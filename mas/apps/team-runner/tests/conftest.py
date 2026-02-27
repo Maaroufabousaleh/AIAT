@@ -18,9 +18,10 @@ def sample_team_yaml(tmp_path):
           display_name: Test Admin
           system_prompt_file: prompts/ceo.md
           budget_defaults:
-            max_tokens_per_turn: 1000
-            max_turns: 5
-            timeout_seconds: 30
+            max_llm_calls: 10
+            max_tool_calls: 5
+            max_subtasks: 3
+            max_cost_usd: 0.25
           tools: []
         workers: []
     """)

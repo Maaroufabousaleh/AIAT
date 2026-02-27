@@ -438,6 +438,16 @@ class TestReviewSummary:
         )
         assert summary.is_complete is True
 
+    def test_not_complete_when_reviewer_count_not_initialized(self):
+        summary = ReviewSummary(
+            project_id="p1",
+            document_id=uuid4(),
+            doc_type=DocumentType.PDR,
+            reviewer_count=0,
+            responses_received=0,
+        )
+        assert summary.is_complete is False
+
 
 class TestFeasibilityReport:
     def test_viable_when_all_pass(self):
@@ -610,6 +620,16 @@ class TestReviewSession:
         )
         assert session.cso_veto is True
         assert "authentication" in session.cso_veto_comment
+
+    def test_not_complete_when_reviewer_count_not_initialized(self):
+        session = ReviewSession(
+            project_id="p1",
+            document_id=uuid4(),
+            doc_type=DocumentType.PDR,
+            reviewer_count=0,
+            responses_received=0,
+        )
+        assert session.is_complete is False
 
 
 # ---------------------------------------------------------------------------

@@ -137,7 +137,8 @@ class ReviewSummary(BaseModel):
 
     @property
     def is_complete(self) -> bool:
-        return self.responses_received >= self.reviewer_count
+        # reviewer_count may be 0 before fan-out starts; that state is not complete.
+        return self.reviewer_count > 0 and self.responses_received >= self.reviewer_count
 
     @property
     def circuit_open(self) -> bool:
@@ -527,7 +528,8 @@ class ReviewSession(BaseModel):
 
     @property
     def is_complete(self) -> bool:
-        return self.responses_received >= self.reviewer_count
+        # reviewer_count may be 0 before fan-out starts; that state is not complete.
+        return self.reviewer_count > 0 and self.responses_received >= self.reviewer_count
 
     @property
     def circuit_open(self) -> bool:

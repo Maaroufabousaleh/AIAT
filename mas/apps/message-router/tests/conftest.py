@@ -1,15 +1,20 @@
 """
 Conftest for message-router tests.
 """
-import pytest
-from httpx import AsyncClient, ASGITransport
+from pathlib import Path
+import sys
 
-from message_router.main import app
+import pytest
 
 
 @pytest.fixture
 async def client():
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+    pytest.importorskip("fastapi")
+    httpx = pytest.importorskip("httpx")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from message_router.main import app
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as ac:
         yield ac

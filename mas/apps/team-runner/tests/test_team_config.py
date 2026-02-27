@@ -1,5 +1,7 @@
 """Smoke tests for team-runner."""
-import yaml
+import pytest
+
+yaml = pytest.importorskip("yaml")
 
 
 def test_sample_team_yaml_loads(sample_team_yaml):
