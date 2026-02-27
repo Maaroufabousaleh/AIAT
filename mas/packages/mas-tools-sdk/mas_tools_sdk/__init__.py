@@ -1,15 +1,23 @@
-"""
-mas-tools-sdk — Tool interface definition + async HTTP client for tool-service.
+"""mas-tools-sdk — tool abstractions and HTTP client for the MAS tool-service.
 
-Exports (Phase 6)
------------------
-BaseTool           Abstract base class every tool implementation must inherit.
-                   execute(request: ToolRequest) → ToolResponse
-ToolServiceClient  Async HTTP client that wraps POST /tools/execute.
-                   Handles 429 rate-limit back-off and circuit breaker detection.
-ToolGroup          Enum of the six tool groups defined in the tool-service manifest:
-                     WEB, FILE, MEMORY, PROJECT, SPRINT_KPI, INFRA
-TOOL_MANIFEST      Dict of tool_name → ToolDefinition (name, group, min_role, description).
+Public API
+----------
+BaseTool           Abstract base class for tool implementations.
+ToolGroup          Enum of the 6 tool groups.
+GROUP_RATE_LIMITS  Default rate limits per group.
+TOOL_MANIFEST      Canonical dict of all registered tools.
+ToolServiceClient  Async HTTP client agents use to call tools.
 """
 
-# Populated in Phase 6.
+from .base import BaseTool
+from .client import ToolServiceClient
+from .groups import GROUP_RATE_LIMITS, ToolGroup
+from .manifest import TOOL_MANIFEST
+
+__all__ = [
+    "BaseTool",
+    "GROUP_RATE_LIMITS",
+    "TOOL_MANIFEST",
+    "ToolGroup",
+    "ToolServiceClient",
+]
