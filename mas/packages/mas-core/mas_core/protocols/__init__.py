@@ -1,20 +1,119 @@
-"""
-protocols — Canonical message schema, domain models and enumerations.
+"""MAS protocols package — unified message schema and domain models.
 
-Exports (Phase 1)
------------------
-MessageEnvelope   Single canonical message format used by all agents, router, controller.
-BlobRef           Reference to a large payload stored in MinIO.
-MessageType       Full enum of all message types (TASK, REVIEW_REQUEST, …, ACK).
-AgentRole         Six-role enum: orchestrator / executive / c_suite / admin / worker / sub_agent.
-TaskBudget        Per-task budget caps embedded in MessageEnvelope.
-ToolRequest       Agent → tool-service request.
-ToolResponse      Tool-service → agent response.
-
-Domain models (Phase 1, §3.4)
-------------------------------
-ProjectDocument, ReviewComment, ReviewSummary, FeasibilityReport,
-HumanDecision, Sprint, Issue, KPISnapshot, AgentProfile
+Public surface
+--------------
+Enums       : MessageType, AgentRole, ProjectState, ReviewSessionStatus,
+              ReviewSeverity, ReviewVerdict, DocumentType, DocumentState,
+              IssueType, IssueStatus, IssuePriority, FailureReason, SystemState
+Envelope    : BlobRef, TaskBudget, MessageEnvelope, MAX_PAYLOAD_BYTES
+Tool        : ToolRequest, ToolResponse, ToolManifestEntry, CircuitState
+Domain      : ProjectDocument, ReviewComment, ReviewSummary, ReviewResponse,
+              ReviewSession, FeasibilityReport, HumanDecision, Sprint, Issue,
+              Milestone, ProjectSummary, KPISnapshot, AgentProfile
+WS          : WSMessageFrame, WSPingFrame, WSAckFrame, WSNackFrame, WSPongFrame,
+              AgentFrame, RouterFrame, parse_agent_frame
 """
 
-# Populated in Phase 1.
+from .domain import (
+    AgentProfile,
+    FeasibilityReport,
+    HumanDecision,
+    Issue,
+    KPISnapshot,
+    Milestone,
+    ProjectDocument,
+    ProjectSummary,
+    ReviewComment,
+    ReviewResponse,
+    ReviewSession,
+    ReviewSummary,
+    Sprint,
+)
+from .enums import (
+    AgentRole,
+    DocumentState,
+    DocumentType,
+    FailureReason,
+    IssueStatus,
+    IssueType,
+    IssuePriority,
+    MessageType,
+    ProjectState,
+    ReviewSessionStatus,
+    ReviewSeverity,
+    ReviewVerdict,
+    SystemState,
+)
+from .envelope import (
+    MAX_PAYLOAD_BYTES,
+    BlobRef,
+    MessageEnvelope,
+    TaskBudget,
+)
+from .tool import (
+    CircuitState,
+    ToolManifestEntry,
+    ToolRequest,
+    ToolResponse,
+)
+from .ws import (
+    AgentFrame,
+    RouterFrame,
+    WSAckFrame,
+    WSMessageFrame,
+    WSNackFrame,
+    WSPingFrame,
+    WSPongFrame,
+    parse_agent_frame,
+)
+
+__all__ = [
+    # Enums
+    "AgentRole",
+    "MessageType",
+    "ProjectState",
+    "ReviewSessionStatus",
+    "ReviewSeverity",
+    "ReviewVerdict",
+    "DocumentType",
+    "DocumentState",
+    "IssueType",
+    "IssueStatus",
+    "IssuePriority",
+    "FailureReason",
+    "SystemState",
+    # Envelope
+    "MAX_PAYLOAD_BYTES",
+    "BlobRef",
+    "TaskBudget",
+    "MessageEnvelope",
+    # Tool
+    "CircuitState",
+    "ToolRequest",
+    "ToolResponse",
+    "ToolManifestEntry",
+    # Domain
+    "ProjectDocument",
+    "ReviewComment",
+    "ReviewSummary",
+    "ReviewResponse",
+    "ReviewSession",
+    "FeasibilityReport",
+    "HumanDecision",
+    "Sprint",
+    "Issue",
+    "Milestone",
+    "ProjectSummary",
+    "KPISnapshot",
+    "AgentProfile",
+    # WS protocol
+    "WSMessageFrame",
+    "WSPingFrame",
+    "WSAckFrame",
+    "WSNackFrame",
+    "WSPongFrame",
+    "AgentFrame",
+    "RouterFrame",
+    "parse_agent_frame",
+]
+

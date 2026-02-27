@@ -53,6 +53,5 @@ ignore_missing_imports = true
 
 # ── pytest (shared) ───────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["packages", "apps"]
-addopts = "--tb=short -q --import-mode=importlib"
+addopts = "--tb=short -q --import-mode=importlib -p no:cacheprovider"
