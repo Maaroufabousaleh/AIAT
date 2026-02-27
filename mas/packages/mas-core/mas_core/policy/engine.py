@@ -134,6 +134,15 @@ class CommunicationPolicy:
                 f"sender is {sender_role.value}"
             )
 
+        # SHUTDOWN_ACK: any role may send to orchestrator (confirming shutdown)
+        if msg_type == MessageType.SHUTDOWN_ACK:
+            if recipient_tier == AgentRole.ORCHESTRATOR or is_own_team:
+                return True
+            return (
+                f"SHUTDOWN_ACK may only be sent to the orchestrator; "
+                f"got recipient_team={recipient_team!r}"
+            )
+
         # ── 3. Role-specific checks ──────────────────────────────────────────
         if sender_role == AgentRole.EXECUTIVE:
             return self._executive_can(

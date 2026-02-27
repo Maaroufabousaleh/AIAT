@@ -585,3 +585,91 @@ class TestDenyReasonMessages:
             AgentRole.C_SUITE, "office_cfo", "office_cio", MessageType.TASK
         )
         assert "cross-team" in reason.lower()
+
+
+# ===========================================================================
+# Additional coverage — audit gap-fills
+# ===========================================================================
+
+
+class TestAdminTaskDelegation:
+    """Bug #24 fix: ADMIN should be able to send ADMIN_TASK intra-team."""
+
+    def test_admin_can_send_admin_task_intra_team(self):
+        assert _allow(
+            AgentRole.ADMIN, "dept_production", "dept_production", MessageType.ADMIN_TASK
+        )
+
+    def test_admin_can_send_issue_assign_intra_team(self):
+        assert _allow(
+            AgentRole.ADMIN, "dept_production", "dept_production", MessageType.ISSUE_ASSIGN
+        )
+
+
+class TestWorkerAdminReply:
+    """Bug #25 fix: WORKER should be able to send ADMIN_REPLY intra-team."""
+
+    def test_worker_can_send_admin_reply_intra_team(self):
+        assert _allow(
+            AgentRole.WORKER, "dept_production", "dept_production", MessageType.ADMIN_REPLY
+        )
+
+    def test_worker_can_send_result_intra_team(self):
+        assert _allow(
+            AgentRole.WORKER, "dept_production", "dept_production", MessageType.RESULT
+        )
+
+
+class TestShutdownAckRouting:
+    """SHUTDOWN_ACK: any role may send to orchestrator team."""
+
+    def test_executive_shutdown_ack_to_orchestrator(self):
+        assert _allow(
+            AgentRole.EXECUTIVE, "exec_coo", ORCHESTRATOR_TEAM, MessageType.SHUTDOWN_ACK
+        )
+
+    def test_c_suite_shutdown_ack_to_orchestrator(self):
+        assert _allow(
+            AgentRole.C_SUITE, "office_cto", ORCHESTRATOR_TEAM, MessageType.SHUTDOWN_ACK
+        )
+
+    def test_admin_shutdown_ack_to_orchestrator(self):
+        assert _allow(
+            AgentRole.ADMIN, "dept_production", ORCHESTRATOR_TEAM, MessageType.SHUTDOWN_ACK
+        )
+
+    def test_worker_shutdown_ack_to_orchestrator(self):
+        assert _allow(
+            AgentRole.WORKER, "dept_production", ORCHESTRATOR_TEAM, MessageType.SHUTDOWN_ACK
+        )
+
+    def test_worker_shutdown_ack_to_non_orchestrator_denied(self):
+        result = _allow(
+            AgentRole.WORKER, "dept_production", "dept_qa", MessageType.SHUTDOWN_ACK
+        )
+        assert result is not True
+
+
+class TestCSuiteDirective:
+    """C-Suite should be able to send DIRECTIVE downward."""
+
+    def test_cto_directive_to_dept(self):
+        assert _allow(
+            AgentRole.C_SUITE, "office_cto", "dept_devops", MessageType.DIRECTIVE
+        )
+
+    def test_cto_directive_to_production_dept(self):
+        assert _allow(
+            AgentRole.C_SUITE, "office_cto", "dept_production", MessageType.DIRECTIVE
+        )
+
+
+class TestUnknownSenderRole:
+    """Policy should return a deny reason for unknown/unsupported roles."""
+
+    def test_unknown_role_denied(self):
+        # Use a valid role name but in an unexpected context — sub_agent to orchestrator
+        result = policy.can(
+            AgentRole.SUB_AGENT, "dept_production", None, ORCHESTRATOR_TEAM, MessageType.TASK
+        )
+        assert result is not True

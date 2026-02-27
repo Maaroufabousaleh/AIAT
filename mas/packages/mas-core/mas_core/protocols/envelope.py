@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .enums import AgentRole, MessageType
 
@@ -211,18 +211,24 @@ class MessageEnvelope(BaseModel):
     # Validators
     # ------------------------------------------------------------------
 
-    @field_validator("payload")
-    @classmethod
-    def payload_size_check(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Reject payloads that exceed MAX_PAYLOAD_BYTES when JSON-encoded."""
-        encoded = json.dumps(v, default=str).encode("utf-8")
-        if len(encoded) > MAX_PAYLOAD_BYTES:
+    @model_validator(mode="after")
+    def payload_size_check(self) -> "MessageEnvelope":
+        """Reject payloads that exceed MAX_PAYLOAD_BYTES unless blob_ref is set.
+
+        When ``blob_ref`` is present the payload is expected to be a small
+        metadata dict pointing at the real data in MinIO, so it's still capped.
+        However, we only enforce the cap when there is **no** blob_ref —
+        callers that exceed the limit must either shrink the payload or
+        upload to MinIO and provide a ``BlobRef``.
+        """
+        encoded = json.dumps(self.payload, default=str).encode("utf-8")
+        if len(encoded) > MAX_PAYLOAD_BYTES and self.blob_ref is None:
             raise ValueError(
                 f"payload serialises to {len(encoded):,} bytes which exceeds "
                 f"MAX_PAYLOAD_BYTES ({MAX_PAYLOAD_BYTES:,}). "
                 "Upload the data to MinIO and supply a BlobRef instead."
             )
-        return v
+        return self
 
     @model_validator(mode="after")
     def routing_check(self) -> "MessageEnvelope":

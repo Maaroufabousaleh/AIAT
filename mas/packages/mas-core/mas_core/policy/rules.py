@@ -54,6 +54,7 @@ EXECUTIVE_MSG_TYPES: frozenset[MessageType] = frozenset(
         MessageType.DIRECTIVE,
         MessageType.BROADCAST,
         MessageType.SHUTDOWN,
+        MessageType.SHUTDOWN_ACK,
         MessageType.ESCALATION,
         MessageType.HEARTBEAT,
         MessageType.SYSTEM_EVENT,
@@ -78,6 +79,7 @@ C_SUITE_MSG_TYPES: frozenset[MessageType] = frozenset(
         MessageType.ESCALATION,
         MessageType.INFRA_READY,
         MessageType.DIRECTIVE,
+        MessageType.SHUTDOWN_ACK,
     }
 )
 
@@ -101,6 +103,7 @@ ADMIN_MSG_TYPES: frozenset[MessageType] = frozenset(
         MessageType.RESULT,
         MessageType.QUERY,
         MessageType.RESPONSE,
+        MessageType.ADMIN_TASK,
         MessageType.DOCUMENT_SUBMIT,
         MessageType.DOCUMENT_REVISION,
         MessageType.ISSUE_ASSIGN,
@@ -109,6 +112,7 @@ ADMIN_MSG_TYPES: frozenset[MessageType] = frozenset(
         MessageType.ESCALATION,
         MessageType.INFRA_READY,
         MessageType.ADMIN_REPLY,
+        MessageType.SHUTDOWN_ACK,
     }
 )
 
@@ -121,6 +125,8 @@ WORKER_MSG_TYPES: frozenset[MessageType] = frozenset(
         MessageType.RESPONSE,
         MessageType.ISSUE_COMPLETE,
         MessageType.ESCALATION,
+        MessageType.ADMIN_REPLY,
+        MessageType.SHUTDOWN_ACK,
     }
 )
 

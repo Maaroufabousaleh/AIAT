@@ -4,7 +4,8 @@ Public surface
 --------------
 Enums       : MessageType, AgentRole, ProjectState, ReviewSessionStatus,
               ReviewSeverity, ReviewVerdict, DocumentType, DocumentState,
-              IssueType, IssueStatus, IssuePriority, FailureReason, SystemState
+              IssueType, IssueStatus, IssuePriority, FailureReason,
+              KPIMetricType, SprintStatus, SystemState
 Envelope    : BlobRef, TaskBudget, MessageEnvelope, MAX_PAYLOAD_BYTES
 Tool        : ToolRequest, ToolResponse, ToolManifestEntry, CircuitState
 Domain      : ProjectDocument, ReviewComment, ReviewSummary, ReviewResponse,
@@ -37,11 +38,13 @@ from .enums import (
     IssueStatus,
     IssueType,
     IssuePriority,
+    KPIMetricType,
     MessageType,
     ProjectState,
     ReviewSessionStatus,
     ReviewSeverity,
     ReviewVerdict,
+    SprintStatus,
     SystemState,
 )
 from .envelope import (
@@ -80,7 +83,9 @@ __all__ = [
     "IssueType",
     "IssueStatus",
     "IssuePriority",
+    "KPIMetricType",
     "FailureReason",
+    "SprintStatus",
     "SystemState",
     # Envelope
     "MAX_PAYLOAD_BYTES",

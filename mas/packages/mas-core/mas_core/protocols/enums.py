@@ -55,6 +55,7 @@ class MessageType(str, Enum):
     # --- System ---
     HEARTBEAT = "HEARTBEAT"                 # Liveness / keepalive pulse
     ACK = "ACK"                             # Explicit message acknowledgment (WS)
+    SHUTDOWN_ACK = "SHUTDOWN_ACK"           # Team confirms checkpoint + shutdown readiness
     SYSTEM_EVENT = "SYSTEM_EVENT"           # Internal system / lifecycle event
 
 
@@ -196,6 +197,29 @@ class FailureReason(str, Enum):
     INFRA_FAILURE = "INFRA_FAILURE"
     AGENT_BUDGET_EXHAUSTED = "AGENT_BUDGET_EXHAUSTED"
     UNRECOVERABLE_ERROR = "UNRECOVERABLE_ERROR"
+
+
+class SprintStatus(str, Enum):
+    """Sprint lifecycle states."""
+
+    PLANNED = "PLANNED"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class KPIMetricType(str, Enum):
+    """Enumeration of all KPI metric types collected by the CTO."""
+
+    ESTIMATION_ACCURACY = "ESTIMATION_ACCURACY"
+    TASK_COMPLETION_RATE = "TASK_COMPLETION_RATE"
+    REVIEW_PASS_RATE = "REVIEW_PASS_RATE"
+    VELOCITY = "VELOCITY"
+    DEFECT_RATE = "DEFECT_RATE"
+    REWORK_RATE = "REWORK_RATE"
+    BUDGET_ADHERENCE = "BUDGET_ADHERENCE"
+    RESOURCE_UTILIZATION = "RESOURCE_UTILIZATION"
+    INFRA_LEAD_TIME = "INFRA_LEAD_TIME"
 
 
 class SystemState(str, Enum):

@@ -92,6 +92,31 @@ def test_phase0_migration_scaffold_files_exist() -> None:
         "alembic.ini",
         "migrations/env.py",
         "migrations/script.py.mako",
+        "migrations/versions/0001_initial_schema.py",
     ]
     missing = [rel for rel in expected if not (root / rel).is_file()]
     assert not missing, f"Missing migration scaffold files: {missing}"
+
+
+def test_phase0_redis_conf_exists() -> None:
+    root = _repo_root()
+    assert (root / "infra/compose/redis.conf").is_file(), "Missing infra/compose/redis.conf"
+
+
+def test_phase0_prompts_directory_has_expected_files() -> None:
+    root = _repo_root()
+    prompts_dir = root / "prompts"
+    assert prompts_dir.is_dir(), "Missing prompts/ directory"
+    expected_prompts = {
+        "ceo", "coo", "cfo", "cio", "chrm", "cso", "cto",
+        "production_pm", "system_pm", "qa_lead", "devops_pm",
+    }
+    actual = {p.stem for p in prompts_dir.glob("*.md")}
+    assert expected_prompts.issubset(actual), (
+        f"Missing prompt files: {expected_prompts - actual}"
+    )
+
+
+def test_phase0_readme_exists() -> None:
+    root = _repo_root()
+    assert (root / "README.md").is_file(), "Missing README.md at repo root"

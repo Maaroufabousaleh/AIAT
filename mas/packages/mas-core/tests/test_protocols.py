@@ -25,11 +25,16 @@ from mas_core.protocols import (
     AgentRole,
     BlobRef,
     CircuitState,
+    DocumentState,
     DocumentType,
+    FailureReason,
     FeasibilityReport,
     HumanDecision,
     Issue,
+    IssuePriority,
+    IssueStatus,
     IssueType,
+    KPIMetricType,
     KPISnapshot,
     MessageEnvelope,
     MessageType,
@@ -45,6 +50,7 @@ from mas_core.protocols import (
     ReviewSummary,
     ReviewVerdict,
     Sprint,
+    SprintStatus,
     TaskBudget,
     ToolManifestEntry,
     ToolRequest,
@@ -312,7 +318,7 @@ class TestEnumCompleteness:
     def test_all_message_types_present(self):
         expected = {
             "TASK", "RESULT", "QUERY", "RESPONSE", "BROADCAST",
-            "ADMIN_TASK", "ADMIN_REPLY", "SHUTDOWN",
+            "ADMIN_TASK", "ADMIN_REPLY", "SHUTDOWN", "SHUTDOWN_ACK",
             "DOCUMENT_SUBMIT", "DOCUMENT_REVISION",
             "REVIEW_REQUEST", "REVIEW_RESPONSE",
             "APPROVAL_REQUEST", "APPROVAL_RESPONSE",
@@ -327,6 +333,51 @@ class TestEnumCompleteness:
     def test_all_agent_roles_present(self):
         expected = {"ORCHESTRATOR", "EXECUTIVE", "C_SUITE", "ADMIN", "WORKER", "SUB_AGENT"}
         actual = {r.name for r in AgentRole}
+        assert expected == actual
+
+    def test_sprint_status_completeness(self):
+        expected = {"PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"}
+        actual = {s.name for s in SprintStatus}
+        assert expected == actual
+
+    def test_kpi_metric_type_completeness(self):
+        expected = {
+            "ESTIMATION_ACCURACY", "TASK_COMPLETION_RATE", "REVIEW_PASS_RATE",
+            "VELOCITY", "DEFECT_RATE", "REWORK_RATE",
+            "BUDGET_ADHERENCE", "RESOURCE_UTILIZATION", "INFRA_LEAD_TIME",
+        }
+        actual = {k.name for k in KPIMetricType}
+        assert expected == actual
+
+    def test_document_state_completeness(self):
+        expected = {
+            "DRAFT", "IN_REVIEW", "APPROVED", "REJECTED",
+            "NEEDS_REVISION", "SUPERSEDED", "ARCHIVED",
+        }
+        actual = {s.name for s in DocumentState}
+        assert expected == actual
+
+    def test_failure_reason_completeness(self):
+        expected = {
+            "WATCHDOG_TIMEOUT", "REVIEW_CIRCUIT_OPEN", "DLQ_OVERFLOW",
+            "INFRA_FAILURE", "AGENT_BUDGET_EXHAUSTED", "UNRECOVERABLE_ERROR",
+        }
+        actual = {r.name for r in FailureReason}
+        assert expected == actual
+
+    def test_issue_type_completeness(self):
+        expected = {"FEATURE", "TEST", "QA", "DOCS", "INFRA", "BUGFIX", "BUG", "REWORK"}
+        actual = {t.name for t in IssueType}
+        assert expected == actual
+
+    def test_issue_priority_completeness(self):
+        expected = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+        actual = {p.name for p in IssuePriority}
+        assert expected == actual
+
+    def test_issue_status_completeness(self):
+        expected = {"BACKLOG", "IN_PROGRESS", "IN_REVIEW", "DONE", "BLOCKED", "CANCELLED"}
+        actual = {s.name for s in IssueStatus}
         assert expected == actual
 
 
@@ -785,3 +836,148 @@ class TestWSFrames:
         restored = WSMessageFrame.model_validate_json(raw)
         assert restored.entry_id == frame.entry_id
         assert restored.envelope.message_id == env.message_id
+
+
+# ===========================================================================
+# Additional coverage — audit gap-fills
+# ===========================================================================
+
+
+class TestOversizedPayloadWithBlobRef:
+    """Oversized payload MUST be accepted when a blob_ref is provided."""
+
+    def test_oversized_payload_accepted_with_blob_ref(self):
+        big = {"data": "a" * (MAX_PAYLOAD_BYTES + 1)}
+        ref = BlobRef(
+            bucket="mas-agents",
+            key="proj-001/documents/big.json",
+            sha256="abc123" * 10,
+            size_bytes=MAX_PAYLOAD_BYTES + 100,
+        )
+        env = _basic_envelope(payload=big, blob_ref=ref)
+        assert env.blob_ref is not None
+        assert env.payload == big
+
+    def test_oversized_payload_without_blob_ref_still_rejected(self):
+        big = {"data": "a" * (MAX_PAYLOAD_BYTES + 1)}
+        with pytest.raises(ValueError, match="MAX_PAYLOAD_BYTES"):
+            _basic_envelope(payload=big)
+
+
+class TestHumanDecisionConstruction:
+    """HumanDecision requires 'decision' as a mandatory field."""
+
+    def test_approve_construction(self):
+        hd = HumanDecision(
+            project_id="p1",
+            gate="FEASIBILITY",
+            approved=True,
+            decision="APPROVE",
+        )
+        assert hd.decision == "APPROVE"
+        assert hd.approved is True
+        assert hd.decided_by == "human"
+
+    def test_reject_construction(self):
+        hd = HumanDecision(
+            project_id="p1",
+            gate="CDR_APPROVAL",
+            approved=False,
+            decision="REJECT",
+            comment="Budget exceeded",
+        )
+        assert hd.decision == "REJECT"
+        assert hd.comment == "Budget exceeded"
+
+    def test_edit_construction_with_instructions(self):
+        hd = HumanDecision(
+            project_id="p1",
+            gate="CDR_APPROVAL",
+            approved=False,
+            decision="EDIT",
+            edit_instructions="Reduce scope of module B.",
+        )
+        assert hd.decision == "EDIT"
+        assert hd.edit_instructions is not None
+
+    def test_missing_decision_raises(self):
+        with pytest.raises(Exception):
+            HumanDecision(
+                project_id="p1",
+                gate="FEASIBILITY",
+                approved=True,
+                # decision is missing — required field
+            )
+
+
+class TestReviewResponseConstruction:
+    def test_basic_construction(self):
+        rr = ReviewResponse(
+            reviewer_id="cfo_agent",
+            reviewer_role="C_SUITE",
+            reviewer_team="office_cfo",
+            verdict=ReviewVerdict.APPROVED,
+        )
+        assert rr.reviewer_id == "cfo_agent"
+        assert rr.veto is False
+        assert rr.comments == []
+
+    def test_with_veto_and_comments(self):
+        comment = ReviewComment(
+            reviewer_id="cso_agent",
+            reviewer_team="office_cso",
+            severity=ReviewSeverity.BLOCKER,
+            body="Critical security flaw in auth module.",
+            category="security",
+            suggested_change="Implement OAuth2 instead of basic auth.",
+        )
+        rr = ReviewResponse(
+            reviewer_id="cso_agent",
+            reviewer_role="C_SUITE",
+            reviewer_team="office_cso",
+            verdict=ReviewVerdict.REJECTED,
+            comments=[comment],
+            veto=True,
+        )
+        assert rr.veto is True
+        assert len(rr.comments) == 1
+        assert rr.comments[0].severity == ReviewSeverity.BLOCKER
+
+
+class TestCorrelationIdDefault:
+    """correlation_id should default to message_id when not explicitly set."""
+
+    def test_correlation_id_defaults_to_message_id(self):
+        env = _basic_envelope()
+        assert env.correlation_id == env.message_id
+
+    def test_explicit_correlation_id_preserved(self):
+        cid = uuid4()
+        env = _basic_envelope(correlation_id=cid)
+        assert env.correlation_id == cid
+        assert env.correlation_id != env.message_id
+
+
+class TestSprintStatusEnum:
+    """Sprint.status should use the SprintStatus enum."""
+
+    def test_sprint_uses_sprint_status_enum(self):
+        s = Sprint(project_id="p1", sprint_number=1, name="Sprint 1")
+        assert s.status == SprintStatus.PLANNED
+
+    def test_sprint_status_active(self):
+        s = Sprint(project_id="p1", sprint_number=2, name="Sprint 2", status=SprintStatus.ACTIVE)
+        assert s.status == SprintStatus.ACTIVE
+
+
+class TestKPIMetricTypeEnum:
+    """KPISnapshot.metric_type should use the KPIMetricType enum."""
+
+    def test_kpi_snapshot_infra_lead_time(self):
+        snap = KPISnapshot(project_id="p1", metric_type=KPIMetricType.INFRA_LEAD_TIME, value=120.0)
+        assert snap.metric_type == KPIMetricType.INFRA_LEAD_TIME
+
+    def test_kpi_snapshot_all_metric_types_accepted(self):
+        for mt in KPIMetricType:
+            snap = KPISnapshot(project_id="p1", metric_type=mt, value=1.0)
+            assert snap.metric_type == mt

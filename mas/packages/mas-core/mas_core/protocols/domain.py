@@ -27,10 +27,12 @@ from .enums import (
     IssueStatus,
     IssueType,
     IssuePriority,
+    KPIMetricType,
     ProjectState,
     ReviewSessionStatus,
     ReviewSeverity,
     ReviewVerdict,
+    SprintStatus,
 )
 from .envelope import BlobRef
 
@@ -96,9 +98,7 @@ class ReviewComment(BaseModel):
     )
     severity: ReviewSeverity = Field(default=ReviewSeverity.INFO)
     body: str = Field(..., description="Review comment text.")
-    comment: str | None = Field(default=None, description="Alias field matching plan text.")
     suggested_change: str | None = None
-    suggested_fix: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     # CSO veto — only applicable when reviewer_role == CSuiteAgent(CSO)
@@ -217,21 +217,19 @@ class HumanDecision(BaseModel):
 
     # Decision
     approved: bool
-    action: str = Field(
+    decision: Literal["APPROVE", "REJECT", "EDIT", "CANCEL"] = Field(
         ...,
         description=(
-            "Explicit action taken: 'approve', 'reject', 'edit', 'cancel'. "
+            "Explicit action taken. "
             "The controller uses this to drive state transitions."
         ),
     )
     comment: str | None = None
-    comments: str | None = None
     edit_instructions: str | None = Field(
         default=None,
-        description="Free-text revision instructions when action == 'edit'.",
+        description="Free-text revision instructions when decision == 'EDIT'.",
     )
     edits: list[str] | None = None
-    decision: Literal["APPROVE", "REJECT", "EDIT", "CANCEL"] | None = None
 
     # Audit
     decided_by: str = Field(default="human", description="Human user or API token identifier.")
@@ -262,12 +260,9 @@ class Issue(BaseModel):
     # Assignment
     assigned_team: str | None = None
     assigned_agent: str | None = None
-    assignee_team: str | None = None
-    assignee_agent: str | None = None
 
     # Estimation
     estimated_hours: float | None = Field(default=None, ge=0.0)
-    estimate_hours: float | None = Field(default=None, ge=0.0)
     actual_hours: float | None = Field(default=None, ge=0.0)
     story_points: int | None = Field(default=None, ge=0)
 
@@ -292,7 +287,7 @@ class Sprint(BaseModel):
     sprint_number: int = Field(..., ge=1)
     name: str
     milestone: str | None = None
-    status: Literal["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"] = "PLANNED"
+    status: SprintStatus = Field(default=SprintStatus.PLANNED)
     start_date: datetime | None = None
     end_date: datetime | None = None
 
@@ -343,17 +338,7 @@ class KPISnapshot(BaseModel):
 
     captured_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     measured_at: datetime | None = None
-    metric_type: Literal[
-        "ESTIMATION_ACCURACY",
-        "TASK_COMPLETION_RATE",
-        "REVIEW_PASS_RATE",
-        "VELOCITY",
-        "DEFECT_RATE",
-        "REWORK_RATE",
-        "BUDGET_ADHERENCE",
-        "RESOURCE_UTILIZATION",
-        "INFRA_LEAD_TIME",
-    ] | None = None
+    metric_type: KPIMetricType | None = None
     value: float | None = None
     context: dict[str, Any] | None = None
 
