@@ -16,4 +16,19 @@ CSuiteAgent     CFO/CIO/CHRM/CSO/CTO: review handling, CSO veto,
 AgentConfig     Pydantic settings per agent (id, role, team_id, budget_defaults, …).
 """
 
-# Populated in Phase 4 + 8.
+from .base import AgentBase
+from .budget import BudgetExhausted, BudgetTracker
+from .config import AgentConfig
+from .router_client import RouterClient, RouterDuplicateMessage, RouterError
+
+__all__ = [
+    "AgentBase",
+    "AgentConfig",
+    "BudgetExhausted",
+    "BudgetTracker",
+    "RouterClient",
+    "RouterDuplicateMessage",
+    "RouterError",
+]
+
+# WorkerAgent, AdminAgent, SubAgent, ExecutiveAgent, CSuiteAgent — populated in Phase 8.

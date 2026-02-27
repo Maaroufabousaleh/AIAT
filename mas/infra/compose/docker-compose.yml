@@ -9,8 +9,10 @@
 #
 # Environment:
 #   Copy .env.example → .env and fill in secrets before starting.
-#   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, REDIS_PASSWORD,
-#             ROUTER_SECRET, TOOL_SECRET, LLM_GATEWAY_URL, LLM_API_KEY
+#   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
+#             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
+#             ROUTER_SECRET, TOOL_SECRET,
+#             LLM_GATEWAY_URL, LLM_API_KEY
 
 name: mas
 
@@ -78,11 +80,30 @@ volumes:
 
 services:
 
+  # ── 0. Redis ACL Init (one-time setup) ──────────────────────────────────────
+  # Runs once to configure ACL users. Can be removed after first run.
+  redis-acl-init:
+    image: redis:7.2-alpine
+    restart: "no"
+    networks:
+      - internal
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ROUTER_PASSWORD: "${ROUTER_PASSWORD:-router_default_pass}"
+      TOOLCACHE_PASSWORD: "${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-acl-init.sh"]
+    volumes:
+      - ./redis-acl-init.sh:/usr/local/bin/redis-acl-init.sh:ro
+    depends_on:
+      redis:
+        condition: service_started
+
   # ── 1. Redis ────────────────────────────────────────────────────────────────
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
-    command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
+    command: redis-server /etc/redis/redis.conf
     volumes:
       - redis_data:/data
       - ./redis.conf:/etc/redis/redis.conf:ro
@@ -93,7 +114,7 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "-u", "redis://:router_default_pass@redis:6379", "ping"]
       interval: 10s
       timeout: 3s
       start_period: 5s
@@ -196,10 +217,15 @@ services:
     ports:
       - "8001:8001"
     depends_on:
+      redis-acl-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
-      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      # Redis ACL: connect as router_user
+      REDIS_URL: "redis://:${ROUTER_PASSWORD:-router_default_pass}@redis:6379/0"
+      REDIS_USERNAME: "router_user"
+      REDIS_PASSWORD: "${ROUTER_PASSWORD:-router_default_pass}"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
     mem_limit: 512m
@@ -225,10 +251,15 @@ services:
     ports:
       - "8002:8002"
     depends_on:
+      redis-acl-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     environment:
-      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/1"   # DB 1 for tool cache
+      # Redis ACL: connect as toolcache_user (DB 1 for tool cache)
+      REDIS_URL: "redis://:${TOOLCACHE_PASSWORD:-toolcache_default_pass}@redis:6379/1"
+      REDIS_USERNAME: "toolcache_user"
+      REDIS_PASSWORD: "${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
       TOOL_SECRET: "${TOOL_SECRET}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
