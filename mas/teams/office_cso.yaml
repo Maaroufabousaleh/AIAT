@@ -1,0 +1,48 @@
+# ── office_cso — CSO office ───────────────────────────────────────────────────
+# MAS role: c_suite
+# Security review, threat analysis, compliance, VETO authority.
+# Reviews for: security feasibility (Step 1), PDR security sections (Step 4).
+#
+# CSO VETO PROTOCOL
+# -----------------
+# If the CSO submits a REVIEW_RESPONSE with severity=BLOCKER and veto=true,
+# the controller transitions the project to SECURITY_BLOCKED.  The project
+# cannot advance until either:
+#   a) The CSO approves a revised document, OR
+#   b) The CEO issues CEO_OVERRIDE_CSO (justification audited in Postgres).
+
+team_id: office_cso
+
+admin:
+  agent_id: cso
+  role: c_suite
+  class: CSuiteAgent
+  display_name: "Chief Security Officer"
+  system_prompt_file: prompts/cso.md
+  budget_defaults:
+    max_llm_calls: 30
+    max_tool_calls: 15
+    max_cost_usd: 1.00
+  tools:
+    - threat_model
+    - compliance_check
+    - security_scan
+    - risk_assess
+    - review.submit_veto
+
+workers:
+  - agent_id: security_analyst_1
+    role: worker
+    class: WorkerAgent
+    display_name: "Security Analyst"
+    min_instances: 0
+    max_instances: 2
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - threat_model
+      - compliance_check
+      - security_scan
+      - risk_assess

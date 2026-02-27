@@ -1,0 +1,30 @@
+from enum import StrEnum
+
+
+class WorkflowEvent(StrEnum):
+    """Events accepted by the deterministic workflow controller."""
+
+    PROJECT_CREATED = "project_created"
+    ALL_REVIEWS_IN = "all_reviews_in"
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_REJECTED = "human_rejected"
+    PDR_SUBMITTED = "pdr_submitted"
+    CDR_SUBMITTED = "cdr_submitted"
+    CDR_PRESENTED = "cdr_presented"
+    HUMAN_EDITS = "human_edits"
+    HUMAN_CANCELLED = "human_cancelled"
+    RR_SUBMITTED = "rr_submitted"
+    SPRINTS_CREATED = "sprints_created"
+    INFRA_READY = "infra_ready"
+    ALL_SPRINTS_DONE = "all_sprints_done"
+    RETROSPECTIVE_DONE = "retrospective_done"
+    KPI_SAVED = "kpi_saved"
+    ARCHIVE_REQUESTED = "archive_requested"
+    CSO_VETO = "cso_veto"
+    BLOCKER_RESOLVED = "blocker_resolved"
+    CEO_OVERRIDE = "ceo_override"
+    WATCHDOG_TIMEOUT = "watchdog_timeout"
+    REVIEW_CIRCUIT_OPEN = "review_circuit_open"
+    UNRECOVERABLE_ERROR = "unrecoverable_error"
+    INFRA_FAILED = "infra_failed"
+    RETRY = "retry"

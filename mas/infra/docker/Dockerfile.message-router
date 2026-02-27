@@ -1,0 +1,36 @@
+# ── Dockerfile.message-router ─────────────────────────────────────────────────
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY pyproject.toml uv.lock* ./
+COPY packages/mas-core/pyproject.toml      packages/mas-core/pyproject.toml
+COPY packages/mas-core/mas_core/           packages/mas-core/mas_core/
+COPY apps/message-router/pyproject.toml    apps/message-router/pyproject.toml
+COPY apps/message-router/message_router/   apps/message-router/message_router/
+
+RUN uv sync --package message-router --no-dev --frozen \
+    --no-editable \
+    --virtualenv /venv
+
+# ── Runtime image ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/venv/bin:$PATH"
+
+COPY --from=builder /venv /venv
+COPY apps/message-router/message_router/ /app/message_router/
+
+WORKDIR /app
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"
+
+CMD ["uvicorn", "message_router.main:app", "--host", "0.0.0.0", "--port", "8001"]

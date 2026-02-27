@@ -1,0 +1,44 @@
+# ── Dockerfile.team-runner ────────────────────────────────────────────────────
+# One image; TEAM_CONFIG env var selects the team YAML at runtime.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY pyproject.toml uv.lock* ./
+COPY packages/mas-core/pyproject.toml      packages/mas-core/pyproject.toml
+COPY packages/mas-core/mas_core/           packages/mas-core/mas_core/
+COPY packages/mas-tools-sdk/pyproject.toml packages/mas-tools-sdk/pyproject.toml
+COPY packages/mas-tools-sdk/mas_tools_sdk/ packages/mas-tools-sdk/mas_tools_sdk/
+COPY apps/team-runner/pyproject.toml       apps/team-runner/pyproject.toml
+COPY apps/team-runner/team_runner/         apps/team-runner/team_runner/
+
+RUN uv sync --package team-runner --no-dev --frozen \
+    --no-editable \
+    --virtualenv /venv
+
+# ── Runtime image ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/venv/bin:$PATH"
+
+COPY --from=builder /venv /venv
+COPY apps/team-runner/team_runner/ /app/team_runner/
+# Team YAML files are volume-mounted or baked in here for convenience
+COPY teams/ /app/teams/
+
+WORKDIR /app
+
+# TEAM_CONFIG must be set — e.g. /app/teams/exec_ceo.yaml
+ENV TEAM_CONFIG=/app/teams/exec_ceo.yaml
+EXPOSE 8080
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"
+
+# stop_grace_period is set in docker-compose.yml (60 s) to allow checkpoint saves.
+CMD ["python", "-m", "team_runner.main"]

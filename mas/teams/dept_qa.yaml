@@ -1,0 +1,42 @@
+# ── dept_qa — QA Department ───────────────────────────────────────────────────
+# MAS role: admin (QA Lead) + worker
+# Purpose: Quality assurance during sprint execution (Step 10).
+#          Receives QA-type issues from CTO; creates test plans, runs tests,
+#          reports defects as new issues, validates fixes, acceptance testing.
+
+team_id: dept_qa
+
+admin:
+  agent_id: qa_lead
+  role: admin
+  class: AdminAgent
+  display_name: "QA Lead"
+  system_prompt_file: prompts/qa_lead.md
+  budget_defaults:
+    max_llm_calls: 20
+    max_tool_calls: 15
+    max_cost_usd: 0.75
+  tools:
+    - document_create
+    - document_get
+    - blob.upload
+    - blob.download
+    - issue.create     # create defect issues back into sprint backlog
+    - project.status
+
+workers:
+  - agent_id: tester_1
+    role: worker
+    class: WorkerAgent
+    display_name: "Tester"
+    min_instances: 1
+    max_instances: 3
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - file_read
+      - code_analyze
+      - web_search
+      - blob.upload

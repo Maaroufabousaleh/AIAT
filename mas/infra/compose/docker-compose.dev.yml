@@ -1,0 +1,83 @@
+# ── docker-compose.dev.yml ────────────────────────────────────────────────────
+# Development overlay: exposes Redis/Postgres ports, adds admin UIs,
+# enables hot-reload for the FastAPI services.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+name: mas
+
+services:
+
+  # Expose Redis on host for local debugging (e.g. RedisInsight)
+  redis:
+    ports:
+      - "6379:6379"
+
+  # Expose Postgres on host for psql / pgAdmin
+  postgres:
+    ports:
+      - "5432:5432"
+
+  # Expose MinIO console on host
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # MinIO Web console
+
+  # pgAdmin — Postgres GUI
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@localhost
+      PGADMIN_DEFAULT_PASSWORD: "${POSTGRES_PASSWORD}"
+    mem_limit: 256m
+
+  # RedisInsight — Redis GUI
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    ports:
+      - "8003:5540"
+    mem_limit: 256m
+
+  # Hot-reload overrides for FastAPI services
+  orchestrator-api:
+    command: >
+      uvicorn orchestrator_api.main:app
+        --host 0.0.0.0 --port 8000
+        --reload --reload-dir /app
+    volumes:
+      - ../../apps/orchestrator-api/orchestrator_api:/app/orchestrator_api
+      - ../../migrations:/app/migrations
+    environment:
+      LOG_LEVEL: DEBUG
+
+  message-router:
+    command: >
+      uvicorn message_router.main:app
+        --host 0.0.0.0 --port 8001
+        --reload --reload-dir /app
+    volumes:
+      - ../../apps/message-router/message_router:/app/message_router
+    environment:
+      LOG_LEVEL: DEBUG
+
+  tool-service:
+    command: >
+      uvicorn tool_service.main:app
+        --host 0.0.0.0 --port 8002
+        --reload --reload-dir /app
+    volumes:
+      - ../../apps/tool-service/tool_service:/app/tool_service
+    environment:
+      LOG_LEVEL: DEBUG

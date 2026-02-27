@@ -1,0 +1,59 @@
+# ── office_cto — CTO office ───────────────────────────────────────────────────
+# MAS role: c_suite
+# Sprint planning, issue decomposition, velocity tracking, KPI analysis,
+# DevOps coordination (INFRA_READY gate enforcement).
+
+team_id: office_cto
+
+admin:
+  agent_id: cto
+  role: c_suite
+  class: CSuiteAgent
+  display_name: "Chief Technology Officer"
+  system_prompt_file: prompts/cto.md
+  budget_defaults:
+    max_llm_calls: 40
+    max_tool_calls: 60    # high — many DB operations (KPIs, sprints, issues)
+    max_cost_usd: 1.50
+  tools:
+    - sprint.create
+    - issue.create
+    - issue.decompose
+    - kpi.compute
+    - kpi.query_history
+    - kpi.update_agent_profile
+    - velocity.report
+    - estimation.adjust
+
+workers:
+  - agent_id: sprint_planner_1
+    role: worker
+    class: WorkerAgent
+    display_name: "Sprint Planner"
+    min_instances: 1
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 30
+      max_cost_usd: 0.75
+    tools:
+      - sprint.create
+      - issue.create
+      - issue.decompose
+
+  - agent_id: kpi_analyst_1
+    role: worker
+    class: WorkerAgent
+    display_name: "KPI Analyst"
+    min_instances: 1
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 25
+      max_cost_usd: 0.50
+    tools:
+      - kpi.compute
+      - kpi.query_history
+      - kpi.update_agent_profile
+      - velocity.report
+      - estimation.adjust

@@ -1,0 +1,38 @@
+# ── office_cfo — CFO office ───────────────────────────────────────────────────
+# MAS role: c_suite
+# Financial feasibility, budget review, cost/benefit analysis, ROI.
+# Reviews for: feasibility (Step 1), PDR budget sections (Step 4).
+
+team_id: office_cfo
+
+admin:
+  agent_id: cfo
+  role: c_suite
+  class: CSuiteAgent
+  display_name: "Chief Financial Officer"
+  system_prompt_file: prompts/cfo.md
+  budget_defaults:
+    max_llm_calls: 30
+    max_tool_calls: 15
+    max_cost_usd: 1.00
+  tools:
+    - cost_estimate
+    - budget_check
+    - roi_calculate
+    - market_research
+
+workers:
+  - agent_id: financial_analyst_1
+    role: worker
+    class: WorkerAgent
+    display_name: "Financial Analyst"
+    min_instances: 0
+    max_instances: 2
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - cost_estimate
+      - market_research
+      - web_search

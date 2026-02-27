@@ -1,0 +1,38 @@
+# ── Dockerfile.tool-service ───────────────────────────────────────────────────
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY pyproject.toml uv.lock* ./
+COPY packages/mas-core/pyproject.toml      packages/mas-core/pyproject.toml
+COPY packages/mas-core/mas_core/           packages/mas-core/mas_core/
+COPY packages/mas-tools-sdk/pyproject.toml packages/mas-tools-sdk/pyproject.toml
+COPY packages/mas-tools-sdk/mas_tools_sdk/ packages/mas-tools-sdk/mas_tools_sdk/
+COPY apps/tool-service/pyproject.toml      apps/tool-service/pyproject.toml
+COPY apps/tool-service/tool_service/       apps/tool-service/tool_service/
+
+RUN uv sync --package tool-service --no-dev --frozen \
+    --no-editable \
+    --virtualenv /venv
+
+# ── Runtime image ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/venv/bin:$PATH"
+
+COPY --from=builder /venv /venv
+COPY apps/tool-service/tool_service/ /app/tool_service/
+
+WORKDIR /app
+
+EXPOSE 8002
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"
+
+CMD ["uvicorn", "tool_service.main:app", "--host", "0.0.0.0", "--port", "8002"]

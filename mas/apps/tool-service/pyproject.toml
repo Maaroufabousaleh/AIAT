@@ -1,0 +1,29 @@
+[project]
+name = "tool-service"
+version = "0.1.0"
+description = "HTTP tool gateway — role-gated access, 6 tool groups, circuit breakers, rate limits"
+requires-python = ">=3.11"
+
+dependencies = [
+    "mas-core",
+    "mas-tools-sdk",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "redis[hiredis]>=5.0",
+    "aiolimiter>=1.1",          # token-bucket rate limiting per tool group
+    "httpx[http2]>=0.27",       # web_search, external API calls
+    "pydantic-settings>=2.3",
+    "structlog>=24.2",
+    "prometheus-fastapi-instrumentator>=7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tool_service"]
+
+[tool.uv.sources]
+mas-core = { workspace = true }
+mas-tools-sdk = { workspace = true }

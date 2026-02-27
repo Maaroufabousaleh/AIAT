@@ -1,0 +1,363 @@
+# ── docker-compose.yml ────────────────────────────────────────────────────────
+# 18 containers: 7 infra + 11 team-runners.
+# All infra is $0 self-hosted OSS; only LLM API costs apply.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f orchestrator-api
+#   docker compose down -v   # removes volumes (destructive!)
+#
+# Environment:
+#   Copy .env.example → .env and fill in secrets before starting.
+#   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, REDIS_PASSWORD,
+#             ROUTER_SECRET, TOOL_SECRET, LLM_GATEWAY_URL, LLM_API_KEY
+
+name: mas
+
+# ── Shared env vars (merged into each team's environment: block) ──────────────
+x-team-env: &team-env
+  ROUTER_URL: "ws://message-router:8001"
+  TOOL_SERVICE_URL: "http://tool-service:8002"
+  PGBOUNCER_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
+  MINIO_ENDPOINT: "http://minio:9000"
+  MINIO_ACCESS_KEY: "mas_agent"
+  MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
+  ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+  LOG_LEVEL: "INFO"
+
+# ── Shared service-level defaults (no environment: key here) ──────────────────
+x-team-defaults: &team-defaults
+  image: mas/team-runner:latest
+  build:
+    context: ../..
+    dockerfile: infra/docker/Dockerfile.team-runner
+  restart: unless-stopped
+  stop_grace_period: 60s          # give agents 60 s to checkpoint before SIGKILL
+  networks:
+    - internal
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    pgbouncer:
+      condition: service_started
+    minio:
+      condition: service_healthy
+    orchestrator-api:
+      condition: service_healthy
+    message-router:
+      condition: service_healthy
+    tool-service:
+      condition: service_healthy
+  mem_limit: 512m
+  cpus: "0.5"
+  healthcheck:
+    test: ["CMD", "python", "-c",
+           "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"]
+    interval: 15s
+    timeout: 5s
+    start_period: 20s
+    retries: 3
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true   # no direct internet access for agents
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  redis_data:
+  postgres_data:
+  minio_data:
+
+# ── Services ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── 1. Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - internal
+    # Redis ports are NOT published to the host in production.
+    # Use docker-compose.dev.yml to expose them for local debugging.
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+  # ── 2. Postgres ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mas
+      POSTGRES_USER: mas_user
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mas_user -d mas"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+
+  # ── 3. PgBouncer ────────────────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_NAME: mas
+      DB_USER: mas_user
+      DB_PASSWORD: "${POSTGRES_PASSWORD}"
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      # CRITICAL: must be 0 for asyncpg compatibility in transaction pool mode
+      SERVER_RESET_QUERY_ALWAYS: "0"
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: "0.25"
+
+  # ── 4. MinIO ────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio_root
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+    volumes:
+      - minio_data:/data
+    networks:
+      - internal
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # MinIO init: create bucket + access key for agents
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - internal
+    environment:
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minio_root $$MINIO_ROOT_PASSWORD &&
+        mc mb --ignore-existing local/mas-agents &&
+        mc admin user add local mas_agent $$MINIO_ROOT_PASSWORD &&
+        mc admin policy attach local readwrite --user mas_agent &&
+        echo 'MinIO init complete'
+      "
+
+  # ── 5. Message Router ───────────────────────────────────────────────────────
+  message-router:
+    image: mas/message-router:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.message-router
+    restart: unless-stopped
+    networks:
+      - public
+      - internal
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      ROUTER_SECRET: "${ROUTER_SECRET}"
+      LOG_LEVEL: "INFO"
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── 6. Tool Service ─────────────────────────────────────────────────────────
+  tool-service:
+    image: mas/tool-service:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.tool-service
+    restart: unless-stopped
+    networks:
+      - public
+      - internal
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/1"   # DB 1 for tool cache
+      TOOL_SECRET: "${TOOL_SECRET}"
+      LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
+      LLM_API_KEY: "${LLM_API_KEY}"
+      LOG_LEVEL: "INFO"
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── 7. Orchestrator API ─────────────────────────────────────────────────────
+  orchestrator-api:
+    image: mas/orchestrator-api:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.orchestrator-api
+    restart: unless-stopped
+    networks:
+      - public
+      - internal
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      message-router:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      PGBOUNCER_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
+      ROUTER_URL: "http://message-router:8001"
+      ROUTER_SECRET: "${ROUTER_SECRET}"
+      LOG_LEVEL: "INFO"
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── Team runners (11 containers) ────────────────────────────────────────────
+  # Each team merges &team-env (env vars only) then adds TEAM_CONFIG.
+  # Using <<: *team-env inside environment: is correct because *team-env
+  # contains ONLY key=value environment pairs, not service-level keys.
+
+  team-exec-ceo:
+    <<: *team-defaults
+    container_name: mas-team-exec-ceo
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/exec_ceo.yaml
+
+  team-exec-coo:
+    <<: *team-defaults
+    container_name: mas-team-exec-coo
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/exec_coo.yaml
+
+  team-office-cfo:
+    <<: *team-defaults
+    container_name: mas-team-office-cfo
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/office_cfo.yaml
+
+  team-office-cio:
+    <<: *team-defaults
+    container_name: mas-team-office-cio
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/office_cio.yaml
+
+  team-office-chrm:
+    <<: *team-defaults
+    container_name: mas-team-office-chrm
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/office_chrm.yaml
+
+  team-office-cso:
+    <<: *team-defaults
+    container_name: mas-team-office-cso
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/office_cso.yaml
+
+  team-office-cto:
+    <<: *team-defaults
+    container_name: mas-team-office-cto
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/office_cto.yaml
+
+  team-dept-production:
+    <<: *team-defaults
+    container_name: mas-team-dept-production
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_production.yaml
+
+  team-dept-system:
+    <<: *team-defaults
+    container_name: mas-team-dept-system
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_system.yaml
+
+  team-dept-qa:
+    <<: *team-defaults
+    container_name: mas-team-dept-qa
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_qa.yaml
+
+  team-dept-devops:
+    <<: *team-defaults
+    container_name: mas-team-dept-devops
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_devops.yaml
