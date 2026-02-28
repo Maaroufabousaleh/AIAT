@@ -118,6 +118,36 @@ class BudgetTracker:
             raise BudgetExhausted(reason)
 
     # ----------------------------------------------------------------
+    # Convenience properties (plan §4a)
+    # ----------------------------------------------------------------
+
+    @property
+    def llm_calls_remaining(self) -> int | None:
+        """LLM calls left before cap, or ``None`` if uncapped."""
+        if self.max_llm_calls is None:
+            return None
+        return max(0, self.max_llm_calls - self.llm_calls_used)
+
+    @property
+    def tool_calls_remaining(self) -> int | None:
+        """Tool calls left before cap, or ``None`` if uncapped."""
+        if self.max_tool_calls is None:
+            return None
+        return max(0, self.max_tool_calls - self.tool_calls_used)
+
+    @property
+    def subtasks_remaining(self) -> int | None:
+        """Subtask spawns left before cap, or ``None`` if uncapped."""
+        if self.max_subtasks is None:
+            return None
+        return max(0, self.max_subtasks - self.subtasks_used)
+
+    @property
+    def cost_so_far(self) -> float:
+        """Accumulated USD cost across all LLM calls in this budget."""
+        return self.cost_usd_used
+
+    # ----------------------------------------------------------------
     # Pre-call guards — call BEFORE attempting an action
     # ----------------------------------------------------------------
 

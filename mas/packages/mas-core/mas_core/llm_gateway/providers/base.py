@@ -87,6 +87,67 @@ class ProviderConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Model capabilities
+# ---------------------------------------------------------------------------
+
+
+class ModelCapabilities(BaseModel):
+    """Declares what input modalities and features a model actually supports.
+
+    These flags represent verified behaviour — not theoretical API support.
+    A model behind a proxy that strips images should set ``supports_images``
+    to ``False`` even if the underlying model family is vision-capable.
+    """
+
+    supports_images: bool = Field(
+        default=False,
+        description=(
+            "Model can process image inputs (base64 data-URL or image_url). "
+            "True only if the provider endpoint actually passes images through."
+        ),
+    )
+    supports_pdf: bool = Field(
+        default=False,
+        description=(
+            "Model can ingest PDF files directly (base64 / file-id / URL). "
+            "Requires Responses API *and* provider-side support."
+        ),
+    )
+    supports_video: bool = Field(
+        default=False,
+        description=(
+            "Model can process video input natively. "
+            "Currently no standard provider supports this."
+        ),
+    )
+    supports_reasoning: bool = Field(
+        default=False,
+        description=(
+            "Model has explicit reasoning / chain-of-thought capability. "
+            "Useful for complex multi-step analysis and planning tasks."
+        ),
+    )
+    image_how: str = Field(
+        default="",
+        description=(
+            "How to pass images when supported, e.g. "
+            "'image_url in content array (base64 or URL)'"
+        ),
+    )
+    pdf_how: str = Field(
+        default="",
+        description=(
+            "How to pass PDFs when supported, e.g. "
+            "'file input (base64/file-id/URL) in Responses API'"
+        ),
+    )
+    video_how: str = Field(
+        default="extract frames as images + optional ASR transcript",
+        description="Recommended workaround for video input.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Model entry
 # ---------------------------------------------------------------------------
 
@@ -133,6 +194,35 @@ class ModelEntry(BaseModel):
         description="Approx cost in USD per 1 M output tokens (for budgeting).",
     )
     default_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+
+    # -- Capability / compliance metadata --
+    capabilities: ModelCapabilities = Field(
+        default_factory=ModelCapabilities,
+        description="Multimodal capability flags (images, PDFs, video).",
+    )
+    best_for: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Recommended use-cases, e.g. ['drafting', 'summarisation', 'code-review']. "
+            "Used by the orchestrator to match tasks to models."
+        ),
+    )
+    limits: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Known limitations, e.g. ['text-only', 'no tool-calling', 'high latency']. "
+            "Used by the orchestrator to avoid unsuitable models."
+        ),
+    )
+    compliance: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Compliance / data-handling tags, e.g. ['free-tier', 'no-data-retention', "
+            "'public-api']. Used for policy enforcement."
+        ),
+    )
+
+    # -- CLI fields --
     cli_args: list[str] = Field(
         default_factory=list,
         description="Extra CLI arguments (only used when api_style == CLI).",

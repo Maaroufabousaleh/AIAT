@@ -65,6 +65,21 @@ COPILOT_COST_MAP: dict[str, float] = {
     "gpt-4.1": 0.0,
 }
 
+#: Per-model metadata for known Copilot CLI models.
+#: Keys: supports_reasoning, max_context_tokens, supports_images.
+COPILOT_MODEL_META: dict[str, dict] = {
+    "gpt-4.1": {
+        "supports_reasoning": False,
+        "supports_images": False,
+        "max_context_tokens": 64_000,
+    },
+    "gpt-5-mini": {
+        "supports_reasoning": True,
+        "supports_images": False,
+        "max_context_tokens": 128_000,
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Provider
 # ---------------------------------------------------------------------------
@@ -222,14 +237,44 @@ class CopilotModelScanner:
 
     def _make_entry(self, copilot_model_id: str, binary: str) -> ModelEntry:
         """Create a ``ModelEntry`` for a single copilot model."""
+        from ..base import ModelCapabilities
+
+        meta = COPILOT_MODEL_META.get(copilot_model_id, {})
+        has_reasoning = meta.get("supports_reasoning", False)
+        has_images = meta.get("supports_images", False)
+        ctx_tokens = meta.get("max_context_tokens", None)
+
+        modalities = "text"
+        if has_images:
+            modalities = "text, image"
+
+        best = ["code-generation", "text-analysis", "agent-advisory"]
+        if has_reasoning:
+            best.insert(0, "reasoning")
+        else:
+            best.insert(0, "quick-generation")
+
+        lims = [
+            "no-tool-calling",
+            "no-streaming",
+            "no-file-attachments",
+            "cli-subprocess",
+        ]
+        if not has_images:
+            lims.insert(0, "text-only")
+            lims.append("no-vision")
+
         return ModelEntry(
             model_id=f"copilot/{copilot_model_id}",
             provider="copilot",
             api_style=ApiStyle.CLI,
             endpoint=binary,
             description=(
-                f"GitHub Copilot CLI — {copilot_model_id} (free tier, 0× cost)."
+                f"GitHub Copilot CLI — {copilot_model_id} (free tier, 0× cost). "
+                f"Modalities: {modalities}. "
+                f"{'Reasoning capable.' if has_reasoning else 'No reasoning.'}"
             ),
+            max_context_tokens=ctx_tokens,
             cli_args=[*COPILOT_BASE_ARGS],
             cli_prompt_flag="-p",
             cli_model_flag="--model",
@@ -238,6 +283,26 @@ class CopilotModelScanner:
             cost_per_1m_input=0.0,
             cost_per_1m_output=0.0,
             extra={"cli_model_name": copilot_model_id},
+            capabilities=ModelCapabilities(
+                supports_images=has_images,
+                supports_pdf=False,
+                supports_video=False,
+                supports_reasoning=has_reasoning,
+                image_how=(
+                    "image input supported via Copilot CLI"
+                    if has_images
+                    else "not supported — use Copilot Chat UI for images"
+                ),
+                pdf_how="extract text and paste relevant excerpts into prompt",
+            ),
+            best_for=best,
+            limits=lims,
+            compliance=[
+                "free-tier (0× cost)",
+                "github-copilot-tos",
+                "local-subprocess",
+                "no-data-retention",
+            ],
         )
 
     async def scan_and_register(self) -> list[ModelEntry]:

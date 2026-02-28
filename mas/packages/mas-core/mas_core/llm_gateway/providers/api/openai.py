@@ -28,6 +28,8 @@ MODEL_REGISTRY.register_provider(OPENAI_PROVIDER)
 # Models
 # ---------------------------------------------------------------------------
 
+from ..base import ModelCapabilities
+
 MODEL_REGISTRY.register(
     ModelEntry(
         model_id="gpt-4o",
@@ -43,5 +45,31 @@ MODEL_REGISTRY.register(
         supports_streaming=True,
         cost_per_1m_input=5.0,
         cost_per_1m_output=15.0,
+        capabilities=ModelCapabilities(
+            supports_images=True,
+            supports_pdf=False,
+            supports_video=False,
+            supports_reasoning=True,
+            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
+            pdf_how="extract text and send as message content (or use Responses API)",
+        ),
+        best_for=[
+            "complex-reasoning",
+            "code-generation",
+            "tool-calling",
+            "structured-output",
+            "multimodal-vision",
+            "agent-orchestration",
+        ],
+        limits=[
+            "requires-api-key",
+            "paid-per-token",
+            "no-native-pdf (chat_completions style)",
+        ],
+        compliance=[
+            "openai-usage-policy",
+            "api-key-required",
+            "data-may-be-retained-30d",
+        ],
     )
 )

@@ -13,6 +13,7 @@ column so that ``AgentStorage`` can filter automatically.
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = sa.MetaData()
 
@@ -27,8 +28,14 @@ projects = sa.Table(
     sa.Column("failure_reason", sa.Text()),
     sa.Column("failed_from_state", sa.Text()),
     sa.Column("created_by", sa.Text(), nullable=False),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("human_requester", sa.Text()),
+    sa.Column("config", JSONB()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 2. project_state_history ──────────────────────────────────────────────────
@@ -36,13 +43,20 @@ project_state_history = sa.Table(
     "project_state_history",
     metadata,
     sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("from_state", sa.Text()),
     sa.Column("to_state", sa.Text(), nullable=False),
     sa.Column("event", sa.Text(), nullable=False),
     sa.Column("triggered_by", sa.Text()),
-    sa.Column("payload", sa.JSON()),
-    sa.Column("transitioned_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("payload", JSONB()),
+    sa.Column(
+        "transitioned_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    ),
 )
 
 # ── 3. documents ──────────────────────────────────────────────────────────────
@@ -50,7 +64,9 @@ documents = sa.Table(
     "documents",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("doc_type", sa.Text(), nullable=False),
     sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
     sa.Column("status", sa.Text(), nullable=False, server_default="DRAFT"),
@@ -58,8 +74,12 @@ documents = sa.Table(
     sa.Column("blob_key", sa.Text()),
     sa.Column("blob_sha256", sa.Text()),
     sa.Column("created_by", sa.Text(), nullable=False),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 4. review_sessions ───────────────────────────────────────────────────────
@@ -67,14 +87,18 @@ review_sessions = sa.Table(
     "review_sessions",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("document_id", sa.UUID(), sa.ForeignKey("documents.id", ondelete="SET NULL")),
     sa.Column("session_type", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False, server_default="IN_PROGRESS"),
     sa.Column("reviewer_ids", sa.ARRAY(sa.Text())),
     sa.Column("timeout_count", sa.Integer(), server_default="0", nullable=False),
     sa.Column("review_timeout_seconds", sa.Integer(), server_default="300", nullable=False),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
 )
 
@@ -83,15 +107,22 @@ review_comments = sa.Table(
     "review_comments",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("session_id", sa.UUID(), sa.ForeignKey("review_sessions.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "session_id",
+        sa.UUID(),
+        sa.ForeignKey("review_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
     sa.Column("project_id", sa.UUID(), nullable=False),
     sa.Column("reviewer_id", sa.Text(), nullable=False),
     sa.Column("reviewer_role", sa.Text(), nullable=False),
     sa.Column("verdict", sa.Text(), nullable=False),
     sa.Column("veto", sa.Boolean(), server_default="false", nullable=False),
     sa.Column("severity", sa.Text()),
-    sa.Column("comments", sa.JSON()),
-    sa.Column("submitted_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("comments", JSONB()),
+    sa.Column(
+        "submitted_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 6. approval_gates ────────────────────────────────────────────────────────
@@ -99,13 +130,17 @@ approval_gates = sa.Table(
     "approval_gates",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("gate_type", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False, server_default="PENDING"),
     sa.Column("decided_by", sa.Text()),
     sa.Column("justification", sa.Text()),
-    sa.Column("human_input", sa.JSON()),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("human_input", JSONB()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
     sa.Column("decided_at", sa.TIMESTAMP(timezone=True)),
 )
 
@@ -114,7 +149,9 @@ sprints = sa.Table(
     "sprints",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("sprint_number", sa.Integer(), nullable=False),
     sa.Column("milestone", sa.Text()),
     sa.Column("goal", sa.Text()),
@@ -127,7 +164,9 @@ sprints = sa.Table(
     sa.Column("end_date", sa.TIMESTAMP(timezone=True)),
     sa.Column("infra_requested_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("infra_ready_at", sa.TIMESTAMP(timezone=True)),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 8. issues ─────────────────────────────────────────────────────────────────
@@ -135,7 +174,9 @@ issues = sa.Table(
     "issues",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("sprint_id", sa.UUID(), sa.ForeignKey("sprints.id", ondelete="SET NULL")),
     sa.Column("parent_issue_id", sa.UUID(), sa.ForeignKey("issues.id", ondelete="SET NULL")),
     sa.Column("title", sa.Text(), nullable=False),
@@ -149,7 +190,9 @@ issues = sa.Table(
     sa.Column("actual_hours", sa.Numeric(10, 2)),
     sa.Column("story_points", sa.Integer()),
     sa.Column("dependencies", sa.ARRAY(sa.UUID())),
-    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
 )
 
@@ -158,7 +201,9 @@ kpi_snapshots = sa.Table(
     "kpi_snapshots",
     metadata,
     sa.Column("id", sa.UUID(), primary_key=True),
-    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
     sa.Column("sprint_id", sa.UUID(), sa.ForeignKey("sprints.id", ondelete="SET NULL")),
     sa.Column("scope", sa.Text(), nullable=False),
     sa.Column("estimation_accuracy", sa.Numeric(5, 4)),
@@ -170,8 +215,10 @@ kpi_snapshots = sa.Table(
     sa.Column("budget_adherence", sa.Numeric(5, 4)),
     sa.Column("resource_utilization", sa.Numeric(5, 4)),
     sa.Column("infra_lead_time_seconds", sa.Integer()),
-    sa.Column("raw_data", sa.JSON()),
-    sa.Column("computed_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("raw_data", JSONB()),
+    sa.Column(
+        "computed_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 10. agent_profiles ────────────────────────────────────────────────────────
@@ -187,7 +234,9 @@ agent_profiles = sa.Table(
     sa.Column("total_tasks_completed", sa.Integer(), server_default="0", nullable=False),
     sa.Column("total_estimated_hours", sa.Numeric(12, 2), server_default="0"),
     sa.Column("total_actual_hours", sa.Numeric(12, 2), server_default="0"),
-    sa.Column("last_updated", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "last_updated", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 11. dead_letters ──────────────────────────────────────────────────────────
@@ -202,8 +251,10 @@ dead_letters = sa.Table(
     sa.Column("project_id", sa.UUID()),
     sa.Column("retry_count", sa.Integer(), nullable=False),
     sa.Column("failure_reason", sa.Text()),
-    sa.Column("envelope_json", sa.JSON(), nullable=False),
-    sa.Column("dead_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("envelope_json", JSONB(), nullable=False),
+    sa.Column(
+        "dead_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 12. system_config ─────────────────────────────────────────────────────────
@@ -213,7 +264,9 @@ system_config = sa.Table(
     sa.Column("key", sa.Text(), primary_key=True),
     sa.Column("value", sa.Text(), nullable=False),
     sa.Column("description", sa.Text()),
-    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )
 
 # ── 13. agent_checkpoints ────────────────────────────────────────────────────
@@ -226,10 +279,78 @@ agent_checkpoints = sa.Table(
     sa.Column("project_id", sa.UUID()),
     sa.Column("task_message_id", sa.Text(), nullable=False),
     sa.Column("iteration", sa.Integer(), nullable=False, server_default="0"),
-    sa.Column("messages_json", sa.JSON(), nullable=False),
-    sa.Column("tool_results_json", sa.JSON()),
-    sa.Column("budget_state_json", sa.JSON()),
-    sa.Column("task_envelope_json", sa.JSON(), nullable=False),
-    sa.Column("saved_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("messages_json", JSONB(), nullable=False),
+    sa.Column("tool_results_json", JSONB()),
+    sa.Column("budget_state_json", JSONB()),
+    sa.Column("task_envelope_json", JSONB(), nullable=False),
+    sa.Column(
+        "saved_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
     sa.UniqueConstraint("agent_id", "task_message_id", name="uq_checkpoint_agent_task"),
+)
+
+# ── 14. memory ────────────────────────────────────────────────────────────────
+memory = sa.Table(
+    "memory",
+    metadata,
+    sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+    sa.Column("agent_id", sa.Text(), nullable=False),
+    sa.Column("key", sa.Text(), nullable=False),
+    sa.Column("value", JSONB()),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.UniqueConstraint("agent_id", "key", name="uq_memory_agent_key"),
+)
+
+# ── 15. task_log ──────────────────────────────────────────────────────────────
+task_log = sa.Table(
+    "task_log",
+    metadata,
+    sa.Column("task_id", sa.UUID(), primary_key=True),
+    sa.Column("agent_id", sa.Text(), nullable=False),
+    sa.Column("parent_task_id", sa.UUID()),
+    sa.Column("team_id", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column("input", JSONB()),
+    sa.Column("output", JSONB()),
+    sa.Column("budget_snapshot", JSONB()),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 16. artifacts ─────────────────────────────────────────────────────────────
+artifacts = sa.Table(
+    "artifacts",
+    metadata,
+    sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+    sa.Column("agent_id", sa.Text(), nullable=False),
+    sa.Column("path", sa.Text(), nullable=False),
+    sa.Column("metadata", JSONB()),
+    sa.Column("sha256", sa.Text()),
+    sa.Column("size_bytes", sa.BigInteger()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 17. infra_events ──────────────────────────────────────────────────────────
+infra_events = sa.Table(
+    "infra_events",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
+    sa.Column("sprint_id", sa.UUID(), sa.ForeignKey("sprints.id", ondelete="SET NULL")),
+    sa.Column("event_type", sa.Text(), nullable=False),
+    sa.Column("details", JSONB()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
 )

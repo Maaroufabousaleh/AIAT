@@ -138,8 +138,31 @@ class BlobClient:
             raise RuntimeError("BlobClient not connected. Call connect() first.")
         return self._client
 
+    @staticmethod
+    def _validate_path_component(value: str, name: str) -> None:
+        """Reject path traversal attempts in *project_id* or *key*.
+
+        Guards against directory traversal (``..``), absolute paths (leading
+        ``/`` or ``\\``), and null-byte injection.
+        """
+        if not value:
+            raise ValueError(f"{name} must not be empty")
+        if "\x00" in value:
+            raise ValueError(f"{name} contains null byte")
+        if value.startswith("/") or value.startswith("\\"):
+            raise ValueError(f"{name} must not start with '/' or '\\\\'")
+        # Check each segment for '..'
+        for segment in value.replace("\\", "/").split("/"):
+            if segment == "..":
+                raise ValueError(f"{name} contains path traversal component '..'")
+
     def _full_key(self, project_id: str, key: str) -> str:
-        """Build the full object key: ``{project_id}/{key}``."""
+        """Build the full object key: ``{project_id}/{key}``.
+
+        Raises :class:`ValueError` on path traversal attempts.
+        """
+        self._validate_path_component(project_id, "project_id")
+        self._validate_path_component(key, "key")
         return f"{project_id}/{key}"
 
     async def upload(
@@ -247,7 +270,13 @@ class BlobClient:
     ) -> list[dict[str, Any]]:
         """List objects under ``{project_id}/{prefix}``."""
         bkt = bucket or self._bucket
-        full_prefix = self._full_key(project_id, prefix)
+        # prefix may be empty (list all objects for this project)
+        self._validate_path_component(project_id, "project_id")
+        if prefix:
+            self._validate_path_component(prefix, "prefix")
+            full_prefix = f"{project_id}/{prefix}"
+        else:
+            full_prefix = f"{project_id}/"
         resp = await self.client.list_objects_v2(
             Bucket=bkt,
             Prefix=full_prefix,

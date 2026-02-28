@@ -129,11 +129,15 @@ class TestModelsMetadata:
         "dead_letters",
         "system_config",
         "agent_checkpoints",
+        "memory",
+        "task_log",
+        "artifacts",
+        "infra_events",
     ]
 
     def test_all_13_tables_present(self):
-        """metadata.tables should contain exactly 13 table names."""
-        assert len(metadata.tables) == 13
+        """metadata.tables should contain exactly 17 table names."""
+        assert len(metadata.tables) == 17
         for name in self.EXPECTED_TABLES:
             assert name in metadata.tables, f"Missing table: {name}"
 
@@ -142,7 +146,8 @@ class TestModelsMetadata:
         cols = {c.name for c in projects.columns}
         expected = {
             "id", "name", "description", "state", "failure_reason",
-            "failed_from_state", "created_by", "created_at", "updated_at",
+            "failed_from_state", "created_by", "human_requester", "config",
+            "created_at", "updated_at",
         }
         assert expected == cols
 

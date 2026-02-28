@@ -512,13 +512,15 @@ class LLMGatewayClient:
         """
         client, endpoint = self._resolve_http_client_and_endpoint(entry)
 
-        # Build responses-API payload (simpler than the typed-block format
-        # used by the official SDK — Zen accepts plain strings too)
+        # Build responses-API payload.  Content can be a plain string *or*
+        # an OpenAI-style content array with text/image_url parts.  We
+        # normalise both into the Responses-format input blocks.
         input_blocks: list[dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
-            input_blocks.append({"role": role, "content": content or ""})
+            raw_content = msg.get("content", "")
+            content = self._normalise_content_for_responses(raw_content)
+            input_blocks.append({"role": role, "content": content})
 
         payload: dict[str, Any] = {
             "model": model,
@@ -561,6 +563,72 @@ class LLMGatewayClient:
             raise LLMGatewayError(response.status_code, response.text)
 
         raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
+    @staticmethod
+    def _normalise_content_for_responses(
+        content: Any,
+    ) -> Any:
+        """Convert an OpenAI content array into Responses-API input blocks.
+
+        If *content* is a plain string it is returned as-is (Zen accepts
+        plain strings).  If it is a list of ``{type: text/image_url}``
+        parts, each part is converted:
+
+        * ``{"type": "text", "text": "..."}``
+          → ``{"type": "input_text", "text": "..."``}
+        * ``{"type": "image_url", "image_url": {"url": "..."}``}
+          → ``{"type": "input_image", "image_url": "..."}``
+        """
+        if isinstance(content, str):
+            return content or ""
+        if not isinstance(content, list):
+            return str(content) if content else ""
+
+        parts: list[dict[str, Any]] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            ctype = item.get("type", "")
+            if ctype == "text":
+                parts.append({"type": "input_text", "text": item.get("text", "")})
+            elif ctype == "image_url":
+                url_data = item.get("image_url", {})
+                url = url_data.get("url", "") if isinstance(url_data, dict) else str(url_data)
+                if url:
+                    parts.append({"type": "input_image", "image_url": url})
+        return parts if parts else ""
+
+    @staticmethod
+    def _extract_text_and_images(
+        content: Any,
+    ) -> tuple[str, list[str]]:
+        """Split a content value into text and a list of image URLs.
+
+        Works with both plain string content and OpenAI content arrays
+        ``[{"type": "text", ...}, {"type": "image_url", ...}]``.
+
+        Returns ``(text, image_urls)`` where *image_urls* may contain
+        base64 data-URLs or HTTPS URLs.
+        """
+        if isinstance(content, str):
+            return content, []
+        if not isinstance(content, list):
+            return (str(content) if content else ""), []
+
+        text_parts: list[str] = []
+        image_urls: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            ctype = item.get("type", "")
+            if ctype == "text":
+                text_parts.append(item.get("text", ""))
+            elif ctype == "image_url":
+                url_data = item.get("image_url", {})
+                url = url_data.get("url", "") if isinstance(url_data, dict) else str(url_data)
+                if url:
+                    image_urls.append(url)
+        return " ".join(text_parts), image_urls
 
     @staticmethod
     def _parse_responses_api(
@@ -629,16 +697,18 @@ class LLMGatewayClient:
             the GitHub Copilot CLI.
         """
         # ---- Build the prompt string from messages ----
+        # Content may be a plain string or an OpenAI content array with
+        # text + image_url parts.  We extract text for the prompt and
+        # collect image data-URLs for attachment via the -a flag.
         prompt_parts: list[str] = []
+        image_urls: list[str] = []  # base64 data-URLs or https URLs
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "system":
-                prompt_parts.append(f"[System] {content}")
-            elif role == "user":
-                prompt_parts.append(f"[User] {content}")
-            elif role == "assistant":
-                prompt_parts.append(f"[Assistant] {content}")
+            raw_content = msg.get("content", "")
+            text, imgs = self._extract_text_and_images(raw_content)
+            image_urls.extend(imgs)
+            prefix = {"system": "[System]", "user": "[User]", "assistant": "[Assistant]"}
+            prompt_parts.append(f"{prefix.get(role, '[User]')} {text}")
         prompt = "\n".join(prompt_parts)
 
         # ---- Build command ----
@@ -654,6 +724,16 @@ class LLMGatewayClient:
             # Inject native model name (strip provider prefix if present)
             native_name = entry.extra.get("cli_model_name", model)
             cmd.extend([entry.cli_model_flag, native_name])
+
+        # Note: image_urls are extracted but CLI providers (e.g. Copilot CLI)
+        # do not currently support image attachment flags.  Images in content
+        # arrays are silently dropped for CLI models.  The model's
+        # supports_images flag should be False if the CLI has no mechanism.
+        if image_urls:
+            logger.warning(
+                "CLI model %s: %d image(s) in content dropped — no CLI image support",
+                model, len(image_urls),
+            )
 
         logger.info("CLI model %s: running %s (stdin=%s)", model, cmd[0], use_stdin)
 

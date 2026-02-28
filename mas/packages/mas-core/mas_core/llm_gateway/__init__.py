@@ -33,6 +33,7 @@ from .models import (
 from .providers import (
     MODEL_REGISTRY,
     ApiStyle,
+    ModelCapabilities,
     ModelEntry,
     ModelRegistry,
     ProviderConfig,
@@ -52,6 +53,7 @@ __all__ = [
     "UsageStats",
     "MODEL_REGISTRY",
     "ModelRegistry",
+    "ModelCapabilities",
     "ModelEntry",
     "ProviderConfig",
     "ApiStyle",

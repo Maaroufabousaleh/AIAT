@@ -47,6 +47,7 @@ from __future__ import annotations
 
 from .base import (
     ApiStyle,
+    ModelCapabilities,
     ModelEntry,
     ModelRegistry,
     ProviderConfig,
@@ -61,6 +62,7 @@ from . import cli as cli  # noqa: E402
 
 __all__ = [
     "ApiStyle",
+    "ModelCapabilities",
     "ModelEntry",
     "ModelRegistry",
     "ProviderConfig",

@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
@@ -116,12 +117,25 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     # Track pending PING ids so we can validate PONGs
     pending_pings: dict[str, asyncio.Task[None]] = {}
 
+    # Consume-side idempotency — LRU set of recently delivered message_ids.
+    # Prevents duplicate delivery to the same agent within a connection.
+    delivered_ids: OrderedDict[str, None] = OrderedDict()
+    max_delivered_ids = 1000
+
     # ── 3. Deliver pending PEL entries (replay after reconnect) ───────────────
     try:
         pending_entries = await xreadgroup_pending(team_id, consumer_id, redis)
         for entry_id, fields in pending_entries:
             delivered = await _deliver_entry(
-                ws, team_id, entry_id, fields, consumer_id, redis, pending_pings
+                ws,
+                team_id,
+                entry_id,
+                fields,
+                consumer_id,
+                redis,
+                pending_pings,
+                delivered_ids,
+                max_delivered_ids,
             )
             if not delivered:
                 break
@@ -132,9 +146,7 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     ping_task: asyncio.Task[None] | None = None
     try:
         # Start ping sender
-        ping_task = asyncio.create_task(
-            _ping_loop(ws, pending_pings), name=f"ping-{agent_id}"
-        )
+        ping_task = asyncio.create_task(_ping_loop(ws, pending_pings), name=f"ping-{agent_id}")
 
         # Start receive task (handles ACK/NACK/PONG from agent)
         receive_task = asyncio.create_task(
@@ -149,16 +161,22 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
                     team_id, consumer_id, block_ms=settings.read_block_ms, redis=redis
                 )
             except Exception:
-                logger.exception(
-                    "XREADGROUP error: agent=%s team=%s", agent_id, team_id
-                )
+                logger.exception("XREADGROUP error: agent=%s team=%s", agent_id, team_id)
                 break
 
             for entry_id, fields in entries:
                 if ws.client_state != WebSocketState.CONNECTED:
                     break
                 delivered = await _deliver_entry(
-                    ws, team_id, entry_id, fields, consumer_id, redis, pending_pings
+                    ws,
+                    team_id,
+                    entry_id,
+                    fields,
+                    consumer_id,
+                    redis,
+                    pending_pings,
+                    delivered_ids,
+                    max_delivered_ids,
                 )
                 if not delivered:
                     break
@@ -208,10 +226,14 @@ async def _deliver_entry(
     consumer_id: str,
     redis,
     pending_pings: dict[str, asyncio.Task[None]],
+    delivered_ids: OrderedDict[str, None],
+    max_delivered_ids: int,
 ) -> bool:
     """Parse and send one stream entry to the agent.
 
     Returns False if the WS is no longer usable (connection should stop).
+    Performs consume-side idempotency: if the envelope's ``message_id`` was
+    already delivered during this connection, the entry is silently ACKed.
     """
     from mas_core.protocols.envelope import MessageEnvelope
 
@@ -219,7 +241,8 @@ async def _deliver_entry(
     if not envelope_json:
         logger.warning(
             "Stream entry has no 'envelope' field: team=%s entry_id=%s",
-            team_id, entry_id,
+            team_id,
+            entry_id,
         )
         await xack(team_id, entry_id, redis)
         return True
@@ -229,10 +252,28 @@ async def _deliver_entry(
     except Exception:
         logger.exception(
             "Failed to parse envelope from stream entry: team=%s entry_id=%s",
-            team_id, entry_id,
+            team_id,
+            entry_id,
         )
         await xack(team_id, entry_id, redis)
         return True
+
+    # ── Consume-side idempotency ──────────────────────────────────────────────
+    msg_id = envelope.message_id
+    if msg_id in delivered_ids:
+        logger.debug(
+            "Duplicate message_id suppressed (LRU): team=%s msg_id=%s entry_id=%s",
+            team_id,
+            msg_id,
+            entry_id,
+        )
+        await xack(team_id, entry_id, redis)
+        return True
+
+    # Record delivery in LRU set
+    delivered_ids[msg_id] = None
+    if len(delivered_ids) > max_delivered_ids:
+        delivered_ids.popitem(last=False)  # evict oldest
 
     frame = WSMessageFrame(
         entry_id=entry_id,
@@ -245,9 +286,7 @@ async def _deliver_entry(
         await ws.send_text(frame.model_dump_json())
         return True
     except Exception:
-        logger.warning(
-            "Failed to send MESSAGE frame: team=%s entry_id=%s", team_id, entry_id
-        )
+        logger.warning("Failed to send MESSAGE frame: team=%s entry_id=%s", team_id, entry_id)
         return False
 
 
@@ -312,18 +351,21 @@ async def _receive_loop(
                 await xack(team_id, frame.entry_id, redis)
                 logger.debug(
                     "ACK: team=%s entry_id=%s msg_id=%s",
-                    team_id, frame.entry_id, frame.message_id,
+                    team_id,
+                    frame.entry_id,
+                    frame.message_id,
                 )
             except Exception:
-                logger.exception(
-                    "XACK failed: team=%s entry_id=%s", team_id, frame.entry_id
-                )
+                logger.exception("XACK failed: team=%s entry_id=%s", team_id, frame.entry_id)
 
         elif isinstance(frame, WSNackFrame):
             # Message stays in PEL — XAUTOCLAIM will reclaim after idle timeout.
             logger.debug(
                 "NACK: team=%s entry_id=%s reason=%s retry_after=%s",
-                team_id, frame.entry_id, frame.reason, frame.retry_after_seconds,
+                team_id,
+                frame.entry_id,
+                frame.reason,
+                frame.retry_after_seconds,
             )
 
         elif isinstance(frame, WSPongFrame):
