@@ -67,15 +67,17 @@ COPILOT_COST_MAP: dict[str, float] = {
 
 #: Per-model metadata for known Copilot CLI models.
 #: Keys: supports_reasoning, max_context_tokens, supports_images.
+#: supports_images=True means the model can read images from disk via
+#: the ``--add-dir`` flag (not inline base64).
 COPILOT_MODEL_META: dict[str, dict] = {
     "gpt-4.1": {
         "supports_reasoning": False,
-        "supports_images": False,
+        "supports_images": True,
         "max_context_tokens": 64_000,
     },
     "gpt-5-mini": {
         "supports_reasoning": True,
-        "supports_images": False,
+        "supports_images": True,
         "max_context_tokens": 128_000,
     },
 }
@@ -257,12 +259,14 @@ class CopilotModelScanner:
         lims = [
             "no-tool-calling",
             "no-streaming",
-            "no-file-attachments",
             "cli-subprocess",
         ]
         if not has_images:
             lims.insert(0, "text-only")
             lims.append("no-vision")
+            lims.append("no-file-attachments")
+        else:
+            lims.append("file-attachments-via-add-dir")
 
         return ModelEntry(
             model_id=f"copilot/{copilot_model_id}",
@@ -289,7 +293,7 @@ class CopilotModelScanner:
                 supports_video=False,
                 supports_reasoning=has_reasoning,
                 image_how=(
-                    "image input supported via Copilot CLI"
+                    "images saved to temp dir and accessed via --add-dir CLI flag"
                     if has_images
                     else "not supported — use Copilot Chat UI for images"
                 ),

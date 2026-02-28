@@ -16,6 +16,7 @@ CSuiteAgent     CFO/CIO/CHRM/CSO/CTO: review handling, CSO veto,
 AgentConfig     Pydantic settings per agent (id, role, team_id, budget_defaults, …).
 """
 
+from .attachment_manager import SavedFile, TempAttachmentManager
 from .base import AgentBase
 from .budget import BudgetExhausted, BudgetTracker
 from .config import AgentConfig
@@ -35,6 +36,8 @@ __all__ = [
     "RouterClient",
     "RouterDuplicateMessage",
     "RouterError",
+    "SavedFile",
+    "TempAttachmentManager",
     "WorkerAgent",
     "AdminAgent",
     "SubAgent",

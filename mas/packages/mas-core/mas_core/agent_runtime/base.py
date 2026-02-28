@@ -37,6 +37,7 @@ from ..llm_gateway.models import ToolDefinition
 from ..protocols.envelope import MessageEnvelope
 from ..protocols.enums import AgentRole
 from ..protocols.ws import WSMessageFrame
+from .attachment_manager import TempAttachmentManager
 from .budget import BudgetExhausted, BudgetTracker
 from .config import AgentConfig
 from .router_client import RouterClient
@@ -344,8 +345,22 @@ class AgentBase(ABC):
         return {"_value": parsed}
 
     @staticmethod
-    def _format_tool_result(result: Any) -> str:
-        """Convert a tool result to OpenAI 'tool' message content."""
+    def _format_tool_result(
+        result: Any,
+        attachment_mgr: TempAttachmentManager | None = None,
+    ) -> str | list[dict[str, Any]]:
+        """Convert a tool result to OpenAI 'tool' message content.
+
+        When *attachment_mgr* is provided the result is inspected for
+        embedded files (base64 data-URLs, raw bytes).  Detected files
+        are saved to a temp staging directory and an OpenAI multipart
+        ``content`` array is returned instead of a plain string.
+        """
+        if attachment_mgr is not None:
+            processed = attachment_mgr.process_tool_result(result)
+            if isinstance(processed, list):
+                return processed  # multipart content array
+            return processed  # plain string (no files found)
         if isinstance(result, str):
             return result
         return json.dumps(result, default=str)
@@ -394,6 +409,11 @@ class AgentBase(ABC):
         budget = self._budget or BudgetTracker()
         self._budget = budget
         tool_results: list[dict[str, Any]] = []
+
+        # Attachment manager — stages files extracted from tool results
+        # so the LLM receives multipart content arrays with image_url parts.
+        # Cleaned up after the think loop (temp dir deleted).
+        attachment_mgr = TempAttachmentManager()
 
         # Restore from checkpoint if resuming
         if resume:
@@ -482,19 +502,24 @@ class AgentBase(ABC):
                                 "result": result,
                             }
                         )
+                        content = self._format_tool_result(
+                            result, attachment_mgr=attachment_mgr,
+                        )
                         messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call.id,
                                 "name": tool_call.function.name,
-                                "content": self._format_tool_result(result),
+                                "content": content,
                             }
                         )
 
                 if iteration % checkpoint_interval == 0 and self._current_envelope is not None:
+                    # Strip base64 data-URLs before persisting to Postgres
+                    ckpt_messages = attachment_mgr.strip_base64_for_checkpoint(messages)
                     await self.save_checkpoint(
                         {
-                            "messages": messages,
+                            "messages": ckpt_messages,
                             "iteration": iteration,
                             "tool_results": tool_results,
                             "budget_snapshot": budget.snapshot(),
@@ -512,9 +537,10 @@ class AgentBase(ABC):
             if completed:
                 await self.delete_checkpoint()
             elif self._current_envelope is not None:
+                ckpt_messages = attachment_mgr.strip_base64_for_checkpoint(messages)
                 await self.save_checkpoint(
                     {
-                        "messages": messages,
+                        "messages": ckpt_messages,
                         "iteration": iteration,
                         "tool_results": tool_results,
                         "budget_snapshot": budget.snapshot(),
@@ -522,6 +548,8 @@ class AgentBase(ABC):
                     }
                 )
         finally:
+            # Clean up temp attachment staging directory
+            attachment_mgr.cleanup()
             if llm_started_here:
                 await self._llm.stop()
                 self._llm_started = False

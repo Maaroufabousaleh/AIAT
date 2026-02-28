@@ -726,45 +726,76 @@ class LLMGatewayClient:
             cmd.extend([entry.cli_model_flag, native_name])
 
         # Note: image_urls are extracted but CLI providers (e.g. Copilot CLI)
-        # do not currently support image attachment flags.  Images in content
-        # arrays are silently dropped for CLI models.  The model's
-        # supports_images flag should be False if the CLI has no mechanism.
+        # do not currently support image attachment flags.  However, they
+        # *can* read files from disk when granted via --add-dir.  We save
+        # images to a temp directory and inject file references into the
+        # prompt so the CLI model can access them.
+        attachment_mgr = None
         if image_urls:
-            logger.warning(
-                "CLI model %s: %d image(s) in content dropped — no CLI image support",
-                model, len(image_urls),
-            )
+            from ..agent_runtime.attachment_manager import TempAttachmentManager
+
+            attachment_mgr = TempAttachmentManager()
+            attachment_mgr.setup()
+            saved = attachment_mgr.process_image_urls_for_cli(image_urls)
+            if saved:
+                # Add --add-dir <temp_dir> so the CLI model can read the files
+                cmd.extend(attachment_mgr.get_cli_args())
+                # Append file reference text to the prompt
+                file_refs = attachment_mgr.build_cli_file_references()
+                if use_stdin:
+                    prompt = prompt + "\n\n" + file_refs
+                else:
+                    # Re-build the flag-mode prompt with file references
+                    # Remove the old -p <prompt> pair and re-add with updated prompt
+                    flag = entry.cli_prompt_flag
+                    if flag and flag in cmd:
+                        idx = cmd.index(flag)
+                        cmd[idx + 1] = cmd[idx + 1] + "\n\n" + file_refs
+                logger.info(
+                    "CLI model %s: %d image(s) saved to %s for --add-dir access",
+                    model, len(saved), attachment_mgr.temp_dir,
+                )
+            else:
+                logger.warning(
+                    "CLI model %s: %d image(s) could not be saved (not data-URLs?)",
+                    model, len(image_urls),
+                )
 
         logger.info("CLI model %s: running %s (stdin=%s)", model, cmd[0], use_stdin)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE if use_stdin else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        if use_stdin:
-            stdout, stderr = await proc.communicate(prompt.encode("utf-8"))
-        else:
-            stdout, stderr = await proc.communicate()
-
-        text = stdout.decode("utf-8", errors="replace").strip()
-
-        if proc.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace").strip()
-            raise LLMGatewayError(
-                proc.returncode or 1,
-                f"CLI model {model} failed: {err}",
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE if use_stdin else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
 
-        message = ChatMessage(role="assistant", content=text or None)
-        return ChatResponse(
-            model=model,
-            finish_reason="stop",
-            message=message,
-            usage=UsageStats(),
-        )
+            if use_stdin:
+                stdout, stderr = await proc.communicate(prompt.encode("utf-8"))
+            else:
+                stdout, stderr = await proc.communicate()
+
+            text = stdout.decode("utf-8", errors="replace").strip()
+
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace").strip()
+                raise LLMGatewayError(
+                    proc.returncode or 1,
+                    f"CLI model {model} failed: {err}",
+                )
+
+            message = ChatMessage(role="assistant", content=text or None)
+            return ChatResponse(
+                model=model,
+                finish_reason="stop",
+                message=message,
+                usage=UsageStats(),
+            )
+        finally:
+            # Clean up temp attachment directory (if any)
+            if attachment_mgr is not None:
+                attachment_mgr.cleanup()
 
     # ------------------------------------------------------------------
     # Convenience
