@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 
@@ -22,6 +23,30 @@ from .config import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class ToolRunRequest(BaseModel):
+    """Path-driven execution body for ``POST /tools/{tool_name}/run``."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    caller_id: str = Field(..., alias="agent_id", serialization_alias="agent_id")
+    caller_role: str = Field(..., alias="sender_role", serialization_alias="sender_role")
+    caller_team: str | None = Field(
+        default=None,
+        alias="sender_team",
+        serialization_alias="sender_team",
+    )
+    project_id: str | None = None
+    tool_name: str | None = None
+    tool_kwargs: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="kwargs",
+        serialization_alias="kwargs",
+    )
+    idempotency_key: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 def _verify_secret(
@@ -38,20 +63,11 @@ def _verify_secret(
         raise HTTPException(status_code=403, detail="Invalid tool secret.")
 
 
-@router.post("/tools/execute", response_model=ToolResponse)
-async def execute_tool(
-    request: Request,
-    body: ToolRequest,
-    _auth: None = Depends(_verify_secret),
-) -> ToolResponse | JSONResponse:
-    """Execute a tool through the registry pipeline.
-
-    Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
-    """
+async def _execute_via_registry(request: Request, body: ToolRequest) -> ToolResponse | JSONResponse:
+    """Execute a tool through the registry pipeline."""
     from .registry import ToolRegistry
 
     registry: ToolRegistry = request.app.state.registry
-
     response = await registry.execute(body)
 
     if not response.success and response.error_code == "RATE_LIMITED":
@@ -64,6 +80,43 @@ async def execute_tool(
         )
 
     return response
+
+
+@router.post("/tools/execute", response_model=ToolResponse)
+async def execute_tool(
+    request: Request,
+    body: ToolRequest,
+    _auth: None = Depends(_verify_secret),
+) -> ToolResponse | JSONResponse:
+    """Execute a tool through the registry pipeline.
+
+    Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
+    """
+    return await _execute_via_registry(request, body)
+
+
+@router.post("/tools/{tool_name}/run", response_model=ToolResponse)
+async def run_tool(
+    tool_name: str,
+    request: Request,
+    body: ToolRunRequest,
+    _auth: None = Depends(_verify_secret),
+) -> ToolResponse | JSONResponse:
+    """Plan-aligned tool execution endpoint.
+
+    The path parameter is canonical. If the body also includes ``tool_name``,
+    it must match the path value.
+    """
+    if body.tool_name and body.tool_name != tool_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Body tool_name {body.tool_name!r} does not match path {tool_name!r}.",
+        )
+
+    effective_body = ToolRequest.model_validate(
+        body.model_dump(mode="json", by_alias=True) | {"tool_name": tool_name}
+    )
+    return await _execute_via_registry(request, effective_body)
 
 
 @router.get("/tools")

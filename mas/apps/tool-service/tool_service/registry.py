@@ -112,7 +112,9 @@ class ToolRegistry:
 
         # 2. Policy gating
         result = self._policy.can_use_tool(
-            request.caller_role, tool_name, sender_team=None
+            request.caller_role,
+            tool_name,
+            sender_team=request.caller_team,
         )
         if result is not True:
             return self._error_response(

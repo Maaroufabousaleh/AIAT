@@ -4,6 +4,14 @@ version = "0.1.0"
 description = "AIAT Multi-Agent System — corporate-hierarchy MAS monorepo"
 requires-python = ">=3.11"
 readme = "README.md"
+dependencies = [
+    "mas-core",
+    "mas-tools-sdk",
+    "message-router",
+    "tool-service",
+    "team-runner",
+    "orchestrator-api",
+]
 
 # ── uv workspace ──────────────────────────────────────────────────────────────
 # All workspace members are listed here.  Each member has its own pyproject.toml
@@ -34,6 +42,14 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+
+[tool.uv.sources]
+mas-core = { workspace = true }
+mas-tools-sdk = { workspace = true }
+message-router = { workspace = true }
+tool-service = { workspace = true }
+team-runner = { workspace = true }
+orchestrator-api = { workspace = true }
 
 # ── ruff config (shared) ──────────────────────────────────────────────────────
 [tool.ruff]

@@ -21,6 +21,12 @@ from .budget import BudgetExhausted, BudgetTracker
 from .config import AgentConfig
 from .router_client import RouterClient, RouterDuplicateMessage, RouterError
 
+from .worker import WorkerAgent
+from .admin import AdminAgent
+from .sub_agent import SubAgent
+from .executive import ExecutiveAgent
+from .csuite import CSuiteAgent
+
 __all__ = [
     "AgentBase",
     "AgentConfig",
@@ -29,6 +35,9 @@ __all__ = [
     "RouterClient",
     "RouterDuplicateMessage",
     "RouterError",
+    "WorkerAgent",
+    "AdminAgent",
+    "SubAgent",
+    "ExecutiveAgent",
+    "CSuiteAgent",
 ]
-
-# WorkerAgent, AdminAgent, SubAgent, ExecutiveAgent, CSuiteAgent — populated in Phase 8.

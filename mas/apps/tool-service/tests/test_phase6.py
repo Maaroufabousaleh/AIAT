@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import anyio
 
 import pytest
 
@@ -162,7 +162,7 @@ class TestCircuitBreaker:
         cb = CircuitBreaker("test_tool", failure_threshold=1, open_duration=0.01)
         await cb.record_failure()
         assert cb.state == CircuitState.OPEN
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
         assert cb.state == CircuitState.HALF_OPEN
         assert await cb.allow_request() is True
 
@@ -172,7 +172,7 @@ class TestCircuitBreaker:
 
         cb = CircuitBreaker("test_tool", failure_threshold=1, open_duration=0.01)
         await cb.record_failure()
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
         assert cb.state == CircuitState.HALF_OPEN
         await cb.record_success()
         assert cb.state == CircuitState.CLOSED
@@ -183,7 +183,7 @@ class TestCircuitBreaker:
 
         cb = CircuitBreaker("test_tool", failure_threshold=1, open_duration=0.01)
         await cb.record_failure()
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
         assert cb.state == CircuitState.HALF_OPEN
         await cb.record_failure()
         assert cb.state == CircuitState.OPEN
@@ -333,6 +333,19 @@ class TestManifest:
 
 class TestHTTPIntegration:
     """Integration tests using the full FastAPI app via ASGI transport."""
+
+    @pytest.mark.anyio
+    async def test_execute_tool_via_canonical_http_route(self, client):
+        payload = {
+            "agent_id": "agent-orch",
+            "sender_role": "orchestrator",
+            "kwargs": {"query": "hello"},
+        }
+        resp = await client.post("/tools/web_search/run", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["tool_name"] == "web_search"
 
     @pytest.mark.anyio
     async def test_execute_tool_via_http(self, client):

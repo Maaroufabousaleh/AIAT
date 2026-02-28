@@ -96,6 +96,15 @@ class TestSettings:
 
         assert settings.max_delivery_attempts == 3
 
+    def test_router_secret_env_alias(self, monkeypatch: pytest.MonkeyPatch):
+        from message_router.config import Settings
+
+        monkeypatch.delenv("AGENT_TOKEN_SECRET", raising=False)
+        monkeypatch.setenv("ROUTER_SECRET", "router-secret-from-compose")
+
+        cfg = Settings()
+        assert cfg.agent_token_secret == "router-secret-from-compose"
+
 
 # ---------------------------------------------------------------------------
 # Redis key helper tests
@@ -191,6 +200,21 @@ class TestPublishRoute:
         data = resp.json()
         assert "entry_id" in data
         assert data["deduplicated"] is False
+
+    def test_publish_compatibility_alias(self):
+        """The plan-aligned /publish alias should forward to the same handler."""
+        mock_redis = self._make_mock_redis()
+        app = _make_test_app(mock_redis)
+        with TestClient(app) as client:
+            env = make_envelope()
+            resp = client.post(
+                "/publish",
+                content=env.model_dump_json(),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "entry_id" in data
 
     def test_publish_policy_rejected(self):
         """Worker cannot send TASK cross-team — should return 403."""
@@ -310,6 +334,30 @@ class TestBroadcastRoute:
         data = resp.json()
         assert "entry_ids" in data
         assert len(data["entry_ids"]) == 11  # All 11 teams
+
+    def test_broadcast_compatibility_alias(self):
+        """The plan-aligned /broadcast alias should fan out to all teams."""
+        call_count = 0
+        mock_redis = MagicMock()
+
+        async def fake_xadd(stream, fields):
+            nonlocal call_count
+            call_count += 1
+            return f"17000000{call_count:05d}-0"
+
+        mock_redis.xadd = fake_xadd
+        mock_redis.ping = AsyncMock(return_value=True)
+        app = _make_test_app(mock_redis)
+        with TestClient(app) as client:
+            env = make_shutdown_envelope()
+            resp = client.post(
+                "/broadcast",
+                content=env.model_dump_json(),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["entry_ids"]) == 11
 
     def test_broadcast_worker_rejected(self):
         """Worker cannot broadcast — policy rejects with 403."""

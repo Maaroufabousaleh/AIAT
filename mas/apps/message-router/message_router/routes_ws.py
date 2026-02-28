@@ -175,6 +175,26 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
         logger.info("WS closed: agent=%s team=%s", agent_id, team_id)
 
 
+@router.websocket("/subscribe")
+async def ws_subscribe_compat(
+    ws: WebSocket,
+    agent_id: str | None = None,
+    team_id: str | None = None,
+) -> None:
+    """Compatibility alias for the query-param subscribe route from the plan."""
+    if team_id is None:
+        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if agent_id is not None:
+        authed_agent = _authenticate(ws)
+        if authed_agent is None or authed_agent != agent_id:
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    await ws_subscribe(ws, team_id)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

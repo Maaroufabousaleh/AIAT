@@ -30,11 +30,9 @@ if config.config_file_name is not None:
 
 # --------------------------------------------------------------------------- #
 # Target metadata                                                               #
-# Set to your SQLAlchemy Base.metadata once the ORM models are defined in     #
-# Phase 7. For now it is None (run --autogenerate after populating models).   #
+# SQLAlchemy MetaData with all table definitions from Phase 7.                #
 # --------------------------------------------------------------------------- #
-# from mas_core.memory.models import Base  # uncomment in Phase 7
-target_metadata = None  # replace with Base.metadata in Phase 7
+from mas_core.memory.models import metadata as target_metadata
 
 # --------------------------------------------------------------------------- #
 # Connection URL                                                                #

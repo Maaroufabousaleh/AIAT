@@ -55,6 +55,12 @@ class ToolRequest(BaseModel):
         serialization_alias="sender_role",
         description="Caller's role — enforced against tool manifest.",
     )
+    caller_team: str | None = Field(
+        default=None,
+        alias="sender_team",
+        serialization_alias="sender_team",
+        description="Caller's team for team-scoped permission checks.",
+    )
     project_id: str | None = Field(default=None, description="Project context for audit logging.")
 
     # Tool to invoke

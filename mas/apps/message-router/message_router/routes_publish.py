@@ -156,6 +156,17 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
     return PublishResponse(entry_id=entry_id)
 
 
+@router.post(
+    "/publish",
+    response_model=PublishResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def publish_message_compat(envelope: MessageEnvelope) -> PublishResponse:
+    """Compatibility alias matching the shorter Phase 3 route from the plan."""
+    return await publish_message(envelope)
+
+
 # ---------------------------------------------------------------------------
 # Broadcast endpoint
 # ---------------------------------------------------------------------------
@@ -214,3 +225,14 @@ async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
         len(entry_ids),
     )
     return BroadcastResponse(entry_ids=entry_ids)
+
+
+@router.post(
+    "/broadcast",
+    response_model=BroadcastResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def broadcast_message_compat(envelope: MessageEnvelope) -> BroadcastResponse:
+    """Compatibility alias matching the shorter Phase 3 route from the plan."""
+    return await broadcast_message(envelope)

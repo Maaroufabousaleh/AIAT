@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from .envelope import MessageEnvelope
 
@@ -101,6 +101,7 @@ class WSAckFrame(_WSFrameBase):
 
     entry_id: str = Field(
         ...,
+        validation_alias=AliasChoices("entry_id", "stream_entry_id"),
         description="Redis Stream entry ID echoed from WSMessageFrame.entry_id.",
     )
     message_id: UUID | None = Field(
@@ -122,6 +123,7 @@ class WSNackFrame(_WSFrameBase):
 
     entry_id: str = Field(
         ...,
+        validation_alias=AliasChoices("entry_id", "stream_entry_id"),
         description="Redis Stream entry ID echoed from WSMessageFrame.entry_id.",
     )
     reason: str = Field(..., description="Human-readable reason for rejection.")

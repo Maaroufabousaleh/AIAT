@@ -11,14 +11,14 @@
 #   Copy .env.example → .env and fill in secrets before starting.
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
-#             ROUTER_SECRET, TOOL_SECRET,
+#             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
 #             LLM_GATEWAY_URL, LLM_API_KEY
 
 name: mas
 
 # ── Shared env vars (merged into each team's environment: block) ──────────────
 x-team-env: &team-env
-  ROUTER_URL: "ws://message-router:8001"
+  ROUTER_URL: "http://message-router:8001"
   TOOL_SERVICE_URL: "http://tool-service:8002"
   PGBOUNCER_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
   MINIO_ENDPOINT: "http://minio:9000"

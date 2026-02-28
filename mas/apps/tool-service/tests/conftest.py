@@ -13,6 +13,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+# ── Restrict anyio to asyncio backend (aiolimiter is asyncio-only) ────────────
+@pytest.fixture(params=["asyncio"])
+def anyio_backend(request):
+    return request.param
+
+
 @pytest.fixture
 async def client():
     """Async httpx test client against the FastAPI app.

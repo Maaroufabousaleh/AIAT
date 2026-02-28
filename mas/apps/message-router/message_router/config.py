@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # ── Agent auth ────────────────────────────────────────────────────────────
     agent_token_secret: str = Field(
         default="changeme",
+        validation_alias=AliasChoices("AGENT_TOKEN_SECRET", "ROUTER_SECRET"),
         description=(
             "Shared secret used to authenticate agent WebSocket connections.  "
             "Each agent presents 'Bearer <agent_id>:<secret>' in the Authorization header."

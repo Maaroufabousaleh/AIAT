@@ -42,7 +42,7 @@ class AgentConfig(BaseSettings):
 
     # --- Router connection ---
     router_url: str = Field(
-        default="http://message-router:8000",
+        default="http://message-router:8001",
         description="Base HTTP URL of the message-router service.",
     )
 

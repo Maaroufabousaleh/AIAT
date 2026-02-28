@@ -29,7 +29,9 @@ GROUP_INFRA      infra.provision, cicd.configure, monitoring.setup,
 
 Endpoints (Phase 6)
 -------------------
-POST /tools/execute     Execute a tool. Body: ToolRequest. Returns ToolResponse.
+POST /tools/{tool_name}/run
+                        Execute a tool. Body: ToolRequest. Returns ToolResponse.
+POST /tools/execute     Backward-compatible execution endpoint.
 GET  /tools             List all tools with role requirements.
 GET  /health            Service health + circuit-breaker states.
 GET  /metrics           Prometheus metrics.
@@ -136,7 +138,3 @@ except ImportError:
     logger.debug("prometheus-fastapi-instrumentator not installed — metrics disabled")
 
 
-@app.get("/tools")
-async def list_tools() -> dict[str, object]:
-    # TODO (Phase 6): return TOOL_MANIFEST from mas_tools_sdk
-    return {"tools": []}

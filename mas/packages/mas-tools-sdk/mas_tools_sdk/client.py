@@ -66,6 +66,7 @@ class ToolServiceClient:
         tool_name: str,
         caller_id: str,
         caller_role: AgentRole,
+        caller_team: str | None = None,
         kwargs: dict[str, Any] | None = None,
         project_id: str | None = None,
         idempotency_key: UUID | None = None,
@@ -84,6 +85,7 @@ class ToolServiceClient:
         request = ToolRequest(
             caller_id=caller_id,
             caller_role=caller_role,
+            caller_team=caller_team,
             project_id=project_id,
             tool_name=tool_name,
             tool_kwargs=kwargs or {},
@@ -97,7 +99,10 @@ class ToolServiceClient:
 
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = await self._client.post("/tools/execute", json=payload)
+                resp = await self._client.post(f"/tools/{tool_name}/run", json=payload)
+
+                if resp.status_code == 404:
+                    resp = await self._client.post("/tools/execute", json=payload)
 
                 if resp.status_code == 429:
                     # Rate limited — back off and retry
