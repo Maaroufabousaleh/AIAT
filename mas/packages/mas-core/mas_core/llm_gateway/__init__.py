@@ -20,6 +20,7 @@ COPILOT_COST_MAP      Known cost multipliers for Copilot models.
 
 from .client import LLMGatewayClient, LLMGatewayError, LLMRateLimited
 from .providers.cli.copilot import COPILOT_COST_MAP, CopilotModelScanner
+from .thinking import Depth as ThinkingDepth, ThinkingChain, ThinkingResult
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -59,4 +60,7 @@ __all__ = [
     "ApiStyle",
     "CopilotModelScanner",
     "COPILOT_COST_MAP",
+    "ThinkingChain",
+    "ThinkingDepth",
+    "ThinkingResult",
 ]

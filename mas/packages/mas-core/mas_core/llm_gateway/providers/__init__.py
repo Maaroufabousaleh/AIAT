@@ -49,6 +49,7 @@ from .base import (
     ApiStyle,
     ModelCapabilities,
     ModelEntry,
+    ModelPool,
     ModelRegistry,
     ProviderConfig,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "ApiStyle",
     "ModelCapabilities",
     "ModelEntry",
+    "ModelPool",
     "ModelRegistry",
     "ProviderConfig",
     "MODEL_REGISTRY",

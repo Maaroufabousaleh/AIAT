@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time as _time
 from typing import Any
 
 import httpx
@@ -194,32 +195,70 @@ class LLMGatewayClient:
             Normalised response with assistant message, tool calls, and usage.
         """
         resolved_model = model or self._config.default_model
-        entry = self._registry.get(resolved_model)
+
+        # ── Thinking chain dispatch ──────────────────────────────────
+        # "gemma-think" or "gemma-think/light|standard|deep" triggers the
+        # multi-model reasoning pipeline instead of a single LLM call.
+        if resolved_model.startswith("gemma-think"):
+            return await self._dispatch_thinking_chain(
+                messages=messages,
+                resolved_model=resolved_model,
+                max_tokens=max_tokens,
+            )
+
+        # ── Pool resolution ──────────────────────────────────────────
+        # If the model ID refers to a registered pool, pick a concrete
+        # model via the pool's round-robin / headroom strategy.
+        entry, pool = self._registry.resolve_pool(resolved_model)
+        if pool is not None and entry is None:
+            # All models in the pool are exhausted
+            raise LLMRateLimited(
+                429,
+                f"All models in pool '{resolved_model}' have reached their "
+                f"rate-limit safety margin. Pool stats: {pool.stats()}",
+            )
 
         # The model name sent on the wire may differ from the registry key.
         # E.g. registry key "openrouter/deepseek/deepseek-r1:free" maps to
         # wire name "deepseek/deepseek-r1:free" (OpenRouter's native format).
+        concrete_model = entry.model_id if entry is not None else resolved_model
         wire_model = (
-            entry.extra.get("api_model_name", resolved_model)
+            entry.extra.get("api_model_name", concrete_model)
             if entry is not None
-            else resolved_model
+            else concrete_model
         )
+
+        if pool is not None:
+            logger.debug(
+                "Pool '%s' picked model '%s' (headroom: %.2f)",
+                pool.pool_id,
+                concrete_model,
+                pool._headroom(concrete_model, _time.monotonic()),
+            )
 
         # Dispatch to the correct API style
         if entry is not None and entry.api_style == ApiStyle.RESPONSES:
-            return await self._call_responses_api(
+            resp = await self._call_responses_api(
                 entry=entry,
                 messages=messages,
                 model=wire_model,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+            if pool is not None:
+                total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                pool.record_request(concrete_model, total_tokens)
+            return resp
         if entry is not None and entry.api_style == ApiStyle.CLI:
-            return await self._call_cli(
+            resp = await self._call_cli(
                 entry=entry,
                 messages=messages,
-                model=resolved_model,
+                model=concrete_model,
             )
+            if pool is not None:
+                total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                pool.record_request(concrete_model, total_tokens)
+            return resp
 
         # Default: chat_completions style
         client, endpoint = self._resolve_http_client_and_endpoint(entry)
@@ -250,7 +289,11 @@ class LLMGatewayClient:
                         json=payload,
                     ) as response:
                         if response.status_code == 200:
-                            return await self._parse_stream_response(response)
+                            resp = await self._parse_stream_response(response)
+                            if pool is not None:
+                                total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                                pool.record_request(concrete_model, total_tokens)
+                            return resp
                         detail = (await response.aread()).decode("utf-8", errors="replace")
                         if self._is_retryable_status(response.status_code):
                             last_exc = (
@@ -275,7 +318,11 @@ class LLMGatewayClient:
                 continue
 
             if response.status_code == 200:
-                return self._parse_response(response.json())
+                resp = self._parse_response(response.json())
+                if pool is not None:
+                    total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                    pool.record_request(concrete_model, total_tokens)
+                return resp
 
             if self._is_retryable_status(response.status_code):
                 last_exc = (
@@ -293,6 +340,51 @@ class LLMGatewayClient:
             raise LLMGatewayError(response.status_code, response.text)
 
         raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
+    # ------------------------------------------------------------------
+    # Thinking chain
+    # ------------------------------------------------------------------
+
+    async def _dispatch_thinking_chain(
+        self,
+        messages: list[dict[str, Any]],
+        resolved_model: str,
+        max_tokens: int | None,
+    ) -> ChatResponse:
+        """Route ``gemma-think[/depth]`` to the multi-model reasoning pipeline.
+
+        Accepted model strings:
+        - ``"gemma-think"``          → standard depth
+        - ``"gemma-think/light"``    → 2-stage (fast)
+        - ``"gemma-think/standard"`` → 3-stage (default)
+        - ``"gemma-think/deep"``     → 3-stage with self-critique
+        """
+        from .thinking import ThinkingChain, Depth
+
+        parts = resolved_model.split("/", 1)
+        depth_str = parts[1] if len(parts) > 1 else "standard"
+        try:
+            depth = Depth(depth_str)
+        except ValueError:
+            depth = Depth.STANDARD
+            logger.warning(
+                "Unknown thinking depth '%s', falling back to 'standard'",
+                depth_str,
+            )
+
+        chain = ThinkingChain(self, depth=depth, max_tokens=max_tokens)
+        result = await chain.think(messages, depth=depth, max_tokens=max_tokens)
+
+        logger.info(
+            "Thinking chain complete: depth=%s, stages=%d, "
+            "total_tokens=%d, elapsed=%.1fs",
+            depth.value,
+            len(result.stages),
+            result.response.usage.total_tokens,
+            result.total_elapsed_s,
+        )
+
+        return result.response
 
     # ------------------------------------------------------------------
     # Response parsing
