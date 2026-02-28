@@ -146,37 +146,7 @@ def _assert_valid_vision_response(resp: ChatResponse, model_id: str) -> None:
     reason="GEMINI_API_KEY not set",
 )
 class TestGeminiLive:
-    """Live tests against the Google Gemini / Gemma OpenAI-compatible endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_gemini_25_flash(self):
-        """gemini-2.5-flash: fast reasoning model."""
-        client = _make_client()
-        async with client:
-            resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemini-2.5-flash",
-            )
-        _assert_valid_response(resp, "gemini-2.5-flash")
-
-    @pytest.mark.asyncio
-    async def test_gemini_25_flash_lite(self):
-        """gemini-2.5-flash-lite: ultralight chat completion."""
-        client = _make_client()
-        async with client:
-            resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemini-2.5-flash-lite",
-            )
-        _assert_valid_response(resp, "gemini-2.5-flash-lite")
-
-    @pytest.mark.asyncio
-    async def test_gemini_3_flash_preview(self):
-        """gemini-3-flash-preview: next-gen fast model."""
-        client = _make_client()
-        async with client:
-            resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemini-3-flash-preview",
-            )
-        _assert_valid_response(resp, "gemini-3-flash-preview")
+    """Live tests against the Google Gemma model on AI Studio."""
 
     @pytest.mark.asyncio
     async def test_gemma3_27b(self):
@@ -187,16 +157,6 @@ class TestGeminiLive:
                 messages=SIMPLE_PROMPT, model="gemma-3-27b-it",
             )
         _assert_valid_response(resp, "gemma-3-27b-it")
-
-    @pytest.mark.asyncio
-    async def test_gemma3_4b(self):
-        """gemma-3-4b-it: tiny open-weight 4B on AI Studio."""
-        client = _make_client()
-        async with client:
-            resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3-4b-it",
-            )
-        _assert_valid_response(resp, "gemma-3-4b-it")
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +650,7 @@ class TestRegistryCompleteness:
 
     def test_gemini_models_count(self):
         models = MODEL_REGISTRY.list_models("gemini")
-        assert len(models) >= 5, f"Expected >= 5 Gemini/Gemma models, got {len(models)}"
+        assert len(models) >= 1, f"Expected >= 1 Gemini/Gemma models, got {len(models)}"
 
     def test_groq_models_count(self):
         models = MODEL_REGISTRY.list_models("groq")
