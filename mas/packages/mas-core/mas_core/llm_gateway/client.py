@@ -196,12 +196,21 @@ class LLMGatewayClient:
         resolved_model = model or self._config.default_model
         entry = self._registry.get(resolved_model)
 
+        # The model name sent on the wire may differ from the registry key.
+        # E.g. registry key "openrouter/deepseek/deepseek-r1:free" maps to
+        # wire name "deepseek/deepseek-r1:free" (OpenRouter's native format).
+        wire_model = (
+            entry.extra.get("api_model_name", resolved_model)
+            if entry is not None
+            else resolved_model
+        )
+
         # Dispatch to the correct API style
         if entry is not None and entry.api_style == ApiStyle.RESPONSES:
             return await self._call_responses_api(
                 entry=entry,
                 messages=messages,
-                model=resolved_model,
+                model=wire_model,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -215,7 +224,7 @@ class LLMGatewayClient:
         # Default: chat_completions style
         client, endpoint = self._resolve_http_client_and_endpoint(entry)
         payload: dict[str, Any] = {
-            "model": resolved_model,
+            "model": wire_model,
             "messages": messages,
             "temperature": temperature,
         }
@@ -298,9 +307,31 @@ class LLMGatewayClient:
         tool_calls = LLMGatewayClient._parse_tool_calls(raw_message.get("tool_calls") or [])
         usage = LLMGatewayClient._parse_usage(data.get("usage", {}))
 
+        # Normalise content — some providers return structured blocks (list of
+        # {type, text/thinking} dicts for reasoning models) or non-string
+        # scalars (e.g. Cloudflare returning bare int).  Flatten to a plain
+        # string so downstream code sees a consistent type.
+        raw_content = raw_message.get("content")
+        if isinstance(raw_content, list):
+            # Concatenate "text" fields from structured content blocks,
+            # skipping thinking/tool blocks.
+            parts: list[str] = []
+            for block in raw_content:
+                if isinstance(block, dict):
+                    text = block.get("text") or block.get("content") or ""
+                    if text:
+                        parts.append(str(text))
+                else:
+                    parts.append(str(block))
+            content: str | None = "".join(parts) if parts else None
+        elif raw_content is not None:
+            content = str(raw_content)
+        else:
+            content = None
+
         message = ChatMessage(
             role=raw_message.get("role", "assistant"),
-            content=raw_message.get("content"),
+            content=content,
             tool_calls=tool_calls if tool_calls else None,
         )
 
