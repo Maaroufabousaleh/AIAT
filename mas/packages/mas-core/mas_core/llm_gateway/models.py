@@ -39,7 +39,7 @@ class LLMConfig(BaseSettings):
         ),
     )
     default_model: str = Field(
-        default="gpt-4o",
+        default="gemma-3-27b-it",
         description="Model to use when no model is specified in the call.",
     )
     api_key: str = Field(
@@ -114,8 +114,8 @@ class ChatMessage(BaseModel):
     role: str  # "system" | "user" | "assistant" | "tool"
     content: str | None = None
     tool_calls: list[ToolCall] | None = None  # set when role == "assistant"
-    tool_call_id: str | None = None            # set when role == "tool"
-    name: str | None = None                    # set when role == "tool"
+    tool_call_id: str | None = None  # set when role == "tool"
+    name: str | None = None  # set when role == "tool"
 
 
 class UsageStats(BaseModel):
@@ -132,9 +132,7 @@ class UsageStats(BaseModel):
         Override in subclasses or pass a real pricing table for accuracy.
         Defaults are intentionally conservative.
         """
-        return (self.prompt_tokens / 1_000_000 * 5.0) + (
-            self.completion_tokens / 1_000_000 * 15.0
-        )
+        return (self.prompt_tokens / 1_000_000 * 5.0) + (self.completion_tokens / 1_000_000 * 15.0)
 
 
 # ---------------------------------------------------------------------------

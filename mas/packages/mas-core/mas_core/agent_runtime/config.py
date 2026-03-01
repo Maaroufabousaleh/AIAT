@@ -69,7 +69,7 @@ class AgentConfig(BaseSettings):
 
     # --- LLM defaults for think() ---
     llm_model: str = Field(
-        default="gpt-4o",
+        default="gemma-3-27b-it",
         description="Default model name passed to LLMGatewayClient.chat_completion().",
     )
     llm_temperature: float = Field(

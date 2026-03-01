@@ -1,32 +1,23 @@
-"""Google Gemini provider — free models via the OpenAI-compatible endpoint.
+"""Google Gemma provider — free open-weight models via the OpenAI-compatible endpoint.
 
-The Gemini API on Google AI Studio exposes an **OpenAI-compatible** layer at
-``generativelanguage.googleapis.com/v1beta/openai/``.  This means models
-registered here can use the standard ``CHAT_COMPLETIONS`` API style with no
+The Google AI Studio exposes an **OpenAI-compatible** layer at
+``generativelanguage.googleapis.com/v1beta/openai/``.  Gemma models
+registered here use the standard ``CHAT_COMPLETIONS`` API style with no
 changes to the gateway client.
 
-Authentication uses a Google AI Studio API key sent as ``Bearer`` token
-(the OpenAI-compat layer accepts this).  Get a free key at:
-https://aistudio.google.com/apikey
+Authentication uses a Google AI Studio API key sent as ``Bearer`` token.
+Get a free key at: https://aistudio.google.com/apikey
 
-Free-tier rate limits (AI Studio, as of Feb 2026):
-- gemini-2.5-flash:       10 RPM / 250 k TPM / 500 RPD
-- gemini-2.5-flash-lite:  30 RPM / 1 M TPM / 1 500 RPD
-- gemini-3-flash-preview: preview, rate-limited
-- gemma-3-27b-it:         free via AI Studio, 14 000 RPD
-- gemma-3-4b-it:          free via AI Studio
+Free-tier rate limits per Gemma model (AI Studio, as of 2026):
+- gemma-3-27b-it:   30 RPM / 15 k TPM / 14 000 RPD
+- gemma-3-12b-it:   30 RPM / 15 k TPM / 14 000 RPD
+- gemma-3-4b-it:    30 RPM / 15 k TPM / 14 000 RPD
+- gemma-3-1b-it:    30 RPM / 15 k TPM / 14 000 RPD
+- gemma-3n-e4b-it:  30 RPM / 15 k TPM / 14 000 RPD
+- gemma-3n-e2b-it:  30 RPM / 15 k TPM / 14 000 RPD
 
-Note: gemini-2.0-flash / gemini-2.0-flash-lite free-tier quota has been set
-to 0 by Google (deprecated on free tier as of late 2025).
-
-Native Gemini API
------------------
-Google also offers a **native** REST API at
-``generativelanguage.googleapis.com/v1beta/models/{model}:generateContent``
-which supports additional features (native PDF/audio/video input, grounding
-with Google Search, code execution, etc.).  If those features are needed,
-add a ``GEMINI_NATIVE`` API style to the gateway client.  For now the
-OpenAI-compat layer covers all MAS requirements.
+All six models are pooled under ``gemma-pool`` for automatic load balancing
+(aggregate ~84 k RPD / 90 k TPM).
 """
 
 from __future__ import annotations
@@ -46,9 +37,9 @@ GEMINI_PROVIDER = ProviderConfig(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai",
     api_key_env_vars=["GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "GOOGLE_API_KEY"],
     description=(
-        "Google Gemini via the OpenAI-compatible endpoint on AI Studio. "
-        "Free tier available (rate-limited). Supports vision, tool-calling, "
-        "and streaming."
+        "Google AI Studio — Gemma open-weight models via the OpenAI-compatible "
+        "endpoint. Free tier available (rate-limited). Supports vision, "
+        "tool-calling, and streaming."
     ),
 )
 MODEL_REGISTRY.register_provider(GEMINI_PROVIDER)

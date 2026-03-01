@@ -1,75 +1,7 @@
-"""OpenAI provider — GPT-4o and related models.
+"""OpenAI provider — removed.
 
-Models registered here use the ``CHAT_COMPLETIONS`` API style against the
-official OpenAI endpoint.
+OpenAI models have been removed from this project.  Only free-tier
+Gemma models (via Google AI Studio) are supported.
 """
 
-from __future__ import annotations
 
-from ..base import ApiStyle, ModelEntry, ProviderConfig
-
-# Deferred import to avoid circular reference — MODEL_REGISTRY lives in the
-# parent __init__.py and is created before sub-packages are imported.
-from .. import MODEL_REGISTRY
-
-# ---------------------------------------------------------------------------
-# Provider
-# ---------------------------------------------------------------------------
-
-OPENAI_PROVIDER = ProviderConfig(
-    provider_id="openai",
-    base_url="https://api.openai.com",
-    api_key_env_vars=["OPENAI_API_KEY", "LLM_API_KEY"],
-    description="OpenAI official API — GPT-4o, o-series, etc.",
-)
-MODEL_REGISTRY.register_provider(OPENAI_PROVIDER)
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
-from ..base import ModelCapabilities
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gpt-4o",
-        provider="openai",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint="https://api.openai.com/v1/chat/completions",
-        description=(
-            "OpenAI GPT-4o — fast multimodal flagship. 128 k context, "
-            "tool-calling, structured output. Good default for agent work."
-        ),
-        max_context_tokens=128_000,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=5.0,
-        cost_per_1m_output=15.0,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=True,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content (or use Responses API)",
-        ),
-        best_for=[
-            "complex-reasoning",
-            "code-generation",
-            "tool-calling",
-            "structured-output",
-            "multimodal-vision",
-            "agent-orchestration",
-        ],
-        limits=[
-            "requires-api-key",
-            "paid-per-token",
-            "no-native-pdf (chat_completions style)",
-        ],
-        compliance=[
-            "openai-usage-policy",
-            "api-key-required",
-            "data-may-be-retained-30d",
-        ],
-    )
-)

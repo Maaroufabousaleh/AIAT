@@ -21,6 +21,29 @@ Usage
             model="gpt-5-nano",          # Zen free responses API
         )
 
+Agent convenience API
+---------------------
+::
+
+    async with LLMGatewayClient() as client:
+        # One-liner: no message boilerplate, auto-selects the best free model
+        text = await client.ask("Summarise this document: ...")
+
+        # With a task hint — picks a model good at code generation
+        text = await client.ask("Write a Python sort function",
+                                task="code-generation")
+
+        # Stateful multi-turn conversation
+        async with client.chat(system="You are a helpful assistant.") as conv:
+            r1 = await conv.send("What is the capital of France?")
+            r2 = await conv.send("And what is its population?")
+
+        # Automatic fallback cascade: tries ranked models until one succeeds
+        response = await client.chat_completion_with_fallback(
+            messages=[{"role": "user", "content": "Explain quantum computing"}],
+            task="reasoning",
+        )
+
 Provider routing
 ----------------
 When a model ID is found in ``MODEL_REGISTRY``, the client uses that entry's
@@ -95,6 +118,180 @@ class LLMRateLimited(LLMGatewayError):
 
 
 # ---------------------------------------------------------------------------
+# Stateful conversation context manager (forward-declared before the client
+# so return-type annotations in LLMGatewayClient.chat() resolve cleanly)
+# ---------------------------------------------------------------------------
+
+
+class _ConversationContext:
+    """Async context manager for stateful multi-turn conversations.
+
+    Do not instantiate directly — use ``LLMGatewayClient.chat()``
+    instead::
+
+        async with client.chat(system="You are a helpful assistant.") as conv:
+            reply1 = await conv.send("Hello!")
+            reply2 = await conv.send("Tell me more.")
+            print(conv.history)   # full conversation history
+    """
+
+    def __init__(
+        self,
+        client: "LLMGatewayClient",
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        task: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> None:
+        self._client = client
+        self._model = model
+        self._task = task
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self.history: list[dict[str, Any]] = []
+        if system:
+            self.history.append({"role": "system", "content": system})
+
+    async def __aenter__(self) -> "_ConversationContext":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        pass  # history is discarded; client lifecycle is managed externally
+
+    async def send(
+        self,
+        message: str,
+        *,
+        tools: list["ToolDefinition"] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Send a message and receive the assistant's text reply.
+
+        The message is appended to ``self.history`` and the response is
+        added automatically, so the full conversation is preserved across
+        turns.
+
+        Parameters
+        ----------
+        message:
+            The user's message text.
+        tools:
+            Optional tool definitions for this turn.
+        tool_choice:
+            Tool choice strategy.
+        temperature:
+            Override temperature for this turn only.
+        max_tokens:
+            Override max tokens for this turn only.
+
+        Returns
+        -------
+        str
+            The assistant's text response.
+        """
+        self.history.append({"role": "user", "content": message})
+
+        # Resolve model (use auto-selection if not specified)
+        model = self._model or self._client._auto_select_model(
+            task=self._task,
+            needs_tools=bool(tools),
+        )
+
+        resp = await self._client.chat_completion(
+            messages=self.history,
+            model=model,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature if temperature is not None else self._temperature,
+            max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
+        )
+
+        # Append the assistant's response to history
+        self.history.append(
+            {
+                "role": "assistant",
+                "content": resp.text or "",
+            }
+        )
+        return resp.text
+
+    async def send_with_response(
+        self,
+        message: str,
+        *,
+        tools: list["ToolDefinition"] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> "ChatResponse":
+        """Like ``send()`` but returns the full ``ChatResponse`` object.
+
+        Useful when you need access to tool calls or usage statistics.
+        """
+        self.history.append({"role": "user", "content": message})
+
+        model = self._model or self._client._auto_select_model(
+            task=self._task,
+            needs_tools=bool(tools),
+        )
+
+        resp = await self._client.chat_completion(
+            messages=self.history,
+            model=model,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature if temperature is not None else self._temperature,
+            max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
+        )
+
+        self.history.append(
+            {
+                "role": "assistant",
+                "content": resp.text or "",
+            }
+        )
+        return resp
+
+    def add_tool_result(self, tool_call_id: str, result: str) -> None:
+        """Append a tool result message to the conversation history.
+
+        Call this after executing a tool requested by the assistant to
+        feed the result back into the conversation::
+
+            resp = await conv.send_with_response("Analyse the codebase")
+            for tc in resp.tool_calls:
+                output = execute_tool(tc)
+                conv.add_tool_result(tc.id, output)
+            # Next send() will see the tool results in history
+        """
+        self.history.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": result,
+            }
+        )
+
+    def reset(self, keep_system: bool = True) -> None:
+        """Clear the conversation history.
+
+        Parameters
+        ----------
+        keep_system:
+            When ``True`` (default), preserve the system prompt at
+            position 0 (if one was set).
+        """
+        if keep_system and self.history and self.history[0]["role"] == "system":
+            self.history = [self.history[0]]
+        else:
+            self.history = []
+
+
+# ---------------------------------------------------------------------------
 # LLMGatewayClient
 # ---------------------------------------------------------------------------
 
@@ -135,10 +332,9 @@ class LLMGatewayClient:
         # ── Observability ────────────────────────────────────────────
         self.audit_log: AuditLog = audit_log or AuditLog(level=audit_level)
         self.metrics: MetricsCollector = metrics or MetricsCollector()
-        self.rate_limits: RateLimitTracker = (
-            rate_limit_tracker or RateLimitTracker()
-        )
+        self.rate_limits: RateLimitTracker = rate_limit_tracker or RateLimitTracker()
         self._smart_router: Any | None = None  # lazy init
+        self._model_selector: Any | None = None  # lazy init
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -244,34 +440,51 @@ class LLMGatewayClient:
             # ── Post-call audit + metrics recording ──────────────────
             latency = _time.time() - t0
             self._record_success(
-                audit_evt, resp, latency, retry_counter[0],
+                audit_evt,
+                resp,
+                latency,
+                retry_counter[0],
             )
             return resp
 
         except LLMRateLimited as exc:
             latency = _time.time() - t0
             self._record_failure(
-                audit_evt, "rate_limited", exc.status_code,
-                latency, str(exc),
+                audit_evt,
+                "rate_limited",
+                exc.status_code,
+                latency,
+                str(exc),
             )
             raise
         except LLMGatewayError as exc:
             latency = _time.time() - t0
             self._record_failure(
-                audit_evt, "error", exc.status_code,
-                latency, str(exc),
+                audit_evt,
+                "error",
+                exc.status_code,
+                latency,
+                str(exc),
             )
             raise
         except httpx.TimeoutException:
             latency = _time.time() - t0
             self._record_failure(
-                audit_evt, "timeout", 0, latency, "timeout",
+                audit_evt,
+                "timeout",
+                0,
+                latency,
+                "timeout",
             )
             raise
         except Exception as exc:
             latency = _time.time() - t0
             self._record_failure(
-                audit_evt, "error", 0, latency, str(exc),
+                audit_evt,
+                "error",
+                0,
+                latency,
+                str(exc),
             )
             raise
 
@@ -325,7 +538,8 @@ class LLMGatewayClient:
         if pool is not None:
             _audit_evt.pool_id = pool.pool_id
             _audit_evt.pool_headroom = pool._headroom(
-                concrete_model, _time.monotonic(),
+                concrete_model,
+                _time.monotonic(),
             )
             logger.debug(
                 "Pool '%s' picked model '%s' (headroom: %.2f)",
@@ -389,7 +603,9 @@ class LLMGatewayClient:
                         if response.status_code == 200:
                             resp = await self._parse_stream_response(response)
                             if pool is not None:
-                                total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                                total_tokens = (
+                                    resp.usage.prompt_tokens + resp.usage.completion_tokens
+                                )
                                 pool.record_request(concrete_model, total_tokens)
                             return resp
                         detail = (await response.aread()).decode("utf-8", errors="replace")
@@ -481,8 +697,7 @@ class LLMGatewayClient:
         result = await chain.think(messages, depth=depth, max_tokens=max_tokens)
 
         logger.info(
-            "Thinking chain complete: depth=%s, stages=%d, "
-            "total_tokens=%d, elapsed=%.1fs",
+            "Thinking chain complete: depth=%s, stages=%d, total_tokens=%d, elapsed=%.1fs",
             depth.value,
             len(result.stages),
             result.response.usage.total_tokens,
@@ -571,10 +786,11 @@ class LLMGatewayClient:
     # ------------------------------------------------------------------
 
     @property
-    def smart_router(self) -> "SmartRouter":
+    def smart_router(self) -> Any:
         """Lazy-initialised ``SmartRouter`` backed by this client's metrics."""
         if self._smart_router is None:
             from .smart_router import SmartRouter
+
             self._smart_router = SmartRouter(
                 metrics=self.metrics,
                 rate_limits=self.rate_limits,
@@ -780,7 +996,8 @@ class LLMGatewayClient:
     # ------------------------------------------------------------------
 
     def _resolve_http_client_and_endpoint(
-        self, entry: ModelEntry | None,
+        self,
+        entry: ModelEntry | None,
     ) -> tuple[httpx.AsyncClient, str]:
         """Return (httpx_client, endpoint_path) for a model.
 
@@ -959,7 +1176,9 @@ class LLMGatewayClient:
 
     @staticmethod
     def _parse_responses_api(
-        data: dict[str, Any], *, model: str = "",
+        data: dict[str, Any],
+        *,
+        model: str = "",
     ) -> ChatResponse:
         """Parse a Responses-API JSON body into ``ChatResponse``.
 
@@ -984,7 +1203,9 @@ class LLMGatewayClient:
         # Responses API uses input_tokens / output_tokens naming
         normalised = {
             "prompt_tokens": raw_usage.get("input_tokens", raw_usage.get("prompt_tokens", 0)),
-            "completion_tokens": raw_usage.get("output_tokens", raw_usage.get("completion_tokens", 0)),
+            "completion_tokens": raw_usage.get(
+                "output_tokens", raw_usage.get("completion_tokens", 0)
+            ),
             "total_tokens": raw_usage.get("total_tokens", 0),
         }
         usage = LLMGatewayClient._parse_usage(normalised)
@@ -1080,12 +1301,15 @@ class LLMGatewayClient:
                         cmd[idx + 1] = cmd[idx + 1] + "\n\n" + file_refs
                 logger.info(
                     "CLI model %s: %d image(s) saved to %s for --add-dir access",
-                    model, len(saved), attachment_mgr.temp_dir,
+                    model,
+                    len(saved),
+                    attachment_mgr.temp_dir,
                 )
             else:
                 logger.warning(
                     "CLI model %s: %d image(s) could not be saved (not data-URLs?)",
-                    model, len(image_urls),
+                    model,
+                    len(image_urls),
                 )
 
         logger.info("CLI model %s: running %s (stdin=%s)", model, cmd[0], use_stdin)
@@ -1125,9 +1349,332 @@ class LLMGatewayClient:
                 attachment_mgr.cleanup()
 
     # ------------------------------------------------------------------
-    # Convenience
+    # Convenience — agent-friendly high-level API
+    # ------------------------------------------------------------------
+
+    async def ask(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        task: str | None = None,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+        max_tokens: int | None = None,
+        temperature: float = 0.7,
+        use_fallback: bool = True,
+    ) -> str:
+        """One-liner for agents — send a prompt, get back a text string.
+
+        This is the simplest way to call an LLM from an agent.  No need
+        to build a message list manually.
+
+        Parameters
+        ----------
+        prompt:
+            The user's question or instruction.
+        system:
+            Optional system/developer prompt.  When omitted no system
+            message is added.
+        model:
+            Model to use.  When ``None``, the best available free model
+            is selected automatically via ``ModelSelector``.
+        task:
+            Optional task hint used by ``ModelSelector`` when ``model``
+            is ``None`` (e.g. ``"reasoning"``, ``"code-generation"``).
+        tools:
+            Tool definitions to pass to the LLM.
+        tool_choice:
+            Tool choice strategy.
+        max_tokens:
+            Hard cap on completion tokens.
+        temperature:
+            Sampling temperature.
+        use_fallback:
+            When ``True``, automatically retries with the next-best model
+            if the first choice fails.
+
+        Returns
+        -------
+        str
+            The assistant's text response (empty string if the model
+            returned only tool calls).
+        """
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        resolved_model = model or self._auto_select_model(
+            task=task,
+            needs_tools=bool(tools),
+        )
+
+        if use_fallback and model is None:
+            resp = await self.chat_completion_with_fallback(
+                messages=messages,
+                task=task,
+                tools=tools,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                needs_tools=bool(tools),
+            )
+        else:
+            resp = await self.chat_completion(
+                messages=messages,
+                model=resolved_model,
+                tools=tools,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        return resp.text
+
+    def chat(
+        self,
+        *,
+        system: str | None = None,
+        model: str | None = None,
+        task: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> "_ConversationContext":
+        """Return a stateful multi-turn conversation context manager.
+
+        Usage::
+
+            async with client.chat(system="You are a helpful assistant.") as conv:
+                r1 = await conv.send("What is 2 + 2?")
+                r2 = await conv.send("And what is that squared?")
+                history = conv.history   # full message list
+
+        Parameters
+        ----------
+        system:
+            Optional system prompt injected as the first message.
+        model:
+            Model to use.  ``None`` = auto-select.
+        task:
+            Optional task hint for model auto-selection.
+        temperature:
+            Sampling temperature for all turns in this conversation.
+        max_tokens:
+            Token cap for each turn.
+
+        Returns
+        -------
+        _ConversationContext
+            An async context manager.  Call ``await conv.send(text)``
+            inside the block to send messages and receive responses.
+        """
+        return _ConversationContext(
+            client=self,
+            system=system,
+            model=model,
+            task=task,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    async def chat_completion_with_fallback(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        task: str | None = None,
+        model: str | None = None,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+        max_tokens: int | None = None,
+        temperature: float = 0.7,
+        stream: bool = False,
+        needs_tools: bool = False,
+        needs_vision: bool = False,
+        chain_length: int = 4,
+    ) -> "ChatResponse":
+        """Call an LLM with automatic model fallback on failure.
+
+        Builds a ranked fallback chain via ``ModelSelector`` and tries
+        each candidate in order until one succeeds.  This makes agent
+        code resilient to individual provider outages, rate limits, and
+        transient errors without any extra boilerplate.
+
+        Parameters
+        ----------
+        messages:
+            Conversation history in OpenAI format.
+        task:
+            Optional task hint for model ranking
+            (e.g. ``"reasoning"``, ``"code-generation"``).
+        model:
+            If provided, this model is tried first before the fallback
+            chain.
+        tools:
+            Tool definitions to pass to the LLM.
+        tool_choice:
+            Tool choice strategy.
+        max_tokens:
+            Token cap.
+        temperature:
+            Sampling temperature.
+        stream:
+            Enable SSE streaming.
+        needs_tools:
+            Require tool-calling support in the fallback chain.
+        needs_vision:
+            Require vision support in the fallback chain.
+        chain_length:
+            Maximum number of models to try before giving up.
+
+        Returns
+        -------
+        ChatResponse
+            Response from the first successful model.
+
+        Raises
+        ------
+        LLMGatewayError
+            When all models in the chain fail.
+        """
+        selector = self.model_selector
+
+        # Build the fallback chain
+        chain: list[str] = []
+        if model:
+            chain.append(model)
+
+        ranked = selector.fallback_chain(
+            task=task,
+            needs_tools=needs_tools or bool(tools),
+            needs_vision=needs_vision,
+            chain_length=chain_length,
+        )
+        for m in ranked:
+            if m not in chain:
+                chain.append(m)
+                if len(chain) >= chain_length:
+                    break
+
+        last_exc: Exception | None = None
+        tried: list[str] = []
+        for candidate in chain:
+            try:
+                resp = await self.chat_completion(
+                    messages=messages,
+                    model=candidate,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=stream,
+                )
+                if tried:
+                    logger.info(
+                        "Fallback succeeded on '%s' after %d failed attempt(s): %s",
+                        candidate,
+                        len(tried),
+                        tried,
+                    )
+                return resp
+            except (LLMRateLimited, LLMGatewayError, httpx.TimeoutException) as exc:
+                logger.warning(
+                    "Fallback: model '%s' failed (%s), trying next in chain",
+                    candidate,
+                    type(exc).__name__,
+                )
+                tried.append(candidate)
+                last_exc = exc
+
+        raise last_exc or LLMGatewayError(
+            0,
+            f"All models in fallback chain failed: {chain}",
+        )
+
+    def auto_select_model(
+        self,
+        *,
+        task: str | None = None,
+        needs_tools: bool = False,
+        needs_vision: bool = False,
+        needs_reasoning: bool = False,
+        min_context: int = 0,
+        exclude: list[str] | None = None,
+        fallback: str | None = None,
+    ) -> str:
+        """Pick the best available model using ``ModelSelector``.
+
+        This is a convenience wrapper around ``ModelSelector.pick()``
+        exposed directly on the client so agents don't need to
+        instantiate the selector manually.
+
+        Parameters
+        ----------
+        task:
+            Optional task hint.
+        needs_tools:
+            Require tool-calling support.
+        needs_vision:
+            Require vision support.
+        needs_reasoning:
+            Require explicit reasoning capability.
+        min_context:
+            Minimum context window size in tokens.
+        exclude:
+            Model IDs to skip.
+        fallback:
+            Fallback model ID if nothing qualifies.
+
+        Returns
+        -------
+        str
+            The best model ID.
+        """
+        return self.model_selector.pick(
+            task=task,
+            needs_tools=needs_tools,
+            needs_vision=needs_vision,
+            needs_reasoning=needs_reasoning,
+            min_context=min_context,
+            exclude=exclude,
+            fallback=fallback,
+        )
+
+    # ------------------------------------------------------------------
+    # Observability accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def model_selector(self) -> Any:
+        """Lazy-initialised ``ModelSelector`` backed by this client."""
+        if self._model_selector is None:
+            from .model_selector import ModelSelector
+
+            self._model_selector = ModelSelector(self)
+        return self._model_selector
+
+    # ------------------------------------------------------------------
+    # Registry
     # ------------------------------------------------------------------
 
     def list_models(self, provider: str | None = None) -> list[ModelEntry]:
         """Return registered models from the registry."""
         return self._registry.list_models(provider)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _auto_select_model(
+        self,
+        *,
+        task: str | None = None,
+        needs_tools: bool = False,
+        needs_vision: bool = False,
+    ) -> str:
+        """Return the best model ID (internal, no exclude support)."""
+        return self.model_selector.pick(
+            task=task,
+            needs_tools=needs_tools,
+            needs_vision=needs_vision,
+        )

@@ -43,7 +43,7 @@ from mas_core.llm_gateway.providers import (
 def _make_config(**overrides) -> LLMConfig:
     defaults = dict(
         gateway_url="http://fake-llm:8080",
-        default_model="gpt-4o",
+        default_model="gemma-3-27b-it",
         api_key="test-key",
         max_retries=1,
         retry_min_wait_s=0.001,
@@ -234,16 +234,17 @@ class TestProviderConfigAuth:
 
 class TestGlobalRegistry:
     def test_builtin_models_registered(self):
-        assert "gpt-4o" in MODEL_REGISTRY
+        assert "gemma-3-27b-it" in MODEL_REGISTRY
         assert "big-pickle" in MODEL_REGISTRY
         assert "minimax-m2.5-free" in MODEL_REGISTRY
         assert "gpt-5-nano" in MODEL_REGISTRY
+        assert "gpt-4o" not in MODEL_REGISTRY
 
-    def test_gpt4o_is_chat_completions(self):
-        entry = MODEL_REGISTRY.get("gpt-4o")
+    def test_gemma_27b_is_chat_completions(self):
+        entry = MODEL_REGISTRY.get("gemma-3-27b-it")
         assert entry is not None
         assert entry.api_style == ApiStyle.CHAT_COMPLETIONS
-        assert entry.provider == "openai"
+        assert entry.provider == "gemini"
 
     def test_zen_models_styles(self):
         pickle = MODEL_REGISTRY.get("big-pickle")

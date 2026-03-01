@@ -24,15 +24,23 @@ AuditLevel            Detail level for audit capture.
 MetricsCollector      Real-time sliding-window metrics per model.
 RateLimitTracker      Empirical rate-limit discovery from 429 observations.
 SmartRouter           Metrics-enhanced intelligent model selection.
+ModelSelector         Task-aware automatic model selection with fallback chains.
+ConversationContext   Stateful multi-turn conversation context manager.
 create_observability_router  FastAPI router factory for all endpoints + UI.
 DASHBOARD_HTML        Self-contained HTML/JS dashboard (served at /ui).
 ObservabilityPersistence  Persist audit/metrics/rate-limit data across restarts.
 """
 
 from .audit import AuditEvent, AuditLevel, AuditLog
-from .client import LLMGatewayClient, LLMGatewayError, LLMRateLimited
+from .client import (
+    LLMGatewayClient,
+    LLMGatewayError,
+    LLMRateLimited,
+    _ConversationContext as ConversationContext,
+)
 from .dashboard import DASHBOARD_HTML
 from .metrics import MetricsCollector, Window as MetricsWindow
+from .model_selector import ModelSelector
 from .providers.api.mistral import MistralModelScanner
 from .providers.cli.copilot import COPILOT_COST_MAP, CopilotModelScanner
 from .rate_limits import RateLimitTracker, ModelRateLimits, ExperimentalLimit
@@ -94,6 +102,8 @@ __all__ = [
     "ExperimentalLimit",
     "SmartRouter",
     "ModelScore",
+    "ModelSelector",
+    "ConversationContext",
     "create_observability_router",
     "DASHBOARD_HTML",
     "ObservabilityPersistence",
