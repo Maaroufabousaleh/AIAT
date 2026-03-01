@@ -59,6 +59,8 @@ from typing import Any
 
 import httpx
 
+from .audit import AuditEvent, AuditLevel, AuditLog, fingerprint_messages
+from .metrics import MetricsCollector, Window
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -69,6 +71,7 @@ from .models import (
     UsageStats,
 )
 from .providers import MODEL_REGISTRY, ApiStyle, ModelEntry
+from .rate_limits import RateLimitTracker
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +121,24 @@ class LLMGatewayClient:
         config: LLMConfig | None = None,
         *,
         registry: Any | None = None,
+        audit_level: AuditLevel = AuditLevel.STANDARD,
+        audit_log: AuditLog | None = None,
+        metrics: MetricsCollector | None = None,
+        rate_limit_tracker: RateLimitTracker | None = None,
     ) -> None:
         self._config = config or LLMConfig()
         self._registry = registry if registry is not None else MODEL_REGISTRY
         self._http: httpx.AsyncClient | None = None
         # Per-provider HTTP clients (created lazily on first use)
         self._provider_clients: dict[str, httpx.AsyncClient] = {}
+
+        # ── Observability ────────────────────────────────────────────
+        self.audit_log: AuditLog = audit_log or AuditLog(level=audit_level)
+        self.metrics: MetricsCollector = metrics or MetricsCollector()
+        self.rate_limits: RateLimitTracker = (
+            rate_limit_tracker or RateLimitTracker()
+        )
+        self._smart_router: Any | None = None  # lazy init
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -196,9 +211,89 @@ class LLMGatewayClient:
         """
         resolved_model = model or self._config.default_model
 
+        # ── Audit pre-flight ─────────────────────────────────────────
+        t0 = _time.time()
+        audit_evt = AuditEvent(
+            model=resolved_model,
+            message_count=len(messages),
+            tool_count=len(tools) if tools else 0,
+            max_tokens_requested=max_tokens,
+            temperature=temperature,
+            stream=stream,
+        )
+        if self.audit_log.level >= AuditLevel.STANDARD and tools:
+            audit_evt.tool_names = [t.function.name for t in tools]
+        if self.audit_log.level >= AuditLevel.FULL:
+            audit_evt.content_fingerprint = fingerprint_messages(messages)
+
+        retry_counter = [0]
+
+        try:
+            resp = await self._dispatch(
+                messages=messages,
+                resolved_model=resolved_model,
+                tools=tools,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=stream,
+                _audit_evt=audit_evt,
+                _retry_counter_ref=retry_counter,
+            )
+
+            # ── Post-call audit + metrics recording ──────────────────
+            latency = _time.time() - t0
+            self._record_success(
+                audit_evt, resp, latency, retry_counter[0],
+            )
+            return resp
+
+        except LLMRateLimited as exc:
+            latency = _time.time() - t0
+            self._record_failure(
+                audit_evt, "rate_limited", exc.status_code,
+                latency, str(exc),
+            )
+            raise
+        except LLMGatewayError as exc:
+            latency = _time.time() - t0
+            self._record_failure(
+                audit_evt, "error", exc.status_code,
+                latency, str(exc),
+            )
+            raise
+        except httpx.TimeoutException:
+            latency = _time.time() - t0
+            self._record_failure(
+                audit_evt, "timeout", 0, latency, "timeout",
+            )
+            raise
+        except Exception as exc:
+            latency = _time.time() - t0
+            self._record_failure(
+                audit_evt, "error", 0, latency, str(exc),
+            )
+            raise
+
+    # ------------------------------------------------------------------
+    # Core dispatch (separated for audit wrapping)
+    # ------------------------------------------------------------------
+
+    async def _dispatch(
+        self,
+        messages: list[dict[str, Any]],
+        resolved_model: str,
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | dict[str, Any],
+        max_tokens: int | None,
+        temperature: float,
+        stream: bool,
+        _audit_evt: AuditEvent,
+        _retry_counter_ref: list[int],
+    ) -> ChatResponse:
+        """Internal dispatch — routes to the correct API style."""
+
         # ── Thinking chain dispatch ──────────────────────────────────
-        # "gemma-think" or "gemma-think/light|standard|deep" triggers the
-        # multi-model reasoning pipeline instead of a single LLM call.
         if resolved_model.startswith("gemma-think"):
             return await self._dispatch_thinking_chain(
                 messages=messages,
@@ -207,20 +302,14 @@ class LLMGatewayClient:
             )
 
         # ── Pool resolution ──────────────────────────────────────────
-        # If the model ID refers to a registered pool, pick a concrete
-        # model via the pool's round-robin / headroom strategy.
         entry, pool = self._registry.resolve_pool(resolved_model)
         if pool is not None and entry is None:
-            # All models in the pool are exhausted
             raise LLMRateLimited(
                 429,
                 f"All models in pool '{resolved_model}' have reached their "
                 f"rate-limit safety margin. Pool stats: {pool.stats()}",
             )
 
-        # The model name sent on the wire may differ from the registry key.
-        # E.g. registry key "openrouter/deepseek/deepseek-r1:free" maps to
-        # wire name "deepseek/deepseek-r1:free" (OpenRouter's native format).
         concrete_model = entry.model_id if entry is not None else resolved_model
         wire_model = (
             entry.extra.get("api_model_name", concrete_model)
@@ -228,12 +317,21 @@ class LLMGatewayClient:
             else concrete_model
         )
 
+        # Populate audit context
+        _audit_evt.resolved_model = concrete_model
+        if entry is not None:
+            _audit_evt.provider = entry.provider
+            _audit_evt.api_style = entry.api_style.value
         if pool is not None:
+            _audit_evt.pool_id = pool.pool_id
+            _audit_evt.pool_headroom = pool._headroom(
+                concrete_model, _time.monotonic(),
+            )
             logger.debug(
                 "Pool '%s' picked model '%s' (headroom: %.2f)",
                 pool.pool_id,
                 concrete_model,
-                pool._headroom(concrete_model, _time.monotonic()),
+                _audit_evt.pool_headroom,
             )
 
         # Dispatch to the correct API style
@@ -296,6 +394,9 @@ class LLMGatewayClient:
                             return resp
                         detail = (await response.aread()).decode("utf-8", errors="replace")
                         if self._is_retryable_status(response.status_code):
+                            _retry_counter_ref[0] = attempt + 1
+                            if response.status_code == 429:
+                                self.rate_limits.record_rate_limit(concrete_model)
                             last_exc = (
                                 LLMRateLimited(response.status_code, detail)
                                 if response.status_code == 429
@@ -311,6 +412,7 @@ class LLMGatewayClient:
 
                 response = await client.post(endpoint, json=payload)
             except httpx.TimeoutException as exc:
+                _retry_counter_ref[0] = attempt + 1
                 last_exc = exc
                 if attempt < max_retries:
                     await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
@@ -325,6 +427,9 @@ class LLMGatewayClient:
                 return resp
 
             if self._is_retryable_status(response.status_code):
+                _retry_counter_ref[0] = attempt + 1
+                if response.status_code == 429:
+                    self.rate_limits.record_rate_limit(concrete_model)
                 last_exc = (
                     LLMRateLimited(response.status_code, response.text)
                     if response.status_code == 429
@@ -385,6 +490,105 @@ class LLMGatewayClient:
         )
 
         return result.response
+
+    # ------------------------------------------------------------------
+    # Audit / metrics recording helpers
+    # ------------------------------------------------------------------
+
+    def _record_success(
+        self,
+        audit_evt: AuditEvent,
+        resp: ChatResponse,
+        latency: float,
+        retry_count: int = 0,
+    ) -> None:
+        """Record a successful LLM call in audit log, metrics, and rate tracker."""
+        model_key = audit_evt.resolved_model or audit_evt.model
+
+        # Audit event
+        audit_evt.status = "success"
+        audit_evt.status_code = 200
+        audit_evt.latency_s = latency
+        audit_evt.retry_count = retry_count
+        audit_evt.finish_reason = resp.finish_reason
+        audit_evt.prompt_tokens = resp.usage.prompt_tokens
+        audit_evt.completion_tokens = resp.usage.completion_tokens
+        audit_evt.total_tokens = resp.usage.total_tokens
+        audit_evt.estimated_cost_usd = resp.usage.estimated_cost_usd
+        audit_evt.tool_calls_returned = len(resp.tool_calls)
+        if self.audit_log.level >= AuditLevel.FULL:
+            audit_evt.response_text_length = len(resp.text)
+        self.audit_log.record(audit_evt)
+
+        # Metrics
+        self.metrics.record_request(
+            model=model_key,
+            provider=audit_evt.provider,
+            status="success",
+            latency_s=latency,
+            prompt_tokens=resp.usage.prompt_tokens,
+            completion_tokens=resp.usage.completion_tokens,
+            total_tokens=resp.usage.total_tokens,
+            estimated_cost_usd=resp.usage.estimated_cost_usd,
+            retry_count=retry_count,
+        )
+
+        # Rate-limit tracker (successful request)
+        self.rate_limits.record_success(
+            model=model_key,
+            tokens=resp.usage.total_tokens,
+        )
+
+    def _record_failure(
+        self,
+        audit_evt: AuditEvent,
+        status: str,
+        status_code: int,
+        latency: float,
+        detail: str,
+    ) -> None:
+        """Record a failed LLM call in audit log, metrics, and rate tracker."""
+        model_key = audit_evt.resolved_model or audit_evt.model
+
+        audit_evt.status = status
+        audit_evt.status_code = status_code
+        audit_evt.latency_s = latency
+        audit_evt.error_detail = detail[:500]  # truncate for safety
+        self.audit_log.record(audit_evt)
+
+        self.metrics.record_request(
+            model=model_key,
+            provider=audit_evt.provider,
+            status=status,
+            latency_s=latency,
+        )
+
+        if status == "rate_limited":
+            self.rate_limits.record_rate_limit(model=model_key)
+
+    # ------------------------------------------------------------------
+    # Observability accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def smart_router(self) -> "SmartRouter":
+        """Lazy-initialised ``SmartRouter`` backed by this client's metrics."""
+        if self._smart_router is None:
+            from .smart_router import SmartRouter
+            self._smart_router = SmartRouter(
+                metrics=self.metrics,
+                rate_limits=self.rate_limits,
+            )
+        return self._smart_router
+
+    def observability_dashboard(self) -> dict[str, Any]:
+        """Return a combined dashboard: audit summary + metrics + rate limits + routing."""
+        return {
+            "audit": self.audit_log.summary(),
+            "metrics": self.metrics.dashboard(),
+            "rate_limits": self.rate_limits.dashboard(),
+            "routing": self.smart_router.dashboard(),
+        }
 
     # ------------------------------------------------------------------
     # Response parsing

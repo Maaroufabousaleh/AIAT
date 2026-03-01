@@ -367,6 +367,26 @@ class TestMistralLive:
             )
         _assert_valid_response(resp, "mistral/magistral-small-latest")
 
+    @pytest.mark.asyncio
+    async def test_mistral_medium(self):
+        """Mistral Medium 3.x: frontier multimodal general-purpose model."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT, model="mistral/mistral-medium-latest",
+            )
+        _assert_valid_response(resp, "mistral/mistral-medium-latest")
+
+    @pytest.mark.asyncio
+    async def test_codestral_latest(self):
+        """Codestral: coding-specialized Mistral model."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT, model="mistral/codestral-latest",
+            )
+        _assert_valid_response(resp, "mistral/codestral-latest")
+
 
 # ---------------------------------------------------------------------------
 # Cloudflare Workers AI (free 10k neurons/day)
@@ -1272,7 +1292,7 @@ class TestRegistryCompleteness:
 
     def test_mistral_models_count(self):
         models = MODEL_REGISTRY.list_models("mistral")
-        assert len(models) >= 4, f"Expected >= 4 Mistral models, got {len(models)}"
+        assert len(models) >= 30, f"Expected >= 30 Mistral models, got {len(models)}"
 
     def test_cloudflare_models_count(self):
         models = MODEL_REGISTRY.list_models("cloudflare")
