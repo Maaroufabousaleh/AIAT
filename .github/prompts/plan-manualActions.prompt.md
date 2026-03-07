@@ -2,9 +2,28 @@
 
 **TL;DR**: This companion document lists every action **you** (the human developer/operator) must perform manually for each implementation phase. Actions are things that cannot be automated by an AI coding agent — decisions requiring your judgment, credentials/secrets you must create, external service configuration, hardware/network setup, and testing that requires real infrastructure. Everything else (writing code, creating files, running scripts) is handled by the AI agent.
 
+> **Architecture note**: The system follows a **two-plane design**. The **Execution Plane** (this codebase) handles workflow control, messaging, agent runtime, tools, and sandboxing. An optional **Control Plane** (e.g., Paperclip) provides the human-facing UI, org chart, task board, approvals, and audit log. You decide at Phase 0 whether to adopt Paperclip or build a minimal custom control plane later. The execution plane works standalone without a control plane.
+
 > **Companion documents**:
-> - **`plan-masArchitectureUpgrade.prompt.md`** — Infrastructure plan (Router, Redis, Tool Service, Storage, Compose, Observability, Shutdown/Resume)
-> - **`plan-orgArchitecture.prompt.md`** — Organizational architecture (Agent hierarchy, Workflow, Protocols, Policy, Teams)
+> - **`plan-masArchitectureUpgrade.prompt.md`** — Infrastructure plan (Router, Redis, Tool Service, Storage, Compose, Observability, Shutdown/Resume, Worker Manifests, Capability Registry, Sandbox Tiers)
+> - **`plan-orgArchitecture.prompt.md`** — Organizational architecture (Agent hierarchy, Workflow, Protocols, Policy, Teams, Capability Registry, Paperclip Integration) — see **§17 Canonical Glossary** for all authoritative names, table names, stream names, endpoint names, and role values
+
+> **Canonical names**: For the definitive list of Redis stream names, Postgres table names, tool groups, role values, and endpoint signatures, see **§17 of `plan-orgArchitecture.prompt.md`**. That section wins in any naming conflict.
+
+---
+
+## v0 Recommended Vertical Slice
+
+> **Build this first.** Everything else is additive. See §11b of `plan-orgArchitecture.prompt.md` for full v0/v1 scope tables.
+
+| v0 Include | v0 Defer to v1+ |
+|-----------|----------------|
+| CEO, COO, CTO teams | QA, DevOps, CSO, CHRM, CFO, CIO, System Dept |
+| Workflow + Document + Sprint/Issue tool groups (3 of 7) | Capability, DevOps, Review, KPI/Utility tool groups |
+| Happy-path workflow (no veto, no CSO block) | CSO veto loop, `SECURITY_BLOCKED` state |
+| Sandbox Tier 0–1 (process + MCP) | Tiers 2–3 (gVisor, Firecracker) |
+| Basic `on_every_llm_call` checkpoints | Alternative checkpoint strategies |
+| Manual control plane (`/projects` REST API) | Paperclip bridge (§16) |
 
 ---
 
@@ -27,12 +46,19 @@ Items marked with ⚠️ are **blocking** — the phase cannot proceed without t
 1. ⚠️ **Package manager**: `uv` (recommended — fast, supports workspaces natively) or `hatch`? This determines `pyproject.toml` workspace format.
 2. ⚠️ **Python version**: Target `3.11` or `3.12`? Affects base Docker image and type hint syntax.
 3. **Project ID format**: UUIDs are specified in the plan. If you have an existing ID scheme, say so now.
+4. **Control plane**: Do you want to adopt **Paperclip** as the optional control plane (org-chart UI, approvals, audit log, budget dashboard)? Options:
+   - **No** (default): Pure API + Grafana. Humans interact via `POST /projects/{id}/decisions`. You can add a UI later.
+   - **Yes — Paperclip**: Add Paperclip integration (Phase 14). Requires Node.js runtime + Paperclip deployment alongside the Docker Compose stack.
+   - **Yes — minimal custom**: Build a lightweight React/Next.js UI later (not in Phase 0).
+5. **Worker manifest scope**: Will you use worker manifests (`workers/{agent_id}.yaml`) from the start, or define all workers inline in team YAMLs only?
+   - Recommendation: use worker manifests from Phase 0 — the capability registry and sandbox profiles depend on them.
 
 ### Manual Actions
 
 1. ⚠️ **Create the virtual environment** — Run `uv venv` or `python -m venv .venv` and activate it. The AI agent cannot persist environment state across sessions.
 2. ⚠️ **Install the workspace** — After the agent creates `pyproject.toml` files, run `uv pip install -e "packages/mas-core[dev]"` (or equivalent) to verify local package resolution works.
-3. **Review generated models** — The agent will create Pydantic models (`MessageEnvelope`, `BlobRef`, `AgentRole`, `TaskBudget`, etc.). Read them and confirm the field names/types match your mental model. This is the canonical schema everything else builds on — changes later are expensive.
+3. **Review generated models** — The agent will create Pydantic models (`MessageEnvelope`, `BlobRef`, `AgentRole`, `TaskBudget`, `WorkerManifest`, `CapabilityDef`, etc.). Read them and confirm the field names/types match your mental model. This is the canonical schema everything else builds on — changes later are expensive.
+4. **Review `workflow-template.yaml`** — The agent will generate the declarative state machine in `packages/mas-core/workflow/workflow-template.yaml`. Confirm the 14 states and all transitions match your expectations before any downstream code is written against it.
 
 ### Verification You Must Run
 
@@ -179,7 +205,7 @@ None — pure Python logic.
 ### Verification You Must Run
 
 - `pytest apps/tool-service/tests/` — All tool tests pass.
-- Start tool-service locally, call `GET /tools` — verify the manifest returns all 6 tool groups.
+- Start tool-service locally, call `GET /tools` — verify the manifest returns all **7 tool groups** (Workflow, Document, Review, Sprint/Issue, DevOps, Capability, KPI/Utility).
 - Call `POST /tools/web_search/run` with a real query — verify it returns results (if using a real search provider).
 
 ---
@@ -190,8 +216,9 @@ None — pure Python logic.
 
 1. ⚠️ **Postgres password**: Generate a strong Postgres password for the `mas` database user.
 2. **Enable Row Level Security?** The plan mentions it as optional. RLS adds per-agent data isolation at the DB level but adds complexity. Recommendation: skip for v1.
-3. **MinIO vs. SeaweedFS**: MinIO is AGPL-licensed. If you plan to distribute this externally, consider SeaweedFS (Apache 2.0). For internal/dev use, MinIO is fine.
+3. ⚠️ **MinIO licensing decision gate**: MinIO is AGPL-licensed. If you plan to distribute this externally, choose SeaweedFS (Apache 2.0) or a MinIO commercial license before release. For internal/dev use, MinIO is fine.
 4. **MinIO retention policy**: How long to keep documents? Infinite (recommended for v1) or lifecycle-expire after N days?
+5. **Capability registry seed data**: Do you want the agent to pre-populate the `capabilities` table with baseline capabilities (`implement_feature`, `write_test`, `provision_infra`, `security_review`, etc.)? Recommended: yes — the CTO uses the registry for issue assignment from the first project.
 
 ### Manual Actions
 
@@ -232,8 +259,9 @@ None — pure Python logic.
 ### Verification You Must Run
 
 - `alembic upgrade head` — Must succeed. Then `alembic downgrade -1` and `alembic upgrade head` again (verify migration is reversible).
-- Connect to Postgres and verify all 16 tables exist (3 base + 11 org + `system_config` + `agent_checkpoints`).
+- Connect to Postgres and verify all **20 tables** exist (3 base: `memory`, `task_log`, `artifacts`; 12 org/workflow; 2 system: `system_config`, `agent_checkpoints`; 3 capability registry: `capabilities`, `worker_registry`, `role_capability_map`).
 - Upload and download a test file to MinIO via the `BlobClient`.
+- **Capability registry seed**: Run `GET /capabilities` — verify baseline capabilities are present. Run `GET /capabilities/workers` — verify all team-runner workers are registered.
 
 ---
 
@@ -291,6 +319,16 @@ None — pure Python logic.
    - `dept_devops`: 1–2 devops_eng + 0–1 sre_agent
 
    Adjust counts in team YAMLs based on your machine's memory (each worker ≈ 100–200 MB resident).
+3. **Sandbox profiles per worker**: Each worker manifest declares a `sandbox.profile`. Review the defaults:
+   - `standard` (Tier 0): default for most workers — Docker-only isolation
+   - `restricted` (Tier 1): recommended for workers with web access or file write access
+   - `gvisor` (Tier 2): for workers handling untrusted code or external data
+   - `firecracker` (Tier 3): maximum isolation — only if you have `firecracker-containerd` deployed
+4. **Transport mode per worker**: Each worker manifest declares a `transport` mode. Choose:
+   - `process`: default — LLM agent in-process with the team-runner
+   - `http`: worker is a separate HTTP service (e.g., a specialized microservice)
+   - `mcp`: worker implements the MCP protocol (tool-service routes calls via MCP)
+   - `human`: placeholder that surfaces tasks to the Human-in-the-Loop API instead of running LLM
 
 ### Manual Actions
 
@@ -300,7 +338,13 @@ None — pure Python logic.
    - Adjust `budget_defaults` per agent/team based on your LLM pricing
    - Set tool lists per agent role
 
-2. **Calculate memory requirements** — Based on your worker counts, estimate total memory:
+2. ⚠️ **Review all worker manifests in `workers/`** — The agent will generate `workers/{agent_id}.yaml` for every worker. For each one, verify:
+   - `sandbox.profile` matches the worker's risk level (workers with web access → `restricted` at minimum)
+   - `transport` mode is correct (default `process`; change to `http` or `mcp` for external workers)
+   - `capabilities` list correctly declares what this worker can do (drives CTO issue assignment)
+   - `checkpoint.strategy` is set (default `on_every_llm_call`)
+
+3. **Calculate memory requirements** — Based on your worker counts, estimate total memory:
    - 7 C-Suite single-agent containers × 384–512 MB ≈ 3 GB
    - 4 department containers × 512–768 MB ≈ 2.5 GB
    - 7 infra containers ≈ 2 GB
@@ -315,6 +359,8 @@ None — pure Python logic.
   TEAM_CONFIG=teams/exec_ceo.yaml python -m team_runner.main
   ```
   Verify it connects to the router, subscribes, and handles a test message.
+- **Capability registry sync**: after team-runner starts, run `GET /capabilities/workers` — verify all workers from the team YAML are registered in `worker_registry` with correct `adapter_type` and `capability_ids`.
+- **Worker manifest validation**: deliberately break one `worker.yaml` (e.g., remove `capabilities` field) — verify team-runner fails fast with a validation error on startup, not silently.
 
 ---
 
@@ -353,6 +399,19 @@ None — pure Python logic.
 1. ⚠️ **Resource limits**: The plan suggests 8 GB / 4 cores minimum. What are your machine's actual specs? Adjust `mem_limit` and `cpus` on team containers accordingly.
 2. **Volume locations**: Docker volumes store data on your system disk by default. If you have limited space on your C: drive, configure named volumes to a different drive.
 3. **Dev tools**: Do you want `redis_ui`, `pgadmin`, `minio-console` in the dev compose? (Recommended: yes for development.)
+4. **Sandbox tier support**: Which sandbox tiers are available on your machine?
+   - **Tier 0 (standard)**: Always available — default Docker isolation.
+   - **Tier 1 (restricted)**: Available via Docker run flags (`--cap-drop=ALL`, `--read-only`, `--security-opt seccomp`). No extra setup.
+   - **Tier 2 (gVisor)**: Requires `runsc` (gVisor container runtime) installed on the host and registered with Docker as `--runtime=runsc`. [Install guide](https://gvisor.dev/docs/user_guide/install/).
+   - **Tier 3 (Firecracker)**: Requires `firecracker-containerd` deployed. Only for production security requirements.
+   
+   **Recommendation for dev**: enable Tier 1 (restricted) by default for all workers; skip Tier 2/3 until needed.
+   
+   Set your max available tier in `.env`:
+   ```env
+   MAX_SANDBOX_TIER=1  # 0=standard, 1=restricted, 2=gvisor, 3=firecracker
+   ```
+   Workers requesting a tier higher than `MAX_SANDBOX_TIER` will fall back to the max available.
 
 ### Manual Actions
 
@@ -421,6 +480,17 @@ None — pure Python logic.
    # Should show: aof_enabled:1
    ```
 
+6. **Verify sandbox tier enforcement** — For a worker with `sandbox.profile: restricted`, check that the container runs with the correct flags:
+   ```bash
+   # Find the container name for a restricted worker, then inspect:
+   docker inspect team_devops | grep -A5 "CapDrop"
+   # Should show: ["ALL"] if Tier 1 is active
+
+   # Test egress allowlist (worker should not reach google.com if not in allowlist):
+   docker compose exec team_devops curl --max-time 5 https://google.com
+   # Should timeout or refuse connection
+   ```
+
 ### Verification You Must Run
 
 - `docker compose ps` — All 18 containers showing "healthy" or "running".
@@ -429,6 +499,7 @@ None — pure Python logic.
 - `curl http://localhost:8001/health` — Router healthy.
 - `curl http://localhost:8002/health` — Tool service healthy.
 - Open MinIO console at `http://localhost:9001` — `mas-agents` bucket exists.
+- `curl http://localhost:8000/capabilities` — Capability registry returns all registered workers and capabilities.
 
 ---
 
@@ -533,6 +604,65 @@ None — pure Python logic.
 
 ---
 
+## Phase 14 — Paperclip Integration (Optional Control Plane)
+
+> **Skip this phase** if you chose "No control plane" in Phase 0 Decision #4. You can return to it at any time — the execution plane operates fully without a control plane.
+
+### Decisions You Must Make
+
+1. **Paperclip deployment model**: Where does Paperclip run?
+   - **Same Docker Compose** (simplest): Add Paperclip services to `docker-compose.yml`. Requires Node.js base image, ~512 MB extra.
+   - **Separate deployment**: Run Paperclip on a different machine or cloud service, connecting to the execution plane via the event bridge API.
+2. **Event bridge direction**:
+   - **Push (webhook)**: MAS sends events to Paperclip on every `project_state_history` write. Requires Paperclip to expose a webhook endpoint.
+   - **Pull (polling)**: Paperclip polls `GET /projects/{id}/state-history` periodically. Simpler but less real-time.
+   - Recommendation: **push** for real-time visibility.
+3. **Approval routing**: Should human approvals flow through Paperclip UI (Paperclip → MAS webhook) or directly via `POST /projects/{id}/decisions`? Both can be active simultaneously (last-writer-wins on `approval_gates.decided_at`).
+4. **KPI sync interval**: How often to sync `kpi_metrics` → Paperclip budget dashboards? Options: per-project-completion, per-sprint, or on-demand.
+
+### Manual Actions
+
+1. ⚠️ **(If deploying in Docker Compose) Add Paperclip to compose** — The agent will add Paperclip services to `docker-compose.dev.yml`. After editing, rebuild:
+   ```bash
+   docker compose --env-file ../../.env up --build paperclip-web paperclip-api
+   ```
+
+2. ⚠️ **Configure the event bridge** — Set in `.env`:
+   ```env
+   PAPERCLIP_ENABLED=true
+   PAPERCLIP_WEBHOOK_URL=http://paperclip-api:3100/api/events/mas
+   PAPERCLIP_API_KEY=<your-paperclip-api-key>
+   PAPERCLIP_SYNC_INTERVAL_SECONDS=60
+   ```
+   If using push-mode, also register the MAS webhook URL in Paperclip's admin settings:
+   ```
+   MAS inbound webhook: http://orchestrator-api:8000/events/paperclip
+   ```
+
+3. ⚠️ **Register all 25 agents as Paperclip "employees"** — The agent will generate a seed script. Review and run it:
+   ```bash
+   python scripts/seed_paperclip_agents.py
+   ```
+   Verify each agent appears in the Paperclip org chart with the correct role and team.
+
+4. **Configure Paperclip org chart to mirror team hierarchy** — Map the 11 teams to Paperclip departments. The seed script should handle this, but verify:
+   - CEO → top-level
+   - COO, CFO, CIO, CHRM, CSO, CTO → direct reports to CEO
+   - dept_production, dept_system, dept_qa, dept_devops → under COO
+
+5. **(Optional) Configure Paperclip budget limits** — Paperclip can surface budget alerts. Map `TaskBudget.max_cost_usd` from team YAMLs to Paperclip budget limits per agent.
+
+### Verification You Must Run
+
+- Open Paperclip UI at `http://localhost:3100` (or your deployment URL).
+- Verify org chart shows all 11 teams and ~25 agents.
+- Create a test project via `POST /projects` → verify Paperclip shows the new project ticket within 5 seconds (push) or 60 seconds (pull).
+- Advance the project to PDR_CREATION → verify Paperclip ticket status updates.
+- Submit a human decision via Paperclip approval UI → verify `GET /projects/{id}` shows the decision applied and state advanced.
+- Verify `GET /capabilities` data is visible in Paperclip agent profiles (capability sync).
+
+---
+
 ## Cross-Phase Manual Actions (Do Once)
 
 These apply across all phases and should be done before or during Phase 0.
@@ -601,7 +731,7 @@ All 11 agent system prompts in `mas/prompts/` must be reviewed by you. The AI ag
 | **4b** | Watchdog/review timeouts | None | Workflow transition tests |
 | **3** | Redis version, XAUTOCLAIM timeout | Generate Redis passwords, review ACL | Redis ACL verified |
 | **6** | Rate limits, tool stubs vs. real | Search API key (optional) | Tool manifest returns |
-| **7** | Postgres password, RLS, MinIO license | Generate all storage credentials, run migration | All 16 tables exist |
+| **7** | Postgres password, RLS, MinIO license | Generate all storage credentials, run migration | All 20 tables exist |
 | **4+8** | Checkpoint interval | **Review all 11 system prompts** | Agent smoke test with real LLM |
 | **9** | Grace period, worker counts | Review 11 team YAMLs, check memory | Team runner connects and processes |
 | **10** | API port, CORS, auth | Set API key, manual API test | End-to-end project flow |

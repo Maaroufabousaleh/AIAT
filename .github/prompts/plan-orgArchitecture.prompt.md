@@ -1,8 +1,10 @@
 # AIAT Organizational Architecture — Corporate Hierarchy MAS
 
-**TL;DR**: A corporate-hierarchy multi-agent system (~20–40 agents across **11 teams**) where **C-Suite agents** (CEO, COO, CFO, CIO, CHRM, CSO, CTO) act as decision-makers and coordinators, **Department teams** (Production, System, QA, **DevOps**) execute the actual work, and a **Human-in-the-Loop** provides approval at critical gates. A **deterministic workflow controller** in the orchestrator-api owns all state transitions — agents emit events, the controller validates and advances state. Projects flow through a 14-step document lifecycle (PDR → CDR → RR → Infra Provisioning → Sprints → Retrospective → KPI) with parallel review fan-outs, CSO veto power, review circuit breakers, approval loops, and KPI-driven learning. Messages use a **single canonical `MessageEnvelope`** schema with idempotency keys, TTL, BlobRef for large payloads, and at-least-once delivery with effectively-once processing via Redis Streams consumer groups. The system is **shutdown-safe**: an orchestrated shutdown protocol lets agents checkpoint mid-task progress to Postgres, and on restart the controller resumes every active project from its last committed state — no work is lost across reboots. Optional scheduled working hours allow the system to auto-shutdown and auto-resume on a daily schedule. All infra is $0 self-hosted OSS; only LLM API costs apply.
+**TL;DR**: A corporate-hierarchy multi-agent system (~20–40 agents across **11 teams**) where **C-Suite agents** (CEO, COO, CFO, CIO, CHRM, CSO, CTO) act as decision-makers and coordinators, **Department teams** (Production, System, QA, **DevOps**) execute the actual work, and a **Human-in-the-Loop** provides approval at critical gates. A **deterministic workflow controller** in the orchestrator-api owns all state transitions — agents emit events, the controller validates and advances state. Projects flow through a 14-step document lifecycle (PDR → CDR → RR → Infra Provisioning → Sprints → Retrospective → KPI) with parallel review fan-outs, CSO veto power, review circuit breakers, approval loops, and KPI-driven learning. Messages use a **single canonical `MessageEnvelope`** schema with idempotency keys, TTL, BlobRef for large payloads, and at-least-once delivery with effectively-once processing via Redis Streams consumer groups. The system is **shutdown-safe**: an orchestrated shutdown protocol lets agents checkpoint mid-task progress to Postgres, and on restart the controller resumes every active project from its last committed state — no work is lost across reboots. Optional scheduled working hours allow the system to auto-shutdown and auto-resume on a daily schedule. A **capability registry** (3 Postgres tables) enables dynamic worker discovery and "hire later" via configuration. **Worker manifests** (`worker.yaml`) define each worker's runtime adapter, capabilities, sandbox profile, and transport mode. All infra is $0 self-hosted OSS; only LLM API costs apply.
 
-> **Companion document**: See **`plan-masArchitectureUpgrade.prompt.md`** for the infrastructure plan (Router, Redis Streams, Tool Service, Postgres/PgBouncer, MinIO, Docker Compose, Observability, **Shutdown/Resume Protocol**).
+> **Architecture note — Two-Plane Design**: This plan defines the **Execution Plane** — the internal machinery of workflow control, durable messaging, agent runtime, and tool execution. An optional **Control Plane** (e.g., Paperclip or a custom UI) can be layered on top to provide human-facing org-chart visualization, task boards, approval UIs, budget dashboards, and audit logs. The two planes communicate via an **event bridge** (webhook or Postgres-backed sync). Agents in the execution plane never depend on the control plane being present — they operate autonomously via the deterministic workflow controller. See §16 for Paperclip integration mapping.
+
+> **Companion document**: See **`plan-masArchitectureUpgrade.prompt.md`** for the infrastructure plan (Router, Redis Streams, Tool Service, Postgres/PgBouncer, MinIO, Docker Compose, Observability, **Shutdown/Resume Protocol**, Worker Manifests, Capability Registry, Sandbox Tiers).
 
 ---
 
@@ -73,6 +75,33 @@ The existing MAS plan defines four roles: `orchestrator`, `admin`, `worker`, `su
 | Sub-Agent | `sub_agent` | Parent agent only | Spawned for subtasks |
 
 This requires extending the `CommunicationPolicy` (Phase 2 of the infrastructure plan) with two new roles and richer routing rules — see section 4 below.
+
+### 1.4 Capability Registry
+
+The **capability registry** (3 Postgres tables — see §10) enables dynamic worker discovery and the "hire later" pattern. Instead of hard-coding which agent handles a task, the workflow controller and CTO query the registry to find workers with the required capabilities.
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `capabilities` | Canonical list of what the system can do | `id`, `name`, `version`, `input_schema`, `output_schema`, `risk_level`, `cost_model` |
+| `worker_registry` | Runtime adapters that fulfill capabilities | `id`, `name`, `adapter_type` (process/http/oci/mcp), `adapter_config`, `sandbox_profile`, `capability_ids[]` |
+| `role_capability_map` | Which roles may invoke which capabilities | `role`, `capability_id`, `priority`, `constraints` |
+
+**Usage pattern**:
+1. CTO decomposes RR into issues → each issue has a `required_capability` tag (e.g., `implement_feature`, `write_test`, `provision_infra`)
+2. CTO queries `POST /capabilities/search` with body `{"name": "implement_feature"}` → gets back available workers + their sandbox profiles
+3. CTO assigns worker to issue, creating the `ISSUE_ASSIGN` message
+4. If no worker has the capability → CTO escalates to CEO ("capability gap")
+
+> **"Hire later" pattern**: To add a new capability (e.g., `code_review_with_ast`), create a `worker.yaml` manifest (see infrastructure plan Phase 9) that declares the capability, register it, and it's immediately discoverable. No code changes to the workflow controller or agent runtime.
+
+### 1.5 Worker Manifest Integration
+
+Each worker (human or AI) is described by a **`worker.yaml`** manifest (defined in the infrastructure plan §Phase 9). The organizational architecture consumes these manifests as follows:
+
+- **Team YAML** references workers by `agent_id`; the team-runner loads the corresponding `worker.yaml` from `workers/` to get runtime config (adapter, sandbox, capabilities).
+- **CTO** queries the capability registry to find workers for issue assignment.
+- **CHRM** queries the registry for capacity planning and resource availability.
+- **CSO** reviews sandbox profiles and risk levels during security feasibility checks.
 
 ---
 
@@ -562,6 +591,7 @@ POLICY_RULES = {
             "sprint.*", "issue.*",
             "kpi.compute_sprint", "kpi.compute_project",
             "kpi.query_history", "kpi.update_agent_profile",
+            "capability.search", "capability.list_workers",  # CTO uses for issue assignment
         ],
     },
     "admin": {
@@ -664,7 +694,7 @@ XAUTOCLAIM returns entry with delivery_count ≥ 3
     ├── Router writes row to Postgres `dead_letters` table (see §10)
     ├── Router XACK + XDEL the original stream entry
     └── Router publishes SYSTEM_EVENT { event: "DLQ_ENTRY", message_id }
-          to stream:orchestrator (CEO is notified)
+          to stream:exec_ceo (CEO is notified)
 ```
 
 > **Clarification**: The infrastructure plan's `pending_messages` Postgres table is **renamed** to `dead_letters`. In-flight messages are tracked solely by the Redis PEL (Pending Entries List). Only messages that exhaust retries land in Postgres for forensic review.
@@ -851,7 +881,7 @@ ACL SETUSER default off
 - Uses agent profiles (`agent_profiles` table) with `correction_factor` to adjust per-agent estimates
 - Uses historical KPI data to improve estimates on new projects
 
-**Tools**: `sprint.create`, `issue.create`, `issue.decompose`, `kpi.compute`, `kpi.query_history`, `kpi.update_agent_profile`, `velocity.report`, `estimation.adjust`
+**Tools**: `sprint.create`, `issue.create`, `issue.decompose`, `kpi.compute`, `kpi.query_history`, `kpi.update_agent_profile`, `velocity.report`, `estimation.adjust`, `capability.search`, `capability.list_workers`
 
 **Budget defaults**: Medium LLM budget, high tool budget (lots of DB operations)
 
@@ -1356,6 +1386,40 @@ CREATE TABLE infra_events (
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
+-- NEW: Capability Registry (see §1.4 — enables dynamic worker discovery)
+CREATE TABLE capabilities (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            TEXT NOT NULL UNIQUE,           -- e.g., 'implement_feature', 'write_test'
+    version         TEXT NOT NULL DEFAULT '1.0',
+    description     TEXT,
+    input_schema    JSONB,                          -- JSON Schema for expected input
+    output_schema   JSONB,                          -- JSON Schema for expected output
+    risk_level      TEXT NOT NULL DEFAULT 'standard', -- 'standard', 'restricted', 'high', 'critical'
+    cost_model      JSONB,                          -- { "per_invocation": 0.05, "currency": "USD" }
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE worker_registry (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            TEXT NOT NULL UNIQUE,           -- e.g., 'devops_eng', 'code_reviewer_ast'
+    adapter_type    TEXT NOT NULL,                  -- 'process', 'http', 'oci', 'mcp'
+    adapter_config  JSONB NOT NULL,                 -- Connection details per adapter type
+    sandbox_profile TEXT NOT NULL DEFAULT 'standard', -- Matches sandbox tier (standard/restricted/gvisor/firecracker)
+    capability_ids  UUID[] NOT NULL DEFAULT '{}',   -- References capabilities(id)
+    status          TEXT NOT NULL DEFAULT 'active',  -- 'active', 'inactive', 'draining'
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE role_capability_map (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role            TEXT NOT NULL,                  -- AgentRole value
+    capability_id   UUID NOT NULL REFERENCES capabilities(id),
+    priority        INT NOT NULL DEFAULT 0,         -- Higher = preferred
+    constraints     JSONB,                          -- { "max_concurrent": 2, "requires_approval": false }
+    UNIQUE(role, capability_id)
+);
+
 -- Indexes
 CREATE INDEX idx_documents_project ON documents(project_id);
 CREATE INDEX idx_reviews_document ON reviews(document_id);
@@ -1373,6 +1437,10 @@ CREATE INDEX idx_dead_letters_created ON dead_letters(created_at);
 CREATE INDEX idx_state_history_project ON project_state_history(project_id);
 CREATE INDEX idx_state_history_time ON project_state_history(transitioned_at);
 CREATE INDEX idx_infra_events_project ON infra_events(project_id);
+CREATE INDEX idx_capabilities_name ON capabilities(name);
+CREATE INDEX idx_worker_registry_adapter ON worker_registry(adapter_type);
+CREATE INDEX idx_worker_registry_status ON worker_registry(status);
+CREATE INDEX idx_role_capability_role ON role_capability_map(role);
 
 -- NEW: System Configuration (shutdown/resume, schedule, watchdog)
 CREATE TABLE system_config (
@@ -1420,10 +1488,10 @@ This section maps every element of the organizational architecture onto the exis
 | **Phase 3 — Router** | Add Redis Streams hardening (§4.4): XAUTOCLAIM, DLQ, publish/consume idempotency, stream trimming, Redis ACL. |
 | **Phase 4 — Agent Runtime** | Add `ExecutiveAgent` (COO), `CSuiteAgent` (CFO/CIO/CHRM/CSO/CTO). CEO uses `orchestrator` runtime with controller integration. |
 | **Phase 5 — LLM Gateway** | No changes. All agent types use the same LLM gateway. |
-| **Phase 6 — Tool Service** | Add tool manifest with 6 groups (§D below). Role-based permission matrix. Circuit breaker per tool. |
-| **Phase 7 — Storage** | Add **13** new Postgres tables (§10): 11 project/workflow tables + `system_config` + `agent_checkpoints`. Add Alembic migrations. PgBouncer `statement_cache_size=0`. MinIO: add `/retrospectives/` bucket path. |
+| **Phase 6 — Tool Service** | Add tool manifest with 7 groups (§D below). Role-based permission matrix. Circuit breaker per tool. |
+| **Phase 7 — Storage** | Add **17** new Postgres tables (§10): 12 project/workflow tables + `system_config` + `agent_checkpoints` + 3 capability registry tables (`capabilities`, `worker_registry`, `role_capability_map`). Add Alembic migrations. PgBouncer `statement_cache_size=0`. MinIO: add `/retrospectives/` bucket path. |
 | **Phase 8 — Agent Types** | Add `ExecutiveAgent`, `CSuiteAgent` alongside existing `WorkerAgent`, `AdminAgent`, `SubAgent`. |
-| **Phase 9 — Team Runner** | Each team YAML specifies corporate role. Team runner passes role to agent constructor. 11 team YAMLs. **Checkpoint-aware graceful shutdown**: on SIGTERM or SHUTDOWN message, agents save mid-task progress to `agent_checkpoints`, NACK in-flight messages, exit cleanly. `stop_grace_period: 60s`. |
+| **Phase 9 — Team Runner** | Each team YAML specifies corporate role. Team runner passes role to agent constructor. 11 team YAMLs. **Worker manifests** (`workers/{agent_id}.yaml`) loaded by team-runner: define adapter type, sandbox profile, capabilities, transport mode. Capability declarations sync to `worker_registry` table on startup. **Checkpoint-aware graceful shutdown**: on SIGTERM or SHUTDOWN message, agents save mid-task progress to `agent_checkpoints`, NACK in-flight messages, exit cleanly. `stop_grace_period: 60s`. |
 | **Phase 10 — Orchestrator API** | Add controller endpoints (§9.1). DLQ management. FAILED state retry/archive. **System lifecycle endpoints**: `POST /system/shutdown`, `POST /system/resume`, `GET /system/status`, `PUT /system/schedule`. On startup: resume sequence re-publishes work messages for active projects; watchdog starts with 5-min grace period. |
 | **Phase 11 — Compose** | **11** team-runner containers + 7 infra = **18 containers**. Apply `mem_limit` per team. Redis **AOF persistence** (`appendonly yes`, `appendfsync everysec`). `stop_grace_period: 60s` on team containers. |
 | **Phase 12 — Observability** | Add: `mas_project_state`, `mas_dlq_depth`, `mas_review_circuit_open`, `mas_infra_lead_time`, `mas_agent_correction_factor`. |
@@ -1505,9 +1573,150 @@ class WorkflowController:
 
 > **Key difference from previous `ProjectStateMachine`**: The controller lives in orchestrator-api (not in any agent's process). Agents call `POST /projects/{id}/transition` with an event. The controller is **not** an LLM — it is pure deterministic Python. This makes state transitions restart-proof and auditable via `project_state_history`.
 
+### 11.2.2 Workflow Template YAML Format
+
+The transition table above can alternatively be declared in a **`workflow-template.yaml`** file, making the workflow composable and inspectable without reading Python:
+
+```yaml
+# packages/mas-core/workflow/workflow-template.yaml
+name: corporate-project-lifecycle
+version: "1.0"
+description: "14-step corporate project lifecycle (PDR → CDR → RR → Sprints → KPI)"
+
+states:
+  - id: INIT
+    responsible: ceo
+    on_enter:
+      - action: create_project_record
+  - id: FEASIBILITY_CHECK
+    responsible: ceo
+    timeout_seconds: 3600
+    on_enter:
+      - action: fan_out_review
+        targets: [cfo, cio, chrm, cso]
+        msg_type: REVIEW_REQUEST
+  - id: FEASIBILITY_REPORT
+    responsible: ceo
+    on_enter:
+      - action: open_approval_gate
+        gate_type: FEASIBILITY
+  - id: PDR_CREATION
+    responsible: coo
+    timeout_seconds: 7200
+    on_enter:
+      - action: publish_task
+        target_team: dept_production
+  - id: PDR_REVIEW
+    responsible: coo
+    timeout_seconds: 3600
+    on_enter:
+      - action: fan_out_review
+        targets: [cfo, cio, chrm, cso]
+        msg_type: REVIEW_REQUEST
+  - id: SECURITY_BLOCKED
+    responsible: ceo
+    on_enter:
+      - action: notify_ceo_cso_veto
+  - id: CDR_CREATION
+    responsible: coo
+    timeout_seconds: 7200
+    on_enter:
+      - action: publish_task
+        target_team: dept_system
+  - id: CDR_REVIEW
+    responsible: ceo
+    on_enter:
+      - action: aggregate_and_present_cdr
+  - id: HUMAN_APPROVAL
+    responsible: ceo
+    on_enter:
+      - action: open_approval_gate
+        gate_type: CDR_APPROVAL
+  - id: RR_CREATION
+    responsible: coo
+    timeout_seconds: 3600
+    on_enter:
+      - action: publish_task
+        target_team: exec_coo
+  - id: SPRINT_PLANNING
+    responsible: cto
+    timeout_seconds: 3600
+    on_enter:
+      - action: publish_task
+        target_team: office_cto
+  - id: INFRA_PROVISIONING
+    responsible: cto
+    timeout_seconds: 1800
+    on_enter:
+      - action: publish_task
+        target_team: dept_devops
+        msg_type: SPRINT_PLAN
+        filter: issue_type=INFRA
+  - id: IN_PROGRESS
+    responsible: cto
+    on_enter:
+      - action: activate_dev_sprints
+  - id: RETROSPECTIVE
+    responsible: cto
+    timeout_seconds: 1800
+    on_enter:
+      - action: publish_task
+        target_team: office_cto
+  - id: KPI_PERSISTENCE
+    responsible: cto
+    on_enter:
+      - action: compute_and_persist_kpi
+  - id: COMPLETED
+    responsible: ceo
+  - id: ARCHIVED
+    terminal: true
+  - id: FAILED
+    responsible: ceo
+    on_enter:
+      - action: notify_failure
+
+transitions:
+  - from: INIT              event: project_created          to: FEASIBILITY_CHECK
+  - from: FEASIBILITY_CHECK event: all_reviews_in           to: FEASIBILITY_REPORT
+  - from: FEASIBILITY_REPORT event: human_approved          to: PDR_CREATION
+  - from: FEASIBILITY_REPORT event: human_rejected          to: ARCHIVED
+  - from: FEASIBILITY_CHECK event: cso_veto                 to: SECURITY_BLOCKED
+  - from: PDR_CREATION       event: pdr_submitted           to: PDR_REVIEW
+  - from: PDR_REVIEW         event: all_reviews_in          to: CDR_CREATION
+  - from: PDR_REVIEW         event: cso_veto                to: SECURITY_BLOCKED
+  - from: SECURITY_BLOCKED   event: blocker_resolved        to: _restore_prior_state
+  - from: SECURITY_BLOCKED   event: ceo_override            to: _restore_prior_state
+  - from: CDR_CREATION       event: cdr_submitted           to: CDR_REVIEW
+  - from: CDR_REVIEW         event: cdr_presented           to: HUMAN_APPROVAL
+  - from: CDR_REVIEW         event: cso_veto                to: SECURITY_BLOCKED
+  - from: HUMAN_APPROVAL     event: human_approved          to: RR_CREATION
+  - from: HUMAN_APPROVAL     event: human_edits             to: CDR_CREATION
+  - from: HUMAN_APPROVAL     event: human_cancelled         to: ARCHIVED
+  - from: RR_CREATION        event: rr_submitted            to: SPRINT_PLANNING
+  - from: SPRINT_PLANNING    event: sprints_created         to: INFRA_PROVISIONING
+  - from: INFRA_PROVISIONING event: infra_ready             to: IN_PROGRESS
+  - from: INFRA_PROVISIONING event: infra_failed            to: FAILED
+  - from: IN_PROGRESS        event: all_sprints_done        to: RETROSPECTIVE
+  - from: RETROSPECTIVE      event: retrospective_done      to: KPI_PERSISTENCE
+  - from: KPI_PERSISTENCE    event: kpi_saved               to: COMPLETED
+  - from: COMPLETED          event: archive_requested       to: ARCHIVED
+  - from: "*"                event: watchdog_timeout        to: FAILED
+  - from: "*"                event: review_circuit_open     to: FAILED
+  - from: "*"                event: unrecoverable_error     to: FAILED
+  - from: FAILED             event: retry                   to: _restore_last_safe_state
+  - from: FAILED             event: archive_requested       to: ARCHIVED
+
+watchdog:
+  check_interval_seconds: 60
+  default_state_timeout_seconds: 3600
+  boot_grace_seconds: 300
+```
+
+The `WorkflowController.load_template()` method parses this YAML and builds the `TRANSITIONS` dict at startup. This enables swapping workflows (e.g., a simpler 6-step fast-track for small projects) without code changes.
+
 ### 11.2.1 Tool Service Manifest
 
-The tool-service exposes tools in **6 groups**. Each tool is gated by `(sender_role, tool_name)` validation.
+The tool-service exposes tools in **7 groups**. Each tool is gated by `(sender_role, tool_name)` validation.
 
 | Group | Tools | Accessible By |
 |-------|-------|--------------|
@@ -1516,6 +1725,7 @@ The tool-service exposes tools in **6 groups**. Each tool is gated by `(sender_r
 | **Review** | `review.submit`, `review.aggregate`, `review.submit_veto`, `review.start_session` | c_suite (submit), executive (aggregate, start_session) |
 | **Sprint / Issue** | `sprint.create`, `sprint.activate`, `issue.create`, `issue.decompose`, `issue.update_status`, `issue.list` | c_suite:cto (create/activate), admin (update_status), worker (update_status own) |
 | **DevOps** | `infra.provision`, `cicd.configure`, `monitoring.setup`, `secrets.manage`, `infra.ready_signal` | admin:devops_pm, worker:devops |
+| **Capability** | `capability.search`, `capability.list_workers`, `capability.register`, `capability.deregister` | c_suite:cto (search/list), orchestrator + executive (register/deregister) |
 | **KPI / Utility** | `kpi.compute`, `kpi.query_history`, `kpi.update_agent_profile`, `velocity.report`, `estimation.adjust`, `blob.*`, `web_search`, `web_fetch` | c_suite:cto (kpi.*), all roles (blob.download, web_search) |
 
 **Tool reliability**:
@@ -1821,22 +2031,70 @@ Resource estimate (all teams idle between tasks; only active containers consume 
 
 ---
 
+## 11b. v0 Recommended Vertical Slice
+
+> **Purpose:** Define the smallest cohesive build that proves end-to-end MAS value before adding org breadth. Build v0 first; every remaining team/feature is additive.
+
+### v0 Scope — Include
+
+| Layer | What to include |
+|-------|----------------|
+| **Teams** | CEO, COO, CTO, Production Dept (PM + 1 worker type) |
+| **Workflow** | `PROJECT_INITIALIZATION → REQUIREMENTS_GATHERING → TECHNICAL_PLANNING → PRODUCTION` (happy path only; no veto loop, no CSO review) |
+| **Infrastructure** | orchestrator-api, message-router, tool-service (3 groups: Workflow, Document, Sprint/Issue), Postgres, Redis, MinIO |
+| **Tool groups** | Workflow, Document, Sprint/Issue (3 of 7) |
+| **Protocols** | `MessageEnvelope`, `TaskMessage`, `WorkerManifest`, `CapabilityDef` |
+| **Auth** | Role hierarchy enforced; only 3 roles active: `orchestrator`, `executive`, `admin`/`worker` |
+| **Human interface** | `POST /projects` to start, `GET /projects/{id}` to poll, `POST /projects/{id}/decisions` for gates |
+
+### v0 Scope — Defer to v1+
+
+| Deferred element | Target milestone |
+|-----------------|-----------------|
+| QA Dept + review sessions | v1 |
+| DevOps Dept + infra provisioning tools | v1 |
+| CSO veto loop + `SECURITY_BLOCKED` path | v1 |
+| CHRM Office (resource feasibility) | v1 |
+| CFO Office (budget feasibility) | v1 |
+| CIO Office (technical feasibility review) | v1 |
+| System Dept (CDR creation) | v1 |
+| Capability Registry (Phase 8 tables + search API) | v1 |
+| Sandbox Tiers 2–3 (gVisor, Firecracker) | v1 |
+| Paperclip Control Plane bridge (§16) | v1 |
+| Checkpoint strategies beyond `on_every_llm_call` | v1 |
+| DLQ + `stream:exec_ceo` DLQ path | v1 (add after v0 stable) |
+
+### v0 Exit Criteria
+
+- CEO can start a project and receive a sprint plan in Postgres
+- At least one Production worker successfully executes an issue and updates its status
+- All v0 tool calls are authorized by the role policy engine
+- CEO's human decision gate (approval) is reached and unblocked by a `POST /projects/{id}/decisions`
+- All events round-trip through Redis Streams; no direct DB writes from agents
+
+---
+
 ## 12. Updated Implementation Order
 
 ```
- Phase 0 + 1    Scaffold + protocols (unified MessageEnvelope, all models)
+ Phase 0 + 1    Scaffold + protocols (unified MessageEnvelope, all models,
+      │              WorkerManifest + CapabilityDef Pydantic models,
+      │              workflow-template.yaml skeleton)
       │
  Phase 2        Policy engine (6-role hierarchy + tool permissions)
       │
- Phase 4b       Deterministic Workflow Controller (transition table, watchdog)
+ Phase 4b       Deterministic Workflow Controller (transition table loaded from
+      │              workflow-template.yaml, watchdog, SECURITY_BLOCKED paths)
       │
  Phase 5        LLM gateway
       │
  Phase 3        Message router (Redis Streams hardening, XAUTOCLAIM, DLQ, ACL)
       │
- Phase 6        Tool service (6 groups, role-gated, circuit breakers)
+ Phase 6        Tool service (7 groups, role-gated, circuit breakers,
+      │              capability search endpoint: POST /capabilities/search)
       │
- Phase 7        Storage (original tables + 13 new tables, PgBouncer fix)
+ Phase 7        Storage (original tables + 17 new tables including 3 capability
+      │              registry tables, PgBouncer fix)
       │
  Phase 4 + 8    Agent runtime + 5 agent types
       │              (WorkerAgent, AdminAgent, SubAgent,
@@ -1844,16 +2102,21 @@ Resource estimate (all teams idle between tasks; only active containers consume 
       │              Includes checkpoint save/restore logic
       │
  Phase 9        Team runner (11 team YAMLs incl. DevOps)
+      │              Worker manifests loaded from workers/ dir on startup
+      │              Capabilities sync to worker_registry on boot
       │              Checkpoint-aware graceful shutdown
       │
  Phase 10       Orchestrator API (controller endpoints, DLQ mgmt, Human-in-the-loop,
-      │              system shutdown/resume endpoints)
+      │              system shutdown/resume endpoints,
+      │              capability registry query endpoint)
       │
  Phase 11       Docker Compose (18 containers, Redis AOF, stop_grace_period: 60s)
       │
  Phase 12       Observability + KPI dashboards + DLQ alerts
       │
  Phase 13       Shutdown/resume protocol + scheduled operation
+      │
+ Phase 14       Paperclip integration (optional — see §16)
 ```
 
 ---
@@ -1897,6 +2160,13 @@ Add to the existing test suite:
 - **Role-gated access**: Worker calls `project.transition` → tool-service rejects (403).
 - **Circuit breaker**: Fail tool 3x in 60 s → assert next call returns OPEN error immediately. After 120 s → HALF_OPEN.
 - **Token bucket**: Exceed rate limit for `sprint.*` group → assert 429 response.
+- **Capability search**: Register 3 capabilities + 2 workers → `POST /capabilities/search?name=implement_feature` → assert correct workers returned with sandbox profiles.
+- **Role capability gate**: Worker calls capability with `required_role: c_suite` → tool-service rejects (403).
+
+**Capability registry tests**:
+- **Worker registration**: Start team-runner with `workers/devops_eng.yaml` → assert `worker_registry` row created with correct `adapter_type` and `capability_ids`.
+- **Capability gap escalation**: Issue has `required_capability: ast_code_review`; no worker has this capability → assert CTO emits ESCALATION to CEO with "capability gap" reason.
+- **"Hire later" pattern**: Add new `workers/code_reviewer_ast.yaml` with `capabilities: [ast_code_review]` → restart team-runner → assert capability discoverable via `GET /capabilities` without code changes.
 
 **Integration tests**:
 - **18-container compose**: `docker compose up` on 8 GB / 4 core machine → all containers healthy within 90 s.
@@ -1927,7 +2197,8 @@ Add to the existing test suite:
 | **DevOps department** | v1 critical path (not future) | INFRA_READY gate required before dev sprints; CI/CD is essential |
 | **Message protocol** | Unified `MessageEnvelope` (replaces dual schemas) | Single canonical format; 64 KB limit + BlobRef for large payloads |
 | **Redis Streams** | XAUTOCLAIM + DLQ + ACL + idempotency | Restart-proof delivery; no lost messages; least-privilege security |
-| **Tool service** | 6 groups, role-gated, circuit breakers | Prevents runaway loops; clear permission boundary per role |
+| **Tool service** | 7 groups, role-gated, circuit breakers | Prevents runaway loops; clear permission boundary per role |
+| **Object storage license posture** | MinIO for internal/dev; SeaweedFS or commercial MinIO for external distribution | Explicit AGPL decision gate before shipping to third parties |
 | **Agent profiles** | Per-agent `correction_factor` in Postgres | Estimation learning survives restarts; no separate ML model |
 | Document lifecycle | PDR → CDR → RR with versioning | Structured quality gates before execution |
 | Human-in-the-loop | API polling (v1), webhook (v2) | Simple first, add push notifications later |
@@ -1941,6 +2212,11 @@ Add to the existing test suite:
 | **Redis persistence** | AOF (`appendonly yes`, `appendfsync everysec`) | At most 1 s data loss on hard crash; zero on graceful stop; `noeviction` prevents silent stream data loss |
 | **Watchdog grace** | 5-min grace after boot; exclude downtime | Prevents false FAILED states after scheduled/unplanned downtime |
 | **Scheduled operation** | Optional working hours via `system_config` | Auto-shutdown/resume cron for dev machines or cost-controlled environments |
+| **Two-plane architecture** | Execution Plane (MAS) + optional Control Plane (Paperclip/custom UI) | Agents never depend on control plane; clean separation of orchestration machinery from human-facing governance |
+| **Capability registry** | 3 Postgres tables (`capabilities`, `worker_registry`, `role_capability_map`) | Dynamic worker discovery; "hire later" = config change; CTO routes by capability not hardcoded agent ID |
+| **Worker manifests** | `workers/{agent_id}.yaml` loaded by team-runner | Adapter type, sandbox profile, capability declarations, transport mode all in one config; no agent runtime code changes to add workers |
+| **Workflow template YAML** | `workflow-template.yaml` declares states + transitions | Workflow is inspectable config, not opaque code; supports swapping workflows without code changes |
+| **Capability gap handling** | CTO emits ESCALATION to CEO when no worker has required capability | Explicit "capability gap" signal rather than silent failure; CEO/CHRM can resolve by adding worker manifest |
 
 ---
 
@@ -1957,3 +2233,209 @@ Add to the existing test suite:
 9. **Agent performance reviews**: CHRM periodically evaluates agent KPIs and recommends model upgrades/downgrades
 10. **Webhook notifications**: orchestrator-api calls webhook URL when human decision needed (Slack, Discord, email)
 11. **Advanced DLQ analytics**: Dashboard for dead-letter patterns, auto-remediation suggestions
+12. **Capability auto-discovery**: team-runners broadcast their capabilities on startup; CTO subscribes and updates the registry dynamically
+13. **Fast-track workflow**: Alternative `workflow-template.yaml` for small projects (6 steps: feasibility → brief → approval → sprint → done) loaded at project creation
+
+---
+
+## 16. Paperclip Integration Mapping (Optional Control Plane)
+
+> **Decision**: Whether to adopt Paperclip as the control plane is optional and deferred to Phase 14 (see infrastructure plan). This section documents the mapping so the decision can be made with full information.
+
+### 16.1 What Paperclip Provides
+
+[Paperclip](https://github.com/paperclipai/paperclip) is an open-source "zero-human company" orchestration framework (TypeScript/React) providing:
+
+| Paperclip Feature | Maps To | Notes |
+|-------------------|---------|-------|
+| Org chart / agent registry | §1.1 Agent Hierarchy | Visual; mirrors team YAML structure |
+| Tickets / task board | `issues` table + Sprint management | Human-auditable equivalent of Postgres issues |
+| Approval workflows | `approval_gates` table + §9.2 Decision Flow | Paperclip approval = human decision gate |
+| Budget dashboards | `kpi_metrics` + TaskBudget model | Sync KPI snapshots to Paperclip budget view |
+| Audit log | `project_state_history` | Push controller transitions to Paperclip activity log |
+| Agent adapters | Worker manifests (`worker.yaml`) | Each MAS worker registered as Paperclip agent |
+| Secrets / credentials | `.env` + Docker secrets | Paperclip credential store → injected into worker env |
+
+### 16.2 Integration Architecture
+
+```
+┌─────────────────────────────────────┐
+│         CONTROL PLANE               │
+│  ┌─────────────────────────────┐    │
+│  │        Paperclip UI         │    │
+│  │  Org chart · Tickets · KPIs │    │
+│  │  Approvals · Audit log      │    │
+│  └────────────┬────────────────┘    │
+│               │ Event Bridge        │
+│               │ (webhook / Postgres │
+│               │  polling)           │
+└───────────────┼─────────────────────┘
+                │
+┌───────────────▼─────────────────────┐
+│         EXECUTION PLANE             │
+│  ┌─────────────────────────────┐    │
+│  │   orchestrator-api          │    │
+│  │   WorkflowController        │    │
+│  │   POST /events/paperclip    │    │  ← Paperclip webhooks in
+│  │   POST /paperclip/sync      │    │  ← Manual sync trigger
+│  └────────────┬────────────────┘    │
+│               │                     │
+│  ┌────────────▼────────────────┐    │
+│  │   Redis Streams + Teams     │    │
+│  │   Tool Service + Storage    │    │
+│  └─────────────────────────────┘    │
+└─────────────────────────────────────┘
+```
+
+### 16.3 Event Bridge Protocol
+
+The orchestrator-api exposes a `/events/paperclip` webhook endpoint. On each `project_state_history` write, the controller optionally posts a structured event to Paperclip:
+
+```python
+# Outbound: MAS → Paperclip
+POST https://your-paperclip-instance/api/events
+{
+  "event_type": "workflow.state_changed",
+  "project_id": "<uuid>",
+  "from_state": "PDR_CREATION",
+  "to_state": "PDR_REVIEW",
+  "actor": "coo",
+  "timestamp": "2026-03-06T10:30:00Z",
+  "context": { "document_id": "<uuid>", "version": 1 }
+}
+
+# Inbound: Paperclip → MAS (human decisions)
+POST /events/paperclip
+{
+  "event_type": "approval.submitted",
+  "project_id": "<uuid>",
+  "gate_type": "CDR_APPROVAL",
+  "decision": "APPROVE",
+  "human_id": "alice",
+  "comments": "Looks good"
+}
+# → controller translates to HumanDecision model → publishes APPROVAL_RESPONSE to CEO
+```
+
+### 16.4 What Paperclip Integration Enables
+
+- **Human operators** see the full project lifecycle in a visual task board — no API polling needed
+- **Budget visibility**: LLM spend per project visible alongside ticket status
+- **One-click approvals**: Human approves CDR via Paperclip UI instead of `POST /projects/{id}/decisions`
+- **Audit trail**: Every state transition, CSO veto, CEO override visible in Paperclip activity log
+- **Agent roster**: All 25 agents visible as "employees" with their roles and current assignments
+
+### 16.5 Conflict Resolutions
+
+| Potential Conflict | Resolution |
+|--------------------|------------|
+| Paperclip issues vs. MAS Postgres issues | MAS `issues` table is ground truth for sprint execution; Paperclip shows a human-readable mirror synced periodically via `POST /paperclip/sync` |
+| Dual state (Paperclip ticket state + `projects.state`) | `projects.state` is authoritative; Paperclip ticket is read-only view updated by event bridge |
+| Auth/credentials | MAS `.env` is the credential store; Paperclip reads from environment at adapter initialization |
+| Human decisions | MAS approval API (`/projects/{id}/decisions`) and Paperclip approval webhook both write to `approval_gates` table; last-writer-wins with `decided_at` timestamp |
+
+---
+
+## 17. Canonical Glossary
+
+> **This is the single source of truth for names used across all three plan documents.** When a name here conflicts with any other section, the glossary wins. Update all three plan docs if a name changes here.
+
+### 17.1 Redis Stream Names
+
+| Stream | Purpose | Consumers |
+|--------|---------|-----------|
+| `stream:exec_ceo` | CEO Office — project lifecycle, human decisions, DLQ alerts | CEO agent |
+| `stream:exec_coo` | COO Office — document lifecycle, department tasking | COO agent |
+| `stream:office_cfo` | CFO Office — feasibility reviews, budget analysis | CFO agent |
+| `stream:office_cio` | CIO Office — technical feasibility reviews | CIO agent |
+| `stream:office_chrm` | CHRM Office — resource feasibility reviews | CHRM agent |
+| `stream:office_cso` | CSO Office — security reviews, veto submissions | CSO agent |
+| `stream:office_cto` | CTO Office — sprint planning, KPI, DevOps coordination | CTO agent |
+| `stream:dept_production` | Production Dept — PDR creation tasks | Production PM |
+| `stream:dept_system` | System Dept — CDR creation tasks | System PM |
+| `stream:dept_qa` | QA Dept — test execution tasks | QA Lead |
+| `stream:dept_devops` | DevOps Dept — infra provisioning, CI/CD tasks | DevOps PM |
+
+**Naming rule**: `stream:{team_id}` where `team_id` matches the team registry (§1.2). No `stream:orchestrator` or `stream:system` — system events go directly to `stream:exec_ceo` (CEO is the human-system interface) or via HTTP to orchestrator-api.
+
+**SHUTDOWN_ACK**: Teams call `POST /system/shutdown-ack` on orchestrator-api with `{team_id, agent_id}` — no stream needed for acknowledgment.
+
+### 17.2 Postgres Table Names (all 20)
+
+| Category | Tables |
+|----------|--------|
+| **Base** (3) | `memory`, `task_log`, `artifacts` |
+| **Org / Workflow** (12) | `projects`, `documents`, `reviews`, `approval_gates`, `sprints`, `issues`, `kpi_metrics`, `review_sessions`, `agent_profiles`, `dead_letters`, `project_state_history`, `infra_events` |
+| **System** (2) | `system_config`, `agent_checkpoints` |
+| **Capability Registry** (3) | `capabilities`, `worker_registry`, `role_capability_map` |
+
+**Total: 20 tables** (3 base + 17 new). The third capability table is `worker_registry` — never `workers` (too ambiguous).
+
+### 17.3 Tool Groups (7)
+
+| # | Group Name | Key Tools |
+|---|-----------|-----------|
+| 1 | **Workflow** | `project.create`, `project.status`, `project.transition`, `project.list` |
+| 2 | **Document** | `document.create_draft`, `document.submit`, `document.revise`, `document.get_latest` |
+| 3 | **Review** | `review.submit`, `review.aggregate`, `review.submit_veto`, `review.start_session` |
+| 4 | **Sprint / Issue** | `sprint.create`, `sprint.activate`, `issue.create`, `issue.decompose`, `issue.update_status` |
+| 5 | **DevOps** | `infra.provision`, `cicd.configure`, `monitoring.setup`, `secrets.manage`, `infra.ready_signal` |
+| 6 | **Capability** | `capability.search`, `capability.list_workers`, `capability.register`, `capability.deregister` |
+| 7 | **KPI / Utility** | `kpi.compute`, `kpi.query_history`, `kpi.update_agent_profile`, `blob.*`, `web_search`, `web_fetch` |
+
+### 17.4 Capability Registry API Endpoints
+
+All served by **orchestrator-api** (not tool-service — the registry is read/written by the controller, not agents directly):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/capabilities` | List all registered capabilities |
+| `POST` | `/capabilities/search` | Search for workers by capability; body: `{"name": "...", "role": "...", "min_sandbox_tier": 0}` |
+| `GET` | `/capabilities/workers` | List all registered workers with their capabilities and sandbox profiles |
+| `POST` | `/capabilities/workers` | Register a new worker (called by team-runner on startup) |
+| `DELETE` | `/capabilities/workers/{worker_id}` | Deregister a worker |
+
+### 17.5 Agent Role Names
+
+| Role Value | Corporate Role | Notes |
+|-----------|---------------|-------|
+| `orchestrator` | CEO | Only role that interfaces with Human |
+| `executive` | COO | Cross-dept + cross-C-Suite access |
+| `c_suite` | CFO, CIO, CHRM, CSO, CTO | Peer review access; own-team + up |
+| `admin` | Department PM | Own team only + up to COO |
+| `worker` | Department worker | Own team only |
+| `sub_agent` | Spawned subtask agent | Parent agent only |
+
+### 17.6 Worker Manifest Keys
+
+The canonical `worker.yaml` schema (fields used across all docs):
+
+```yaml
+id:        <string>         # Matches agent_id in team YAML
+name:      <string>         # Human-readable
+adapter:
+  type:    process|http|oci|mcp|human
+  config:  {}               # Per-type: {module} | {url} | {image} | {mcp_url}
+capabilities:
+  - name:  <capability_name>  # Must match capabilities.name in DB
+    version: "1.0"
+sandbox:
+  profile: standard|restricted|gvisor|firecracker  # tier 0-3
+  egress_allowlist: []       # Domains: e.g., ["api.github.com:443"]
+checkpoint:
+  strategy: on_every_llm_call|on_every_n_calls|on_milestone
+  n: 1                       # Used when strategy = on_every_n_calls
+```
+
+### 17.7 Service Ports (default)
+
+| Service | Port | Notes |
+|---------|------|-------|
+| orchestrator-api | 8000 | Human-facing API + controller endpoints |
+| message-router | 8001 | HTTP publish + WS subscribe |
+| tool-service | 8002 | Tool execution gateway |
+| Redis | 6379 | Not exposed to host in production |
+| Postgres | 5432 | Not exposed to host in production |
+| PgBouncer | 6432 | Connection pool (used by all services) |
+| MinIO API | 9000 | S3-compatible object storage |
+| MinIO Console | 9001 | Web UI (dev only) |
