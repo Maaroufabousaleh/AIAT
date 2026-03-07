@@ -1,0 +1,53 @@
+metadata:
+  id: tech_writer
+  name: Tech Writer
+  version: '1.0'
+  description: Auto-generated baseline manifest for tech_writer
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - worker
+  - dept_system
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: file_read
+  version: '1.0'
+  description: Capability mapped from tool file_read
+  risk_level: low
+  required_tools:
+  - file_read
+- name: blob.upload
+  version: '1.0'
+  description: Capability mapped from tool blob.upload
+  risk_level: low
+  required_tools:
+  - blob.upload
+- name: blob.download
+  version: '1.0'
+  description: Capability mapped from tool blob.download
+  risk_level: low
+  required_tools:
+  - blob.download
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

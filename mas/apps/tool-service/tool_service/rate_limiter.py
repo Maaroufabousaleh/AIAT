@@ -1,16 +1,52 @@
-"""Per-group token-bucket rate limiter using ``aiolimiter``.
+"""Per-group token-bucket rate limiter.
 
-Each of the 6 tool groups gets its own ``AsyncLimiter`` with rate limits
-from ``GROUP_RATE_LIMITS``.
+Each canonical tool group gets its own limiter with rates from
+``GROUP_RATE_LIMITS``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
-
-from aiolimiter import AsyncLimiter
+from time import monotonic
 
 from mas_tools_sdk.groups import GROUP_RATE_LIMITS, ToolGroup
+
+try:
+    from aiolimiter import AsyncLimiter as _AsyncLimiter
+except ModuleNotFoundError:
+    class _AsyncLimiter:  # pragma: no cover - fallback for minimal test environments
+        """Small in-process limiter fallback when aiolimiter is unavailable."""
+
+        def __init__(self, max_rate: int, time_period: int) -> None:
+            self.time_period = float(time_period)
+            self._max_rate = float(max_rate)
+            self._rate_per_sec = self._max_rate / self.time_period
+            self._level = 0.0
+            self._window_started = monotonic()
+            self._lock = asyncio.Lock()
+
+        def _refill(self) -> None:
+            if monotonic() - self._window_started >= self.time_period:
+                self._level = 0.0
+                self._window_started = monotonic()
+
+        def has_capacity(self) -> bool:
+            self._refill()
+            return self._level + 1.0 <= self._max_rate
+
+        async def acquire(self) -> None:
+            async with self._lock:
+                self._refill()
+                if self._level + 1.0 <= self._max_rate:
+                    self._level += 1.0
+                    return
+                sleep_for = max(0.0, self.time_period - (monotonic() - self._window_started))
+            if sleep_for > 0:
+                await asyncio.sleep(sleep_for)
+            async with self._lock:
+                self._refill()
+                self._level = min(self._max_rate, self._level + 1.0)
 
 
 class RateLimiterPool:
@@ -31,8 +67,8 @@ class RateLimiterPool:
 
         # AsyncLimiter(max_rate, time_period_in_seconds)
         # We express as calls-per-minute → (max_rate=N, time_period=60)
-        self._limiters: dict[ToolGroup, AsyncLimiter] = {
-            group: AsyncLimiter(max_rate=rate, time_period=60)
+        self._limiters: dict[ToolGroup, _AsyncLimiter] = {
+            group: _AsyncLimiter(max_rate=rate, time_period=60)
             for group, rate in rates.items()
         }
         self._rates: dict[ToolGroup, int] = rates

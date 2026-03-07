@@ -1,4 +1,4 @@
-"""INFRA group tools — infra, cicd, monitoring, secrets, blob."""
+"""DevOps and blob utility tools."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _ALL = list(AgentRole)
 
 class InfraProvisionTool(BaseTool):
     name = "infra.provision"
-    group = ToolGroup.INFRA
+    group = ToolGroup.DEVOPS
     description = "Provision infrastructure resources."
     allowed_roles = _ADMIN
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -30,7 +30,7 @@ class InfraProvisionTool(BaseTool):
 
 class CICDConfigureTool(BaseTool):
     name = "cicd.configure"
-    group = ToolGroup.INFRA
+    group = ToolGroup.DEVOPS
     description = "Configure CI/CD pipeline settings."
     allowed_roles = _ADMIN
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -43,7 +43,7 @@ class CICDConfigureTool(BaseTool):
 
 class MonitoringSetupTool(BaseTool):
     name = "monitoring.setup"
-    group = ToolGroup.INFRA
+    group = ToolGroup.DEVOPS
     description = "Set up monitoring and alerting rules."
     allowed_roles = _ADMIN
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -56,7 +56,7 @@ class MonitoringSetupTool(BaseTool):
 
 class SecretsManageTool(BaseTool):
     name = "secrets.manage"
-    group = ToolGroup.INFRA
+    group = ToolGroup.DEVOPS
     description = "Manage secrets (create, rotate, revoke)."
     allowed_roles = _ADMIN
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -69,7 +69,7 @@ class SecretsManageTool(BaseTool):
 
 class InfraReadySignalTool(BaseTool):
     name = "infra.ready_signal"
-    group = ToolGroup.INFRA
+    group = ToolGroup.DEVOPS
     description = "Signal that infrastructure is ready for deployment."
     allowed_roles = _ADMIN
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -84,7 +84,7 @@ class InfraReadySignalTool(BaseTool):
 
 class BlobUploadTool(BaseTool):
     name = "blob.upload"
-    group = ToolGroup.INFRA
+    group = ToolGroup.KPI_UTILITY
     description = "Upload a file to MinIO blob storage."
     allowed_roles = _WORKER
     cache_ttl_seconds = 0
@@ -101,7 +101,7 @@ class BlobUploadTool(BaseTool):
 
 class BlobDownloadTool(BaseTool):
     name = "blob.download"
-    group = ToolGroup.INFRA
+    group = ToolGroup.KPI_UTILITY
     description = "Download a file from MinIO blob storage."
     allowed_roles = _ALL  # Even sub-agents can download
     cache_ttl_seconds = 30
@@ -116,7 +116,7 @@ class BlobDownloadTool(BaseTool):
 
 class BlobListTool(BaseTool):
     name = "blob.list"
-    group = ToolGroup.INFRA
+    group = ToolGroup.KPI_UTILITY
     description = "List objects in a MinIO bucket with optional prefix."
     allowed_roles = _WORKER
     cache_ttl_seconds = 15

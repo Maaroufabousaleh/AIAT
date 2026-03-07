@@ -42,6 +42,8 @@ class BaseTool(ABC):
         If True, identical kwargs always produce the same result (safe to cache).
     max_concurrency : int
         asyncio.Semaphore cap for this tool. 0 = unlimited.
+    transport : str
+        Execution transport for this tool: internal | http | mcp | process.
     """
 
     name: ClassVar[str]
@@ -52,6 +54,7 @@ class BaseTool(ABC):
     cache_ttl_seconds: ClassVar[int] = 30
     idempotent: ClassVar[bool] = True
     max_concurrency: ClassVar[int] = 5
+    transport: ClassVar[str] = "internal"
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> Any:
@@ -81,5 +84,6 @@ class BaseTool(ABC):
             blocked_roles=list(self.blocked_roles),
             cache_ttl_seconds=self.cache_ttl_seconds,
             idempotent=self.idempotent,
+            transport=self.transport,
         )
         return entry.model_dump(mode="json")

@@ -60,7 +60,7 @@ workers:
       - cicd.configure
       - blob.upload
       - web_search
-      - code_analyze
+      - capability.search
 
   - agent_id: sre_agent_1
     role: worker

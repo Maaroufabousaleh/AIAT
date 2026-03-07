@@ -1,4 +1,4 @@
-"""SPRINT_KPI group tools — sprint, issue, kpi, velocity, estimation."""
+"""Sprint/Issue and KPI/utility tools."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _EXEC = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
 
 class SprintCreateTool(BaseTool):
     name = "sprint.create"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Create a new sprint for a team."
     allowed_roles = _CSUITE
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -30,7 +30,7 @@ class SprintCreateTool(BaseTool):
 
 class SprintActivateTool(BaseTool):
     name = "sprint.activate"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Activate a sprint, transitioning it to IN_PROGRESS."
     allowed_roles = _CSUITE
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -43,7 +43,7 @@ class SprintActivateTool(BaseTool):
 
 class SprintCloseTool(BaseTool):
     name = "sprint.close"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Close a sprint and generate the sprint report."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 0
@@ -57,7 +57,7 @@ class SprintCloseTool(BaseTool):
 
 class IssueCreateTool(BaseTool):
     name = "issue.create"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Create a new issue/work-item in a sprint."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 0
@@ -74,7 +74,7 @@ class IssueCreateTool(BaseTool):
 
 class IssueDecomposeTool(BaseTool):
     name = "issue.decompose"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Decompose an issue into sub-tasks."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 0
@@ -89,7 +89,7 @@ class IssueDecomposeTool(BaseTool):
 
 class IssueUpdateStatusTool(BaseTool):
     name = "issue.update_status"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.SPRINT_ISSUE
     description = "Update the status of an issue."
     allowed_roles = _ADMIN
     cache_ttl_seconds = 0
@@ -106,19 +106,20 @@ class IssueUpdateStatusTool(BaseTool):
 # ── KPI ────────────────────────────────────────────────────────────────────
 
 class KPIComputeSprintTool(BaseTool):
-    name = "kpi.compute_sprint"
-    group = ToolGroup.SPRINT_KPI
-    description = "Compute KPIs for a sprint (velocity, defect rate, etc.)."
+    name = "kpi.compute"
+    group = ToolGroup.KPI_UTILITY
+    description = "Compute KPI snapshot (sprint or project scope)."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 30
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"sprint_id": kwargs.get("sprint_id", ""), "velocity": 0, "defect_rate": 0.0}
+        scope = kwargs.get("scope", "sprint")
+        return {"scope": scope, "project_id": kwargs.get("project_id", ""), "sprint_id": kwargs.get("sprint_id", ""), "velocity": 0, "defect_rate": 0.0}
 
 
 class KPIComputeProjectTool(BaseTool):
     name = "kpi.compute_project"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.KPI_UTILITY
     description = "Compute project-level KPIs across all sprints."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 30
@@ -129,7 +130,7 @@ class KPIComputeProjectTool(BaseTool):
 
 class KPIQueryHistoryTool(BaseTool):
     name = "kpi.query_history"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.KPI_UTILITY
     description = "Query historical KPI data with filters."
     allowed_roles = _EXEC
     cache_ttl_seconds = 30
@@ -140,7 +141,7 @@ class KPIQueryHistoryTool(BaseTool):
 
 class KPIUpdateAgentProfileTool(BaseTool):
     name = "kpi.update_agent_profile"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.KPI_UTILITY
     description = "Update an agent's performance profile based on KPI data."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 0
@@ -154,7 +155,7 @@ class KPIUpdateAgentProfileTool(BaseTool):
 
 class VelocityReportTool(BaseTool):
     name = "velocity.report"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.KPI_UTILITY
     description = "Generate a velocity report for a team/sprint."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 60
@@ -165,7 +166,7 @@ class VelocityReportTool(BaseTool):
 
 class EstimationAdjustTool(BaseTool):
     name = "estimation.adjust"
-    group = ToolGroup.SPRINT_KPI
+    group = ToolGroup.KPI_UTILITY
     description = "Adjust story-point estimation model based on actuals."
     allowed_roles = _CSUITE
     cache_ttl_seconds = 0

@@ -24,10 +24,10 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 1.00
   tools:
-    - threat_model
-    - compliance_check
-    - security_scan
-    - risk_assess
+    - review.submit
+    - review.submit
+    - review.submit
+    - review.submit
     - review.submit_veto
 
 workers:
@@ -42,7 +42,7 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - threat_model
-      - compliance_check
-      - security_scan
-      - risk_assess
+      - review.submit
+      - review.submit
+      - review.submit
+      - review.submit

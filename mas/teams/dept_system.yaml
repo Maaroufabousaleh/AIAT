@@ -22,8 +22,8 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 0.75
   tools:
-    - document_create
-    - document_get
+    - document.create_draft
+    - document.get_latest
     - blob.upload
     - blob.download
     - project.status
@@ -40,9 +40,9 @@ workers:
       max_tool_calls: 12
       max_cost_usd: 1.50
     tools:
-      - tech_stack_analyze
+      - capability.search
       - web_search
-      - code_analyze
+      - capability.search
       - blob.upload
 
   - agent_id: solution_designer
@@ -56,8 +56,8 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 1.25
     tools:
-      - tech_stack_analyze
-      - integration_check
+      - capability.search
+      - capability.search
       - web_search
       - blob.upload
 

@@ -1,0 +1,83 @@
+metadata:
+  id: devops_pm
+  name: DevOps PM
+  version: '1.0'
+  description: Auto-generated baseline manifest for devops_pm
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - admin
+  - dept_devops
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: infra.provision
+  version: '1.0'
+  description: Capability mapped from tool infra.provision
+  risk_level: low
+  required_tools:
+  - infra.provision
+- name: cicd.configure
+  version: '1.0'
+  description: Capability mapped from tool cicd.configure
+  risk_level: low
+  required_tools:
+  - cicd.configure
+- name: monitoring.setup
+  version: '1.0'
+  description: Capability mapped from tool monitoring.setup
+  risk_level: low
+  required_tools:
+  - monitoring.setup
+- name: secrets.manage
+  version: '1.0'
+  description: Capability mapped from tool secrets.manage
+  risk_level: low
+  required_tools:
+  - secrets.manage
+- name: infra.ready_signal
+  version: '1.0'
+  description: Capability mapped from tool infra.ready_signal
+  risk_level: low
+  required_tools:
+  - infra.ready_signal
+- name: blob.upload
+  version: '1.0'
+  description: Capability mapped from tool blob.upload
+  risk_level: low
+  required_tools:
+  - blob.upload
+- name: blob.download
+  version: '1.0'
+  description: Capability mapped from tool blob.download
+  risk_level: low
+  required_tools:
+  - blob.download
+- name: project.status
+  version: '1.0'
+  description: Capability mapped from tool project.status
+  risk_level: low
+  required_tools:
+  - project.status
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

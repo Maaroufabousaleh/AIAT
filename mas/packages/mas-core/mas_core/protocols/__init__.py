@@ -8,6 +8,9 @@ Enums       : MessageType, AgentRole, ProjectState, ReviewSessionStatus,
               KPIMetricType, SprintStatus, SystemState
 Envelope    : BlobRef, TaskBudget, MessageEnvelope, MAX_PAYLOAD_BYTES
 Tool        : ToolRequest, ToolResponse, ToolManifestEntry, CircuitState
+Capability  : CapabilityDef, WorkerCapabilityRecord, CapabilitySearchRequest,
+              CapabilitySearchResponse
+Worker      : WorkerManifest
 Domain      : ProjectDocument, ReviewComment, ReviewSummary, ReviewResponse,
               ReviewSession, FeasibilityReport, HumanDecision, Sprint, Issue,
               Milestone, ProjectSummary, KPISnapshot, AgentProfile
@@ -29,6 +32,12 @@ from .domain import (
     ReviewSession,
     ReviewSummary,
     Sprint,
+)
+from .capability import (
+    CapabilityDef,
+    CapabilitySearchRequest,
+    CapabilitySearchResponse,
+    WorkerCapabilityRecord,
 )
 from .enums import (
     AgentRole,
@@ -59,6 +68,7 @@ from .tool import (
     ToolRequest,
     ToolResponse,
 )
+from .worker_manifest import WorkerManifest
 from .ws import (
     AgentFrame,
     RouterFrame,
@@ -97,6 +107,12 @@ __all__ = [
     "ToolRequest",
     "ToolResponse",
     "ToolManifestEntry",
+    # Capability / Worker Manifest
+    "CapabilityDef",
+    "WorkerCapabilityRecord",
+    "CapabilitySearchRequest",
+    "CapabilitySearchResponse",
+    "WorkerManifest",
     # Domain
     "ProjectDocument",
     "ReviewComment",

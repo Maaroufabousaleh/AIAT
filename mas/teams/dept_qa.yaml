@@ -17,8 +17,8 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 0.75
   tools:
-    - document_create
-    - document_get
+    - document.create_draft
+    - document.get_latest
     - blob.upload
     - blob.download
     - issue.create     # create defect issues back into sprint backlog
@@ -37,6 +37,6 @@ workers:
       max_cost_usd: 0.50
     tools:
       - file_read
-      - code_analyze
+      - capability.search
       - web_search
       - blob.upload

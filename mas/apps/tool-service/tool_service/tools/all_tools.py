@@ -16,6 +16,12 @@ from .infra import (
     SecretsManageTool,
 )
 from .memory import SharedMemoryReadTool, SharedMemoryWriteTool
+from .capability import (
+    CapabilitySearchTool,
+    CapabilityListWorkersTool,
+    CapabilityRegisterTool,
+    CapabilityDeregisterTool,
+)
 from .project import (
     ApprovalOverrideCSOTool,
     DepartmentTaskTool,
@@ -26,6 +32,7 @@ from .project import (
     DocumentSubmitTool,
     HumanAwaitDecisionTool,
     HumanNotifyTool,
+    ProjectListTool,
     ProjectCreateTool,
     ProjectStatusTool,
     ProjectTransitionTool,
@@ -39,7 +46,6 @@ from .sprint_kpi import (
     IssueCreateTool,
     IssueDecomposeTool,
     IssueUpdateStatusTool,
-    KPIComputeProjectTool,
     KPIComputeSprintTool,
     KPIQueryHistoryTool,
     KPIUpdateAgentProfileTool,
@@ -67,6 +73,7 @@ def get_all_tools() -> list[BaseTool]:
         ProjectCreateTool(),
         ProjectStatusTool(),
         ProjectTransitionTool(),
+        ProjectListTool(),
         DocumentCreateDraftTool(),
         DocumentSubmitTool(),
         DocumentReviseTool(),
@@ -88,11 +95,15 @@ def get_all_tools() -> list[BaseTool]:
         IssueDecomposeTool(),
         IssueUpdateStatusTool(),
         KPIComputeSprintTool(),
-        KPIComputeProjectTool(),
         KPIQueryHistoryTool(),
         KPIUpdateAgentProfileTool(),
         VelocityReportTool(),
         EstimationAdjustTool(),
+        # CAPABILITY
+        CapabilitySearchTool(),
+        CapabilityListWorkersTool(),
+        CapabilityRegisterTool(),
+        CapabilityDeregisterTool(),
         # INFRA
         InfraProvisionTool(),
         CICDConfigureTool(),

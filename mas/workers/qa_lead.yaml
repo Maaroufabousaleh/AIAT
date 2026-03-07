@@ -1,0 +1,71 @@
+metadata:
+  id: qa_lead
+  name: QA Lead
+  version: '1.0'
+  description: Auto-generated baseline manifest for qa_lead
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - admin
+  - dept_qa
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: document_create
+  version: '1.0'
+  description: Capability mapped from tool document_create
+  risk_level: low
+  required_tools:
+  - document_create
+- name: document_get
+  version: '1.0'
+  description: Capability mapped from tool document_get
+  risk_level: low
+  required_tools:
+  - document_get
+- name: blob.upload
+  version: '1.0'
+  description: Capability mapped from tool blob.upload
+  risk_level: low
+  required_tools:
+  - blob.upload
+- name: blob.download
+  version: '1.0'
+  description: Capability mapped from tool blob.download
+  risk_level: low
+  required_tools:
+  - blob.download
+- name: issue.create
+  version: '1.0'
+  description: Capability mapped from tool issue.create
+  risk_level: low
+  required_tools:
+  - issue.create
+- name: project.status
+  version: '1.0'
+  description: Capability mapped from tool project.status
+  risk_level: low
+  required_tools:
+  - project.status
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

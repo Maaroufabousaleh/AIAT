@@ -16,10 +16,10 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 1.00
   tools:
-    - cost_estimate
-    - budget_check
-    - roi_calculate
-    - market_research
+    - kpi.compute
+    - kpi.query_history
+    - kpi.compute
+    - web_search
 
 workers:
   - agent_id: financial_analyst_1
@@ -33,6 +33,6 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - cost_estimate
-      - market_research
+      - kpi.compute
+      - web_search
       - web_search

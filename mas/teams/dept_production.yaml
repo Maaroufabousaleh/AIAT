@@ -22,8 +22,8 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 0.75
   tools:
-    - document_create
-    - document_get
+    - document.create_draft
+    - document.get_latest
     - blob.upload
     - blob.download
     - project.status
@@ -69,6 +69,6 @@ workers:
       max_tool_calls: 8
       max_cost_usd: 0.50
     tools:
-      - cost_estimate
-      - market_research
+      - kpi.compute
+      - web_search
       - blob.upload

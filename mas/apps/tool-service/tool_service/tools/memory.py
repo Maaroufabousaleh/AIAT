@@ -11,7 +11,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 class SharedMemoryReadTool(BaseTool):
     name = "shared_memory_read"
-    group = ToolGroup.MEMORY
+    group = ToolGroup.KPI_UTILITY
     description = "Read a value from the shared agent memory store."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,
@@ -29,7 +29,7 @@ class SharedMemoryReadTool(BaseTool):
 
 class SharedMemoryWriteTool(BaseTool):
     name = "shared_memory_write"
-    group = ToolGroup.MEMORY
+    group = ToolGroup.KPI_UTILITY
     description = "Write a value to the shared agent memory store."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,

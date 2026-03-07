@@ -1,4 +1,4 @@
-"""PROJECT group tools — project, document, review, approval, human, department_task."""
+"""Workflow/Document/Review tools."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 class ProjectCreateTool(BaseTool):
     name = "project.create"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Create a new project record."
     allowed_roles = [AgentRole.ORCHESTRATOR]
     cache_ttl_seconds = 0
@@ -25,7 +25,7 @@ class ProjectCreateTool(BaseTool):
 
 class ProjectStatusTool(BaseTool):
     name = "project.status"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Get the current project status and state."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     cache_ttl_seconds = 15
@@ -36,7 +36,7 @@ class ProjectStatusTool(BaseTool):
 
 class ProjectTransitionTool(BaseTool):
     name = "project.transition"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Transition the project to a new state."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     cache_ttl_seconds = 0
@@ -46,11 +46,22 @@ class ProjectTransitionTool(BaseTool):
         return {"project_id": kwargs.get("project_id", ""), "new_state": kwargs.get("target_state", ""), "ok": True}
 
 
+class ProjectListTool(BaseTool):
+    name = "project.list"
+    group = ToolGroup.WORKFLOW
+    description = "List projects with optional filters."
+    allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
+    cache_ttl_seconds = 15
+
+    async def execute(self, **kwargs: Any) -> Any:
+        return {"projects": [], "total": 0}
+
+
 # ── Documents ──────────────────────────────────────────────────────────────
 
 class DocumentCreateDraftTool(BaseTool):
     name = "document.create_draft"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.DOCUMENT
     description = "Create a new document draft."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
     cache_ttl_seconds = 0
@@ -62,7 +73,7 @@ class DocumentCreateDraftTool(BaseTool):
 
 class DocumentSubmitTool(BaseTool):
     name = "document.submit"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.DOCUMENT
     description = "Submit a document draft for review."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
     cache_ttl_seconds = 0
@@ -74,7 +85,7 @@ class DocumentSubmitTool(BaseTool):
 
 class DocumentReviseTool(BaseTool):
     name = "document.revise"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.DOCUMENT
     description = "Revise a document based on review feedback."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
     cache_ttl_seconds = 0
@@ -86,7 +97,7 @@ class DocumentReviseTool(BaseTool):
 
 class DocumentGetLatestTool(BaseTool):
     name = "document.get_latest"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.DOCUMENT
     description = "Retrieve the latest version of a document."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,
@@ -100,7 +111,7 @@ class DocumentGetLatestTool(BaseTool):
 
 class DocumentListTool(BaseTool):
     name = "document.list"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.DOCUMENT
     description = "List documents, optionally filtered by project or type."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,
@@ -116,7 +127,7 @@ class DocumentListTool(BaseTool):
 
 class ReviewStartSessionTool(BaseTool):
     name = "review.start_session"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.REVIEW
     description = "Start a multi-reviewer review session."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -128,8 +139,8 @@ class ReviewStartSessionTool(BaseTool):
 
 
 class ReviewSubmitResponseTool(BaseTool):
-    name = "review.submit_response"
-    group = ToolGroup.PROJECT
+    name = "review.submit"
+    group = ToolGroup.REVIEW
     description = "Submit a review verdict for a review session."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE]
     cache_ttl_seconds = 0
@@ -141,7 +152,7 @@ class ReviewSubmitResponseTool(BaseTool):
 
 class ReviewSubmitVetoTool(BaseTool):
     name = "review.submit_veto"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.REVIEW
     description = "Submit a CSO veto on a review."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE]
     cache_ttl_seconds = 0
@@ -153,7 +164,7 @@ class ReviewSubmitVetoTool(BaseTool):
 
 class ReviewAggregateTool(BaseTool):
     name = "review.aggregate"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.REVIEW
     description = "Aggregate review verdicts into a final decision."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     blocked_roles = [AgentRole.WORKER, AgentRole.SUB_AGENT]
@@ -168,7 +179,7 @@ class ReviewAggregateTool(BaseTool):
 
 class ApprovalOverrideCSOTool(BaseTool):
     name = "approval.override_cso"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.REVIEW
     description = "CSO override: block or approve despite reviews."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE]
     cache_ttl_seconds = 0
@@ -182,7 +193,7 @@ class ApprovalOverrideCSOTool(BaseTool):
 
 class HumanNotifyTool(BaseTool):
     name = "human.notify"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Send a notification to the human operator."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     cache_ttl_seconds = 0
@@ -194,7 +205,7 @@ class HumanNotifyTool(BaseTool):
 
 class HumanAwaitDecisionTool(BaseTool):
     name = "human.await_decision"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Block until the human operator makes a decision."
     allowed_roles = [AgentRole.ORCHESTRATOR]
     cache_ttl_seconds = 0
@@ -208,7 +219,7 @@ class HumanAwaitDecisionTool(BaseTool):
 
 class DepartmentTaskTool(BaseTool):
     name = "department_task"
-    group = ToolGroup.PROJECT
+    group = ToolGroup.WORKFLOW
     description = "Dispatch a work task to a department team."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
     cache_ttl_seconds = 0

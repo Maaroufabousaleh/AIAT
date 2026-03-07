@@ -1,20 +1,19 @@
-"""Tool manifest — the canonical registry of every tool available in the MAS.
+"""Canonical tool manifest and compatibility aliases.
 
-Each entry maps a tool name to its metadata (group, description, roles, limits).
-The tool-service uses this to build the GET /tools endpoint and to validate
-incoming ToolRequests before dispatch.
-
-This module is the "single source of truth" for tool definitions.  Adding a
-new tool means:
-1. Adding an entry here.
-2. Creating a ``BaseTool`` subclass in ``tool_service/tools/``.
+This module is the source of truth for:
+- Canonical Phase 6 tool names and groups.
+- Legacy aliases supported during the migration window.
 """
 
 from __future__ import annotations
 
+from typing import Literal
+
 from mas_core.protocols.enums import AgentRole
 
 from .groups import GROUP_RATE_LIMITS, ToolGroup
+
+ToolTransport = Literal["internal", "http", "mcp", "process"]
 
 # Shorthand aliases for readability
 _ALL = list(AgentRole)
@@ -40,6 +39,7 @@ def _entry(
     blocked_roles: list[AgentRole] | None = None,
     cache_ttl: int = 30,
     idempotent: bool = True,
+    transport: ToolTransport = "internal",
 ) -> dict:
     return {
         "tool_name": name,
@@ -50,372 +50,144 @@ def _entry(
         "rate_limit_calls_per_min": GROUP_RATE_LIMITS[group],
         "cache_ttl_seconds": cache_ttl,
         "idempotent": idempotent,
+        "transport": transport,
     }
 
 
-# ---------------------------------------------------------------------------
-# TOOL_MANIFEST — dict[str, dict]  keyed by tool_name
-# ---------------------------------------------------------------------------
-
 TOOL_MANIFEST: dict[str, dict] = {}
+
 
 def _register(*entries: dict) -> None:
     for e in entries:
         TOOL_MANIFEST[e["tool_name"]] = e
 
 
-# ── GROUP_WEB ──────────────────────────────────────────────────────────────
+# --- Workflow ---
 _register(
-    _entry(
-        name="web_search",
-        group=ToolGroup.WEB,
-        description="Search the web via a search API and return top results.",
-        allowed_roles=_WORKER,  # C-Suite, Admin, Worker all have web_search
-        cache_ttl=60,
-    ),
-    _entry(
-        name="web_fetch",
-        group=ToolGroup.WEB,
-        description="Fetch the contents of a URL and return text/HTML.",
-        allowed_roles=_WORKER,
-        cache_ttl=60,
-    ),
+    _entry(name="project.create", group=ToolGroup.WORKFLOW, description="Create a new project record.", allowed_roles=_ORCH, cache_ttl=0, idempotent=False),
+    _entry(name="project.status", group=ToolGroup.WORKFLOW, description="Get the current project status.", allowed_roles=_EXEC, cache_ttl=15),
+    _entry(name="project.transition", group=ToolGroup.WORKFLOW, description="Transition a project state.", allowed_roles=_EXEC, cache_ttl=0, idempotent=False),
+    _entry(name="project.list", group=ToolGroup.WORKFLOW, description="List projects with optional filters.", allowed_roles=_EXEC, cache_ttl=15),
+    _entry(name="department_task", group=ToolGroup.WORKFLOW, description="Dispatch work to a department.", allowed_roles=_EXEC, cache_ttl=0, idempotent=False),
+    _entry(name="human.notify", group=ToolGroup.WORKFLOW, description="Notify human operator.", allowed_roles=_EXEC, cache_ttl=0, idempotent=False),
+    _entry(name="human.await_decision", group=ToolGroup.WORKFLOW, description="Await human decision.", allowed_roles=_ORCH, cache_ttl=0, idempotent=False),
 )
 
-# ── GROUP_FILE ─────────────────────────────────────────────────────────────
+# --- Document ---
 _register(
-    _entry(
-        name="file_read",
-        group=ToolGroup.FILE,
-        description="Read a file from the project workspace.",
-        allowed_roles=_WORKER,
-        cache_ttl=10,
-    ),
-    _entry(
-        name="file_write",
-        group=ToolGroup.FILE,
-        description="Write content to a file in the project workspace.",
-        allowed_roles=_WORKER,
-        cache_ttl=0,
-        idempotent=False,
-    ),
+    _entry(name="document.create_draft", group=ToolGroup.DOCUMENT, description="Create a document draft.", allowed_roles=_ADMIN, cache_ttl=0, idempotent=False),
+    _entry(name="document.submit", group=ToolGroup.DOCUMENT, description="Submit document for review.", allowed_roles=_ADMIN, cache_ttl=0, idempotent=False),
+    _entry(name="document.revise", group=ToolGroup.DOCUMENT, description="Revise an existing document.", allowed_roles=_ADMIN, cache_ttl=0, idempotent=False),
+    _entry(name="document.get_latest", group=ToolGroup.DOCUMENT, description="Fetch latest document version.", allowed_roles=_WORKER, cache_ttl=15),
+    _entry(name="document.list", group=ToolGroup.DOCUMENT, description="List documents.", allowed_roles=_WORKER, cache_ttl=15),
 )
 
-# ── GROUP_MEMORY ───────────────────────────────────────────────────────────
+# --- Review ---
 _register(
-    _entry(
-        name="shared_memory_read",
-        group=ToolGroup.MEMORY,
-        description="Read a value from the shared agent memory store.",
-        allowed_roles=_WORKER,
-        cache_ttl=5,
-    ),
-    _entry(
-        name="shared_memory_write",
-        group=ToolGroup.MEMORY,
-        description="Write a value to the shared agent memory store.",
-        allowed_roles=_WORKER,
-        cache_ttl=0,
-        idempotent=False,
-    ),
+    _entry(name="review.start_session", group=ToolGroup.REVIEW, description="Start a review session.", allowed_roles=_EXEC, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="review.submit", group=ToolGroup.REVIEW, description="Submit a review response.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="review.submit_veto", group=ToolGroup.REVIEW, description="Submit a CSO veto.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="review.aggregate", group=ToolGroup.REVIEW, description="Aggregate review responses.", allowed_roles=_EXEC, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="approval.override_cso", group=ToolGroup.REVIEW, description="CEO override for CSO veto.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
 )
 
-# ── GROUP_PROJECT ──────────────────────────────────────────────────────────
+# --- Sprint / Issue ---
 _register(
-    _entry(
-        name="project.create",
-        group=ToolGroup.PROJECT,
-        description="Create a new project record.",
-        allowed_roles=_ORCH,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="project.status",
-        group=ToolGroup.PROJECT,
-        description="Get the current project status and state.",
-        allowed_roles=_EXEC,
-        cache_ttl=15,
-    ),
-    _entry(
-        name="project.transition",
-        group=ToolGroup.PROJECT,
-        description="Transition the project to a new state.",
-        allowed_roles=_EXEC,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="document.create_draft",
-        group=ToolGroup.PROJECT,
-        description="Create a new document draft.",
-        allowed_roles=_ADMIN,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="document.submit",
-        group=ToolGroup.PROJECT,
-        description="Submit a document draft for review.",
-        allowed_roles=_ADMIN,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="document.revise",
-        group=ToolGroup.PROJECT,
-        description="Revise a document based on review feedback.",
-        allowed_roles=_ADMIN,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="document.get_latest",
-        group=ToolGroup.PROJECT,
-        description="Retrieve the latest version of a document.",
-        allowed_roles=_WORKER,
-        cache_ttl=15,
-    ),
-    _entry(
-        name="document.list",
-        group=ToolGroup.PROJECT,
-        description="List documents, optionally filtered by project or type.",
-        allowed_roles=_WORKER,
-        cache_ttl=15,
-    ),
-    _entry(
-        name="review.start_session",
-        group=ToolGroup.PROJECT,
-        description="Start a multi-reviewer review session.",
-        allowed_roles=_EXEC,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="review.submit_response",
-        group=ToolGroup.PROJECT,
-        description="Submit a review verdict for a review session.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="review.submit_veto",
-        group=ToolGroup.PROJECT,
-        description="Submit a CSO veto on a review.",
-        allowed_roles=[AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="review.aggregate",
-        group=ToolGroup.PROJECT,
-        description="Aggregate review verdicts into a final decision.",
-        allowed_roles=_EXEC,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="approval.override_cso",
-        group=ToolGroup.PROJECT,
-        description="CSO override: block or approve despite reviews.",
-        allowed_roles=[AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="human.notify",
-        group=ToolGroup.PROJECT,
-        description="Send a notification to the human operator.",
-        allowed_roles=_EXEC,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="human.await_decision",
-        group=ToolGroup.PROJECT,
-        description="Block until the human operator makes a decision.",
-        allowed_roles=_ORCH,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="department_task",
-        group=ToolGroup.PROJECT,
-        description="Dispatch a work task to a department team.",
-        allowed_roles=_EXEC,
-        cache_ttl=0,
-        idempotent=False,
-    ),
+    _entry(name="sprint.create", group=ToolGroup.SPRINT_ISSUE, description="Create sprint.", allowed_roles=_CSUITE, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="sprint.activate", group=ToolGroup.SPRINT_ISSUE, description="Activate sprint.", allowed_roles=_CSUITE, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="sprint.close", group=ToolGroup.SPRINT_ISSUE, description="Close sprint.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="issue.create", group=ToolGroup.SPRINT_ISSUE, description="Create issue.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="issue.decompose", group=ToolGroup.SPRINT_ISSUE, description="Decompose issue.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="issue.update_status", group=ToolGroup.SPRINT_ISSUE, description="Update issue status.", allowed_roles=_ADMIN, cache_ttl=0, idempotent=False),
 )
 
-# ── GROUP_SPRINT_KPI ───────────────────────────────────────────────────────
+# --- DevOps ---
 _register(
-    _entry(
-        name="sprint.create",
-        group=ToolGroup.SPRINT_KPI,
-        description="Create a new sprint for a team.",
-        allowed_roles=_CSUITE,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="sprint.activate",
-        group=ToolGroup.SPRINT_KPI,
-        description="Activate a sprint, transitioning it to IN_PROGRESS.",
-        allowed_roles=_CSUITE,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="sprint.close",
-        group=ToolGroup.SPRINT_KPI,
-        description="Close a sprint and generate the sprint report.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="issue.create",
-        group=ToolGroup.SPRINT_KPI,
-        description="Create a new issue/work-item in a sprint.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="issue.decompose",
-        group=ToolGroup.SPRINT_KPI,
-        description="Decompose an issue into sub-tasks.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="issue.update_status",
-        group=ToolGroup.SPRINT_KPI,
-        description="Update the status of an issue.",
-        allowed_roles=_ADMIN,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="kpi.compute_sprint",
-        group=ToolGroup.SPRINT_KPI,
-        description="Compute KPIs for a sprint (velocity, defect rate, etc.).",
-        allowed_roles=_CSUITE,
-        cache_ttl=30,
-    ),
-    _entry(
-        name="kpi.compute_project",
-        group=ToolGroup.SPRINT_KPI,
-        description="Compute project-level KPIs across all sprints.",
-        allowed_roles=_CSUITE,
-        cache_ttl=30,
-    ),
-    _entry(
-        name="kpi.query_history",
-        group=ToolGroup.SPRINT_KPI,
-        description="Query historical KPI data with filters.",
-        allowed_roles=_EXEC,
-        cache_ttl=30,
-    ),
-    _entry(
-        name="kpi.update_agent_profile",
-        group=ToolGroup.SPRINT_KPI,
-        description="Update an agent's performance profile based on KPI data.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="velocity.report",
-        group=ToolGroup.SPRINT_KPI,
-        description="Generate a velocity report for a team/sprint.",
-        allowed_roles=_CSUITE,
-        cache_ttl=60,
-    ),
-    _entry(
-        name="estimation.adjust",
-        group=ToolGroup.SPRINT_KPI,
-        description="Adjust story-point estimation model based on actuals.",
-        allowed_roles=_CSUITE,
-        cache_ttl=0,
-        idempotent=False,
-    ),
+    _entry(name="infra.provision", group=ToolGroup.DEVOPS, description="Provision infrastructure resources.", allowed_roles=_ADMIN, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="cicd.configure", group=ToolGroup.DEVOPS, description="Configure CI/CD.", allowed_roles=_ADMIN, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="monitoring.setup", group=ToolGroup.DEVOPS, description="Setup monitoring.", allowed_roles=_ADMIN, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="secrets.manage", group=ToolGroup.DEVOPS, description="Manage secrets.", allowed_roles=_ADMIN, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
+    _entry(name="infra.ready_signal", group=ToolGroup.DEVOPS, description="Signal infra readiness.", allowed_roles=_ADMIN, blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT], cache_ttl=0, idempotent=False),
 )
 
-# ── GROUP_INFRA ────────────────────────────────────────────────────────────
+# --- Capability ---
 _register(
-    _entry(
-        name="infra.provision",
-        group=ToolGroup.INFRA,
-        description="Provision infrastructure resources.",
-        allowed_roles=_ADMIN,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="cicd.configure",
-        group=ToolGroup.INFRA,
-        description="Configure CI/CD pipeline settings.",
-        allowed_roles=_ADMIN,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="monitoring.setup",
-        group=ToolGroup.INFRA,
-        description="Set up monitoring and alerting rules.",
-        allowed_roles=_ADMIN,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="secrets.manage",
-        group=ToolGroup.INFRA,
-        description="Manage secrets (create, rotate, revoke).",
-        allowed_roles=_ADMIN,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="infra.ready_signal",
-        group=ToolGroup.INFRA,
-        description="Signal that infrastructure is ready for deployment.",
-        allowed_roles=_ADMIN,
-        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="blob.upload",
-        group=ToolGroup.INFRA,
-        description="Upload a file to MinIO blob storage.",
-        allowed_roles=_WORKER,
-        cache_ttl=0,
-        idempotent=False,
-    ),
-    _entry(
-        name="blob.download",
-        group=ToolGroup.INFRA,
-        description="Download a file from MinIO blob storage.",
-        allowed_roles=_ALL,  # Even sub-agents can download
-        cache_ttl=30,
-    ),
-    _entry(
-        name="blob.list",
-        group=ToolGroup.INFRA,
-        description="List objects in a MinIO bucket with optional prefix.",
-        allowed_roles=_WORKER,
-        cache_ttl=15,
-    ),
+    _entry(name="capability.search", group=ToolGroup.CAPABILITY, description="Search for workers by capability.", allowed_roles=_ADMIN, cache_ttl=15),
+    _entry(name="capability.list_workers", group=ToolGroup.CAPABILITY, description="List registered workers and capabilities.", allowed_roles=_ADMIN, cache_ttl=15),
+    _entry(name="capability.register", group=ToolGroup.CAPABILITY, description="Register worker capabilities.", allowed_roles=_EXEC, cache_ttl=0, idempotent=False),
+    _entry(name="capability.deregister", group=ToolGroup.CAPABILITY, description="Deregister worker capabilities.", allowed_roles=_EXEC, cache_ttl=0, idempotent=False),
 )
+
+# --- KPI / Utility ---
+_register(
+    _entry(name="kpi.compute", group=ToolGroup.KPI_UTILITY, description="Compute KPI snapshot.", allowed_roles=_CSUITE, cache_ttl=30),
+    _entry(name="kpi.query_history", group=ToolGroup.KPI_UTILITY, description="Query KPI history.", allowed_roles=_EXEC, cache_ttl=30),
+    _entry(name="kpi.update_agent_profile", group=ToolGroup.KPI_UTILITY, description="Update agent profile from KPI data.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="velocity.report", group=ToolGroup.KPI_UTILITY, description="Generate velocity report.", allowed_roles=_CSUITE, cache_ttl=60),
+    _entry(name="estimation.adjust", group=ToolGroup.KPI_UTILITY, description="Adjust estimation strategy.", allowed_roles=_CSUITE, cache_ttl=0, idempotent=False),
+    _entry(name="blob.upload", group=ToolGroup.KPI_UTILITY, description="Upload blob to object storage.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="blob.download", group=ToolGroup.KPI_UTILITY, description="Download blob from object storage.", allowed_roles=_ALL, cache_ttl=30),
+    _entry(name="blob.list", group=ToolGroup.KPI_UTILITY, description="List blobs from object storage.", allowed_roles=_WORKER, cache_ttl=15),
+    _entry(name="web_search", group=ToolGroup.KPI_UTILITY, description="Search the web.", allowed_roles=_WORKER, cache_ttl=60),
+    _entry(name="web_fetch", group=ToolGroup.KPI_UTILITY, description="Fetch URL content.", allowed_roles=_WORKER, cache_ttl=60),
+    _entry(name="file_read", group=ToolGroup.KPI_UTILITY, description="Read a workspace file.", allowed_roles=_WORKER, cache_ttl=10),
+    _entry(name="file_write", group=ToolGroup.KPI_UTILITY, description="Write a workspace file.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="shared_memory_read", group=ToolGroup.KPI_UTILITY, description="Read shared memory.", allowed_roles=_WORKER, cache_ttl=5),
+    _entry(name="shared_memory_write", group=ToolGroup.KPI_UTILITY, description="Write shared memory.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+)
+
+
+# Compatibility aliases (legacy_name -> canonical_name)
+TOOL_ALIASES: dict[str, str] = {
+    # legacy document/review names
+    "document_create": "document.create_draft",
+    "document_get": "document.get_latest",
+    "review_aggregate": "review.aggregate",
+    "review.submit_response": "review.submit",
+    # legacy KPI split names
+    "kpi.compute_sprint": "kpi.compute",
+    "kpi.compute_project": "kpi.compute",
+    # legacy org-specific helper names
+    "cost_estimate": "kpi.compute",
+    "budget_check": "kpi.query_history",
+    "roi_calculate": "kpi.compute",
+    "market_research": "web_search",
+    "tech_stack_analyze": "capability.search",
+    "integration_check": "capability.search",
+    "code_analyze": "capability.search",
+    "capacity_check": "capability.list_workers",
+    "agent_registry_query": "capability.list_workers",
+    "workload_report": "kpi.query_history",
+    "team_recommend": "capability.search",
+    "threat_model": "review.submit",
+    "compliance_check": "review.submit",
+    "security_scan": "review.submit",
+    "risk_assess": "review.submit",
+}
+
+
+def resolve_tool_name(tool_name: str) -> str | None:
+    """Return canonical name for a tool (or None when unknown)."""
+    if tool_name in TOOL_MANIFEST:
+        return tool_name
+    return TOOL_ALIASES.get(tool_name)
+
+
+def tool_exists(tool_name: str) -> bool:
+    return resolve_tool_name(tool_name) is not None
+
+
+def all_manifest_entries(*, include_aliases: bool = True) -> list[dict]:
+    """Return manifest entries, optionally including deprecated alias records."""
+    entries = [dict(v) for _, v in sorted(TOOL_MANIFEST.items())]
+    if not include_aliases:
+        return entries
+
+    for alias, canonical in sorted(TOOL_ALIASES.items()):
+        base = TOOL_MANIFEST[canonical]
+        alias_entry = dict(base)
+        alias_entry["tool_name"] = alias
+        alias_entry["deprecated_alias_of"] = canonical
+        entries.append(alias_entry)
+    return entries
+

@@ -13,6 +13,7 @@ LOG_LEVEL            INFO
 
 from __future__ import annotations
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -45,6 +46,12 @@ class Settings(BaseSettings):
     # Service
     host: str = "0.0.0.0"
     port: int = 8002
+
+    # Optional external transport configuration (JSON env maps)
+    http_transport_endpoints: dict[str, str] = Field(default_factory=dict)
+    mcp_transport_endpoints: dict[str, str] = Field(default_factory=dict)
+    process_transport_commands: dict[str, list[str]] = Field(default_factory=dict)
+    transport_request_timeout_seconds: float = 15.0
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

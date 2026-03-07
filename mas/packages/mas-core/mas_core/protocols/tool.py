@@ -2,7 +2,7 @@
 
 Design notes
 ------------
-* Agents call the tool-service over HTTP (POST /tools/call).
+* Agents call the tool-service over HTTP (POST /tools/{tool_name}/run).
 * The tool-service enforces role-based access before executing any tool.
 * ``ToolRequest.idempotency_key`` maps to the originating ``MessageEnvelope.message_id``
   so the shared Redis cache (``tool_cache:{hash}``) can deduplicate concurrent calls.
@@ -38,7 +38,7 @@ class CircuitState(str, Enum):
 
 
 class ToolRequest(BaseModel):
-    """Sent by an agent to POST /tools/call on the tool-service."""
+    """Sent by an agent to POST /tools/{tool_name}/run on the tool-service."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -189,4 +189,12 @@ class ToolManifestEntry(BaseModel):
     idempotent: bool = Field(
         default=True,
         description="If True, identical kwargs always produce the same result (safe to cache/retry).",
+    )
+    transport: str = Field(
+        default="internal",
+        description="Tool transport backend: internal | http | mcp | process.",
+    )
+    deprecated_alias_of: str | None = Field(
+        default=None,
+        description="If set, this entry is a legacy alias of the canonical tool name.",
     )

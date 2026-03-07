@@ -1,0 +1,189 @@
+name: corporate-project-lifecycle
+version: "1.0"
+description: "14-step corporate project lifecycle (PDR -> CDR -> RR -> Sprints -> KPI)"
+
+states:
+  - id: INIT
+    responsible: ceo
+    on_enter:
+      - action: create_project_record
+  - id: FEASIBILITY_CHECK
+    responsible: ceo
+    timeout_seconds: 3600
+    on_enter:
+      - action: fan_out_review
+        targets: [cfo, cio, chrm, cso]
+        msg_type: REVIEW_REQUEST
+  - id: FEASIBILITY_REPORT
+    responsible: ceo
+    on_enter:
+      - action: open_approval_gate
+        gate_type: FEASIBILITY
+  - id: PDR_CREATION
+    responsible: coo
+    timeout_seconds: 7200
+    on_enter:
+      - action: publish_task
+        target_team: dept_production
+  - id: PDR_REVIEW
+    responsible: coo
+    timeout_seconds: 3600
+    on_enter:
+      - action: fan_out_review
+        targets: [cfo, cio, chrm, cso]
+        msg_type: REVIEW_REQUEST
+  - id: SECURITY_BLOCKED
+    responsible: ceo
+    on_enter:
+      - action: notify_ceo_cso_veto
+  - id: CDR_CREATION
+    responsible: coo
+    timeout_seconds: 7200
+    on_enter:
+      - action: publish_task
+        target_team: dept_system
+  - id: CDR_REVIEW
+    responsible: ceo
+    on_enter:
+      - action: aggregate_and_present_cdr
+  - id: HUMAN_APPROVAL
+    responsible: ceo
+    on_enter:
+      - action: open_approval_gate
+        gate_type: CDR_APPROVAL
+  - id: RR_CREATION
+    responsible: coo
+    timeout_seconds: 3600
+    on_enter:
+      - action: publish_task
+        target_team: exec_coo
+  - id: SPRINT_PLANNING
+    responsible: cto
+    timeout_seconds: 3600
+    on_enter:
+      - action: publish_task
+        target_team: office_cto
+  - id: INFRA_PROVISIONING
+    responsible: cto
+    timeout_seconds: 1800
+    on_enter:
+      - action: publish_task
+        target_team: dept_devops
+        msg_type: SPRINT_PLAN
+        filter: issue_type=INFRA
+  - id: IN_PROGRESS
+    responsible: cto
+    on_enter:
+      - action: activate_dev_sprints
+  - id: RETROSPECTIVE
+    responsible: cto
+    timeout_seconds: 1800
+    on_enter:
+      - action: publish_task
+        target_team: office_cto
+  - id: KPI_PERSISTENCE
+    responsible: cto
+    on_enter:
+      - action: compute_and_persist_kpi
+  - id: COMPLETED
+    responsible: ceo
+  - id: ARCHIVED
+    terminal: true
+  - id: FAILED
+    responsible: ceo
+    on_enter:
+      - action: notify_failure
+
+transitions:
+  - from: INIT
+    event: project_created
+    to: FEASIBILITY_CHECK
+  - from: FEASIBILITY_CHECK
+    event: all_reviews_in
+    to: FEASIBILITY_REPORT
+  - from: FEASIBILITY_REPORT
+    event: human_approved
+    to: PDR_CREATION
+  - from: FEASIBILITY_REPORT
+    event: human_rejected
+    to: ARCHIVED
+  - from: FEASIBILITY_CHECK
+    event: cso_veto
+    to: SECURITY_BLOCKED
+  - from: PDR_CREATION
+    event: pdr_submitted
+    to: PDR_REVIEW
+  - from: PDR_REVIEW
+    event: all_reviews_in
+    to: CDR_CREATION
+  - from: PDR_REVIEW
+    event: cso_veto
+    to: SECURITY_BLOCKED
+  - from: SECURITY_BLOCKED
+    event: blocker_resolved
+    to: _restore_prior_state
+  - from: SECURITY_BLOCKED
+    event: ceo_override
+    to: _restore_prior_state
+  - from: CDR_CREATION
+    event: cdr_submitted
+    to: CDR_REVIEW
+  - from: CDR_REVIEW
+    event: cdr_presented
+    to: HUMAN_APPROVAL
+  - from: CDR_REVIEW
+    event: cso_veto
+    to: SECURITY_BLOCKED
+  - from: HUMAN_APPROVAL
+    event: human_approved
+    to: RR_CREATION
+  - from: HUMAN_APPROVAL
+    event: human_edits
+    to: CDR_CREATION
+  - from: HUMAN_APPROVAL
+    event: human_cancelled
+    to: ARCHIVED
+  - from: RR_CREATION
+    event: rr_submitted
+    to: SPRINT_PLANNING
+  - from: SPRINT_PLANNING
+    event: sprints_created
+    to: INFRA_PROVISIONING
+  - from: INFRA_PROVISIONING
+    event: infra_ready
+    to: IN_PROGRESS
+  - from: INFRA_PROVISIONING
+    event: infra_failed
+    to: FAILED
+  - from: IN_PROGRESS
+    event: all_sprints_done
+    to: RETROSPECTIVE
+  - from: RETROSPECTIVE
+    event: retrospective_done
+    to: KPI_PERSISTENCE
+  - from: KPI_PERSISTENCE
+    event: kpi_saved
+    to: COMPLETED
+  - from: COMPLETED
+    event: archive_requested
+    to: ARCHIVED
+  - from: "*"
+    event: watchdog_timeout
+    to: FAILED
+  - from: "*"
+    event: review_circuit_open
+    to: FAILED
+  - from: "*"
+    event: unrecoverable_error
+    to: FAILED
+  - from: FAILED
+    event: retry
+    to: _restore_last_safe_state
+  - from: FAILED
+    event: archive_requested
+    to: ARCHIVED
+
+watchdog:
+  check_interval_seconds: 60
+  default_state_timeout_seconds: 3600
+  boot_grace_seconds: 300

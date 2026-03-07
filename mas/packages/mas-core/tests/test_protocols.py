@@ -24,6 +24,9 @@ from mas_core.protocols import (
     AgentProfile,
     AgentRole,
     BlobRef,
+    CapabilityDef,
+    CapabilitySearchRequest,
+    CapabilitySearchResponse,
     CircuitState,
     DocumentState,
     DocumentType,
@@ -60,6 +63,8 @@ from mas_core.protocols import (
     WSNackFrame,
     WSPingFrame,
     WSPongFrame,
+    WorkerCapabilityRecord,
+    WorkerManifest,
     parse_agent_frame,
 )
 
@@ -981,3 +986,45 @@ class TestKPIMetricTypeEnum:
         for mt in KPIMetricType:
             snap = KPISnapshot(project_id="p1", metric_type=mt, value=1.0)
             assert snap.metric_type == mt
+
+
+class TestCapabilityModels:
+    def test_capability_def_defaults(self):
+        cap = CapabilityDef(name="implement_feature")
+        assert cap.name == "implement_feature"
+        assert cap.version == "1.0"
+        assert cap.risk_level == "low"
+
+    def test_capability_search_roundtrip(self):
+        req = CapabilitySearchRequest(name="write_test", min_sandbox_tier=1)
+        worker = WorkerCapabilityRecord(
+            worker_id="tester_1",
+            name="Tester",
+            capabilities=["write_test"],
+        )
+        resp = CapabilitySearchResponse(query=req, workers=[worker], count=1)
+        assert resp.count == 1
+        assert resp.workers[0].worker_id == "tester_1"
+
+
+class TestWorkerManifestModel:
+    def test_worker_manifest_minimal(self):
+        manifest = WorkerManifest.model_validate(
+            {
+                "metadata": {"id": "worker_1", "name": "Worker One"},
+                "capabilities": [{"name": "web_search"}],
+            }
+        )
+        assert manifest.metadata.id == "worker_1"
+        assert manifest.runtime.transport == "process"
+        assert manifest.capabilities[0].name == "web_search"
+
+    def test_worker_manifest_rejects_bad_transport(self):
+        with pytest.raises(Exception):
+            WorkerManifest.model_validate(
+                {
+                    "metadata": {"id": "worker_1", "name": "Worker One"},
+                    "runtime": {"transport": "invalid_transport"},
+                    "capabilities": [{"name": "web_search"}],
+                }
+            )

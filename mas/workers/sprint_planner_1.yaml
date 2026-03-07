@@ -1,0 +1,53 @@
+metadata:
+  id: sprint_planner_1
+  name: Sprint Planner
+  version: '1.0'
+  description: Auto-generated baseline manifest for sprint_planner_1
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - worker
+  - office_cto
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: sprint.create
+  version: '1.0'
+  description: Capability mapped from tool sprint.create
+  risk_level: low
+  required_tools:
+  - sprint.create
+- name: issue.create
+  version: '1.0'
+  description: Capability mapped from tool issue.create
+  risk_level: low
+  required_tools:
+  - issue.create
+- name: issue.decompose
+  version: '1.0'
+  description: Capability mapped from tool issue.decompose
+  risk_level: low
+  required_tools:
+  - issue.decompose
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

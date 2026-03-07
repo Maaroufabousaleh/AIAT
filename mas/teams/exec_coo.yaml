@@ -16,9 +16,9 @@ admin:
     max_tool_calls: 40
     max_cost_usd: 3.00
   tools:
-    - document_create
-    - document_get
-    - review_aggregate
+    - document.create_draft
+    - document.get_latest
+    - review.aggregate
     - review.start_session
     - department_task
     - project.status

@@ -10,22 +10,9 @@ Responsibilities
 • Result cache: hash(tool_name + sorted(kwargs)) → Redis tool_cache:{hash}, 30 s TTL.
 • Per-tool circuit breaker: ≥3 failures in 60 s → OPEN for 120 s → HALF_OPEN probe.
 
-Tool groups (Phase 6, 6 groups)
---------------------------------
-GROUP_WEB        web_search, fetch_url
-GROUP_FILE       file_read, file_write
-GROUP_MEMORY     shared_memory_read, shared_memory_write
-GROUP_PROJECT    project.create, project.status, project.transition,
-                 document_create, document_get, review_aggregate,
-                 approval.override_cso, review.submit_veto,
-                 human.notify, human.await_decision, review.start_session,
-                 department_task
-GROUP_SPRINT_KPI sprint.create, issue.create, issue.decompose,
-                 kpi.compute, kpi.query_history, kpi.update_agent_profile,
-                 velocity.report, estimation.adjust
-GROUP_INFRA      infra.provision, cicd.configure, monitoring.setup,
-                 secrets.manage, infra.ready_signal,
-                 blob.upload, blob.download
+Tool groups (Phase 6, canonical 7 groups)
+-----------------------------------------
+workflow, document, review, sprint_issue, devops, capability, kpi_utility
 
 Endpoints (Phase 6)
 -------------------

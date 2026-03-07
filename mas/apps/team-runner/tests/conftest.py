@@ -1,13 +1,22 @@
 """
 Conftest for team-runner tests.
 """
+import sys
+from pathlib import Path
 import os
 import textwrap
+from uuid import uuid4
 import pytest
+
+# Ensure the team-runner package is importable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "packages" / "mas-core"))
+sys.path.insert(0, str(ROOT / "packages" / "mas-tools-sdk"))
 
 
 @pytest.fixture
-def sample_team_yaml(tmp_path):
+def sample_team_yaml():
     """Write a minimal team YAML to a temp file and set TEAM_CONFIG env var."""
     yaml_content = textwrap.dedent("""\
         team_id: test_team
@@ -25,8 +34,14 @@ def sample_team_yaml(tmp_path):
           tools: []
         workers: []
     """)
-    config_file = tmp_path / "test_team.yaml"
-    config_file.write_text(yaml_content)
+    temp_dir = Path(__file__).resolve().parent / "_tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    config_file = temp_dir / f"test_team_{uuid4().hex}.yaml"
+    config_file.write_text(yaml_content, encoding="utf-8")
     os.environ["TEAM_CONFIG"] = str(config_file)
-    yield str(config_file)
-    del os.environ["TEAM_CONFIG"]
+    try:
+        yield str(config_file)
+    finally:
+        os.environ.pop("TEAM_CONFIG", None)
+        if config_file.exists():
+            config_file.unlink()

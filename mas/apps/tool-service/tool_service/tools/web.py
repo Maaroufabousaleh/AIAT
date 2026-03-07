@@ -11,7 +11,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 class WebSearchTool(BaseTool):
     name = "web_search"
-    group = ToolGroup.WEB
+    group = ToolGroup.KPI_UTILITY
     description = "Search the web via a search API and return top results."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,
@@ -36,7 +36,7 @@ class WebSearchTool(BaseTool):
 
 class WebFetchTool(BaseTool):
     name = "web_fetch"
-    group = ToolGroup.WEB
+    group = ToolGroup.KPI_UTILITY
     description = "Fetch the contents of a URL and return text/HTML."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,

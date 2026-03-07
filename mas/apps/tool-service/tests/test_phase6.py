@@ -128,6 +128,72 @@ class TestToolRegistry:
         assert resp.trace_id == "trace-abc"
         assert resp.span_id == "span-123"
 
+    @pytest.mark.anyio
+    async def test_http_transport_path_is_supported(self, make_registry, monkeypatch):
+        from mas_tools_sdk.base import BaseTool
+        from mas_tools_sdk.groups import ToolGroup
+
+        class HttpTransportTool(BaseTool):
+            name = "capability.register"
+            group = ToolGroup.CAPABILITY
+            transport = "http"
+            allowed_roles = [AgentRole.ORCHESTRATOR]
+
+            async def execute(self, **kwargs):
+                return {"should_not": "run"}
+
+        registry = make_registry()
+        registry.register(HttpTransportTool())
+        async def fake_http(tool_name, kwargs):
+            return {"tool": tool_name, "ok": True}
+        monkeypatch.setattr(
+            registry,
+            "_execute_http_transport",
+            fake_http,
+        )
+        req = ToolRequest(
+            caller_id="agent-1",
+            caller_role=AgentRole.ORCHESTRATOR,
+            tool_name="capability.register",
+            tool_kwargs={"worker_id": "w1"},
+        )
+        resp = await registry.execute(req)
+        assert resp.success is True
+        assert resp.result["ok"] is True
+
+    @pytest.mark.anyio
+    async def test_process_transport_path_is_supported(self, make_registry, monkeypatch):
+        from mas_tools_sdk.base import BaseTool
+        from mas_tools_sdk.groups import ToolGroup
+
+        class ProcessTransportTool(BaseTool):
+            name = "capability.deregister"
+            group = ToolGroup.CAPABILITY
+            transport = "process"
+            allowed_roles = [AgentRole.ORCHESTRATOR]
+
+            async def execute(self, **kwargs):
+                return {"should_not": "run"}
+
+        registry = make_registry()
+        registry.register(ProcessTransportTool())
+        async def fake_process(tool_name, kwargs):
+            return {"tool": tool_name, "ok": True}
+        monkeypatch.setattr(
+            registry,
+            "_execute_process_transport",
+            fake_process,
+        )
+        req = ToolRequest(
+            caller_id="agent-1",
+            caller_role=AgentRole.ORCHESTRATOR,
+            tool_name="capability.deregister",
+            tool_kwargs={"worker_id": "w1"},
+        )
+        resp = await registry.execute(req)
+        assert resp.success is True
+        assert resp.result["ok"] is True
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Circuit Breaker
@@ -221,7 +287,7 @@ class TestRateLimiter:
         from tool_service.rate_limiter import RateLimiterPool
 
         pool = RateLimiterPool()
-        allowed, remaining, _ = await pool.acquire(ToolGroup.WEB)
+        allowed, remaining, _ = await pool.acquire(ToolGroup.KPI_UTILITY)
         assert allowed is True
 
     @pytest.mark.anyio
@@ -230,7 +296,7 @@ class TestRateLimiter:
         from tool_service.rate_limiter import RateLimiterPool
 
         pool = RateLimiterPool()
-        assert pool.get_rate(ToolGroup.WEB) == GROUP_RATE_LIMITS[ToolGroup.WEB]
+        assert pool.get_rate(ToolGroup.KPI_UTILITY) == GROUP_RATE_LIMITS[ToolGroup.KPI_UTILITY]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -315,7 +381,13 @@ class TestManifest:
 
         assert "web_search" in TOOL_MANIFEST
         entry = TOOL_MANIFEST["web_search"]
-        assert entry["tool_group"] == "web"
+        assert entry["tool_group"] == "kpi_utility"
+
+    def test_alias_entries_include_deprecation_metadata(self, make_registry):
+        registry = make_registry()
+        manifest = registry.get_manifest()
+        alias = next(e for e in manifest if e["tool_name"] == "document_create")
+        assert alias["deprecated_alias_of"] == "document.create_draft"
 
     def test_project_create_restricted_to_orchestrator(self):
         from mas_tools_sdk.manifest import TOOL_MANIFEST
@@ -360,6 +432,45 @@ class TestHTTPIntegration:
         data = resp.json()
         assert data["success"] is True
         assert data["tool_name"] == "web_search"
+
+    @pytest.mark.anyio
+    async def test_execute_legacy_alias_via_http(self, client):
+        payload = {
+            "agent_id": "agent-orch",
+            "sender_role": "orchestrator",
+            "tool_name": "document_create",
+            "kwargs": {"title": "Doc 1"},
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["tool_name"] == "document_create"
+        assert data["result"]["_canonical_tool"] == "document.create_draft"
+
+    @pytest.mark.anyio
+    async def test_capability_lifecycle_via_http(self, client):
+        register_payload = {
+            "agent_id": "agent-orch",
+            "sender_role": "orchestrator",
+            "tool_name": "capability.register",
+            "kwargs": {"worker_id": "w1", "capabilities": ["implement_feature"]},
+        }
+        resp = await client.post("/tools/execute", json=register_payload)
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        list_payload = {
+            "agent_id": "agent-orch",
+            "sender_role": "orchestrator",
+            "tool_name": "capability.list_workers",
+            "kwargs": {},
+        }
+        resp = await client.post("/tools/execute", json=list_payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"]["count"] >= 1
 
     @pytest.mark.anyio
     async def test_execute_forbidden_via_http(self, client):

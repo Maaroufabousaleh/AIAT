@@ -16,10 +16,10 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 1.00
   tools:
-    - tech_stack_analyze
-    - integration_check
+    - capability.search
+    - capability.search
     - web_search
-    - code_analyze
+    - capability.search
 
 workers:
   - agent_id: tech_analyst_1
@@ -33,6 +33,6 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - tech_stack_analyze
+      - capability.search
       - web_search
-      - code_analyze
+      - capability.search

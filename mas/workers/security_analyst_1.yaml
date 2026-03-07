@@ -1,0 +1,59 @@
+metadata:
+  id: security_analyst_1
+  name: Security Analyst
+  version: '1.0'
+  description: Auto-generated baseline manifest for security_analyst_1
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - worker
+  - office_cso
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: threat_model
+  version: '1.0'
+  description: Capability mapped from tool threat_model
+  risk_level: low
+  required_tools:
+  - threat_model
+- name: compliance_check
+  version: '1.0'
+  description: Capability mapped from tool compliance_check
+  risk_level: low
+  required_tools:
+  - compliance_check
+- name: security_scan
+  version: '1.0'
+  description: Capability mapped from tool security_scan
+  risk_level: low
+  required_tools:
+  - security_scan
+- name: risk_assess
+  version: '1.0'
+  description: Capability mapped from tool risk_assess
+  risk_level: low
+  required_tools:
+  - risk_assess
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

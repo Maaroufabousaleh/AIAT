@@ -160,19 +160,22 @@ C_SUITE_BASE_TOOLS: tuple[str, ...] = (
     "blob.list",
     "web_search",
     "web_fetch",
-    "review.submit*",
+    "review.submit",
+    "capability.search",
+    "capability.list_workers",
 )
 
 #: Extra tools available only to the CTO team (office_cto).
 CTO_EXTRA_TOOLS: tuple[str, ...] = (
     "sprint.*",
     "issue.*",
-    "kpi.compute_sprint",
-    "kpi.compute_project",
+    "kpi.compute",
     "kpi.query_history",
     "kpi.update_agent_profile",
     "velocity.report",
     "estimation.adjust",
+    "capability.search",
+    "capability.list_workers",
 )
 
 ADMIN_BASE_TOOLS: tuple[str, ...] = (
@@ -183,6 +186,8 @@ ADMIN_BASE_TOOLS: tuple[str, ...] = (
     "document.list",
     "blob.*",
     "issue.update_status",
+    "capability.search",
+    "capability.list_workers",
 )
 
 #: Extra tools available only to the DevOps PM team (dept_devops).

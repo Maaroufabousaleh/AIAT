@@ -12,7 +12,10 @@ Coverage
 
 from __future__ import annotations
 
+import fnmatch
+
 import pytest
+from mas_tools_sdk.manifest import TOOL_ALIASES, TOOL_MANIFEST
 
 from mas_core.policy import (
     ADMIN_MSG_TYPES,
@@ -447,7 +450,7 @@ class TestToolAccessAllowed:
     def test_cto_extra_tools(self):
         for tool in [
             "sprint.create", "sprint.activate", "issue.create",
-            "kpi.compute_sprint", "kpi.update_agent_profile", "velocity.report",
+            "kpi.compute", "kpi.update_agent_profile", "velocity.report",
         ]:
             result = policy.can_use_tool(AgentRole.C_SUITE, tool, sender_team=CTO_TEAM)
             assert result is True
@@ -673,3 +676,27 @@ class TestUnknownSenderRole:
             AgentRole.SUB_AGENT, "dept_production", None, ORCHESTRATOR_TEAM, MessageType.TASK
         )
         assert result is not True
+
+
+class TestPolicyToolPatternValidity:
+    """All explicit policy tool patterns should resolve against canonical or alias names."""
+
+    def test_policy_tool_patterns_match_known_manifest_or_alias(self):
+        known = set(TOOL_MANIFEST) | set(TOOL_ALIASES)
+        role_rules = [
+            POLICY_RULES["orchestrator"]["allowed_tools"],
+            POLICY_RULES["executive"]["allowed_tools"],
+            POLICY_RULES["c_suite"]["allowed_tools"],
+            POLICY_RULES["c_suite"]["cto_extra_tools"],
+            POLICY_RULES["admin"]["allowed_tools"],
+            POLICY_RULES["admin"]["devops_pm_extra_tools"],
+            POLICY_RULES["worker"]["allowed_tools"],
+            POLICY_RULES["worker"]["blocked_tools"],
+            POLICY_RULES["sub_agent"]["allowed_tools"],
+        ]
+        for patterns in role_rules:
+            for pattern in patterns:
+                if pattern == "*":
+                    continue
+                matched = any(fnmatch.fnmatch(name, pattern) for name in known)
+                assert matched, f"Policy pattern '{pattern}' does not match any known tool"

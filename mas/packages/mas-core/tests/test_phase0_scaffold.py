@@ -21,9 +21,12 @@ def test_required_phase0_directories_exist() -> None:
         "packages/mas-core",
         "packages/mas-tools-sdk",
         "packages/mas-core/workflow",
+        "packages/mas-core/capabilities",
         "teams",
+        "workers",
         "infra/docker",
         "infra/compose",
+        "infra/sandbox",
         "migrations",
     ]
     missing = [rel for rel in required if not (root / rel).exists()]
@@ -53,12 +56,15 @@ def test_phase0_workflow_scaffold_files_exist() -> None:
     root = _repo_root()
     required = [
         "packages/mas-core/workflow/README.md",
+        "packages/mas-core/workflow/workflow-template.yaml",
         "packages/mas-core/mas_core/workflow/__init__.py",
         "packages/mas-core/mas_core/workflow/controller.py",
         "packages/mas-core/mas_core/workflow/events.py",
         "packages/mas-core/mas_core/workflow/states.py",
         "packages/mas-core/mas_core/workflow/transitions.py",
         "packages/mas-core/mas_core/workflow/watchdog.py",
+        "packages/mas-core/capabilities/README.md",
+        "packages/mas-core/mas_core/capabilities/__init__.py",
     ]
     missing = [rel for rel in required if not (root / rel).exists()]
     assert not missing, f"Missing workflow scaffold files: {missing}"
@@ -115,6 +121,25 @@ def test_phase0_prompts_directory_has_expected_files() -> None:
     assert expected_prompts.issubset(actual), (
         f"Missing prompt files: {expected_prompts - actual}"
     )
+
+
+def test_phase0_workers_directory_populated() -> None:
+    root = _repo_root()
+    workers_dir = root / "workers"
+    assert workers_dir.is_dir(), "Missing workers/ directory"
+    manifests = list(workers_dir.glob("*.yaml"))
+    assert manifests, "workers/ directory must include baseline worker manifests"
+
+
+def test_phase0_sandbox_scaffold_exists() -> None:
+    root = _repo_root()
+    required = [
+        "infra/sandbox/README.md",
+        "infra/sandbox/tier0-standard.yaml",
+        "infra/sandbox/tier1-restricted.yaml",
+    ]
+    missing = [rel for rel in required if not (root / rel).is_file()]
+    assert not missing, f"Missing sandbox scaffold files: {missing}"
 
 
 def test_phase0_readme_exists() -> None:

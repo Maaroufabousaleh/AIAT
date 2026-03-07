@@ -16,10 +16,10 @@ admin:
     max_tool_calls: 12
     max_cost_usd: 0.75
   tools:
-    - capacity_check
-    - agent_registry_query
-    - workload_report
-    - team_recommend
+    - capability.list_workers
+    - capability.list_workers
+    - kpi.query_history
+    - capability.search
 
 workers:
   - agent_id: hr_analyst_1
@@ -33,6 +33,6 @@ workers:
       max_tool_calls: 8
       max_cost_usd: 0.30
     tools:
-      - capacity_check
-      - agent_registry_query
-      - workload_report
+      - capability.list_workers
+      - capability.list_workers
+      - kpi.query_history

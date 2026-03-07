@@ -1,0 +1,53 @@
+metadata:
+  id: hr_analyst_1
+  name: HR Analyst
+  version: '1.0'
+  description: Auto-generated baseline manifest for hr_analyst_1
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - worker
+  - office_chrm
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: capacity_check
+  version: '1.0'
+  description: Capability mapped from tool capacity_check
+  risk_level: low
+  required_tools:
+  - capacity_check
+- name: agent_registry_query
+  version: '1.0'
+  description: Capability mapped from tool agent_registry_query
+  risk_level: low
+  required_tools:
+  - agent_registry_query
+- name: workload_report
+  version: '1.0'
+  description: Capability mapped from tool workload_report
+  risk_level: low
+  required_tools:
+  - workload_report
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

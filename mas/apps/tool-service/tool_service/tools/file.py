@@ -11,7 +11,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 class FileReadTool(BaseTool):
     name = "file_read"
-    group = ToolGroup.FILE
+    group = ToolGroup.KPI_UTILITY
     description = "Read a file from the project workspace."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,
@@ -28,7 +28,7 @@ class FileReadTool(BaseTool):
 
 class FileWriteTool(BaseTool):
     name = "file_write"
-    group = ToolGroup.FILE
+    group = ToolGroup.KPI_UTILITY
     description = "Write content to a file in the project workspace."
     allowed_roles = [
         AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE,

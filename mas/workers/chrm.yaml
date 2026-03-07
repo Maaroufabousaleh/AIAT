@@ -1,0 +1,59 @@
+metadata:
+  id: chrm
+  name: Chief Human Resource Manager
+  version: '1.0'
+  description: Auto-generated baseline manifest for chrm
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - c_suite
+  - office_chrm
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: CSuiteAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: capacity_check
+  version: '1.0'
+  description: Capability mapped from tool capacity_check
+  risk_level: low
+  required_tools:
+  - capacity_check
+- name: agent_registry_query
+  version: '1.0'
+  description: Capability mapped from tool agent_registry_query
+  risk_level: low
+  required_tools:
+  - agent_registry_query
+- name: workload_report
+  version: '1.0'
+  description: Capability mapped from tool workload_report
+  risk_level: low
+  required_tools:
+  - workload_report
+- name: team_recommend
+  version: '1.0'
+  description: Capability mapped from tool team_recommend
+  risk_level: low
+  required_tools:
+  - team_recommend
+sandbox:
+  profile: restricted
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

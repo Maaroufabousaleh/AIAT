@@ -15,7 +15,7 @@ import signal
 from collections.abc import Sequence
 from itertools import cycle
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import structlog
@@ -34,10 +34,13 @@ from mas_core.agent_runtime import (
     SubAgent,
     WorkerAgent,
 )
-from mas_core.memory import AgentStorage, CheckpointStore
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
+from mas_tools_sdk.manifest import resolve_tool_name
 from mas_tools_sdk.client import ToolServiceClient
+
+if TYPE_CHECKING:
+    from mas_core.memory import AgentStorage, CheckpointStore
 
 log = structlog.get_logger(__name__)
 
@@ -202,6 +205,8 @@ class TeamRuntime:
             )
 
         if self.settings.pgbouncer_dsn:
+            from mas_core.memory import AgentStorage, CheckpointStore
+
             self.storage = AgentStorage(self.settings.pgbouncer_dsn)
             await self.storage.connect()
             self.checkpoint_store = CheckpointStore(self.storage.engine)
@@ -451,7 +456,35 @@ class TeamRuntime:
 def load_team_config(path: Path) -> TeamConfig:
     """Parse the configured YAML file into TeamConfig."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return TeamConfig.model_validate(raw)
+    config = TeamConfig.model_validate(raw)
+    _normalize_and_validate_team_tools(config)
+    return config
+
+
+def _normalize_and_validate_team_tools(config: TeamConfig) -> None:
+    """Validate team tools against canonical + alias-aware manifest names.
+
+    Unknown tools fail fast at startup. Legacy alias names are normalized to
+    canonical names for runtime execution.
+    """
+
+    def normalize(agent: AgentSpec) -> None:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for tool in agent.tools:
+            canonical = resolve_tool_name(tool)
+            if canonical is None:
+                raise ValueError(
+                    f"Unknown tool '{tool}' in team '{config.team_id}' for agent '{agent.agent_id}'"
+                )
+            if canonical not in seen:
+                normalized.append(canonical)
+                seen.add(canonical)
+        agent.tools = normalized
+
+    normalize(config.admin)
+    for worker in config.workers:
+        normalize(worker)
 
 
 def build_health_app(runtime: TeamRuntime) -> FastAPI:

@@ -1,0 +1,71 @@
+metadata:
+  id: coo
+  name: Chief Operating Officer
+  version: '1.0'
+  description: Auto-generated baseline manifest for coo
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - executive
+  - exec_coo
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: ExecutiveAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: document_create
+  version: '1.0'
+  description: Capability mapped from tool document_create
+  risk_level: low
+  required_tools:
+  - document_create
+- name: document_get
+  version: '1.0'
+  description: Capability mapped from tool document_get
+  risk_level: low
+  required_tools:
+  - document_get
+- name: review_aggregate
+  version: '1.0'
+  description: Capability mapped from tool review_aggregate
+  risk_level: low
+  required_tools:
+  - review_aggregate
+- name: review.start_session
+  version: '1.0'
+  description: Capability mapped from tool review.start_session
+  risk_level: low
+  required_tools:
+  - review.start_session
+- name: department_task
+  version: '1.0'
+  description: Capability mapped from tool department_task
+  risk_level: low
+  required_tools:
+  - department_task
+- name: project.status
+  version: '1.0'
+  description: Capability mapped from tool project.status
+  risk_level: low
+  required_tools:
+  - project.status
+sandbox:
+  profile: restricted
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

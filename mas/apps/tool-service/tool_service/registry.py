@@ -10,17 +10,19 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import subprocess
 import time
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from mas_core.policy.engine import CommunicationPolicy
-from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 from mas_tools_sdk.base import BaseTool
-from mas_tools_sdk.groups import ToolGroup
-from mas_tools_sdk.manifest import TOOL_MANIFEST
+from mas_tools_sdk.manifest import all_manifest_entries, resolve_tool_name
 
 from .cache import ToolCache
 from .circuit_breaker import CircuitBreaker
@@ -86,10 +88,7 @@ class ToolRegistry:
 
     def get_manifest(self) -> list[dict[str, Any]]:
         """Return the full tool manifest (for GET /tools)."""
-        entries = []
-        for tool in self._tools.values():
-            entries.append(tool.to_manifest_entry())
-        return entries
+        return all_manifest_entries(include_aliases=True)
 
     def get_breaker_states(self) -> list[dict]:
         """Return breaker snapshots (for /health)."""
@@ -101,10 +100,16 @@ class ToolRegistry:
         Pipeline: policy check → circuit breaker → rate limiter → cache → execute → cache set.
         """
         tool_name = request.tool_name
+        resolved_tool_name = resolve_tool_name(tool_name)
+        if resolved_tool_name is None:
+            return self._error_response(
+                request, error=f"Tool '{tool_name}' not found.", error_code="TOOL_NOT_FOUND"
+            )
+        is_alias = resolved_tool_name != tool_name
         t0 = time.monotonic()
 
         # 1. Tool exists?
-        tool = self._tools.get(tool_name)
+        tool = self._tools.get(resolved_tool_name)
         if tool is None:
             return self._error_response(
                 request, error=f"Tool '{tool_name}' not found.", error_code="TOOL_NOT_FOUND"
@@ -113,7 +118,7 @@ class ToolRegistry:
         # 2. Policy gating
         result = self._policy.can_use_tool(
             request.caller_role,
-            tool_name,
+            resolved_tool_name,
             sender_team=request.caller_team,
         )
         if result is not True:
@@ -121,11 +126,11 @@ class ToolRegistry:
                 request,
                 error=f"Access denied: {result}",
                 error_code="FORBIDDEN",
-                circuit_state=self._breakers[tool_name].state,
+                circuit_state=self._breakers[resolved_tool_name].state,
             )
 
         # 3. Circuit breaker
-        breaker = self._breakers[tool_name]
+        breaker = self._breakers[resolved_tool_name]
         if not await breaker.allow_request():
             return self._error_response(
                 request,
@@ -153,7 +158,7 @@ class ToolRegistry:
         # 5. Cache lookup (only for idempotent tools)
         kwargs = request.tool_kwargs
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
-            cached = await self._cache.get(tool_name, kwargs)
+            cached = await self._cache.get(resolved_tool_name, kwargs)
             if cached is not None:
                 duration = (time.monotonic() - t0) * 1000
                 return ToolResponse(
@@ -172,17 +177,17 @@ class ToolRegistry:
 
         # 6. Execute (with semaphore if configured)
         try:
-            if tool_name in self._semaphores:
-                async with self._semaphores[tool_name]:
-                    result_val = await tool.execute(**kwargs)
+            if resolved_tool_name in self._semaphores:
+                async with self._semaphores[resolved_tool_name]:
+                    result_val = await self._execute_tool(tool, resolved_tool_name, kwargs)
             else:
-                result_val = await tool.execute(**kwargs)
+                result_val = await self._execute_tool(tool, resolved_tool_name, kwargs)
         except Exception as exc:
             await breaker.record_failure()
             duration = (time.monotonic() - t0) * 1000
             logger.error(
                 "tool_execution_error",
-                extra={"tool": tool_name, "error": str(exc)},
+                extra={"tool": resolved_tool_name, "requested_tool": tool_name, "error": str(exc)},
                 exc_info=True,
             )
             return self._error_response(
@@ -200,7 +205,11 @@ class ToolRegistry:
         duration = (time.monotonic() - t0) * 1000
 
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
-            await self._cache.set(tool_name, kwargs, result_val, ttl=tool.cache_ttl_seconds)
+            await self._cache.set(resolved_tool_name, kwargs, result_val, ttl=tool.cache_ttl_seconds)
+
+        if is_alias and isinstance(result_val, dict):
+            result_val = dict(result_val)
+            result_val.setdefault("_canonical_tool", resolved_tool_name)
 
         return ToolResponse(
             tool_name=tool_name,
@@ -215,6 +224,66 @@ class ToolRegistry:
             trace_id=request.trace_id,
             span_id=request.span_id,
         )
+
+    async def _execute_tool(self, tool: BaseTool, tool_name: str, kwargs: dict[str, Any]) -> Any:
+        """Dispatch execution using the configured transport adapter."""
+        transport = getattr(tool, "transport", "internal")
+        if transport == "internal":
+            return await tool.execute(**kwargs)
+        if transport == "http":
+            return await self._execute_http_transport(tool_name, kwargs)
+        if transport == "mcp":
+            return await self._execute_mcp_transport(tool_name, kwargs)
+        if transport == "process":
+            return await self._execute_process_transport(tool_name, kwargs)
+        raise ValueError(f"Unsupported tool transport '{transport}' for tool '{tool_name}'")
+
+    async def _execute_http_transport(self, tool_name: str, kwargs: dict[str, Any]) -> Any:
+        endpoint = self._settings.http_transport_endpoints.get(tool_name)
+        if not endpoint:
+            raise ValueError(f"No HTTP transport endpoint configured for tool '{tool_name}'")
+        timeout = self._settings.transport_request_timeout_seconds
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(endpoint, json={"tool_name": tool_name, "kwargs": kwargs})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _execute_mcp_transport(self, tool_name: str, kwargs: dict[str, Any]) -> Any:
+        endpoint = self._settings.mcp_transport_endpoints.get(tool_name)
+        if not endpoint:
+            raise ValueError(f"No MCP transport endpoint configured for tool '{tool_name}'")
+        timeout = self._settings.transport_request_timeout_seconds
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                endpoint,
+                json={"method": "tool.run", "params": {"tool_name": tool_name, "kwargs": kwargs}},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _execute_process_transport(self, tool_name: str, kwargs: dict[str, Any]) -> Any:
+        command = self._settings.process_transport_commands.get(tool_name)
+        if not command:
+            raise ValueError(f"No process transport command configured for tool '{tool_name}'")
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        payload = json.dumps({"tool_name": tool_name, "kwargs": kwargs}).encode("utf-8")
+        stdout, stderr = await proc.communicate(payload)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Process transport failed for '{tool_name}': {stderr.decode('utf-8', errors='replace')}"
+            )
+        text = stdout.decode("utf-8", errors="replace").strip()
+        if not text:
+            return {}
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {"output": text}
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
