@@ -15,7 +15,7 @@ All models use Pydantic v2.  Instances are stored in Postgres; large bodies
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field
 from .enums import (
     DocumentState,
     DocumentType,
+    IssuePriority,
     IssueStatus,
     IssueType,
-    IssuePriority,
     KPIMetricType,
     ProjectState,
     ReviewSessionStatus,
@@ -35,7 +35,6 @@ from .enums import (
     SprintStatus,
 )
 from .envelope import BlobRef
-
 
 # ---------------------------------------------------------------------------
 # Documents
@@ -72,8 +71,8 @@ class ProjectDocument(BaseModel):
     summary: str | None = Field(default=None, max_length=2048)
 
     # Audit
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # Review tracking
     review_session_id: UUID | None = None
@@ -99,7 +98,7 @@ class ReviewComment(BaseModel):
     severity: ReviewSeverity = Field(default=ReviewSeverity.INFO)
     body: str = Field(..., description="Review comment text.")
     suggested_change: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # CSO veto — only applicable when reviewer_role == CSuiteAgent(CSO)
     veto: bool = Field(
@@ -121,7 +120,7 @@ class ReviewSummary(BaseModel):
     doc_type: DocumentType
 
     # Reviewer responses keyed by agent_id
-    responses: dict[str, "ReviewResponse"] = Field(default_factory=dict)
+    responses: dict[str, ReviewResponse] = Field(default_factory=dict)
     reviews: list[ReviewComment] = Field(default_factory=list)
     overall_verdict: ReviewVerdict | None = None
 
@@ -155,7 +154,7 @@ class ReviewResponse(BaseModel):
     verdict: ReviewVerdict
     comments: list[ReviewComment] = Field(default_factory=list)
     veto: bool = False
-    submitted_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    submitted_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------
@@ -167,10 +166,10 @@ class FeasibilityReport(BaseModel):
     """Aggregated feasibility findings presented to Human at step 2."""
 
     project_id: str
-    financial_viable: bool | None = None    # Set by CFO
-    technical_viable: bool | None = None    # Set by CIO
-    resource_viable: bool | None = None     # Set by CHRM
-    security_viable: bool | None = None     # Set by CSO
+    financial_viable: bool | None = None  # Set by CFO
+    technical_viable: bool | None = None  # Set by CIO
+    resource_viable: bool | None = None  # Set by CHRM
+    security_viable: bool | None = None  # Set by CSO
     estimated_cost: float | None = Field(default=None, ge=0.0)
     estimated_duration_days: int | None = Field(default=None, ge=0)
     risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] | None = None
@@ -184,7 +183,7 @@ class FeasibilityReport(BaseModel):
     risks: list[str] = Field(default_factory=list)
 
     assembled_by: str = Field(..., description="CEO agent ID that assembled this report.")
-    assembled_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    assembled_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     @property
     def is_viable(self) -> bool:
@@ -219,10 +218,7 @@ class HumanDecision(BaseModel):
     approved: bool
     decision: Literal["APPROVE", "REJECT", "EDIT", "CANCEL"] = Field(
         ...,
-        description=(
-            "Explicit action taken. "
-            "The controller uses this to drive state transitions."
-        ),
+        description=("Explicit action taken. The controller uses this to drive state transitions."),
     )
     comment: str | None = None
     edit_instructions: str | None = Field(
@@ -233,7 +229,7 @@ class HumanDecision(BaseModel):
 
     # Audit
     decided_by: str = Field(default="human", description="Human user or API token identifier.")
-    decided_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    decided_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +270,8 @@ class Issue(BaseModel):
     dependencies: list[UUID] = Field(default_factory=list)
 
     # Audit
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     completed_at: datetime | None = None
 
 
@@ -314,8 +310,8 @@ class Sprint(BaseModel):
         description="First dev sprint is blocked until infra_ready == True.",
     )
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------
@@ -332,11 +328,11 @@ class KPISnapshot(BaseModel):
 
     snapshot_id: UUID = Field(default_factory=uuid4)
     project_id: str
-    sprint_id: UUID | None = None          # None == project-level KPI
-    agent_id: str | None = None            # None == aggregated team KPI
+    sprint_id: UUID | None = None  # None == project-level KPI
+    agent_id: str | None = None  # None == aggregated team KPI
     team_id: str | None = None
 
-    captured_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     measured_at: datetime | None = None
     metric_type: KPIMetricType | None = None
     value: float | None = None
@@ -389,10 +385,10 @@ class KPISnapshot(BaseModel):
         le=1.0,
         description="RESOURCE_UTILIZATION — agent capacity used / total available.",
     )
-    infra_lead_time_minutes: float | None = Field(
+    infra_lead_time_seconds: int | None = Field(
         default=None,
-        ge=0.0,
-        description="INFRA_LEAD_TIME — minutes from INFRA_PROVISIONING start to INFRA_READY.",
+        ge=0,
+        description="INFRA_LEAD_TIME — seconds from INFRA_PROVISIONING start to INFRA_READY.",
     )
 
     # Raw counters for cross-project aggregation
@@ -454,7 +450,7 @@ class AgentProfile(BaseModel):
     sample_count: int = Field(default=0, ge=0)
 
     # Metadata
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     kpi_snapshot_ids: list[UUID] = Field(
         default_factory=list,
         description="IDs of KPISnapshot rows used to compute current profile.",
@@ -508,7 +504,7 @@ class ReviewSession(BaseModel):
         ge=30,
         description="Per-reviewer timeout in seconds. Reminder sent at 1x, CB fires at 2x.",
     )
-    started_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    started_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     completed_at: datetime | None = None
 
     @property
@@ -557,8 +553,8 @@ class Milestone(BaseModel):
 
     # Audit
     created_by: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------
@@ -577,14 +573,14 @@ class ProjectSummary(BaseModel):
     name: str
     description: str | None = None
     state: ProjectState = ProjectState.INIT
-    failure_reason: str | None = None      # FailureReason value when state == FAILED
+    failure_reason: str | None = None  # FailureReason value when state == FAILED
     failed_from_state: ProjectState | None = None  # State active when failure occurred
 
     # Requestor info (CEO proxies for human)
     requested_by: str = Field(..., description="Human user or CEO agent ID.")
 
     # Timing
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     shutdown_at: datetime | None = None
     boot_at: datetime | None = None

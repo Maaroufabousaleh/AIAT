@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import os
 import signal
 from collections.abc import Sequence
 from itertools import cycle
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
+import httpx
 import structlog
 import uvicorn
 import yaml
@@ -34,10 +34,11 @@ from mas_core.agent_runtime import (
     SubAgent,
     WorkerAgent,
 )
+from mas_core.observability import configure_logging
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
-from mas_tools_sdk.manifest import resolve_tool_name
 from mas_tools_sdk.client import ToolServiceClient
+from mas_tools_sdk.manifest import resolve_tool_name
 
 if TYPE_CHECKING:
     from mas_core.memory import AgentStorage, CheckpointStore
@@ -80,12 +81,13 @@ class RunnerSettings(BaseModel):
     tool_service_url: str | None = None
     tool_secret: str | None = None
     pgbouncer_dsn: str | None = None
+    orchestrator_url: str = "http://orchestrator-api:8000"
     health_host: str = "0.0.0.0"
     health_port: int = 8080
     llm_model: str = "gpt-4o"
 
     @classmethod
-    def from_env(cls) -> "RunnerSettings":
+    def from_env(cls) -> RunnerSettings:
         team_config = os.environ["TEAM_CONFIG"]
         router_url = os.environ.get("ROUTER_URL", "http://message-router:8001")
         if router_url.startswith("ws://"):
@@ -104,6 +106,7 @@ class RunnerSettings(BaseModel):
             tool_service_url=os.environ.get("TOOL_SERVICE_URL"),
             tool_secret=os.environ.get("TOOL_SECRET"),
             pgbouncer_dsn=os.environ.get("PGBOUNCER_DSN"),
+            orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
             llm_model=os.environ.get("LLM_DEFAULT_MODEL", "gpt-4o"),
@@ -196,6 +199,7 @@ class TeamRuntime:
         self._stop_event = asyncio.Event()
         self._health_status = "starting"
         self._resume_tasks: list[asyncio.Task[None]] = []
+        self._in_flight_frame: WSMessageFrame | None = None
 
     async def start(self) -> None:
         if self.settings.tool_service_url:
@@ -221,6 +225,33 @@ class TeamRuntime:
     async def stop(self) -> None:
         self._stop_event.set()
         self._health_status = "stopping"
+
+        # G6: Save final checkpoint for any agent with active state
+        for agent in self.agents_by_id.values():
+            try:
+                envelope = getattr(agent, "_current_envelope", None)
+                if envelope is not None:
+                    restored = getattr(agent, "_checkpoint", {}) or {}
+                    budget_snap = None
+                    budget = getattr(agent, "_budget", None)
+                    if budget is not None and hasattr(budget, "snapshot"):
+                        budget_snap = budget.snapshot()
+                    await agent.save_checkpoint(
+                        {
+                            "messages": restored.get("messages", []),
+                            "iteration": restored.get("iteration", 0),
+                            "tool_results": restored.get("tool_results", []),
+                            "budget_snapshot": budget_snap,
+                            "task_envelope_id": str(envelope.message_id),
+                            "reason": "graceful_shutdown",
+                        }
+                    )
+            except Exception:
+                log.warning(
+                    "team_runner.stop_checkpoint_failed",
+                    agent_id=agent.agent_id,
+                    exc_info=True,
+                )
 
         for agent in self.agents_by_id.values():
             await agent.stop()
@@ -350,19 +381,118 @@ class TeamRuntime:
                     expanded.append(worker)
                     continue
                 expanded.append(
-                    worker.model_copy(
-                        update={"agent_id": f"{worker.agent_id}_{index + 1}"}
-                    )
+                    worker.model_copy(update={"agent_id": f"{worker.agent_id}_{index + 1}"})
                 )
         return expanded
 
     async def _handle_frame(self, frame: WSMessageFrame) -> None:
+        # G5/G6: intercept SHUTDOWN at team-runner level for coordinated shutdown
+        if frame.envelope.msg_type == MessageType.SHUTDOWN:
+            await self._handle_shutdown_message(frame)
+            return
+
         agent = self._choose_agent(frame.envelope)
         if agent is None:
             raise RuntimeError(
                 f"No agent available for {frame.envelope.msg_type} in team {self.team_config.team_id}"
             )
-        await agent._dispatch(frame)
+        self._in_flight_frame = frame
+        try:
+            await agent._dispatch(frame)
+        finally:
+            self._in_flight_frame = None
+
+    async def _handle_shutdown_message(self, frame: WSMessageFrame) -> None:
+        """G5+G6: Handle SHUTDOWN — save checkpoints, stop agents, send HTTP ACK."""
+        log.info(
+            "team_runner.shutdown_received",
+            team_id=self.team_config.team_id,
+        )
+
+        # NACK any in-flight message so it can be resumed after restart
+        in_flight = self._in_flight_frame
+        if in_flight is not None:
+            log.info(
+                "team_runner.nacking_in_flight",
+                entry_id=in_flight.entry_id,
+                team_id=self.team_config.team_id,
+            )
+            self._in_flight_frame = None
+
+        # G6: Save a final checkpoint for each agent that has active state
+        checkpoint_errors: list[str] = []
+        for agent in self.agents_by_id.values():
+            try:
+                envelope = getattr(agent, "_current_envelope", None)
+                if envelope is not None:
+                    restored = getattr(agent, "_checkpoint", {}) or {}
+                    budget_snap = None
+                    budget = getattr(agent, "_budget", None)
+                    if budget is not None and hasattr(budget, "snapshot"):
+                        budget_snap = budget.snapshot()
+                    await agent.save_checkpoint(
+                        {
+                            "messages": restored.get("messages", []),
+                            "iteration": restored.get("iteration", 0),
+                            "tool_results": restored.get("tool_results", []),
+                            "budget_snapshot": budget_snap,
+                            "task_envelope_id": str(envelope.message_id),
+                            "reason": "shutdown_checkpoint",
+                        }
+                    )
+            except Exception:
+                checkpoint_errors.append(agent.agent_id)
+                log.warning(
+                    "team_runner.checkpoint_save_failed",
+                    agent_id=agent.agent_id,
+                    exc_info=True,
+                )
+
+        # Forward SHUTDOWN to admin agent for cascade to workers
+        if self.admin_agent is not None:
+            try:
+                await self.admin_agent._dispatch(frame)
+            except Exception:
+                log.warning("team_runner.admin_shutdown_dispatch_failed", exc_info=True)
+
+        # G5: HTTP-call /system/shutdown-ack or /system/shutdown-nack on orchestrator
+        orchestrator_url = self.settings.orchestrator_url
+        admin_id = self.admin_agent.agent_id if self.admin_agent else "unknown"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                if checkpoint_errors:
+                    resp = await client.post(
+                        f"{orchestrator_url}/system/shutdown-nack",
+                        json={
+                            "team_id": self.team_config.team_id,
+                            "agent_id": admin_id,
+                            "reason": f"checkpoint_save_failed for agents: {checkpoint_errors}",
+                        },
+                    )
+                    log.warning(
+                        "team_runner.shutdown_nack_sent",
+                        team_id=self.team_config.team_id,
+                        status=resp.status_code,
+                        failed_agents=checkpoint_errors,
+                    )
+                else:
+                    resp = await client.post(
+                        f"{orchestrator_url}/system/shutdown-ack",
+                        json={
+                            "team_id": self.team_config.team_id,
+                            "agent_id": admin_id,
+                        },
+                    )
+                    log.info(
+                        "team_runner.shutdown_ack_sent",
+                        team_id=self.team_config.team_id,
+                        status=resp.status_code,
+                    )
+        except Exception:
+            log.warning("team_runner.shutdown_ack_failed", exc_info=True)
+
+        # Signal the stop event to terminate the subscription loop
+        self._stop_event.set()
 
     def _choose_agent(self, envelope: MessageEnvelope) -> AgentBase | None:
         if envelope.recipient_id and envelope.recipient_id in self.agents_by_id:
@@ -383,7 +513,6 @@ class TeamRuntime:
             MessageType.ADMIN_REPLY,
             MessageType.RESULT,
             MessageType.ISSUE_COMPLETE,
-            MessageType.SHUTDOWN,
             MessageType.SHUTDOWN_ACK,
             MessageType.DIRECTIVE,
             MessageType.DOCUMENT_SUBMIT,
@@ -399,7 +528,10 @@ class TeamRuntime:
         }:
             return self.admin_agent
 
-        if same_team_sender and envelope.msg_type in {MessageType.ADMIN_TASK, MessageType.ISSUE_ASSIGN}:
+        if same_team_sender and envelope.msg_type in {
+            MessageType.ADMIN_TASK,
+            MessageType.ISSUE_ASSIGN,
+        }:
             return next(self._worker_cycle) if self._worker_cycle else self.admin_agent
 
         if envelope.msg_type in {MessageType.TASK, MessageType.QUERY}:
@@ -527,18 +659,7 @@ async def _wait_for_signal(stop_event: asyncio.Event) -> None:
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+    configure_logging("team-runner", json=os.environ.get("LOG_FORMAT") != "console")
 
     settings = RunnerSettings.from_env()
     team_config = load_team_config(settings.team_config_path)
@@ -546,7 +667,9 @@ async def main() -> None:
     health_app = build_health_app(runtime)
     stop_event = asyncio.Event()
 
-    log.info("team_runner.starting", team_id=team_config.team_id, config=str(settings.team_config_path))
+    log.info(
+        "team_runner.starting", team_id=team_config.team_id, config=str(settings.team_config_path)
+    )
 
     await runtime.start()
     health_task = asyncio.create_task(

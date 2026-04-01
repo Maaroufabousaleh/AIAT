@@ -57,26 +57,32 @@ class CircuitBreaker:
                 self._state = CircuitState.HALF_OPEN
         return self._state
 
+    def _check_half_open_transition(self) -> None:
+        """Transition OPEN → HALF_OPEN if the open timer has expired.
+
+        MUST be called while ``self._lock`` is held.
+        """
+        if self._state == CircuitState.OPEN:
+            if time.monotonic() - self._opened_at >= self.open_duration:
+                self._state = CircuitState.HALF_OPEN
+
     async def allow_request(self) -> bool:
         """Return ``True`` if the request should proceed, ``False`` to reject."""
         async with self._lock:
-            s = self.state
+            self._check_half_open_transition()
+            s = self._state
             if s == CircuitState.CLOSED:
                 return True
             if s == CircuitState.HALF_OPEN:
-                # Allow one probe
                 return True
-            # OPEN
             return False
 
     async def record_success(self) -> None:
         """Record a successful execution."""
         async with self._lock:
             if self._state == CircuitState.HALF_OPEN:
-                # Probe succeeded — close the breaker
                 self._state = CircuitState.CLOSED
                 self._failures.clear()
-            # In CLOSED state, no action needed for success
 
     async def record_failure(self) -> None:
         """Record a failed execution. May trip the breaker to OPEN."""
@@ -84,12 +90,10 @@ class CircuitBreaker:
             now = time.monotonic()
 
             if self._state == CircuitState.HALF_OPEN:
-                # Probe failed — go back to OPEN
                 self._state = CircuitState.OPEN
                 self._opened_at = now
                 return
 
-            # CLOSED — add failure, prune window, check threshold
             self._failures.append(now)
             cutoff = now - self.failure_window
             while self._failures and self._failures[0] < cutoff:
@@ -110,6 +114,6 @@ class CircuitBreaker:
         """Snapshot for the /health endpoint."""
         return {
             "tool": self.name,
-            "state": self.state.value,
+            "state": self._state.value,
             "recent_failures": len(self._failures),
         }

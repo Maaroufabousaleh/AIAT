@@ -7,11 +7,10 @@ These are consumed by ``LLMGatewayClient`` and by ``AgentBase``
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # ---------------------------------------------------------------------------
 # Config

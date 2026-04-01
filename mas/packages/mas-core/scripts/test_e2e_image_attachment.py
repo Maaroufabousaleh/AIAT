@@ -1,15 +1,20 @@
 """End-to-end test: image through TempAttachmentManager → LLM."""
+
 import asyncio
 import base64
+import os
 import struct
 import sys
 import zlib
 
-sys.path.insert(0, "mas/packages/mas-core")
+# Ensure the package is importable regardless of CWD
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_SCRIPT_DIR)  # mas-core/
+sys.path.insert(0, _PACKAGE_ROOT)
 
-from mas_core.llm_gateway import LLMGatewayClient, MODEL_REGISTRY, CopilotModelScanner
-from mas_core.llm_gateway.models import LLMConfig
 from mas_core.agent_runtime.attachment_manager import TempAttachmentManager
+from mas_core.llm_gateway import MODEL_REGISTRY, CopilotModelScanner, LLMGatewayClient
+from mas_core.llm_gateway.models import LLMConfig
 
 
 def make_png(w=8, h=8, r=50, g=120, b=220):
@@ -91,7 +96,7 @@ async def main():
     # The gpt-5-nano Responses-API has a proxy-side usage parsing bug, so
     # we bypass the registry and send directly via chat_completions format
     # to the proxy endpoint which also supports the chat/completions path.
-    print(f"\nSending to LLM via direct chat_completions to proxy...")
+    print("\nSending to LLM via direct chat_completions to proxy...")
     print("=" * 60)
 
     config = LLMConfig()
@@ -136,7 +141,8 @@ async def main():
                         }
                     ]
                     r2 = await client.chat_completion(
-                        messages=text_messages, model="copilot/gpt-5-mini",
+                        messages=text_messages,
+                        model="copilot/gpt-5-mini",
                     )
                     print(f"LLM Response: {r2.text}")
                     print("Status: OK (text fallback)")

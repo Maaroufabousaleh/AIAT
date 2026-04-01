@@ -11,7 +11,7 @@ Design notes
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -19,7 +19,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from .enums import AgentRole
-
 
 # ---------------------------------------------------------------------------
 # Circuit-breaker state (mirrored from tool-service)
@@ -148,7 +147,7 @@ class ToolResponse(BaseModel):
         default=None, description="Wall-clock execution time of the tool in milliseconds."
     )
     responded_at: datetime = Field(
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=lambda: datetime.now(tz=UTC),
         description="UTC timestamp when the tool-service generated this response.",
     )
 

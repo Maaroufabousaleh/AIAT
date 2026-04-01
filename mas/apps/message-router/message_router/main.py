@@ -12,8 +12,8 @@ Responsibilities
 • Trim each stream to MAXLEN ~ 50 000 every 60 s.
 • Deliver messages to agents over WebSocket (WS Subscribe Protocol).
 
-Endpoints (Phase 3)
--------------------
+Endpoints
+---------
 POST /messages/publish          Publish a MessageEnvelope to a team stream.
                                 Returns { entry_id } or { deduplicated: true }.
 POST /messages/broadcast        Fan-out to ALL 11 team streams (SHUTDOWN, etc.).
@@ -25,11 +25,15 @@ GET  /health                    Redis ping + internal state.
 from __future__ import annotations
 
 import asyncio
-import logging
+import os
 from contextlib import asynccontextmanager
 
+import prometheus_client
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
+
+from mas_core.observability import configure_logging
 
 from .config import settings
 from .dlq import close_pool
@@ -38,34 +42,11 @@ from .routes_publish import router as publish_router
 from .routes_ws import router as ws_router
 from .tasks import reclaim_loop, trim_loop
 
-# ---------------------------------------------------------------------------
-# Logging — structlog with stdlib integration
-# ---------------------------------------------------------------------------
+configure_logging("message-router", json=os.environ.get("LOG_FORMAT") != "console")
 
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.stdlib.add_log_level,
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.stdlib.BoundLogger,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-)
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Background task handles
-# ---------------------------------------------------------------------------
+logger = structlog.stdlib.get_logger(__name__)
 
 _background_tasks: list[asyncio.Task] = []
-
-
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
@@ -73,16 +54,11 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     """Startup: connect Redis, ensure consumer groups, launch background tasks.
     Shutdown: cancel tasks, close connections.
     """
-    # ── Startup ──────────────────────────────────────────────────────────────
     logger.info("message-router starting up…")
 
-    # Connect to Redis
     await connect_redis()
-
-    # Ensure consumer groups for all 11 teams
     await ensure_all_consumer_groups()
 
-    # Launch background tasks
     reclaim_task = asyncio.create_task(reclaim_loop(), name="reclaim-loop")
     trim_task = asyncio.create_task(trim_loop(), name="trim-loop")
     _background_tasks.extend([reclaim_task, trim_task])
@@ -91,7 +67,6 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     yield
 
-    # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("message-router shutting down…")
 
     for task in _background_tasks:
@@ -100,16 +75,11 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         await asyncio.gather(*_background_tasks, return_exceptions=True)
     _background_tasks.clear()
 
-    # Close connections
     await close_redis()
     await close_pool()
 
     logger.info("message-router stopped.")
 
-
-# ---------------------------------------------------------------------------
-# Application
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="AIAT Message Router",
@@ -122,21 +92,43 @@ app = FastAPI(
     ),
 )
 
-# Register routers
 app.include_router(publish_router, tags=["publish"])
 app.include_router(ws_router, tags=["subscribe"])
 
+_prom_app = prometheus_client.make_asgi_app()
 
-# ---------------------------------------------------------------------------
-# Health endpoint
-# ---------------------------------------------------------------------------
+
+@app.get("/metrics", tags=["observability"])
+async def prometheus_metrics(request: Request) -> Response:
+    """Expose Prometheus metrics at /metrics."""
+    scope = dict(request.scope)
+    scope["path"] = "/"
+    body_parts: list[bytes] = []
+    status_code = 200
+    resp_headers: list[tuple[bytes, bytes]] = []
+
+    async def receive():  # noqa: ANN202
+        return {"type": "http.request", "body": b""}
+
+    async def send(msg: dict) -> None:  # noqa: ANN001
+        nonlocal status_code, resp_headers
+        if msg["type"] == "http.response.start":
+            status_code = msg["status"]
+            resp_headers = msg.get("headers", [])
+        elif msg["type"] == "http.response.body":
+            body_parts.append(msg.get("body", b""))
+
+    await _prom_app(scope, receive, send)
+    return Response(
+        content=b"".join(body_parts),
+        status_code=status_code,
+        headers={k.decode(): v.decode() for k, v in resp_headers},
+    )
 
 
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, object]:
     """Redis ping + internal state."""
-    from redis.exceptions import RedisError
-
     from .redis_client import get_redis
 
     redis_ok = False
@@ -153,7 +145,5 @@ async def health() -> dict[str, object]:
         "redis": "ok" if redis_ok else f"error: {redis_error}",
         "known_teams": len(settings.known_teams),
         "background_tasks": len(_background_tasks),
-        "background_tasks_running": sum(
-            1 for t in _background_tasks if not t.done()
-        ),
+        "background_tasks_running": sum(1 for t in _background_tasks if not t.done()),
     }

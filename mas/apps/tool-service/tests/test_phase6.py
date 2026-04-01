@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import anyio
-
 import pytest
 
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import CircuitState, ToolRequest
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Registry: tool lookup, manifest, execute pipeline
@@ -283,8 +281,9 @@ class TestRateLimiter:
 
     @pytest.mark.anyio
     async def test_allows_within_limit(self):
-        from mas_tools_sdk.groups import ToolGroup
         from tool_service.rate_limiter import RateLimiterPool
+
+        from mas_tools_sdk.groups import ToolGroup
 
         pool = RateLimiterPool()
         allowed, remaining, _ = await pool.acquire(ToolGroup.KPI_UTILITY)
@@ -292,8 +291,9 @@ class TestRateLimiter:
 
     @pytest.mark.anyio
     async def test_get_rate(self):
-        from mas_tools_sdk.groups import GROUP_RATE_LIMITS, ToolGroup
         from tool_service.rate_limiter import RateLimiterPool
+
+        from mas_tools_sdk.groups import GROUP_RATE_LIMITS, ToolGroup
 
         pool = RateLimiterPool()
         assert pool.get_rate(ToolGroup.KPI_UTILITY) == GROUP_RATE_LIMITS[ToolGroup.KPI_UTILITY]

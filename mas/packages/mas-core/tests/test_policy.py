@@ -14,12 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 
-import pytest
-from mas_tools_sdk.manifest import TOOL_ALIASES, TOOL_MANIFEST
-
 from mas_core.policy import (
-    ADMIN_MSG_TYPES,
-    C_SUITE_CROSS_TEAM_TYPES,
     C_SUITE_TEAMS,
     CTO_TEAM,
     DEPT_TEAMS,
@@ -28,10 +23,10 @@ from mas_core.policy import (
     ORCHESTRATOR_TEAM,
     POLICY_RULES,
     TEAM_TIERS,
-    WORKER_BLOCKED_TOOLS,
     CommunicationPolicy,
 )
 from mas_core.protocols.enums import AgentRole, MessageType
+from mas_tools_sdk.manifest import TOOL_ALIASES, TOOL_MANIFEST
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

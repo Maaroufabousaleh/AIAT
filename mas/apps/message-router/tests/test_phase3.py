@@ -15,20 +15,17 @@ Test coverage:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mas_core.protocols.envelope import MessageEnvelope
 from mas_core.protocols.enums import AgentRole, MessageType
-
+from mas_core.protocols.envelope import MessageEnvelope
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,7 +137,6 @@ def _no_op_lifespan():
     Bypasses Redis connect, consumer group creation, and background tasks.
     """
     from contextlib import asynccontextmanager
-    from fastapi import FastAPI
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):  # noqa: ANN001
@@ -293,7 +289,7 @@ class TestPublishRoute:
             env = make_envelope(ttl_seconds=1)
             # Manually set timestamp far in the past
             env = env.model_copy(
-                update={"timestamp": datetime.now(tz=timezone.utc) - timedelta(hours=1)}
+                update={"timestamp": datetime.now(tz=UTC) - timedelta(hours=1)}
             )
             resp = client.post(
                 "/messages/publish",
@@ -444,7 +440,6 @@ class TestReclaimLogic:
     @pytest.mark.asyncio
     async def test_retry_count_incremented(self):
         """An entry below max_attempts should be re-queued with incremented retry_count."""
-        from message_router.config import settings
         from message_router.tasks import _handle_reclaimed_entry
 
         # retry_count = 0, max_attempts = 3 → should NOT go to DLQ
@@ -489,7 +484,7 @@ class TestReclaimLogic:
         env = make_envelope(ttl_seconds=1, retry_count=0)
         # Backdate timestamp to force expiry
         env = env.model_copy(
-            update={"timestamp": datetime.now(tz=timezone.utc) - timedelta(hours=2)}
+            update={"timestamp": datetime.now(tz=UTC) - timedelta(hours=2)}
         )
         env_json = env.model_dump_json()
         fields = {"envelope": env_json}
@@ -557,8 +552,8 @@ class TestConsumerGroupHelpers:
     @pytest.mark.asyncio
     async def test_ensure_consumer_group_idempotent(self):
         """ensure_consumer_group is idempotent — BUSYGROUP error is swallowed."""
-        from redis.exceptions import ResponseError
         from message_router.redis_client import ensure_consumer_group
+        from redis.exceptions import ResponseError
 
         mock_redis = MagicMock()
         # First call raises BUSYGROUP
@@ -571,8 +566,8 @@ class TestConsumerGroupHelpers:
     @pytest.mark.asyncio
     async def test_ensure_consumer_group_other_error_propagates(self):
         """Non-BUSYGROUP ResponseError should propagate."""
-        from redis.exceptions import ResponseError
         from message_router.redis_client import ensure_consumer_group
+        from redis.exceptions import ResponseError
 
         mock_redis = MagicMock()
         mock_redis.xgroup_create = AsyncMock(
@@ -658,7 +653,6 @@ class TestDLQSystemEvent:
 class TestRedisACL:
     def test_acl_config_documentation(self):
         """Verify redis.conf documents the ACL users."""
-        import os
         import pathlib
 
         # Find the redis.conf file relative to this test
@@ -679,7 +673,6 @@ class TestRedisACL:
 
     def test_docker_compose_uses_acl(self):
         """Verify docker-compose.yml uses ACL usernames for Redis connections."""
-        import os
         import pathlib
 
         test_dir = pathlib.Path(__file__).resolve().parent

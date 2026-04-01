@@ -36,7 +36,6 @@ Size safeguards
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging
@@ -44,9 +43,10 @@ import os
 import re
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +77,18 @@ _MIME_EXT: dict[str, str] = {
 }
 
 # Image MIME types that should be sent as ``image_url`` content parts
-_IMAGE_MIMES: frozenset[str] = frozenset({
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "image/bmp",
-})
+_IMAGE_MIMES: frozenset[str] = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+    }
+)
 
 DEFAULT_MAX_FILE_BYTES: int = 20 * 1024 * 1024  # 20 MB
-DEFAULT_ROOT_DIR: str | None = None  # None → system temp dir
+DEFAULT_ROOT_DIR: str | None = None  # None → MAS_TMP_DIR or system temp dir
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +155,9 @@ class TempAttachmentManager:
         max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
         prefix: str = "mas_attach_",
     ) -> None:
+        # Optional override for restricted environments where OS temp is blocked.
+        if root_dir is None:
+            root_dir = os.getenv("MAS_TMP_DIR") or None
         self._root_dir = root_dir
         self._max_file_bytes = max_file_bytes
         self._prefix = prefix
@@ -174,9 +179,22 @@ class TempAttachmentManager:
         """Create the temp sub-directory. Returns the Path."""
         if self._temp_dir is not None:
             return self._temp_dir
-        self._temp_dir = Path(
-            tempfile.mkdtemp(prefix=self._prefix, dir=self._root_dir)
-        )
+        root = Path(self._root_dir) if self._root_dir else Path(tempfile.gettempdir())
+        root.mkdir(parents=True, exist_ok=True)
+
+        # Avoid tempfile.mkdtemp here; some restricted Windows environments
+        # produce temp dirs that are not writable by the current process.
+        for _ in range(16):
+            candidate = root / f"{self._prefix}{uuid4().hex[:10]}"
+            try:
+                candidate.mkdir(parents=False, exist_ok=False)
+                self._temp_dir = candidate
+                break
+            except FileExistsError:
+                continue
+
+        if self._temp_dir is None:
+            raise RuntimeError("Failed to create writable attachment staging directory")
         logger.debug("Attachment staging dir created: %s", self._temp_dir)
         return self._temp_dir
 
@@ -193,7 +211,9 @@ class TempAttachmentManager:
             )
         except Exception:
             logger.warning(
-                "Failed to clean up staging dir: %s", self._temp_dir, exc_info=True,
+                "Failed to clean up staging dir: %s",
+                self._temp_dir,
+                exc_info=True,
             )
         finally:
             self._temp_dir = None
@@ -355,7 +375,9 @@ class TempAttachmentManager:
                 if parsed:
                     mime, raw = parsed
                     saved = self.save_bytes(
-                        raw, mime_type=mime, filename_hint=f"{tool_name}_{key}",
+                        raw,
+                        mime_type=mime,
+                        filename_hint=f"{tool_name}_{key}",
                     )
                     if saved:
                         files.append(saved)
@@ -363,7 +385,8 @@ class TempAttachmentManager:
                         continue
             if isinstance(val, (bytes, bytearray)):
                 saved = self.save_bytes(
-                    bytes(val), filename_hint=f"{tool_name}_{key}",
+                    bytes(val),
+                    filename_hint=f"{tool_name}_{key}",
                 )
                 if saved:
                     files.append(saved)
@@ -408,10 +431,12 @@ class TempAttachmentManager:
         for f in files:
             if f.is_image:
                 # Use data-URL for the LLM (most providers require this)
-                parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f.data_url, "detail": "auto"},
-                })
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f.data_url, "detail": "auto"},
+                    }
+                )
             else:
                 non_image_descriptions.append(
                     f"[Attached file: {f.path.name} ({f.mime_type}, {f.size_bytes:,} bytes)]"
@@ -456,14 +481,9 @@ class TempAttachmentManager:
             return ""
         lines = ["The following file(s) are available for you to read from disk:"]
         for f in self._saved_files:
-            lines.append(
-                f"  - {f.path}  ({f.mime_type}, {f.size_bytes:,} bytes)"
-            )
+            lines.append(f"  - {f.path}  ({f.mime_type}, {f.size_bytes:,} bytes)")
         lines.append("")
-        lines.append(
-            "Please examine these files and incorporate their content "
-            "in your response."
-        )
+        lines.append("Please examine these files and incorporate their content in your response.")
         return "\n".join(lines)
 
     def process_image_urls_for_cli(
@@ -524,18 +544,22 @@ class TempAttachmentManager:
                         url = part["image_url"].get("url", "")
                         if url.startswith("data:"):
                             # Replace data-URL with a placeholder
-                            new_parts.append({
-                                "type": "text",
-                                "text": "[image data-URL stripped for checkpoint]",
-                            })
+                            new_parts.append(
+                                {
+                                    "type": "text",
+                                    "text": "[image data-URL stripped for checkpoint]",
+                                }
+                            )
                             continue
                     new_parts.append(part)
                 cleaned.append({**msg, "content": new_parts})
             elif isinstance(content, str) and _DATA_URL_RE.match(content.strip()):
-                cleaned.append({
-                    **msg,
-                    "content": "[data-URL stripped for checkpoint]",
-                })
+                cleaned.append(
+                    {
+                        **msg,
+                        "content": "[data-URL stripped for checkpoint]",
+                    }
+                )
             else:
                 cleaned.append(msg)
         return cleaned

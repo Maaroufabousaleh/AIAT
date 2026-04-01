@@ -14,13 +14,11 @@ Lifecycle
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
-from uuid import uuid4
 
+from mas_core.protocols.enums import MessageType
 from mas_core.protocols.envelope import MessageEnvelope
-from mas_core.protocols.enums import AgentRole, MessageType
 
 from .base import AgentBase
 from .budget import BudgetExhausted, BudgetTracker

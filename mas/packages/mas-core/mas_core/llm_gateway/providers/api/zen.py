@@ -6,11 +6,10 @@ styles against the Zen endpoint on opencode.ai.  No API key required.
 
 from __future__ import annotations
 
-from ..base import ApiStyle, ModelEntry, ProviderConfig
-
 # Deferred import — MODEL_REGISTRY is created in the parent __init__.py
 # before sub-packages are imported.
 from .. import MODEL_REGISTRY
+from ..base import ApiStyle, ModelEntry, ProviderConfig
 
 # ---------------------------------------------------------------------------
 # Provider

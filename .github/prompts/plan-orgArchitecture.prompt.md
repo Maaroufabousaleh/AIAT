@@ -1252,17 +1252,34 @@ CREATE TABLE documents (
     UNIQUE(project_id, doc_type, version)
 );
 
--- NEW: Reviews
-CREATE TABLE reviews (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id     UUID NOT NULL REFERENCES documents(id),
-    reviewer_id     TEXT NOT NULL,                  -- agent_id
-    reviewer_role   TEXT NOT NULL,                  -- 'CFO', 'CIO', etc.
-    severity        TEXT NOT NULL,                  -- 'BLOCKER', 'MAJOR', 'MINOR', 'SUGGESTION', 'APPROVED'
-    section         TEXT,
-    comment         TEXT NOT NULL,
-    suggested_fix   TEXT,
-    created_at      TIMESTAMPTZ DEFAULT now()
+-- NEW: Review Sessions (tracks fan-out/fan-in review cycles)
+CREATE TABLE review_sessions (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id             UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    document_id            UUID REFERENCES documents(id) ON DELETE SET NULL,  -- nullable (feasibility reviews are project-level)
+    session_type           TEXT NOT NULL,                   -- 'FEASIBILITY', 'PDR_REVIEW', 'CDR_REVIEW'
+    status                 TEXT NOT NULL DEFAULT 'IN_PROGRESS',  -- IN_PROGRESS | COMPLETED | TIMED_OUT | CIRCUIT_OPEN
+    reviewer_ids           TEXT[],                          -- agent_ids invited to review
+    timeout_count          INT NOT NULL DEFAULT 0,
+    review_timeout_seconds INT NOT NULL DEFAULT 300,
+    created_at             TIMESTAMPTZ DEFAULT now(),
+    completed_at           TIMESTAMPTZ
+);
+
+-- NEW: Review Comments (individual reviewer responses within a review session)
+-- Note: this table replaces the simpler 'reviews' table from earlier drafts.
+-- Review comments are now scoped to a review_session, not a document directly.
+CREATE TABLE review_comments (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id    UUID NOT NULL REFERENCES review_sessions(id) ON DELETE CASCADE,
+    project_id    UUID NOT NULL,
+    reviewer_id   TEXT NOT NULL,                    -- agent_id
+    reviewer_role TEXT NOT NULL,                    -- 'CFO', 'CIO', 'CHRM', 'CSO', 'CTO'
+    verdict       TEXT NOT NULL,                    -- 'APPROVED' | 'APPROVED_WITH_COMMENTS' | 'NEEDS_REVISION' | 'REJECTED'
+    veto          BOOLEAN NOT NULL DEFAULT false,   -- true when CSO submits severity=BLOCKER with veto intent
+    severity      TEXT,                             -- 'BLOCKER', 'MAJOR', 'MINOR', 'SUGGESTION', 'INFO'
+    comments      JSONB,                            -- [{section, body, severity}] structured review comments
+    submitted_at  TIMESTAMPTZ DEFAULT now()
 );
 
 -- NEW: Approval Gates
@@ -1313,30 +1330,29 @@ CREATE TABLE issues (
     updated_at      TIMESTAMPTZ DEFAULT now()
 );
 
--- NEW: KPI Metrics
-CREATE TABLE kpi_metrics (
-    id              BIGSERIAL PRIMARY KEY,
-    project_id      UUID NOT NULL REFERENCES projects(id),
-    sprint_id       UUID REFERENCES sprints(id),
-    agent_id        TEXT NOT NULL,
-    metric_type     TEXT NOT NULL,
-    value           FLOAT NOT NULL,
-    context         JSONB,
-    measured_at     TIMESTAMPTZ DEFAULT now()
+-- NEW: KPI Snapshots (per-sprint/per-project computed performance snapshots)
+-- Note: named 'kpi_snapshots' in implementation (vs earlier 'kpi_metrics' draft).
+-- Uses a wide-column snapshot model rather than per-metric rows for simpler analytics.
+CREATE TABLE kpi_snapshots (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id              UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    sprint_id               UUID REFERENCES sprints(id) ON DELETE SET NULL,
+    scope                   TEXT NOT NULL,                      -- 'sprint' | 'project'
+    estimation_accuracy     NUMERIC(5,4),                       -- 0.0-1.0
+    task_completion_rate    NUMERIC(5,4),
+    review_pass_rate        NUMERIC(5,4),
+    velocity                NUMERIC(10,2),                      -- story points per sprint
+    defect_rate             NUMERIC(5,4),
+    rework_rate             NUMERIC(5,4),
+    budget_adherence        NUMERIC(5,4),
+    resource_utilization    NUMERIC(5,4),
+    infra_lead_time_seconds INT,
+    raw_data                JSONB,                              -- full metric breakdown
+    computed_at             TIMESTAMPTZ DEFAULT now()
 );
 
--- NEW: Review Sessions (tracks fan-out/fan-in cycles)
-CREATE TABLE review_sessions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id     UUID NOT NULL REFERENCES documents(id),
-    initiated_by    TEXT NOT NULL,                  -- agent_id (COO)
-    reviewer_roles  TEXT[] NOT NULL,                -- {'CFO','CIO','CHRM','CSO'}
-    status          TEXT NOT NULL DEFAULT 'IN_PROGRESS',  -- IN_PROGRESS | COMPLETED | TIMED_OUT | CIRCUIT_OPEN
-    timeout_count   INT NOT NULL DEFAULT 0,
-    due_at          TIMESTAMPTZ NOT NULL,           -- review_timeout deadline
-    completed_at    TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ DEFAULT now()
-);
+-- Note: review_sessions was defined earlier in this schema (before review_comments)
+-- as it is the parent table that review_comments references.
 
 -- NEW: Agent Profiles (per-agent rolling performance data)
 CREATE TABLE agent_profiles (
@@ -1354,14 +1370,16 @@ CREATE TABLE agent_profiles (
 
 -- NEW: Dead Letters (messages that exhausted retries or expired TTL)
 CREATE TABLE dead_letters (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    original_msg_id UUID NOT NULL,                  -- MessageEnvelope.message_id
-    stream_name     TEXT NOT NULL,                  -- e.g., 'stream:exec_ceo'
-    consumer_group  TEXT NOT NULL,
-    envelope        JSONB NOT NULL,                 -- Full MessageEnvelope JSON
-    failure_reason  TEXT NOT NULL,                  -- 'MAX_RETRIES' | 'TTL_EXPIRED'
-    retry_count     INT NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ DEFAULT now()
+    id              BIGSERIAL PRIMARY KEY,
+    message_id      TEXT NOT NULL,              -- MessageEnvelope.message_id
+    recipient_team  TEXT NOT NULL,              -- target stream team, e.g. 'exec_ceo'
+    sender_id       TEXT,                       -- MessageEnvelope.sender_id
+    msg_type        TEXT,                       -- MessageEnvelope.msg_type
+    project_id      UUID,                       -- MessageEnvelope.project_id (if set)
+    retry_count     INT NOT NULL,               -- delivery attempt count at DLQ time
+    failure_reason  TEXT,                       -- 'max_attempts_exceeded' | 'ttl_expired'
+    envelope_json   JSONB NOT NULL,             -- full serialised MessageEnvelope
+    dead_at         TIMESTAMPTZ DEFAULT now()
 );
 
 -- NEW: Project State History (audit log for controller transitions)
@@ -1422,17 +1440,18 @@ CREATE TABLE role_capability_map (
 
 -- Indexes
 CREATE INDEX idx_documents_project ON documents(project_id);
-CREATE INDEX idx_reviews_document ON reviews(document_id);
+CREATE INDEX idx_review_sessions_project ON review_sessions(project_id);
+CREATE INDEX idx_review_sessions_doc ON review_sessions(document_id);
+CREATE INDEX idx_review_comments_session ON review_comments(session_id);
 CREATE INDEX idx_approval_gates_project ON approval_gates(project_id);
 CREATE INDEX idx_sprints_project ON sprints(project_id);
 CREATE INDEX idx_issues_sprint ON issues(sprint_id);
 CREATE INDEX idx_issues_project ON issues(project_id);
-CREATE INDEX idx_issues_assignee ON issues(assignee_team, assignee_agent);
-CREATE INDEX idx_kpi_project ON kpi_metrics(project_id);
-CREATE INDEX idx_kpi_agent ON kpi_metrics(agent_id, metric_type);
-CREATE INDEX idx_kpi_type_date ON kpi_metrics(metric_type, measured_at);
-CREATE INDEX idx_review_sessions_doc ON review_sessions(document_id);
-CREATE INDEX idx_dead_letters_msg ON dead_letters(original_msg_id);
+CREATE INDEX idx_issues_assignee ON issues(assigned_team, assigned_agent);
+CREATE INDEX idx_kpi_project ON kpi_snapshots(project_id);
+CREATE INDEX idx_kpi_sprint ON kpi_snapshots(sprint_id);
+CREATE INDEX idx_kpi_computed ON kpi_snapshots(computed_at);
+CREATE INDEX idx_dead_letters_msg ON dead_letters(message_id);
 CREATE INDEX idx_dead_letters_created ON dead_letters(created_at);
 CREATE INDEX idx_state_history_project ON project_state_history(project_id);
 CREATE INDEX idx_state_history_time ON project_state_history(transitioned_at);
@@ -1444,29 +1463,37 @@ CREATE INDEX idx_role_capability_role ON role_capability_map(role);
 
 -- NEW: System Configuration (shutdown/resume, schedule, watchdog)
 CREATE TABLE system_config (
-    key           TEXT PRIMARY KEY,
-    value         JSONB NOT NULL,
-    updated_at    TIMESTAMPTZ DEFAULT now()
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,              -- JSON-serialised scalar or object
+    description TEXT,                       -- human doc for the key
+    updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
 -- Bootstrap rows (inserted by migration):
--- ('system_state', '"RUNNING"')
+-- ('system_state', 'RUNNING')
 -- ('shutdown_at', 'null')
 -- ('boot_at', 'null')
 -- ('schedule', '{"enabled": false}')
 -- ('watchdog_grace_seconds', '300')
 
--- NEW: Agent Checkpoints (mid-task progress for shutdown/resume)
+-- NEW: Agent Checkpoints (mid-task LLM conversation state for shutdown/resume)
+-- Checkpoint fields are stored in separate JSONB columns for targeted updates.
 CREATE TABLE agent_checkpoints (
-    id              BIGSERIAL PRIMARY KEY,
-    agent_id        TEXT NOT NULL,
-    project_id      UUID NOT NULL REFERENCES projects(id),
-    task_message_id UUID NOT NULL,
-    checkpoint_data JSONB NOT NULL,       -- messages, iteration, tool_results, budget_snapshot
-    created_at      TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(agent_id, project_id)          -- one checkpoint per agent per project
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id          TEXT NOT NULL,
+    team_id           TEXT NOT NULL,
+    project_id        UUID,                   -- nullable: some tasks are pre-project
+    task_message_id   TEXT NOT NULL,          -- MessageEnvelope.message_id triggering the task
+    iteration         INT NOT NULL DEFAULT 0, -- think() loop iteration at checkpoint
+    messages_json     JSONB NOT NULL,         -- LLM conversation history array
+    tool_results_json JSONB,                  -- accumulated tool call results
+    budget_state_json JSONB,                  -- remaining budget counters
+    task_envelope_json JSONB NOT NULL,        -- original task MessageEnvelope for replay
+    saved_at          TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(agent_id, task_message_id)         -- one checkpoint per agent per task
 );
 
+CREATE INDEX idx_checkpoints_agent ON agent_checkpoints(agent_id);
 CREATE INDEX idx_checkpoints_project ON agent_checkpoints(project_id);
 ```
 
@@ -2365,7 +2392,7 @@ POST /events/paperclip
 | Category | Tables |
 |----------|--------|
 | **Base** (3) | `memory`, `task_log`, `artifacts` |
-| **Org / Workflow** (12) | `projects`, `documents`, `reviews`, `approval_gates`, `sprints`, `issues`, `kpi_metrics`, `review_sessions`, `agent_profiles`, `dead_letters`, `project_state_history`, `infra_events` |
+| **Org / Workflow** (12) | `projects`, `documents`, `review_sessions`, `review_comments`, `approval_gates`, `sprints`, `issues`, `kpi_snapshots`, `agent_profiles`, `dead_letters`, `project_state_history`, `infra_events` |
 | **System** (2) | `system_config`, `agent_checkpoints` |
 | **Capability Registry** (3) | `capabilities`, `worker_registry`, `role_capability_map` |
 

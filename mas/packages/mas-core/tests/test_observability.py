@@ -6,7 +6,6 @@ All tests are pure unit tests — no network, no real LLM calls.
 from __future__ import annotations
 
 import time
-import pytest
 
 from mas_core.llm_gateway.audit import (
     AuditEvent,
@@ -17,11 +16,9 @@ from mas_core.llm_gateway.audit import (
 from mas_core.llm_gateway.metrics import MetricsCollector, Window
 from mas_core.llm_gateway.rate_limits import (
     ExperimentalLimit,
-    ModelRateLimits,
     RateLimitTracker,
 )
 from mas_core.llm_gateway.smart_router import SmartRouter
-
 
 # =====================================================================
 # Audit log tests

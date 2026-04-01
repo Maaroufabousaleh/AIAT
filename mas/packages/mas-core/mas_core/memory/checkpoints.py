@@ -13,7 +13,7 @@ At 10–20 LLM calls per task, negligible compared to LLM API latency.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -61,7 +61,7 @@ class CheckpointStore:
         Returns the checkpoint UUID.
         """
         cid = checkpoint_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values: dict[str, Any] = {
             "id": cid,
             "agent_id": agent_id,

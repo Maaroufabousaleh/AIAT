@@ -13,9 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..protocols.enums import MessageType
 from ..protocols.envelope import MessageEnvelope
-from ..protocols.enums import AgentRole, MessageType
-
 from .base import AgentBase
 from .config import AgentConfig
 

@@ -19,13 +19,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import io
+import os
 import struct
 import sys
 import zlib
 
-# Ensure the package is importable when running from repo root
-sys.path.insert(0, "mas/packages/mas-core")
+# Ensure the package is importable regardless of CWD
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_SCRIPT_DIR)  # mas-core/
+sys.path.insert(0, _PACKAGE_ROOT)
 
 from mas_core.llm_gateway import (
     MODEL_REGISTRY,
@@ -34,10 +36,10 @@ from mas_core.llm_gateway import (
 )
 from mas_core.llm_gateway.models import LLMConfig
 
-
 # ---------------------------------------------------------------------------
 # Tiny PNG generator (no Pillow dependency)
 # ---------------------------------------------------------------------------
+
 
 def make_png(width: int = 8, height: int = 8, r: int = 50, g: int = 120, b: int = 220) -> bytes:
     """Generate a minimal solid-colour PNG (RGB, no palette)."""
@@ -68,6 +70,7 @@ def make_data_url(png_bytes: bytes) -> str:
 # Test helpers
 # ---------------------------------------------------------------------------
 
+
 async def test_model_with_image(
     client: LLMGatewayClient,
     model_id: str,
@@ -82,17 +85,16 @@ async def test_model_with_image(
     cap = entry.capabilities if entry else None
     has_images = cap.supports_images if cap else False
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Model:    {model_id}")
     print(f"Images:   {'YES' if has_images else 'NO'}")
 
     if not has_images:
-        print(f"  SKIP — model does not support images")
+        print("  SKIP — model does not support images")
         return True
 
     prompt_text = (
-        f"This is a solid {colour_name} image. "
-        "What colour do you see? Reply in one short sentence."
+        f"This is a solid {colour_name} image. What colour do you see? Reply in one short sentence."
     )
     messages = [
         {
@@ -124,7 +126,7 @@ async def test_model_text_only(
     model_id: str,
 ) -> bool:
     """Send a plain text prompt to verify the model still works."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Model:    {model_id}  (text-only check)")
     print("-" * 60)
 
@@ -145,10 +147,13 @@ async def test_model_text_only(
 # Main
 # ---------------------------------------------------------------------------
 
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Live image-input model tester")
     parser.add_argument("--scan-copilot", action="store_true", help="Scan Copilot CLI models first")
-    parser.add_argument("--text-too", action="store_true", help="Also test every model with text-only prompt")
+    parser.add_argument(
+        "--text-too", action="store_true", help="Also test every model with text-only prompt"
+    )
     args = parser.parse_args()
 
     if args.scan_copilot:
@@ -170,9 +175,9 @@ async def main() -> None:
     async with client:
         # Test image-capable models with the image
         all_ids = list(MODEL_REGISTRY.model_ids())
-        print(f"\n{'#'*60}")
+        print(f"\n{'#' * 60}")
         print(f"IMAGE TESTS — {len(all_ids)} registered models")
-        print(f"{'#'*60}")
+        print(f"{'#' * 60}")
 
         for model_id in all_ids:
             entry = MODEL_REGISTRY.get(model_id)
@@ -185,17 +190,17 @@ async def main() -> None:
 
         # Optionally test all models with text
         if args.text_too:
-            print(f"\n{'#'*60}")
+            print(f"\n{'#' * 60}")
             print(f"TEXT-ONLY TESTS — {len(all_ids)} registered models")
-            print(f"{'#'*60}")
+            print(f"{'#' * 60}")
             for model_id in all_ids:
                 ok = await test_model_text_only(client, model_id)
                 results[f"{model_id} (text)"] = "OK" if ok else "FAIL"
 
     # Summary
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print("SUMMARY")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
     for label, status in results.items():
         icon = "✓" if status == "OK" else ("—" if "SKIP" in status else "✗")
         print(f"  {icon} {label:<40s}  {status}")

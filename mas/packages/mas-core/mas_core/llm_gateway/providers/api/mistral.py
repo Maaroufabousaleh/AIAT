@@ -14,10 +14,13 @@ The verified fallback snapshot below was smoke-tested against a local
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from collections.abc import Iterable
 
 import httpx
 
+# Deferred import - MODEL_REGISTRY is created in the parent __init__.py
+# before sub-packages are imported.
+from .. import MODEL_REGISTRY
 from ..base import (
     ApiStyle,
     ModelCapabilities,
@@ -25,10 +28,6 @@ from ..base import (
     ModelRegistry,
     ProviderConfig,
 )
-
-# Deferred import - MODEL_REGISTRY is created in the parent __init__.py
-# before sub-packages are imported.
-from .. import MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)
 

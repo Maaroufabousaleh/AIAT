@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -58,20 +58,20 @@ from mas_core.protocols import (
     ToolManifestEntry,
     ToolRequest,
     ToolResponse,
+    WorkerCapabilityRecord,
+    WorkerManifest,
     WSAckFrame,
     WSMessageFrame,
     WSNackFrame,
     WSPingFrame,
     WSPongFrame,
-    WorkerCapabilityRecord,
-    WorkerManifest,
     parse_agent_frame,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _basic_envelope(**kwargs) -> MessageEnvelope:
     defaults = dict(
@@ -89,6 +89,7 @@ def _basic_envelope(**kwargs) -> MessageEnvelope:
 # ---------------------------------------------------------------------------
 # MessageEnvelope — basic construction
 # ---------------------------------------------------------------------------
+
 
 class TestMessageEnvelopeBasic:
     def test_defaults_are_sane(self):
@@ -117,6 +118,7 @@ class TestMessageEnvelopeBasic:
 # ---------------------------------------------------------------------------
 # MessageEnvelope — routing validation
 # ---------------------------------------------------------------------------
+
 
 class TestMessageEnvelopeRouting:
     def test_sender_team_required(self):
@@ -187,6 +189,7 @@ class TestMessageEnvelopeRouting:
 # MessageEnvelope — payload size enforcement
 # ---------------------------------------------------------------------------
 
+
 class TestPayloadSizeEnforcement:
     def test_small_payload_accepted(self):
         env = _basic_envelope(payload={"key": "value"})
@@ -195,7 +198,7 @@ class TestPayloadSizeEnforcement:
     def test_payload_exactly_at_limit_accepted(self):
         # Build a payload that serialises to exactly MAX_PAYLOAD_BYTES
         # Use a key + value that just fits
-        value = "x" * (MAX_PAYLOAD_BYTES - len(b'{"k": ""}') )
+        value = "x" * (MAX_PAYLOAD_BYTES - len(b'{"k": ""}'))
         payload = {"k": value}
         serialised = json.dumps(payload, default=str).encode()
         assert len(serialised) <= MAX_PAYLOAD_BYTES
@@ -211,6 +214,7 @@ class TestPayloadSizeEnforcement:
 # ---------------------------------------------------------------------------
 # BlobRef
 # ---------------------------------------------------------------------------
+
 
 class TestBlobRef:
     def test_construction(self):
@@ -232,6 +236,7 @@ class TestBlobRef:
 # TaskBudget
 # ---------------------------------------------------------------------------
 
+
 class TestTaskBudget:
     def test_uncapped_always_has_budget(self):
         b = TaskBudget()
@@ -240,12 +245,12 @@ class TestTaskBudget:
         assert b.deadline_exceeded() is False
 
     def test_deadline_exceeded(self):
-        past = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(tz=UTC) - timedelta(seconds=1)
         b = TaskBudget(deadline=past)
         assert b.deadline_exceeded() is True
 
     def test_deadline_not_exceeded(self):
-        future = datetime.now(tz=timezone.utc) + timedelta(hours=1)
+        future = datetime.now(tz=UTC) + timedelta(hours=1)
         b = TaskBudget(deadline=future)
         assert b.deadline_exceeded() is False
 
@@ -271,6 +276,7 @@ class TestTaskBudget:
 # ---------------------------------------------------------------------------
 # reply() helper
 # ---------------------------------------------------------------------------
+
 
 class TestReplyHelper:
     def test_reply_wires_correlation_and_parent(self):
@@ -303,13 +309,14 @@ class TestReplyHelper:
 # MessageEnvelope.is_expired()
 # ---------------------------------------------------------------------------
 
+
 class TestIsExpired:
     def test_fresh_message_not_expired(self):
         env = _basic_envelope(ttl_seconds=3600)
         assert env.is_expired() is False
 
     def test_old_message_expired(self):
-        past = datetime.now(tz=timezone.utc) - timedelta(seconds=7200)
+        past = datetime.now(tz=UTC) - timedelta(seconds=7200)
         env = _basic_envelope(ttl_seconds=3600)
         object.__setattr__(env, "timestamp", past)
         assert env.is_expired() is True
@@ -319,18 +326,35 @@ class TestIsExpired:
 # Enum completeness
 # ---------------------------------------------------------------------------
 
+
 class TestEnumCompleteness:
     def test_all_message_types_present(self):
         expected = {
-            "TASK", "RESULT", "QUERY", "RESPONSE", "BROADCAST",
-            "ADMIN_TASK", "ADMIN_REPLY", "SHUTDOWN", "SHUTDOWN_ACK",
-            "DOCUMENT_SUBMIT", "DOCUMENT_REVISION",
-            "REVIEW_REQUEST", "REVIEW_RESPONSE",
-            "APPROVAL_REQUEST", "APPROVAL_RESPONSE",
-            "SPRINT_PLAN", "SPRINT_REPORT", "ISSUE_ASSIGN", "ISSUE_COMPLETE",
-            "ESCALATION", "DIRECTIVE",
+            "TASK",
+            "RESULT",
+            "QUERY",
+            "RESPONSE",
+            "BROADCAST",
+            "ADMIN_TASK",
+            "ADMIN_REPLY",
+            "SHUTDOWN",
+            "SHUTDOWN_ACK",
+            "DOCUMENT_SUBMIT",
+            "DOCUMENT_REVISION",
+            "REVIEW_REQUEST",
+            "REVIEW_RESPONSE",
+            "APPROVAL_REQUEST",
+            "APPROVAL_RESPONSE",
+            "SPRINT_PLAN",
+            "SPRINT_REPORT",
+            "ISSUE_ASSIGN",
+            "ISSUE_COMPLETE",
+            "ESCALATION",
+            "DIRECTIVE",
             "INFRA_READY",
-            "HEARTBEAT", "ACK", "SYSTEM_EVENT",
+            "HEARTBEAT",
+            "ACK",
+            "SYSTEM_EVENT",
         }
         actual = {m.name for m in MessageType}
         assert expected.issubset(actual), f"Missing message types: {expected - actual}"
@@ -347,25 +371,40 @@ class TestEnumCompleteness:
 
     def test_kpi_metric_type_completeness(self):
         expected = {
-            "ESTIMATION_ACCURACY", "TASK_COMPLETION_RATE", "REVIEW_PASS_RATE",
-            "VELOCITY", "DEFECT_RATE", "REWORK_RATE",
-            "BUDGET_ADHERENCE", "RESOURCE_UTILIZATION", "INFRA_LEAD_TIME",
+            "ESTIMATION_ACCURACY",
+            "TASK_COMPLETION_RATE",
+            "REVIEW_PASS_RATE",
+            "VELOCITY",
+            "DEFECT_RATE",
+            "REWORK_RATE",
+            "BUDGET_ADHERENCE",
+            "RESOURCE_UTILIZATION",
+            "INFRA_LEAD_TIME",
         }
         actual = {k.name for k in KPIMetricType}
         assert expected == actual
 
     def test_document_state_completeness(self):
         expected = {
-            "DRAFT", "IN_REVIEW", "APPROVED", "REJECTED",
-            "NEEDS_REVISION", "SUPERSEDED", "ARCHIVED",
+            "DRAFT",
+            "IN_REVIEW",
+            "APPROVED",
+            "REJECTED",
+            "NEEDS_REVISION",
+            "SUPERSEDED",
+            "ARCHIVED",
         }
         actual = {s.name for s in DocumentState}
         assert expected == actual
 
     def test_failure_reason_completeness(self):
         expected = {
-            "WATCHDOG_TIMEOUT", "REVIEW_CIRCUIT_OPEN", "DLQ_OVERFLOW",
-            "INFRA_FAILURE", "AGENT_BUDGET_EXHAUSTED", "UNRECOVERABLE_ERROR",
+            "WATCHDOG_TIMEOUT",
+            "REVIEW_CIRCUIT_OPEN",
+            "DLQ_OVERFLOW",
+            "INFRA_FAILURE",
+            "AGENT_BUDGET_EXHAUSTED",
+            "UNRECOVERABLE_ERROR",
         }
         actual = {r.name for r in FailureReason}
         assert expected == actual
@@ -389,6 +428,7 @@ class TestEnumCompleteness:
 # ---------------------------------------------------------------------------
 # ToolRequest / ToolResponse
 # ---------------------------------------------------------------------------
+
 
 class TestToolModels:
     def test_tool_request_construction(self):
@@ -448,6 +488,7 @@ class TestToolModels:
 # ---------------------------------------------------------------------------
 # Domain models
 # ---------------------------------------------------------------------------
+
 
 class TestProjectDocument:
     def test_defaults(self):
@@ -543,9 +584,9 @@ class TestKPISnapshot:
             project_id="p1",
             estimation_accuracy=0.85,
             velocity=3.2,
-            infra_lead_time_minutes=42.0,
+            infra_lead_time_seconds=2520,
         )
-        assert snap.infra_lead_time_minutes == 42.0
+        assert snap.infra_lead_time_seconds == 2520
 
     def test_metric_type_supports_infra_and_resource_metrics(self):
         infra = KPISnapshot(project_id="p1", metric_type="INFRA_LEAD_TIME", value=120.0)
@@ -592,12 +633,24 @@ class TestIssue:
 class TestProjectState:
     def test_all_states_present(self):
         expected = {
-            "INIT", "FEASIBILITY_CHECK", "FEASIBILITY_REPORT",
-            "PDR_CREATION", "PDR_REVIEW", "SECURITY_BLOCKED",
-            "CDR_CREATION", "CDR_REVIEW", "HUMAN_APPROVAL",
-            "RR_CREATION", "SPRINT_PLANNING", "INFRA_PROVISIONING",
-            "IN_PROGRESS", "RETROSPECTIVE", "KPI_PERSISTENCE",
-            "COMPLETED", "ARCHIVED", "FAILED",
+            "INIT",
+            "FEASIBILITY_CHECK",
+            "FEASIBILITY_REPORT",
+            "PDR_CREATION",
+            "PDR_REVIEW",
+            "SECURITY_BLOCKED",
+            "CDR_CREATION",
+            "CDR_REVIEW",
+            "HUMAN_APPROVAL",
+            "RR_CREATION",
+            "SPRINT_PLANNING",
+            "INFRA_PROVISIONING",
+            "IN_PROGRESS",
+            "RETROSPECTIVE",
+            "KPI_PERSISTENCE",
+            "COMPLETED",
+            "ARCHIVED",
+            "FAILED",
         }
         actual = {s.name for s in ProjectState}
         assert expected == actual, f"Missing: {expected - actual}; Extra: {actual - expected}"

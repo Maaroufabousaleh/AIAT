@@ -20,6 +20,7 @@ Tables
 12. system_config           — system lifecycle state + working-hours schedule
 13. agent_checkpoints       — mid-task LLM conversation checkpoints (resumable)
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -73,10 +74,17 @@ def upgrade() -> None:
     op.create_table(
         "project_state_history",
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("from_state", sa.Text()),
         sa.Column("to_state", sa.Text(), nullable=False),
-        sa.Column("event", sa.Text(), nullable=False, comment="EventType that triggered transition"),
+        sa.Column(
+            "event", sa.Text(), nullable=False, comment="EventType that triggered transition"
+        ),
         sa.Column("triggered_by", sa.Text(), comment="agent_id that emitted the event"),
         sa.Column("payload", sa.JSONB(), comment="Event payload snapshot"),
         sa.Column(
@@ -92,7 +100,12 @@ def upgrade() -> None:
     op.create_table(
         "documents",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column(
             "doc_type",
             sa.Text(),
@@ -130,7 +143,12 @@ def upgrade() -> None:
     op.create_table(
         "review_sessions",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("document_id", sa.UUID(), sa.ForeignKey("documents.id", ondelete="SET NULL")),
         sa.Column(
             "session_type",
@@ -145,7 +163,9 @@ def upgrade() -> None:
             server_default="IN_PROGRESS",
             comment="IN_PROGRESS | COMPLETED | TIMED_OUT | CIRCUIT_OPEN",
         ),
-        sa.Column("reviewer_ids", sa.ARRAY(sa.Text()), comment="List of agent_ids invited to review"),
+        sa.Column(
+            "reviewer_ids", sa.ARRAY(sa.Text()), comment="List of agent_ids invited to review"
+        ),
         sa.Column("timeout_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("review_timeout_seconds", sa.Integer(), server_default="300", nullable=False),
         sa.Column(
@@ -177,7 +197,9 @@ def upgrade() -> None:
             nullable=False,
             comment="APPROVED | NEEDS_REVISION | BLOCKER",
         ),
-        sa.Column("veto", sa.Boolean(), server_default="false", nullable=False, comment="CSO veto flag"),
+        sa.Column(
+            "veto", sa.Boolean(), server_default="false", nullable=False, comment="CSO veto flag"
+        ),
         sa.Column(
             "severity",
             sa.Text(),
@@ -197,7 +219,12 @@ def upgrade() -> None:
     op.create_table(
         "approval_gates",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column(
             "gate_type",
             sa.Text(),
@@ -228,7 +255,12 @@ def upgrade() -> None:
     op.create_table(
         "sprints",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("sprint_number", sa.Integer(), nullable=False),
         sa.Column("milestone", sa.Text()),
         sa.Column("goal", sa.Text()),
@@ -260,7 +292,12 @@ def upgrade() -> None:
     op.create_table(
         "issues",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("sprint_id", sa.UUID(), sa.ForeignKey("sprints.id", ondelete="SET NULL")),
         sa.Column("parent_issue_id", sa.UUID(), sa.ForeignKey("issues.id", ondelete="SET NULL")),
         sa.Column("title", sa.Text(), nullable=False),
@@ -307,7 +344,12 @@ def upgrade() -> None:
     op.create_table(
         "kpi_snapshots",
         sa.Column("id", sa.UUID(), primary_key=True),
-        sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id",
+            sa.UUID(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("sprint_id", sa.UUID(), sa.ForeignKey("sprints.id", ondelete="SET NULL")),
         sa.Column(
             "scope",
@@ -324,7 +366,9 @@ def upgrade() -> None:
         sa.Column("rework_rate", sa.Numeric(5, 4)),
         sa.Column("budget_adherence", sa.Numeric(5, 4)),
         sa.Column("resource_utilization", sa.Numeric(5, 4)),
-        sa.Column("infra_lead_time_seconds", sa.Integer(), comment="infra_ready_at - infra_requested_at"),
+        sa.Column(
+            "infra_lead_time_seconds", sa.Integer(), comment="infra_ready_at - infra_requested_at"
+        ),
         sa.Column("raw_data", sa.JSONB(), comment="Full raw numbers for future recomputation"),
         sa.Column(
             "computed_at",
@@ -380,7 +424,12 @@ def upgrade() -> None:
         sa.Column("project_id", sa.UUID()),
         sa.Column("retry_count", sa.Integer(), nullable=False),
         sa.Column("failure_reason", sa.Text(), comment="RETRY_EXHAUSTED | TTL_EXPIRED"),
-        sa.Column("envelope_json", sa.JSONB(), nullable=False, comment="Full serialised envelope for forensics"),
+        sa.Column(
+            "envelope_json",
+            sa.JSONB(),
+            nullable=False,
+            comment="Full serialised envelope for forensics",
+        ),
         sa.Column(
             "dead_at",
             sa.TIMESTAMP(timezone=True),
@@ -408,8 +457,8 @@ def upgrade() -> None:
     op.execute("""
         INSERT INTO system_config (key, value, description) VALUES
             ('system_state',    'STOPPED',  'RUNNING | SHUTTING_DOWN | STARTING | STOPPED'),
-            ('boot_at',          NULL,       'Timestamp of last successful startup (set by orchestrator-api)'),
-            ('shutdown_at',      NULL,       'Timestamp of last clean shutdown'),
+            ('boot_at',          '',         'Timestamp of last successful startup (set by orchestrator-api)'),
+            ('shutdown_at',      '',         'Timestamp of last clean shutdown'),
             ('watchdog_timeout', '3600',     'Seconds of inactivity before project is marked FAILED'),
             ('watchdog_grace',   '300',      'Seconds to ignore watchdog after system boot'),
             ('schedule_enabled', 'false',    'Enable automatic shutdown / resume on a daily schedule'),
@@ -429,7 +478,9 @@ def upgrade() -> None:
         sa.Column("agent_id", sa.Text(), nullable=False),
         sa.Column("team_id", sa.Text(), nullable=False),
         sa.Column("project_id", sa.UUID()),
-        sa.Column("task_message_id", sa.Text(), nullable=False, comment="message_id of the TASK envelope"),
+        sa.Column(
+            "task_message_id", sa.Text(), nullable=False, comment="message_id of the TASK envelope"
+        ),
         sa.Column("iteration", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "messages_json",
@@ -439,7 +490,9 @@ def upgrade() -> None:
         ),
         sa.Column("tool_results_json", sa.JSONB(), comment="Accumulated tool results"),
         sa.Column("budget_state_json", sa.JSONB(), comment="Remaining budget counters"),
-        sa.Column("task_envelope_json", sa.JSONB(), nullable=False, comment="Original TASK envelope"),
+        sa.Column(
+            "task_envelope_json", sa.JSONB(), nullable=False, comment="Original TASK envelope"
+        ),
         sa.Column(
             "saved_at",
             sa.TIMESTAMP(timezone=True),

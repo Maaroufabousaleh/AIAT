@@ -30,7 +30,6 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
-from uuid import UUID
 
 import httpx
 
@@ -298,7 +297,7 @@ class RouterClient:
     # Context manager support
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> "RouterClient":
+    async def __aenter__(self) -> RouterClient:
         await self.start()
         return self
 

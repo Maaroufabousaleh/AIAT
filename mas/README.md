@@ -1,6 +1,6 @@
 # MAS — Multi-Agent System
 
-> **Status:** Phase 0 scaffold complete. Phases 1–12 implement the actual agent logic.
+> **Status:** Phases 0-6 are implemented and aligned to the updated plans; repository baseline is prepared for Phase 7+.
 
 A self-hosted, fully autonomous multi-agent system built on FastAPI, Redis Streams,
 PostgreSQL, and MinIO. Eleven specialised agent teams cover the full software delivery
@@ -14,7 +14,7 @@ lifecycle — from CEO vision to DevOps deployment.
 ┌─────────────────────────────────────────────────────────────┐
 │  orchestrator-api  (workflow controller + REST)  :8000      │
 │  message-router    (policy + Redis Streams)      :8001      │
-│  tool-service      (6 tool groups, rate-limited) :8002      │
+│  tool-service      (7 tool groups, rate-limited) :8002      │
 │  team-runner ×11   (one container per team)      internal   │
 ├─────────────────────────────────────────────────────────────┤
 │  Redis 7.2   PostgreSQL 16   PgBouncer 1.22   MinIO         │
@@ -105,7 +105,7 @@ mas/
 ├── apps/
 │   ├── orchestrator-api/       # Workflow controller + REST API
 │   ├── message-router/         # Policy enforcement + Redis Streams broker
-│   ├── tool-service/           # Tool gateway (6 groups, rate-limited)
+│   ├── tool-service/           # Tool gateway (7 groups, rate-limited)
 │   └── team-runner/            # Per-team agent process (×11 at runtime)
 ├── teams/                      # YAML configs for each team (11 files)
 ├── prompts/                    # Agent system prompt stubs (11 Markdown files)
@@ -130,6 +130,11 @@ uv sync
 ```bash
 uv run pytest                    # all packages + apps
 uv run pytest packages/mas-core  # single package
+```
+
+```bash
+# live/provider tests are opt-in:
+MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live.py
 ```
 
 ### Lint + type-check
@@ -161,19 +166,20 @@ uv run mypy .
 
 | Phase | Description |
 |---|---|
-| **0** | ✅ Repo scaffold (this phase) |
-| 1 | Core protocols & message envelope |
-| 2 | Policy engine & role enforcement |
-| 3 | Redis Streams broker (message-router) |
-| 4 | LLM gateway client |
-| 5 | Agent base classes & runtime |
-| 6 | Tool service implementation (6 groups) |
-| 7 | ORM models + Alembic integration |
-| 8 | Agent system prompts |
-| 9 | Team-runner: YAML loading + agent instantiation |
-| 10 | Workflow controller (orchestrator-api full) |
-| 11 | KPI tracking & reporting |
-| 12 | End-to-end integration hardening |
+| 0 | Repo scaffold |
+| 1 | Protocols and core models |
+| 2 | Policy engine |
+| 5 | LLM gateway |
+| 4b | Deterministic workflow controller |
+| 3 | Message router |
+| 6 | Tool service implementation (7 groups) |
+| 7 | Storage layer (Postgres + MinIO + capability registry) |
+| 4 + 8 | Agent runtime + agent types |
+| 9 + 10 | Team runner + orchestrator API |
+| 11 | Docker Compose baseline |
+| 12 | Observability |
+| 13 | Shutdown and resume |
+| 14 (optional) | Paperclip control-plane integration |
 
 ---
 

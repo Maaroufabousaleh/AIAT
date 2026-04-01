@@ -2,3 +2,39 @@
 .env
 *.env
 !*.env.example
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing / linting caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE / editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.VSCodeCounter
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# OpenCode config (developer-local)
+opencode.json
+
+# Local dev utility scripts (Windows)
+guardian.bat

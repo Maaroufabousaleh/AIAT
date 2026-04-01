@@ -12,11 +12,10 @@ from typing import Any
 import pytest
 
 from mas_core.agent_runtime.attachment_manager import (
+    _DATA_URL_RE,
     SavedFile,
     TempAttachmentManager,
-    _DATA_URL_RE,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -71,5 +71,15 @@ ignore_missing_imports = true
 
 # ── pytest (shared) ───────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["packages", "apps"]
+testpaths = [
+    "packages/mas-core/tests",
+    "packages/mas-tools-sdk/tests",
+    "apps/message-router/tests",
+    "apps/orchestrator-api/tests",
+    "apps/team-runner/tests",
+    "apps/tool-service/tests",
+]
 addopts = "--tb=short -q --import-mode=importlib -p no:cacheprovider"
+markers = [
+    "live: marks tests that require external providers/network and are opt-in via MAS_RUN_LIVE_TESTS=1",
+]

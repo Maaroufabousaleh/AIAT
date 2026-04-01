@@ -11,21 +11,26 @@ This script:
 4. Prints the response
 5. Cleans up
 """
+
 from __future__ import annotations
 
 import asyncio
+import os
 import struct
 import sys
 import zlib
 
 # Ensure project root is on PYTHONPATH
-sys.path.insert(0, r"C:\projects\AIAT\mas\packages\mas-core")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_SCRIPT_DIR)  # mas-core/
+sys.path.insert(0, _PACKAGE_ROOT)
 
 from mas_core.agent_runtime.attachment_manager import TempAttachmentManager
 
 
 def make_test_png(width: int = 8, height: int = 8) -> bytes:
     """Generate a small red/blue checkerboard PNG."""
+
     def _chunk(chunk_type: bytes, data: bytes) -> bytes:
         c = chunk_type + data
         return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
@@ -37,9 +42,9 @@ def make_test_png(width: int = 8, height: int = 8) -> bytes:
         raw_rows += b"\x00"
         for x in range(width):
             if (x + y) % 2 == 0:
-                raw_rows += bytes([255, 0, 0])    # red pixel
+                raw_rows += bytes([255, 0, 0])  # red pixel
             else:
-                raw_rows += bytes([0, 0, 255])     # blue pixel
+                raw_rows += bytes([0, 0, 255])  # blue pixel
     idat = _chunk(b"IDAT", zlib.compress(raw_rows))
     iend = _chunk(b"IEND", b"")
     return b"\x89PNG\r\n\x1a\n" + ihdr + idat + iend
@@ -65,10 +70,25 @@ async def main() -> None:
 
         # 4. Build a full Copilot CLI command
         import shutil
+
         binary = shutil.which("copilot")
         if binary is None:
-            # Fallback to known path
-            binary = r"c:\Users\Maaro\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.BAT"
+            # Try common install paths
+            appdata = os.environ.get("APPDATA", "")
+            candidate = os.path.join(
+                appdata,
+                "Code",
+                "User",
+                "globalStorage",
+                "github.copilot-chat",
+                "copilotCli",
+                "copilot.BAT",
+            )
+            if os.path.isfile(candidate):
+                binary = candidate
+            else:
+                print("ERROR: copilot CLI not found on PATH or in VS Code globalStorage")
+                return
 
         prompt = (
             f"Describe the image file I've given you access to. "
@@ -80,8 +100,10 @@ async def main() -> None:
             "--no-ask-user",
             "--no-auto-update",
             *cli_args,
-            "--model", "gpt-5-mini",
-            "-p", prompt,
+            "--model",
+            "gpt-5-mini",
+            "-p",
+            prompt,
         ]
         print(f"[4] Command: {' '.join(cmd[:6])} ... (truncated)")
         print(f"    Full prompt: {prompt[:200]}...")

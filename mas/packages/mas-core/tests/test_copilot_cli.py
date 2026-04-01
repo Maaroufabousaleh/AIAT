@@ -12,25 +12,22 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from mas_core.llm_gateway.client import LLMGatewayClient, LLMGatewayError
-from mas_core.llm_gateway.providers.cli.copilot import (
-    COPILOT_BASE_ARGS,
-    COPILOT_COST_MAP,
-    COPILOT_PROVIDER,
-    CopilotModelScanner,
-)
 from mas_core.llm_gateway.models import LLMConfig
 from mas_core.llm_gateway.providers import (
     ApiStyle,
     ModelEntry,
     ModelRegistry,
-    ProviderConfig,
 )
-
+from mas_core.llm_gateway.providers.cli.copilot import (
+    COPILOT_COST_MAP,
+    COPILOT_PROVIDER,
+    CopilotModelScanner,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures

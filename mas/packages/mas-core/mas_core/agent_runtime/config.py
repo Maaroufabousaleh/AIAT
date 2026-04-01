@@ -10,8 +10,8 @@ from __future__ import annotations
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ..protocols.envelope import TaskBudget
 from ..protocols.enums import AgentRole
+from ..protocols.envelope import TaskBudget
 
 
 class AgentConfig(BaseSettings):

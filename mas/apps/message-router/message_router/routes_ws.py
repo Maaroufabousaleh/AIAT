@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections import OrderedDict
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from fastapi.websockets import WebSocketState
 
@@ -46,21 +46,15 @@ from .config import settings
 from .redis_client import (
     ensure_consumer_group,
     get_redis,
-    group_name,
     stream_key,
     xack,
     xreadgroup_new,
     xreadgroup_pending,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.stdlib.get_logger(__name__)
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# Auth helper
-# ---------------------------------------------------------------------------
 
 
 def _authenticate(ws: WebSocket) -> str | None:
@@ -81,16 +75,9 @@ def _authenticate(ws: WebSocket) -> str | None:
     return agent_id if agent_id else None
 
 
-# ---------------------------------------------------------------------------
-# WebSocket subscribe handler
-# ---------------------------------------------------------------------------
-
-
 @router.websocket("/ws/subscribe/{team_id}")
 async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     """Agent WebSocket subscription — stream messages from ``stream:{team_id}``."""
-
-    # ── 1. Auth ────────────────────────────────────────────────────────────────
     agent_id = _authenticate(ws)
     if agent_id is None:
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -103,7 +90,6 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     await ws.accept()
     logger.info("WS connected: agent=%s team=%s", agent_id, team_id)
 
-    # ── 2. Ensure consumer group exists ───────────────────────────────────────
     try:
         await ensure_consumer_group(team_id)
     except Exception:
@@ -112,17 +98,13 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
         return
 
     redis = get_redis()
-    consumer_id = agent_id  # Use agent_id as the Redis consumer name
+    consumer_id = agent_id
 
-    # Track pending PING ids so we can validate PONGs
     pending_pings: dict[str, asyncio.Task[None]] = {}
 
-    # Consume-side idempotency — LRU set of recently delivered message_ids.
-    # Prevents duplicate delivery to the same agent within a connection.
     delivered_ids: OrderedDict[str, None] = OrderedDict()
     max_delivered_ids = 1000
 
-    # ── 3. Deliver pending PEL entries (replay after reconnect) ───────────────
     try:
         pending_entries = await xreadgroup_pending(team_id, consumer_id, redis)
         for entry_id, fields in pending_entries:
@@ -142,19 +124,15 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     except Exception:
         logger.exception("Error delivering PEL entries: agent=%s team=%s", agent_id, team_id)
 
-    # ── 4. Live new-message loop ───────────────────────────────────────────────
     ping_task: asyncio.Task[None] | None = None
     try:
-        # Start ping sender
         ping_task = asyncio.create_task(_ping_loop(ws, pending_pings), name=f"ping-{agent_id}")
 
-        # Start receive task (handles ACK/NACK/PONG from agent)
         receive_task = asyncio.create_task(
             _receive_loop(ws, team_id, consumer_id, redis, pending_pings),
             name=f"recv-{agent_id}",
         )
 
-        # Main read loop
         while ws.client_state == WebSocketState.CONNECTED:
             try:
                 entries = await xreadgroup_new(
@@ -213,11 +191,6 @@ async def ws_subscribe_compat(
     await ws_subscribe(ws, team_id)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 async def _deliver_entry(
     ws: WebSocket,
     team_id: str,
@@ -258,7 +231,6 @@ async def _deliver_entry(
         await xack(team_id, entry_id, redis)
         return True
 
-    # ── Consume-side idempotency ──────────────────────────────────────────────
     msg_id = envelope.message_id
     if msg_id in delivered_ids:
         logger.debug(
@@ -270,10 +242,9 @@ async def _deliver_entry(
         await xack(team_id, entry_id, redis)
         return True
 
-    # Record delivery in LRU set
     delivered_ids[msg_id] = None
     if len(delivered_ids) > max_delivered_ids:
-        delivered_ids.popitem(last=False)  # evict oldest
+        delivered_ids.popitem(last=False)
 
     frame = WSMessageFrame(
         entry_id=entry_id,
@@ -305,7 +276,6 @@ async def _ping_loop(
         except Exception:
             break
 
-        # Schedule a pong-timeout watchdog
         pong_timeout_task = asyncio.create_task(
             _pong_timeout(ws, ping.ping_id, settings.ws_pong_timeout_seconds),
             name=f"pong-timeout-{ping.ping_id}",
@@ -359,7 +329,6 @@ async def _receive_loop(
                 logger.exception("XACK failed: team=%s entry_id=%s", team_id, frame.entry_id)
 
         elif isinstance(frame, WSNackFrame):
-            # Message stays in PEL — XAUTOCLAIM will reclaim after idle timeout.
             logger.debug(
                 "NACK: team=%s entry_id=%s reason=%s retry_after=%s",
                 team_id,
@@ -369,7 +338,6 @@ async def _receive_loop(
             )
 
         elif isinstance(frame, WSPongFrame):
-            # Cancel the pong-timeout watchdog for this ping
             ping_id = frame.ping_id
             timeout_task = pending_pings.pop(ping_id, None)
             if timeout_task and not timeout_task.done():

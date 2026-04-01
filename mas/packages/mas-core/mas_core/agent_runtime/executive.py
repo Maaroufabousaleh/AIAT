@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -28,15 +28,12 @@ from ..protocols.domain import (
     ReviewResponse,
     ReviewSummary,
 )
-from ..protocols.envelope import MessageEnvelope
 from ..protocols.enums import (
-    AgentRole,
-    DocumentState,
     MessageType,
-    ReviewSessionStatus,
     ReviewSeverity,
     ReviewVerdict,
 )
+from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
 from .config import AgentConfig
 
@@ -329,7 +326,7 @@ class ExecutiveAgent(AdminAgent):
             overall = ReviewVerdict.APPROVED
 
         summary.overall_verdict = overall
-        summary.completed_at = datetime.now(tz=timezone.utc)
+        summary.completed_at = datetime.now(tz=UTC)
 
         document_id = str(summary.document_id)
         project_id = summary.project_id

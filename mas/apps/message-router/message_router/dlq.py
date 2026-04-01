@@ -7,19 +7,14 @@ or has expired (``ttl_seconds`` elapsed), the router:
   3. Publishes a ``SYSTEM_EVENT { event: "DLQ_ENTRY" }`` to ``stream:exec_ceo``
      so the CEO is notified.
 
-This module uses a plain ``asyncpg`` connection (no PgBouncer pool needed here
-since these writes are infrequent; the router only writes to Postgres for DLQ).
-``statement_cache_size=0`` is mandatory for PgBouncer transaction pooling
-compatibility, but we open a direct connection here — still set it for safety.
+``statement_cache_size=0`` is mandatory for PgBouncer transaction pooling compatibility.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 import asyncpg  # type: ignore[import-untyped]
 
@@ -27,7 +22,6 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# Module-level connection pool — lazily initialised.
 _pool: asyncpg.Pool | None = None
 
 
@@ -39,7 +33,7 @@ async def get_pool() -> asyncpg.Pool:
             settings.postgres_dsn,
             min_size=1,
             max_size=5,
-            statement_cache_size=0,  # mandatory for PgBouncer transaction pooling
+            statement_cache_size=0,
         )
         logger.info("DLQ Postgres pool created.")
     return _pool
@@ -52,11 +46,6 @@ async def close_pool() -> None:
         await _pool.close()
         _pool = None
         logger.info("DLQ Postgres pool closed.")
-
-
-# ---------------------------------------------------------------------------
-# DLQ insert
-# ---------------------------------------------------------------------------
 
 
 async def write_dead_letter(
@@ -82,7 +71,7 @@ async def write_dead_letter(
     """
     pool = await get_pool()
     dlq_id = str(uuid.uuid4())
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     try:
         await pool.execute(
@@ -115,11 +104,6 @@ async def write_dead_letter(
     return dlq_id
 
 
-# ---------------------------------------------------------------------------
-# System event helper (SYSTEM_EVENT → stream:exec_ceo)
-# ---------------------------------------------------------------------------
-
-
 def make_dlq_system_event_fields(
     dlq_id: str,
     message_id: str,
@@ -131,8 +115,8 @@ def make_dlq_system_event_fields(
     Published to ``stream:exec_ceo`` after a dead-letter is written so the CEO
     agent can inspect the DLQ and take corrective action.
     """
-    from mas_core.protocols.envelope import MessageEnvelope
     from mas_core.protocols.enums import AgentRole, MessageType
+    from mas_core.protocols.envelope import MessageEnvelope
 
     notification = MessageEnvelope(
         msg_type=MessageType.SYSTEM_EVENT,

@@ -58,14 +58,14 @@ and still get a sensible default.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .client import LLMGatewayClient
 
+from .providers.base import ModelRegistry
 from .smart_router import ModelScore
-from .providers.base import ModelEntry, ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +231,7 @@ class ModelSelector:
 
     def __init__(
         self,
-        client: "LLMGatewayClient",
+        client: LLMGatewayClient,
         *,
         free_only: bool = True,
         task_bonus: float = 0.15,

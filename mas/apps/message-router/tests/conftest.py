@@ -1,8 +1,8 @@
 """
 Conftest for message-router tests.
 """
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 

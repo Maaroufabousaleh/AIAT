@@ -1,17 +1,16 @@
 """
 util — Cross-cutting utilities.
 
-Exports (Phase 4 + general)
-----------------------------
-get_logger(name)    Returns a structlog logger bound with agent_id / team_id
-                    context (JSON output in production, coloured in dev).
+Planned exports
+---------------
+get_logger(name)    Structlog logger bound with agent_id / team_id context.
 BudgetTracker       Tracks remaining LLM calls, tool calls, subtasks, cost.
-                    Raises BudgetExhaustedError when any cap is hit.
-LRUIdempotencySet   Thread-safe LRU set (cachetools.LRUCache) of processed
-                    message_id values; size-1000 default.
-configure_logging   Call once at startup; reads LOG_LEVEL / LOG_FORMAT env vars.
-new_message_id      Returns a new ULID string suitable for MessageEnvelope.message_id.
-utcnow              Returns timezone-aware datetime.now(UTC) (replaces naive utcnow()).
-"""
+LRUIdempotencySet   Thread-safe LRU set of processed message_id values.
+configure_logging   Read LOG_LEVEL / LOG_FORMAT env vars at startup.
+new_message_id      Returns a new ULID string for MessageEnvelope.message_id.
+utcnow              Returns timezone-aware datetime.now(UTC).
 
-# Populated incrementally across phases.
+Note: BudgetTracker is currently implemented in
+``mas_core.agent_runtime.budget``.  The above exports will be
+consolidated here in a future phase.
+"""

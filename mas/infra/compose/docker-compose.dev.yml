@@ -1,6 +1,6 @@
 # ── docker-compose.dev.yml ────────────────────────────────────────────────────
 # Development overlay: exposes Redis/Postgres ports, adds admin UIs,
-# enables hot-reload for the FastAPI services.
+# adds Prometheus + Grafana (Phase 12), enables hot-reload for FastAPI services.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -50,6 +50,52 @@ services:
       - "8003:5540"
     mem_limit: 256m
 
+  # ── Prometheus (Phase 12) ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── Grafana (Phase 12) ────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana-oss:10.4.0
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: "0.5"
+
   # Hot-reload overrides for FastAPI services
   orchestrator-api:
     command: >
@@ -63,6 +109,8 @@ services:
       LOG_LEVEL: DEBUG
 
   message-router:
+    ports:
+      - "8001:8001"
     command: >
       uvicorn message_router.main:app
         --host 0.0.0.0 --port 8001
@@ -73,6 +121,8 @@ services:
       LOG_LEVEL: DEBUG
 
   tool-service:
+    ports:
+      - "8002:8002"
     command: >
       uvicorn tool_service.main:app
         --host 0.0.0.0 --port 8002
@@ -81,3 +131,8 @@ services:
       - ../../apps/tool-service/tool_service:/app/tool_service
     environment:
       LOG_LEVEL: DEBUG
+
+# ── Volumes (dev-only) ─────────────────────────────────────────────────────
+volumes:
+  prometheus_data:
+  grafana_data:

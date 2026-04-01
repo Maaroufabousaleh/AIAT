@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import logging
-
+import structlog
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from mas_core.protocols.envelope import MessageEnvelope
+from mas_core.observability.metrics import MAS_MESSAGES_TOTAL
+from mas_core.observability.tracing import bind_trace_id
 from mas_core.policy.engine import CommunicationPolicy
+from mas_core.protocols.envelope import MessageEnvelope
 
 from .config import settings
 from .redis_client import (
@@ -19,15 +20,10 @@ from .redis_client import (
     xadd_message,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.stdlib.get_logger(__name__)
 
 router = APIRouter()
 policy = CommunicationPolicy()
-
-
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
 
 
 class PublishResponse(BaseModel):
@@ -35,11 +31,6 @@ class PublishResponse(BaseModel):
 
     entry_id: str
     deduplicated: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Publish endpoint
-# ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -55,8 +46,6 @@ class PublishResponse(BaseModel):
 )
 async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
     """Publish a validated MessageEnvelope to the target team's Redis stream."""
-
-    # ── 1. Policy check ───────────────────────────────────────────────────────
     policy_result = policy.can(
         sender_role=envelope.sender_role,
         sender_team=envelope.sender_team,
@@ -78,10 +67,8 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
             detail=str(policy_result),
         )
 
-    # ── 2. Resolve target team ─────────────────────────────────────────────────
     target_team = envelope.recipient_team
     if target_team is None:
-        # Intra-team message: deliver to the sender's own stream.
         target_team = envelope.sender_team
 
     if target_team not in settings.known_teams:
@@ -90,17 +77,16 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
             detail=f"Unknown recipient_team: {target_team!r}",
         )
 
-    # ── 3. TTL check ──────────────────────────────────────────────────────────
     if envelope.is_expired():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Message has already exceeded its TTL; rejected.",
         )
 
-    # ── 4. Publish-side idempotency ───────────────────────────────────────────
+    if envelope.correlation_id:
+        bind_trace_id(str(envelope.correlation_id))
+
     message_id_str = str(envelope.message_id)
-    # We first optimistically XADD, then store dedupe key.
-    # Because Redis is single-threaded we use SET NX with a sentinel.
     pending_marker = "_pending_"
     existing_entry_id = await check_and_set_dedupe(message_id_str, pending_marker)
     if existing_entry_id is not None:
@@ -127,18 +113,14 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
         )
         return PublishResponse(entry_id=existing_entry_id, deduplicated=True)
 
-    # ── 5. XADD to team stream ─────────────────────────────────────────────────
     fields = {"envelope": envelope.model_dump_json()}
     try:
         entry_id = await xadd_message(target_team, fields)
     except Exception:
-        # Clear pending marker so retries can proceed after a failed XADD.
         redis = get_redis()
         await redis.delete(dedupe_key(message_id_str))
         raise
 
-    # ── 6. Update dedupe key with real entry_id ────────────────────────────────
-    # The initial SET NX stored "_pending_"; overwrite with real entry_id.
     redis = get_redis()
     await redis.set(
         f"{settings.dedupe_prefix}:{message_id_str}",
@@ -153,6 +135,13 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
         envelope.msg_type,
         entry_id,
     )
+
+    MAS_MESSAGES_TOTAL.labels(
+        direction="outbound",
+        team=target_team,
+        msg_type=str(envelope.msg_type),
+    ).inc()
+
     return PublishResponse(entry_id=entry_id)
 
 
@@ -167,15 +156,10 @@ async def publish_message_compat(envelope: MessageEnvelope) -> PublishResponse:
     return await publish_message(envelope)
 
 
-# ---------------------------------------------------------------------------
-# Broadcast endpoint
-# ---------------------------------------------------------------------------
-
-
 class BroadcastResponse(BaseModel):
     """Returned by POST /messages/broadcast."""
 
-    entry_ids: dict[str, str]  # team_id → stream entry_id
+    entry_ids: dict[str, str]
 
 
 @router.post(
@@ -191,9 +175,7 @@ class BroadcastResponse(BaseModel):
 )
 async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
     """Broadcast an envelope to every known team stream."""
-    from mas_core.protocols.enums import MessageType
 
-    # ── 1. Policy check ───────────────────────────────────────────────────────
     policy_result = policy.can(
         sender_role=envelope.sender_role,
         sender_team=envelope.sender_team,
@@ -207,12 +189,10 @@ async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
             detail=str(policy_result),
         )
 
-    # ── 2. Fan-out to all teams ────────────────────────────────────────────────
     entry_ids: dict[str, str] = {}
     message_id_str = str(envelope.message_id)
 
     for team_id in settings.known_teams:
-        # Build a per-team copy with recipient_team set
         per_team = envelope.model_copy(update={"recipient_team": team_id})
         fields = {"envelope": per_team.model_dump_json()}
         eid = await xadd_message(team_id, fields)
@@ -224,6 +204,14 @@ async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
         envelope.msg_type,
         len(entry_ids),
     )
+
+    for team_id in entry_ids:
+        MAS_MESSAGES_TOTAL.labels(
+            direction="broadcast",
+            team=team_id,
+            msg_type=str(envelope.msg_type),
+        ).inc()
+
     return BroadcastResponse(entry_ids=entry_ids)
 
 

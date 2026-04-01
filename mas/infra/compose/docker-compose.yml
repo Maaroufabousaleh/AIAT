@@ -43,7 +43,7 @@ x-team-defaults: &team-defaults
     postgres:
       condition: service_healthy
     pgbouncer:
-      condition: service_started
+      condition: service_healthy
     minio:
       condition: service_healthy
     orchestrator-api:
@@ -54,6 +54,13 @@ x-team-defaults: &team-defaults
       condition: service_healthy
   mem_limit: 512m
   cpus: "0.5"
+  # ── Sandbox tier enforcement (Phase 11) ────────────────────────────────────
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m
+    - /var/tmp:size=32m
   healthcheck:
     test: ["CMD", "python", "-c",
            "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"]
@@ -162,6 +169,12 @@ services:
         condition: service_healthy
     mem_limit: 128m
     cpus: "0.25"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U mas_user -d mas || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
 
   # ── 4. MinIO ────────────────────────────────────────────────────────────────
   minio:
@@ -212,10 +225,9 @@ services:
       dockerfile: infra/docker/Dockerfile.message-router
     restart: unless-stopped
     networks:
-      - public
       - internal
-    ports:
-      - "8001:8001"
+    # No host port in production — only orchestrator-api (on public+internal)
+    # needs to reach the router.  Use docker-compose.dev.yml for local access.
     depends_on:
       redis-acl-init:
         condition: service_completed_successfully
@@ -246,10 +258,9 @@ services:
       dockerfile: infra/docker/Dockerfile.tool-service
     restart: unless-stopped
     networks:
-      - public
       - internal
-    ports:
-      - "8002:8002"
+    # No host port in production — only team-runners (on internal) need it.
+    # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
       redis-acl-init:
         condition: service_completed_successfully

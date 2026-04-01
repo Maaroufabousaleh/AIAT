@@ -12,6 +12,7 @@ Any extra arguments are forwarded directly to pytest.
 """
 
 import sys
+
 import pytest
 
 sys.exit(pytest.main(sys.argv[1:]))

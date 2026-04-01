@@ -3,7 +3,7 @@
 Public API
 ----------
 BaseTool           Abstract base class for tool implementations.
-ToolGroup          Enum of the 6 tool groups.
+ToolGroup          Enum of the 7 canonical tool groups.
 GROUP_RATE_LIMITS  Default rate limits per group.
 TOOL_MANIFEST      Canonical dict of all registered tools.
 ToolServiceClient  Async HTTP client agents use to call tools.

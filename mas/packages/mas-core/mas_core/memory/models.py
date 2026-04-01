@@ -182,8 +182,8 @@ issues = sa.Table(
     sa.Column("title", sa.Text(), nullable=False),
     sa.Column("description", sa.Text()),
     sa.Column("issue_type", sa.Text(), nullable=False),
-    sa.Column("status", sa.Text(), nullable=False, server_default="OPEN"),
-    sa.Column("priority", sa.Text(), nullable=False, server_default="MEDIUM"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="backlog"),
+    sa.Column("priority", sa.Text(), nullable=False, server_default="medium"),
     sa.Column("assigned_team", sa.Text()),
     sa.Column("assigned_agent", sa.Text()),
     sa.Column("estimated_hours", sa.Numeric(10, 2)),
@@ -353,4 +353,62 @@ infra_events = sa.Table(
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
+)
+
+# ── 18. capabilities ─────────────────────────────────────────────────────────
+capabilities = sa.Table(
+    "capabilities",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("version", sa.Text(), nullable=False, server_default="'1.0'"),
+    sa.Column("description", sa.Text()),
+    sa.Column("input_schema", JSONB()),
+    sa.Column("output_schema", JSONB()),
+    sa.Column("risk_level", sa.Text(), nullable=False, server_default="'low'"),
+    sa.Column("cost_model", JSONB()),
+    sa.Column("required_tools", sa.ARRAY(sa.Text()), server_default="'{}'"),
+    sa.Column("required_role", sa.Text()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.UniqueConstraint("name", name="uq_capabilities_name"),
+)
+
+# ── 19. worker_registry ───────────────────────────────────────────────────────
+worker_registry = sa.Table(
+    "worker_registry",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("adapter_type", sa.Text(), nullable=False),
+    sa.Column("adapter_config", JSONB(), nullable=False, server_default="'{}'"),
+    sa.Column("sandbox_profile", sa.Text(), nullable=False, server_default="'standard'"),
+    sa.Column("capability_ids", sa.ARRAY(sa.UUID()), nullable=False, server_default="'{}'"),
+    sa.Column("team_id", sa.Text()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="'ACTIVE'"),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.UniqueConstraint("name", name="uq_worker_registry_name"),
+)
+
+# ── 20. role_capability_map ───────────────────────────────────────────────────
+role_capability_map = sa.Table(
+    "role_capability_map",
+    metadata,
+    sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+    sa.Column("role", sa.Text(), nullable=False),
+    sa.Column(
+        "capability_id",
+        sa.UUID(),
+        sa.ForeignKey("capabilities.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("priority", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("constraints", JSONB()),
+    sa.UniqueConstraint("role", "capability_id", name="uq_role_capability"),
 )

@@ -14,7 +14,7 @@ Design notes
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -106,7 +106,7 @@ class TaskBudget(BaseModel):
         """Return True if the wall-clock deadline has passed."""
         if self.deadline is None:
             return False
-        return datetime.now(tz=timezone.utc) >= self.deadline
+        return datetime.now(tz=UTC) >= self.deadline
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ class MessageEnvelope(BaseModel):
 
     # --- Timing & delivery ---
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=lambda: datetime.now(tz=UTC),
         description="UTC timestamp when the message was created.",
     )
     ttl_seconds: int = Field(
@@ -212,7 +212,7 @@ class MessageEnvelope(BaseModel):
     # ------------------------------------------------------------------
 
     @model_validator(mode="after")
-    def payload_size_check(self) -> "MessageEnvelope":
+    def payload_size_check(self) -> MessageEnvelope:
         """Reject payloads that exceed MAX_PAYLOAD_BYTES unless blob_ref is set.
 
         When ``blob_ref`` is present the payload is expected to be a small
@@ -231,7 +231,7 @@ class MessageEnvelope(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def routing_check(self) -> "MessageEnvelope":
+    def routing_check(self) -> MessageEnvelope:
         """Validate recipient routing target shape."""
         exempt = {MessageType.HEARTBEAT, MessageType.ACK, MessageType.BROADCAST}
         if self.msg_type not in exempt:
@@ -248,7 +248,7 @@ class MessageEnvelope(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def budget_scope_check(self) -> "MessageEnvelope":
+    def budget_scope_check(self) -> MessageEnvelope:
         """Ensure budget is only set on TASK / ADMIN_TASK messages."""
         budget_allowed = {MessageType.TASK, MessageType.ADMIN_TASK}
         if self.budget is not None and self.msg_type not in budget_allowed:
@@ -259,14 +259,14 @@ class MessageEnvelope(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def correlation_default_check(self) -> "MessageEnvelope":
+    def correlation_default_check(self) -> MessageEnvelope:
         """Default root correlation_id to message_id."""
         if self.correlation_id is None:
             self.correlation_id = self.message_id
         return self
 
     @model_validator(mode="after")
-    def project_scope_check(self) -> "MessageEnvelope":
+    def project_scope_check(self) -> MessageEnvelope:
         """Require project context for all project-bound message types."""
         exempt = {
             MessageType.SHUTDOWN,
@@ -284,7 +284,7 @@ class MessageEnvelope(BaseModel):
 
     def is_expired(self) -> bool:
         """Return True if the message has exceeded its TTL."""
-        age = (datetime.now(tz=timezone.utc) - self.timestamp).total_seconds()
+        age = (datetime.now(tz=UTC) - self.timestamp).total_seconds()
         return age > self.ttl_seconds
 
     def reply(
@@ -296,7 +296,7 @@ class MessageEnvelope(BaseModel):
         sender_role: AgentRole,
         sender_team: str,
         **kwargs: Any,
-    ) -> "MessageEnvelope":
+    ) -> MessageEnvelope:
         """Construct a reply to this message with correlation wired up."""
         return MessageEnvelope(
             msg_type=msg_type,

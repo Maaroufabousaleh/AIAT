@@ -16,6 +16,7 @@ dependencies = [
     "tenacity>=8.5",           # retry / backoff
     "cachetools>=5.4",         # LRU cache for idempotency
     "python-ulid>=2.0",        # sortable UUIDs for message_id
+    "prometheus-client>=0.20",  # Phase 12 custom Prometheus metrics
 ]
 
 [build-system]

@@ -16,7 +16,6 @@ from mas_core.llm_gateway.metrics import MetricsCollector, RequestRecord, Window
 from mas_core.llm_gateway.persistence import ObservabilityPersistence
 from mas_core.llm_gateway.rate_limits import RateLimitTracker
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

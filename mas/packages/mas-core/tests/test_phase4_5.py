@@ -12,11 +12,8 @@ TestLLMGatewayClient    — chat_completion with mocked HTTP, retry on 429/5xx
 
 from __future__ import annotations
 
-import asyncio
-import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -24,7 +21,7 @@ from mas_core.agent_runtime.base import AgentBase, _LRUSet
 from mas_core.agent_runtime.budget import BudgetExhausted, BudgetTracker
 from mas_core.agent_runtime.config import AgentConfig
 from mas_core.agent_runtime.router_client import RouterClient
-from mas_core.llm_gateway.client import LLMGatewayClient, LLMGatewayError, LLMRateLimited
+from mas_core.llm_gateway.client import LLMGatewayClient, LLMGatewayError
 from mas_core.llm_gateway.models import (
     ChatMessage,
     ChatResponse,
@@ -33,10 +30,9 @@ from mas_core.llm_gateway.models import (
     ToolCallFunction,
     UsageStats,
 )
-from mas_core.protocols.envelope import MessageEnvelope, TaskBudget
 from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.protocols.envelope import MessageEnvelope, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -192,7 +188,7 @@ class TestBudgetTracker:
             bt.consume_llm_call(cost_usd=0.001)
 
     def test_deadline_exceeded(self):
-        past = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(tz=UTC) - timedelta(seconds=1)
         bt = BudgetTracker(deadline=past)
         assert not bt.ok_to_continue()
         with pytest.raises(BudgetExhausted, match="deadline"):
@@ -362,7 +358,7 @@ class TestAgentBase:
         llm = _FakeLLMClient([_assistant_response(content="should-not-run")])
         agent = self._make_agent(llm_client=llm)
         agent._current_envelope = _make_envelope()
-        past = datetime.now(tz=timezone.utc) - timedelta(seconds=10)
+        past = datetime.now(tz=UTC) - timedelta(seconds=10)
         agent._budget = BudgetTracker(deadline=past)
         messages = [{"role": "user", "content": "x"}]
         result = await agent.think(messages=messages)

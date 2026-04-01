@@ -1,10 +1,6 @@
 """ToolRegistry — discovers, wraps, and dispatches tools.
 
-Responsibilities:
-1. Discover ``BaseTool`` subclasses and build ``tool_name → instance`` map.
-2. Gate access via ``CommunicationPolicy.can_use_tool()``.
-3. Check circuit breakers, rate limiters, and cache before dispatching.
-4. Return ``ToolResponse`` with metadata.
+Pipeline: policy check → circuit breaker → rate limiter → cache → execute → cache set.
 """
 
 from __future__ import annotations
@@ -14,11 +10,12 @@ import json
 import logging
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
 
+from mas_core.observability.metrics import MAS_TOOL_CALLS_TOTAL, set_tool_circuit_state
 from mas_core.policy.engine import CommunicationPolicy
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 from mas_tools_sdk.base import BaseTool
@@ -33,17 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
-    """Central registry that holds tool instances and dispatch logic.
-
-    Parameters
-    ----------
-    settings : Settings
-        Service configuration.
-    cache : ToolCache | None
-        Redis cache (optional — no caching if None).
-    rate_limiter : RateLimiterPool | None
-        Rate limiter (optional — no limiting if None).
-    """
+    """Central registry that holds tool instances and dispatch logic."""
 
     def __init__(
         self,
@@ -57,11 +44,8 @@ class ToolRegistry:
         self._rate_limiter = rate_limiter or RateLimiterPool()
         self._policy = CommunicationPolicy()
 
-        # tool_name → BaseTool instance
         self._tools: dict[str, BaseTool] = {}
-        # tool_name → CircuitBreaker
         self._breakers: dict[str, CircuitBreaker] = {}
-        # tool_name → asyncio.Semaphore (concurrency limit)
         self._semaphores: dict[str, asyncio.Semaphore] = {}
 
     def register(self, tool: BaseTool) -> None:
@@ -95,10 +79,7 @@ class ToolRegistry:
         return [b.to_dict() for b in self._breakers.values()]
 
     async def execute(self, request: ToolRequest) -> ToolResponse:
-        """Execute a tool request through the full pipeline.
-
-        Pipeline: policy check → circuit breaker → rate limiter → cache → execute → cache set.
-        """
+        """Execute a tool request through the full pipeline."""
         tool_name = request.tool_name
         resolved_tool_name = resolve_tool_name(tool_name)
         if resolved_tool_name is None:
@@ -108,14 +89,12 @@ class ToolRegistry:
         is_alias = resolved_tool_name != tool_name
         t0 = time.monotonic()
 
-        # 1. Tool exists?
         tool = self._tools.get(resolved_tool_name)
         if tool is None:
             return self._error_response(
                 request, error=f"Tool '{tool_name}' not found.", error_code="TOOL_NOT_FOUND"
             )
 
-        # 2. Policy gating
         result = self._policy.can_use_tool(
             request.caller_role,
             resolved_tool_name,
@@ -129,7 +108,6 @@ class ToolRegistry:
                 circuit_state=self._breakers[resolved_tool_name].state,
             )
 
-        # 3. Circuit breaker
         breaker = self._breakers[resolved_tool_name]
         if not await breaker.allow_request():
             return self._error_response(
@@ -139,7 +117,6 @@ class ToolRegistry:
                 circuit_state=breaker.state,
             )
 
-        # 4. Rate limiter
         group = tool.group
         if self._rate_limiter:
             allowed, remaining, reset_at = await self._rate_limiter.acquire(group)
@@ -155,7 +132,6 @@ class ToolRegistry:
         else:
             remaining, reset_at = None, None
 
-        # 5. Cache lookup (only for idempotent tools)
         kwargs = request.tool_kwargs
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
             cached = await self._cache.get(resolved_tool_name, kwargs)
@@ -175,7 +151,6 @@ class ToolRegistry:
                     span_id=request.span_id,
                 )
 
-        # 6. Execute (with semaphore if configured)
         try:
             if resolved_tool_name in self._semaphores:
                 async with self._semaphores[resolved_tool_name]:
@@ -185,6 +160,8 @@ class ToolRegistry:
         except Exception as exc:
             await breaker.record_failure()
             duration = (time.monotonic() - t0) * 1000
+            MAS_TOOL_CALLS_TOTAL.labels(tool_name=resolved_tool_name, status="error").inc()
+            set_tool_circuit_state(resolved_tool_name, breaker.state.value)
             logger.error(
                 "tool_execution_error",
                 extra={"tool": resolved_tool_name, "requested_tool": tool_name, "error": str(exc)},
@@ -200,12 +177,16 @@ class ToolRegistry:
                 rate_limit_reset_at=reset_at,
             )
 
-        # 7. Record success + cache
         await breaker.record_success()
         duration = (time.monotonic() - t0) * 1000
 
+        MAS_TOOL_CALLS_TOTAL.labels(tool_name=resolved_tool_name, status="success").inc()
+        set_tool_circuit_state(resolved_tool_name, breaker.state.value)
+
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
-            await self._cache.set(resolved_tool_name, kwargs, result_val, ttl=tool.cache_ttl_seconds)
+            await self._cache.set(
+                resolved_tool_name, kwargs, result_val, ttl=tool.cache_ttl_seconds
+            )
 
         if is_alias and isinstance(result_val, dict):
             result_val = dict(result_val)
@@ -265,6 +246,7 @@ class ToolRegistry:
         command = self._settings.process_transport_commands.get(tool_name)
         if not command:
             raise ValueError(f"No process transport command configured for tool '{tool_name}'")
+        timeout = self._settings.transport_request_timeout_seconds
         proc = await asyncio.create_subprocess_exec(
             *command,
             stdin=subprocess.PIPE,
@@ -272,7 +254,14 @@ class ToolRegistry:
             stderr=subprocess.PIPE,
         )
         payload = json.dumps({"tool_name": tool_name, "kwargs": kwargs}).encode("utf-8")
-        stdout, stderr = await proc.communicate(payload)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(
+                f"Process transport timed out after {timeout}s for tool '{tool_name}'"
+            )
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Process transport failed for '{tool_name}': {stderr.decode('utf-8', errors='replace')}"
@@ -284,8 +273,6 @@ class ToolRegistry:
             return json.loads(text)
         except json.JSONDecodeError:
             return {"output": text}
-
-    # ── Helpers ────────────────────────────────────────────────────────────
 
     @staticmethod
     def _error_response(

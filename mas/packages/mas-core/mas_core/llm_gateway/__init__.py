@@ -36,18 +36,14 @@ from .client import (
     LLMGatewayClient,
     LLMGatewayError,
     LLMRateLimited,
+)
+from .client import (
     _ConversationContext as ConversationContext,
 )
 from .dashboard import DASHBOARD_HTML
-from .metrics import MetricsCollector, Window as MetricsWindow
+from .metrics import MetricsCollector
+from .metrics import Window as MetricsWindow
 from .model_selector import ModelSelector
-from .providers.api.mistral import MistralModelScanner
-from .providers.cli.copilot import COPILOT_COST_MAP, CopilotModelScanner
-from .rate_limits import RateLimitTracker, ModelRateLimits, ExperimentalLimit
-from .persistence import ObservabilityPersistence
-from .routes_observability import create_observability_router
-from .smart_router import SmartRouter, ModelScore
-from .thinking import Depth as ThinkingDepth, ThinkingChain, ThinkingResult
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -58,6 +54,7 @@ from .models import (
     ToolFunction,
     UsageStats,
 )
+from .persistence import ObservabilityPersistence
 from .providers import (
     MODEL_REGISTRY,
     ApiStyle,
@@ -66,6 +63,13 @@ from .providers import (
     ModelRegistry,
     ProviderConfig,
 )
+from .providers.api.mistral import MistralModelScanner
+from .providers.cli.copilot import COPILOT_COST_MAP, CopilotModelScanner
+from .rate_limits import ExperimentalLimit, ModelRateLimits, RateLimitTracker
+from .routes_observability import create_observability_router
+from .smart_router import ModelScore, SmartRouter
+from .thinking import Depth as ThinkingDepth
+from .thinking import ThinkingChain, ThinkingResult
 
 __all__ = [
     "LLMGatewayClient",

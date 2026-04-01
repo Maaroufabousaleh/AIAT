@@ -1,7 +1,7 @@
 [project]
 name = "tool-service"
 version = "0.1.0"
-description = "HTTP tool gateway — role-gated access, 6 tool groups, circuit breakers, rate limits"
+description = "HTTP tool gateway — role-gated access, 7 tool groups, circuit breakers, rate limits"
 requires-python = ">=3.11"
 
 dependencies = [

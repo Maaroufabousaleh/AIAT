@@ -247,9 +247,8 @@ class ObservabilityPersistence:
     def _on_audit_event(self, event: AuditEvent) -> None:
         """Write-through: immediately append event to audit.jsonl."""
         line = json.dumps(event.to_dict()) + "\n"
-        with self._audit_lock:
-            with self.audit_path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+        with self._audit_lock, self.audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
     def _on_metrics_record(self, record: RequestRecord) -> None:
         """Buffer a metrics record for the next periodic flush."""
@@ -345,7 +344,7 @@ class ObservabilityPersistence:
     # Context-manager support
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "ObservabilityPersistence":
+    def __enter__(self) -> ObservabilityPersistence:
         self.start()
         return self
 

@@ -46,6 +46,10 @@ echo "  - toolcache_user configured"
 redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER default off
 echo "  - default user disabled"
 
+# Persist ACL to disk so users survive Redis restarts
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SAVE
+echo "  - ACL persisted to disk (ACL SAVE)"
+
 echo ""
 echo "ACL configuration complete. Current users:"
 redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL LIST | head -20

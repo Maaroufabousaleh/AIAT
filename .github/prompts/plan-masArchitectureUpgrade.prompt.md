@@ -106,12 +106,12 @@ This plan implements the **execution plane** of a two-plane architecture informe
 ### Phase 3 — Message Router (`apps/message-router/`)
 
 10. **HTTP endpoints** (FastAPI):
-    - `POST /publish` — accepts `MessageEnvelope`, validates via `CommunicationPolicy`, checks **publish-side idempotency** (`dedupe:{message_id}` in Redis with 300 s TTL). If key exists, returns the original `stream_entry_id` without re-enqueuing. Otherwise, XADDs to `stream:{recipient_team}` and stores the dedupe key. Returns stream entry ID.
-    - `POST /broadcast` — same policy validation, for team broadcasts.
+    - `POST /messages/publish` — accepts `MessageEnvelope`, validates via `CommunicationPolicy`, checks **publish-side idempotency** (`dedupe:{message_id}` in Redis with 300 s TTL). If key exists, returns the original `stream_entry_id` without re-enqueuing. Otherwise, XADDs to `stream:{recipient_team}` and stores the dedupe key. Returns `{entry_id, deduplicated: bool}`.
+    - `POST /messages/broadcast` — same policy validation, fan-out to all 11 team streams (used for `SHUTDOWN`, `DIRECTIVE` broadcasts).
     - `GET /health` — Redis ping + internal state.
 11. **WebSocket endpoint**:
-    - `WS /subscribe?agent_id=X&team_id=Y` — authenticates (simple token/shared secret per agent for now), then streams messages to the agent using `XREADGROUP` from `stream:{team_id}`. Sends messages as JSON frames. Each delivered message includes `retry_count` (incremented on XAUTOCLAIM reclaim).
-    - **ACK/NACK protocol**: agent sends `{"type": "ACK", "message_id": "...", "stream_entry_id": "..."}` on success → router calls `XACK`. Agent sends `NACK` on failure → message stays in PEL for XAUTOCLAIM. This prevents silent message loss.
+    - `WS /ws/subscribe/{team_id}` — agent connects with `Authorization: Bearer {agent_id}:{secret}` header. Router authenticates, then first replays **pending PEL entries** (`XREADGROUP … 0`) for any in-flight messages from before the previous disconnect, then enters the live **new-message loop** (`XREADGROUP … >`). Sends messages as `WSMessageFrame` JSON text frames. Each delivered frame includes `retry_count` (incremented on XAUTOCLAIM reclaim).
+    - **ACK/NACK protocol**: agent sends `WSAckFrame {type: "ACK", message_id, stream_entry_id}` on success → router calls `XACK`. Agent sends `WSNackFrame {type: "NACK", message_id, stream_entry_id}` on failure → message stays in PEL for XAUTOCLAIM. This prevents silent message loss.
     - **Heartbeat**: router sends periodic WS `PING` frames (every 15s). If no `PONG` within 10s, connection is considered dead → cleanup + pending entries remain for reclaim. This detects silent disconnects faster than TCP keepalive alone.
     - **Scaling caveat**: sticky sessions are required for >1 router instance. **NGINX Plus** supports sticky cookies natively; **NGINX OSS** only has `ip_hash` (imperfect behind NAT). Default: **run 1 router instance** ($0, sufficient for 20–40 agents). Add affinity when scaling.
 12. **Consumer group management** (per-team streams — see org-architecture plan §4.4):
@@ -177,9 +177,10 @@ This plan implements the **execution plane** of a two-plane architecture informe
 ### Phase 6 — Tool Service (`apps/tool-service/`)
 
 20. **FastAPI service** with endpoints:
-    - `POST /tools/{tool_name}/run` — body: `{agent_id, sender_role, kwargs}`, validates `(sender_role, tool_name)` against policy, returns `ToolResponse`.
-    - `GET /tools` — returns tool manifest (for LLM system prompts). **7 tool groups**: Workflow, Document, Review, Sprint/Issue, DevOps, Capability, KPI/Utility. See org-architecture plan §11.2.1 for full manifest.
-    - `GET /health`
+    - `POST /tools/{tool_name}/run` — path-driven; body: `{agent_id, sender_role, sender_team, kwargs}`. Validates `(sender_role, tool_name)` via policy, runs through registry pipeline (policy → breaker → rate limit → cache → execute), returns `ToolResponse`.
+    - `POST /tools/execute` — flat SDK-friendly endpoint; body is a full `ToolRequest` (includes `tool_name` in the JSON body). Runs the same registry pipeline as above. Useful for clients that resolve the tool name before calling.
+    - `GET /tools` — returns tool manifest (for LLM system prompts). **7 tool groups**: Workflow, Document, Review, Sprint/Issue, DevOps, Capability, KPI/Utility. See org-architecture plan §17.3 for the full canonical manifest.
+    - `GET /health` — service health including cache status and per-tool circuit-breaker states.
 20b. **Transport modes for tool execution**: The tool-service supports multiple backend transport modes for invoking tools, aligned with the Paperclip adapter contract (`invoke/status/cancel`):
     - **Internal** (default): Tool logic runs in-process within the tool-service Python runtime (e.g., Postgres queries, MinIO operations, web search).
     - **HTTP webhook**: Tool delegates to an external HTTP endpoint (e.g., a separate microservice or serverless function). Useful for heavy/isolated tools.
@@ -204,7 +205,7 @@ This plan implements the **execution plane** of a two-plane architecture informe
     - `memory(id BIGSERIAL, agent_id TEXT, key TEXT, value JSONB, updated_at TIMESTAMPTZ, UNIQUE(agent_id, key))`
     - `task_log(task_id UUID PK, agent_id TEXT, parent_task_id UUID NULL, team_id TEXT, status TEXT, input JSONB, output JSONB, budget_snapshot JSONB, trace_id TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`
     - `artifacts(id BIGSERIAL, agent_id TEXT, path TEXT, metadata JSONB, sha256 TEXT, size_bytes BIGINT, created_at TIMESTAMPTZ)`
-    - **12 org-architecture tables** (see org-architecture plan §10 for full DDL): `projects` (with `failure_reason` for FAILED state), `documents`, `reviews`, `approval_gates`, `sprints`, `issues`, `kpi_metrics`, `review_sessions`, `agent_profiles`, `dead_letters`, `project_state_history`, `infra_events`
+    - **12 org-architecture tables** (see org-architecture plan §10 for full DDL): `projects` (with `failure_reason` for FAILED state), `documents`, `review_sessions`, `review_comments`, `approval_gates`, `sprints`, `issues`, `kpi_snapshots`, `agent_profiles`, `dead_letters`, `project_state_history`, `infra_events`
     - **2 system tables**: `system_config` (shutdown/resume state, schedule, watchdog config), `agent_checkpoints` (mid-task progress for shutdown/resume — see Phase 13)
     - **3 capability registry tables** (enables "hire later" as config change — see `Docs/deep-research-report.md` §Capability Registry):
       - `capabilities(id UUID PK, name TEXT UNIQUE, version TEXT, description TEXT, input_schema JSONB, output_schema JSONB, risk_level TEXT, cost_model JSONB, required_tools TEXT[], required_role TEXT, created_at TIMESTAMPTZ)`

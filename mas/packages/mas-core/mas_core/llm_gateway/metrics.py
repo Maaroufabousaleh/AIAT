@@ -33,12 +33,12 @@ Usage::
 from __future__ import annotations
 
 import logging
-import math
 import time
-from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,10 @@ logger = logging.getLogger(__name__)
 
 class Window(str, Enum):
     """Aggregation time window."""
-    MINUTE = "minute"     # 60 s
-    HOUR = "hour"         # 3 600 s
-    DAY = "day"           # 86 400 s
+
+    MINUTE = "minute"  # 60 s
+    HOUR = "hour"  # 3 600 s
+    DAY = "day"  # 86 400 s
 
     @property
     def seconds(self) -> float:
@@ -67,10 +68,11 @@ class Window(str, Enum):
 @dataclass(slots=True)
 class RequestRecord:
     """Lightweight record stored in the sliding window buffer."""
+
     timestamp: float
     model: str
     provider: str
-    status: str              # success | error | rate_limited | timeout
+    status: str  # success | error | rate_limited | timeout
     latency_s: float
     prompt_tokens: int
     completion_tokens: int
@@ -94,7 +96,7 @@ class RequestRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "RequestRecord":
+    def from_dict(cls, d: dict[str, Any]) -> RequestRecord:
         """Deserialise from a JSON-safe dictionary."""
         return cls(
             timestamp=float(d["timestamp"]),
@@ -212,8 +214,12 @@ class _ModelWindowStats:
             "tokens_per_second": 0.0,
             "cost_usd": 0.0,
             "latency": {
-                "avg": 0.0, "min": 0.0, "max": 0.0,
-                "p50": 0.0, "p95": 0.0, "p99": 0.0,
+                "avg": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "p50": 0.0,
+                "p95": 0.0,
+                "p99": 0.0,
             },
         }
 
@@ -241,9 +247,7 @@ class MetricsCollector:
 
     def _ensure_model(self, model: str) -> dict[Window, _ModelWindowStats]:
         if model not in self._windows:
-            self._windows[model] = {
-                w: _ModelWindowStats(w) for w in Window
-            }
+            self._windows[model] = {w: _ModelWindowStats(w) for w in Window}
         return self._windows[model]
 
     # ------------------------------------------------------------------
@@ -315,7 +319,9 @@ class MetricsCollector:
     # ------------------------------------------------------------------
 
     def snapshot(
-        self, model: str, window: Window = Window.HOUR,
+        self,
+        model: str,
+        window: Window = Window.HOUR,
     ) -> dict[str, Any]:
         """Return aggregated stats for a model in the given window."""
         windows = self._windows.get(model)
@@ -346,10 +352,7 @@ class MetricsCollector:
             },
         }
         for model in sorted(self._windows.keys()):
-            result["models"][model] = {
-                w.value: self._windows[model][w].stats(now)
-                for w in Window
-            }
+            result["models"][model] = {w.value: self._windows[model][w].stats(now) for w in Window}
             result["models"][model]["health_score"] = self.health_score(model, now)
         return result
 
@@ -445,10 +448,7 @@ class MetricsCollector:
         start = now - total_s
 
         # Collect raw records from the global buffer for this model
-        records = [
-            r for r in self._global
-            if r.model == model and r.timestamp >= start
-        ]
+        records = [r for r in self._global if r.model == model and r.timestamp >= start]
 
         series: list[dict[str, Any]] = []
         for i in range(buckets):
@@ -465,15 +465,17 @@ class MetricsCollector:
             latencies = [r.latency_s for r in bucket_recs if r.status == "success"]
             avg_latency = (sum(latencies) / len(latencies)) if latencies else 0.0
 
-            series.append({
-                "t": round(mid, 2),
-                "requests": n,
-                "successes": successes,
-                "errors": errors,
-                "tokens": tokens,
-                "cost_usd": round(cost, 8),
-                "avg_latency_s": round(avg_latency, 4),
-            })
+            series.append(
+                {
+                    "t": round(mid, 2),
+                    "requests": n,
+                    "successes": successes,
+                    "errors": errors,
+                    "tokens": tokens,
+                    "cost_usd": round(cost, 8),
+                    "avg_latency_s": round(avg_latency, 4),
+                }
+            )
 
         return series
 
@@ -500,12 +502,14 @@ class MetricsCollector:
             tokens = sum(r.total_tokens for r in bucket_recs)
             cost = sum(r.estimated_cost_usd for r in bucket_recs)
 
-            series.append({
-                "t": round(mid, 2),
-                "requests": n,
-                "tokens": tokens,
-                "cost_usd": round(cost, 8),
-            })
+            series.append(
+                {
+                    "t": round(mid, 2),
+                    "requests": n,
+                    "tokens": tokens,
+                    "cost_usd": round(cost, 8),
+                }
+            )
 
         return series
 
@@ -519,10 +523,9 @@ class MetricsCollector:
         now = time.time()
         start = now - window.seconds
         latencies = [
-            r.latency_s for r in self._global
-            if r.model == model
-            and r.timestamp >= start
-            and r.status == "success"
+            r.latency_s
+            for r in self._global
+            if r.model == model and r.timestamp >= start and r.status == "success"
         ]
         if not latencies:
             return {"bins": [], "counts": [], "model": model}

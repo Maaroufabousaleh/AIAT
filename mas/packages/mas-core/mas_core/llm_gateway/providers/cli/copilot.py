@@ -21,11 +21,10 @@ import logging
 import re
 import shutil
 
-from ..base import ApiStyle, ModelEntry, ModelRegistry, ProviderConfig
-
 # Deferred import — MODEL_REGISTRY is created in the parent __init__.py
 # before sub-packages are imported.
 from .. import MODEL_REGISTRY
+from ..base import ApiStyle, ModelEntry, ModelRegistry, ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +186,7 @@ class CopilotModelScanner:
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
             help_text = stdout.decode("utf-8", errors="replace")
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning("Failed to run copilot --help: %s", exc)
             return []
 

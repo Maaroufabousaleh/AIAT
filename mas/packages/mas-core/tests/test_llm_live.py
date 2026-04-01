@@ -1,7 +1,7 @@
 """Live integration tests for LLM providers.
 
-These tests make **real API calls** to every configured provider.
-They are skipped automatically when the required API key / binary is missing.
+These tests make **real API calls** to configured providers.
+They are opt-in only and run only when ``MAS_RUN_LIVE_TESTS=1``.
 
 Run all live tests::
 
@@ -25,6 +25,9 @@ API keys are read from env vars (or a root ``.env`` file via pydantic-settings):
 - ``OPENCODE_API_KEY``    — Zen / opencode.ai (default "public")
 - Copilot CLI             — ``copilot`` binary on PATH + ``copilot auth login``
 
+Live test opt-in:
+- ``MAS_RUN_LIVE_TESTS=1``  — enables tests marked with ``@pytest.mark.live``
+
 Each test sends a small prompt ("What is 2+2?") and asserts the response
 contains meaningful text.  This validates auth, endpoint, parsing, and
 basic model functionality end-to-end.
@@ -32,13 +35,11 @@ basic model functionality end-to-end.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 from typing import Any
 
 import pytest
-
 from dotenv import load_dotenv
 
 # Load root .env so API keys are available even when CWD is not project root.
@@ -59,12 +60,16 @@ for _base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
     if _loaded:
         break
 
-from mas_core.llm_gateway.client import LLMGatewayClient, LLMGatewayError
+from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.llm_gateway.models import ChatResponse, LLMConfig
 from mas_core.llm_gateway.providers import MODEL_REGISTRY
 from mas_core.llm_gateway.providers.base import ModelPool
-from mas_core.llm_gateway.thinking import Depth, ThinkingChain, ThinkingResult, _stages_for_depth, _CRITIQUE_RE
-
+from mas_core.llm_gateway.thinking import (
+    _CRITIQUE_RE,
+    Depth,
+    ThinkingChain,
+    _stages_for_depth,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,6 +104,17 @@ def _has_key(env_var: str) -> bool:
     """Check if an API key env var is set and non-empty."""
     val = os.environ.get(env_var, "")
     return bool(val) and val not in ("", "sk-...", "public")
+
+
+def _live_enabled() -> bool:
+    """Return True only when live tests were explicitly enabled."""
+    value = os.environ.get("MAS_RUN_LIVE_TESTS", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_provider(provider_id: str) -> bool:
+    """Check if the provider exists in the runtime model registry."""
+    return MODEL_REGISTRY.get_provider(provider_id) is not None
 
 
 def _has_copilot() -> bool:
@@ -143,6 +159,12 @@ def _assert_valid_vision_response(resp: ChatResponse, model_id: str) -> None:
 # Gemini (free tier)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("GEMINI_API_KEY"),
     reason="GEMINI_API_KEY not set",
@@ -156,7 +178,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3-27b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3-27b-it",
             )
         _assert_valid_response(resp, "gemma-3-27b-it")
 
@@ -166,7 +189,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3-12b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3-12b-it",
             )
         _assert_valid_response(resp, "gemma-3-12b-it")
 
@@ -176,7 +200,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3-4b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3-4b-it",
             )
         _assert_valid_response(resp, "gemma-3-4b-it")
 
@@ -186,7 +211,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3-1b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3-1b-it",
             )
         _assert_valid_response(resp, "gemma-3-1b-it")
 
@@ -196,7 +222,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3n-e4b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3n-e4b-it",
             )
         _assert_valid_response(resp, "gemma-3n-e4b-it")
 
@@ -206,7 +233,8 @@ class TestGeminiLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-3n-e2b-it",
+                messages=SIMPLE_PROMPT,
+                model="gemma-3n-e2b-it",
             )
         _assert_valid_response(resp, "gemma-3n-e2b-it")
 
@@ -215,6 +243,12 @@ class TestGeminiLive:
 # Groq (free tier — ultra-fast LPU inference)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("GROQ_API_KEY"),
     reason="GROQ_API_KEY not set",
@@ -228,7 +262,8 @@ class TestGroqLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="groq/llama-3.1-8b-instant",
+                messages=SIMPLE_PROMPT,
+                model="groq/llama-3.1-8b-instant",
             )
         _assert_valid_response(resp, "groq/llama-3.1-8b-instant")
 
@@ -238,7 +273,8 @@ class TestGroqLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="groq/llama-3.3-70b-versatile",
+                messages=SIMPLE_PROMPT,
+                model="groq/llama-3.3-70b-versatile",
             )
         _assert_valid_response(resp, "groq/llama-3.3-70b-versatile")
 
@@ -248,7 +284,8 @@ class TestGroqLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="groq/openai/gpt-oss-120b",
+                messages=SIMPLE_PROMPT,
+                model="groq/openai/gpt-oss-120b",
             )
         _assert_valid_response(resp, "groq/openai/gpt-oss-120b")
 
@@ -258,7 +295,8 @@ class TestGroqLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="groq/openai/gpt-oss-20b",
+                messages=SIMPLE_PROMPT,
+                model="groq/openai/gpt-oss-20b",
             )
         _assert_valid_response(resp, "groq/openai/gpt-oss-20b")
 
@@ -279,7 +317,8 @@ class TestGroqLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="groq/qwen/qwen3-32b",
+                messages=SIMPLE_PROMPT,
+                model="groq/qwen/qwen3-32b",
             )
         _assert_valid_response(resp, "groq/qwen/qwen3-32b")
 
@@ -288,6 +327,12 @@ class TestGroqLive:
 # Cerebras Cloud (free tier — world's fastest inference)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("CEREBRAS_API_KEY"),
     reason="CEREBRAS_API_KEY not set",
@@ -301,7 +346,8 @@ class TestCerebrasLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="cerebras/llama3.1-8b",
+                messages=SIMPLE_PROMPT,
+                model="cerebras/llama3.1-8b",
             )
         _assert_valid_response(resp, "cerebras/llama3.1-8b")
 
@@ -311,7 +357,8 @@ class TestCerebrasLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="cerebras/gpt-oss-120b",
+                messages=SIMPLE_PROMPT,
+                model="cerebras/gpt-oss-120b",
             )
         _assert_valid_response(resp, "cerebras/gpt-oss-120b")
 
@@ -320,6 +367,12 @@ class TestCerebrasLive:
 # Mistral AI (free Experiment tier)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("MISTRAL_API_KEY"),
     reason="MISTRAL_API_KEY not set",
@@ -333,7 +386,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/mistral-small-latest",
+                messages=SIMPLE_PROMPT,
+                model="mistral/mistral-small-latest",
             )
         _assert_valid_response(resp, "mistral/mistral-small-latest")
 
@@ -343,7 +397,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/open-mistral-nemo",
+                messages=SIMPLE_PROMPT,
+                model="mistral/open-mistral-nemo",
             )
         _assert_valid_response(resp, "mistral/open-mistral-nemo")
 
@@ -353,7 +408,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/ministral-3b-latest",
+                messages=SIMPLE_PROMPT,
+                model="mistral/ministral-3b-latest",
             )
         _assert_valid_response(resp, "mistral/ministral-3b-latest")
 
@@ -363,7 +419,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/magistral-small-latest",
+                messages=SIMPLE_PROMPT,
+                model="mistral/magistral-small-latest",
             )
         _assert_valid_response(resp, "mistral/magistral-small-latest")
 
@@ -373,7 +430,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/mistral-medium-latest",
+                messages=SIMPLE_PROMPT,
+                model="mistral/mistral-medium-latest",
             )
         _assert_valid_response(resp, "mistral/mistral-medium-latest")
 
@@ -383,7 +441,8 @@ class TestMistralLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="mistral/codestral-latest",
+                messages=SIMPLE_PROMPT,
+                model="mistral/codestral-latest",
             )
         _assert_valid_response(resp, "mistral/codestral-latest")
 
@@ -403,6 +462,11 @@ def _has_cloudflare() -> bool:
 @pytest.mark.skipif(
     not _has_cloudflare(),
     reason="CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not set",
+)
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
 )
 class TestCloudflareLive:
     """Live tests against Cloudflare Workers AI (free tier, 10k neurons/day)."""
@@ -456,6 +520,12 @@ class TestCloudflareLive:
 # OpenRouter (free tier) — model IDs verified against /api/v1/models
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("OPENROUTER_API_KEY"),
     reason="OPENROUTER_API_KEY not set",
@@ -589,6 +659,12 @@ class TestOpenRouterLive:
 # Zen / opencode.ai (always available — no key needed)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 class TestZenLive:
     """Live tests against Zen free-tier models (no API key required)."""
 
@@ -598,7 +674,8 @@ class TestZenLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="big-pickle",
+                messages=SIMPLE_PROMPT,
+                model="big-pickle",
             )
         _assert_valid_response(resp, "big-pickle")
 
@@ -608,7 +685,8 @@ class TestZenLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="minimax-m2.5-free",
+                messages=SIMPLE_PROMPT,
+                model="minimax-m2.5-free",
             )
         _assert_valid_response(resp, "minimax-m2.5-free")
 
@@ -618,7 +696,8 @@ class TestZenLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gpt-5-nano",
+                messages=SIMPLE_PROMPT,
+                model="gpt-5-nano",
             )
         _assert_valid_response(resp, "gpt-5-nano")
 
@@ -628,7 +707,8 @@ class TestZenLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="trinity-large-preview-free",
+                messages=SIMPLE_PROMPT,
+                model="trinity-large-preview-free",
             )
         _assert_valid_response(resp, "trinity-large-preview-free")
 
@@ -637,6 +717,16 @@ class TestZenLive:
 # OpenAI (paid — only if key is set)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
+@pytest.mark.skipif(
+    not _has_provider("openai"),
+    reason="openai provider is not registered in this build",
+)
 @pytest.mark.skipif(
     not _has_key("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set",
@@ -650,7 +740,8 @@ class TestOpenAILive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gpt-4o",
+                messages=SIMPLE_PROMPT,
+                model="gpt-4o",
             )
         _assert_valid_response(resp, "gpt-4o")
 
@@ -660,7 +751,8 @@ class TestOpenAILive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=_vision_messages(), model="gpt-4o",
+                messages=_vision_messages(),
+                model="gpt-4o",
             )
         _assert_valid_vision_response(resp, "gpt-4o [vision]")
 
@@ -669,6 +761,12 @@ class TestOpenAILive:
 # Copilot CLI (only if binary is available)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_copilot(),
     reason="copilot binary not found on PATH",
@@ -680,13 +778,15 @@ class TestCopilotCLILive:
     async def test_copilot_gpt5_mini(self):
         """copilot/gpt-5-mini: free CLI model."""
         from mas_core.llm_gateway.providers.cli.copilot import CopilotModelScanner
+
         scanner = CopilotModelScanner(registry=MODEL_REGISTRY)
         scanner.register_known_free_models()
 
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="copilot/gpt-5-mini",
+                messages=SIMPLE_PROMPT,
+                model="copilot/gpt-5-mini",
             )
         _assert_valid_response(resp, "copilot/gpt-5-mini")
 
@@ -694,13 +794,15 @@ class TestCopilotCLILive:
     async def test_copilot_gpt41(self):
         """copilot/gpt-4.1: free CLI model."""
         from mas_core.llm_gateway.providers.cli.copilot import CopilotModelScanner
+
         scanner = CopilotModelScanner(registry=MODEL_REGISTRY)
         scanner.register_known_free_models()
 
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="copilot/gpt-4.1",
+                messages=SIMPLE_PROMPT,
+                model="copilot/gpt-4.1",
             )
         _assert_valid_response(resp, "copilot/gpt-4.1")
 
@@ -708,6 +810,7 @@ class TestCopilotCLILive:
 # ---------------------------------------------------------------------------
 # Model Pool — unit tests (no API calls)
 # ---------------------------------------------------------------------------
+
 
 class TestModelPoolUnit:
     """Pure logic tests for ModelPool round-robin and limit tracking."""
@@ -729,7 +832,7 @@ class TestModelPoolUnit:
         pool = ModelPool(
             pool_id="test-pool",
             model_ids=["a", "b"],
-            rpm_per_model=2,      # effective = 2 * 0.85 = 1
+            rpm_per_model=2,  # effective = 2 * 0.85 = 1
             rpd_per_model=10_000,
             tpm_per_model=50_000,
             safety_margin=0.15,
@@ -767,7 +870,7 @@ class TestModelPoolUnit:
             model_ids=["a", "b"],
             rpm_per_model=100,
             rpd_per_model=10_000,
-            tpm_per_model=100,     # effective = 85 tokens
+            tpm_per_model=100,  # effective = 85 tokens
             safety_margin=0.15,
         )
         pool.pick()
@@ -810,7 +913,7 @@ class TestModelPoolUnit:
         assert pool.pick() is None  # exhausted
 
         pool.reset()
-        assert pool.pick() == "a"   # available again
+        assert pool.pick() == "a"  # available again
 
     def test_gemma_pool_registered(self):
         """The gemma-pool should be registered in MODEL_REGISTRY."""
@@ -840,6 +943,12 @@ class TestModelPoolUnit:
 # Gemma Pool — live integration test
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("GEMINI_API_KEY"),
     reason="GEMINI_API_KEY not set",
@@ -859,7 +968,8 @@ class TestGemmaPoolLive:
         async with client:
             for _ in range(3):
                 resp = await client.chat_completion(
-                    messages=SIMPLE_PROMPT, model="gemma-pool",
+                    messages=SIMPLE_PROMPT,
+                    model="gemma-pool",
                 )
                 assert resp is not None
                 assert resp.message is not None
@@ -869,9 +979,7 @@ class TestGemmaPoolLive:
 
         # Should have rotated to at least 2 distinct models
         distinct = set(used_models)
-        assert len(distinct) >= 2, (
-            f"Expected >= 2 distinct models, got {distinct}"
-        )
+        assert len(distinct) >= 2, f"Expected >= 2 distinct models, got {distinct}"
 
     @pytest.mark.asyncio
     async def test_pool_records_usage(self):
@@ -883,7 +991,8 @@ class TestGemmaPoolLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-pool",
+                messages=SIMPLE_PROMPT,
+                model="gemma-pool",
             )
         assert resp is not None
 
@@ -897,6 +1006,7 @@ class TestGemmaPoolLive:
 # ---------------------------------------------------------------------------
 # Thinking chain — unit tests (no API calls)
 # ---------------------------------------------------------------------------
+
 
 class TestThinkingChainUnit:
     """Unit tests for ThinkingChain internals — no network required."""
@@ -1115,20 +1225,14 @@ class TestThinkingChainUnit:
 
     def test_critique_regex_strips_tags(self):
         """_CRITIQUE_RE removes <critique>...</critique> blocks."""
-        text = (
-            "<critique>The analysis misses edge cases.</critique>\n"
-            "The answer is 42."
-        )
+        text = "<critique>The analysis misses edge cases.</critique>\nThe answer is 42."
         cleaned = _CRITIQUE_RE.sub("", text).strip()
         assert "<critique>" not in cleaned
         assert "The answer is 42." in cleaned
 
     def test_critique_regex_handles_multiline(self):
         """_CRITIQUE_RE works across multiple lines."""
-        text = (
-            "<critique>\nLine 1.\nLine 2.\n</critique>\n"
-            "The final answer."
-        )
+        text = "<critique>\nLine 1.\nLine 2.\n</critique>\nThe final answer."
         cleaned = _CRITIQUE_RE.sub("", text).strip()
         assert "The final answer." in cleaned
         assert "Line 1" not in cleaned
@@ -1160,6 +1264,12 @@ class TestThinkingChainUnit:
 # Thinking chain — live tests (requires GEMINI_API_KEY)
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
 @pytest.mark.skipif(
     not _has_key("GEMINI_API_KEY"),
     reason="GEMINI_API_KEY not set",
@@ -1173,7 +1283,8 @@ class TestGemmaThinkLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-think",
+                messages=SIMPLE_PROMPT,
+                model="gemma-think",
             )
         assert resp is not None
         assert resp.message is not None
@@ -1189,7 +1300,8 @@ class TestGemmaThinkLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-think/light",
+                messages=SIMPLE_PROMPT,
+                model="gemma-think/light",
             )
         assert resp is not None
         assert resp.message is not None
@@ -1204,13 +1316,15 @@ class TestGemmaThinkLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "What are the main pros and cons of microservices vs "
-                        "monolithic architecture? Be specific and balanced."
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "What are the main pros and cons of microservices vs "
+                            "monolithic architecture? Be specific and balanced."
+                        ),
+                    }
+                ],
                 model="gemma-think/deep",
                 max_tokens=2048,
             )
@@ -1227,7 +1341,8 @@ class TestGemmaThinkLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=SIMPLE_PROMPT, model="gemma-think/light",
+                messages=SIMPLE_PROMPT,
+                model="gemma-think/light",
             )
         # Light = 2 stages → usage should include tokens from both
         assert resp.usage.prompt_tokens > 0
@@ -1243,13 +1358,15 @@ class TestGemmaThinkLive:
         client = _make_client()
         async with client:
             resp = await client.chat_completion(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "A farmer has 17 sheep. All but 9 run away. "
-                        "How many sheep does the farmer have left?"
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "A farmer has 17 sheep. All but 9 run away. "
+                            "How many sheep does the farmer have left?"
+                        ),
+                    }
+                ],
                 model="gemma-think",
                 max_tokens=1024,
             )
@@ -1262,20 +1379,29 @@ class TestGemmaThinkLive:
 # Cross-provider sanity: registry completeness
 # ---------------------------------------------------------------------------
 
+
 class TestRegistryCompleteness:
     """Verify all expected providers and models are registered."""
 
     def test_all_providers_present(self):
         providers = {p.provider_id for p in MODEL_REGISTRY.list_providers()}
         for expected in (
-            "openai", "gemini", "groq", "cerebras",
-            "mistral", "cloudflare", "openrouter", "zen", "copilot",
+            "gemini",
+            "groq",
+            "cerebras",
+            "mistral",
+            "cloudflare",
+            "openrouter",
+            "zen",
+            "copilot",
         ):
             assert expected in providers, f"Provider '{expected}' not registered"
 
     def test_gemini_models_count(self):
         models = MODEL_REGISTRY.list_models("gemini")
-        assert len(models) >= 7, f"Expected >= 7 Gemini models (6 Gemma + gemma-think), got {len(models)}"
+        assert len(models) >= 7, (
+            f"Expected >= 7 Gemini models (6 Gemma + gemma-think), got {len(models)}"
+        )
 
     def test_gemma_pool_registered(self):
         pool = MODEL_REGISTRY.get_pool("gemma-pool")
@@ -1324,6 +1450,4 @@ class TestRegistryCompleteness:
     def test_every_model_has_provider(self):
         providers = {p.provider_id for p in MODEL_REGISTRY.list_providers()}
         for m in MODEL_REGISTRY.list_models():
-            assert m.provider in providers, (
-                f"{m.model_id}: provider '{m.provider}' not registered"
-            )
+            assert m.provider in providers, f"{m.model_id}: provider '{m.provider}' not registered"

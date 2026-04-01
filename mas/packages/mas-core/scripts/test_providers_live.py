@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
-# Ensure the package is importable when running from repo root
-sys.path.insert(0, "mas/packages/mas-core")
+# Ensure the package is importable regardless of CWD
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PACKAGE_ROOT = os.path.dirname(_SCRIPT_DIR)  # mas-core/
+sys.path.insert(0, _PACKAGE_ROOT)
 
 from mas_core.llm_gateway import (
     MODEL_REGISTRY,
@@ -28,7 +31,7 @@ from mas_core.llm_gateway.models import LLMConfig
 
 async def test_model(client: LLMGatewayClient, model_id: str, prompt: str) -> None:
     """Send a single prompt to a model and print the result."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     entry = MODEL_REGISTRY.get(model_id)
     if entry:
         print(f"Model:    {model_id}")
@@ -61,7 +64,9 @@ async def test_model(client: LLMGatewayClient, model_id: str, prompt: str) -> No
         )
         print(f"Response: {resp.text}")
         if resp.usage:
-            print(f"Tokens:   in={resp.usage.prompt_tokens}  out={resp.usage.completion_tokens}  total={resp.usage.total_tokens}")
+            print(
+                f"Tokens:   in={resp.usage.prompt_tokens}  out={resp.usage.completion_tokens}  total={resp.usage.total_tokens}"
+            )
         print("Status:   OK ✓")
     except Exception as exc:
         print(f"ERROR:    {type(exc).__name__}: {exc}")
@@ -88,13 +93,15 @@ async def main() -> None:
         for mid in MODEL_REGISTRY.model_ids():
             entry = MODEL_REGISTRY.get(mid)
             cap = entry.capabilities
-            img = '✓' if cap.supports_images else '✗'
-            pdf = '✓' if cap.supports_pdf else '✗'
-            vid = '✓' if cap.supports_video else '✗'
-            rsn = '✓' if getattr(cap, 'supports_reasoning', False) else '✗'
+            img = "✓" if cap.supports_images else "✗"
+            pdf = "✓" if cap.supports_pdf else "✗"
+            vid = "✓" if cap.supports_video else "✗"
+            rsn = "✓" if getattr(cap, "supports_reasoning", False) else "✗"
             ctx = entry.max_context_tokens
             ctx_s = f"{ctx:>7,}" if ctx else "      ?"
-            print(f"  {mid:<30s}  {entry.provider:<10s}  {entry.api_style.value:<20s}  ctx={ctx_s}  rsn={rsn}  img={img}  pdf={pdf}  vid={vid}")
+            print(
+                f"  {mid:<30s}  {entry.provider:<10s}  {entry.api_style.value:<20s}  ctx={ctx_s}  rsn={rsn}  img={img}  pdf={pdf}  vid={vid}"
+            )
             if entry.best_for:
                 print(f"    Best for: {', '.join(entry.best_for)}")
             if entry.limits:
@@ -120,7 +127,7 @@ async def main() -> None:
             for model_id in MODEL_REGISTRY.model_ids():
                 await test_model(client, model_id, args.prompt)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Done.")
 
 

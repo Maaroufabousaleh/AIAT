@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from mas_tools_sdk.base import BaseTool
 
+from .capability import (
+    CapabilityDeregisterTool,
+    CapabilityListWorkersTool,
+    CapabilityRegisterTool,
+    CapabilitySearchTool,
+)
 from .file import FileReadTool, FileWriteTool
 from .infra import (
     BlobDownloadTool,
@@ -16,12 +22,6 @@ from .infra import (
     SecretsManageTool,
 )
 from .memory import SharedMemoryReadTool, SharedMemoryWriteTool
-from .capability import (
-    CapabilitySearchTool,
-    CapabilityListWorkersTool,
-    CapabilityRegisterTool,
-    CapabilityDeregisterTool,
-)
 from .project import (
     ApprovalOverrideCSOTool,
     DepartmentTaskTool,
@@ -32,8 +32,8 @@ from .project import (
     DocumentSubmitTool,
     HumanAwaitDecisionTool,
     HumanNotifyTool,
-    ProjectListTool,
     ProjectCreateTool,
+    ProjectListTool,
     ProjectStatusTool,
     ProjectTransitionTool,
     ReviewAggregateTool,

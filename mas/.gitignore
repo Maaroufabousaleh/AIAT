@@ -57,3 +57,11 @@ migrations/versions/__pycache__/
 # Logs
 *.log
 logs/
+
+# Local runtime/test temp directories
+codex_tmp/
+.tmp/
+.pytest_tmp/
+temp_pytest/
+pytest_base/
+tmp_work/

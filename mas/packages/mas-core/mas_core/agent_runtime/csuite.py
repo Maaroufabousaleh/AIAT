@@ -17,24 +17,21 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from ..protocols.domain import (
-    ReviewComment,
-    ReviewResponse,
     Issue,
-    Sprint,
     KPISnapshot,
+    ReviewComment,
+    Sprint,
 )
-from ..protocols.envelope import MessageEnvelope
 from ..protocols.enums import (
-    AgentRole,
     IssueType,
     MessageType,
     ReviewSeverity,
     ReviewVerdict,
-    SprintStatus,
 )
+from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
 from .config import AgentConfig
 

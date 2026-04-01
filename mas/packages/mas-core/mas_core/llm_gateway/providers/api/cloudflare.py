@@ -33,11 +33,10 @@ from __future__ import annotations
 
 import os
 
-from ..base import ApiStyle, ModelCapabilities, ModelEntry, ProviderConfig
-
 # Deferred import — MODEL_REGISTRY is created in the parent __init__.py
 # before sub-packages are imported.
 from .. import MODEL_REGISTRY
+from ..base import ApiStyle, ModelCapabilities, ModelEntry, ProviderConfig
 
 # ---------------------------------------------------------------------------
 # Dynamic base URL — includes the user's Cloudflare Account ID

@@ -13,17 +13,15 @@ TestCSuiteAgent         — review handling, CSO veto, CTO sprint planning,
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
 from mas_core.agent_runtime.admin import AdminAgent
 from mas_core.agent_runtime.base import AgentBase
-from mas_core.agent_runtime.budget import BudgetExhausted, BudgetTracker
+from mas_core.agent_runtime.budget import BudgetTracker
 from mas_core.agent_runtime.config import AgentConfig
 from mas_core.agent_runtime.csuite import CSuiteAgent
 from mas_core.agent_runtime.executive import ExecutiveAgent
@@ -32,18 +30,14 @@ from mas_core.agent_runtime.worker import WorkerAgent
 from mas_core.llm_gateway.models import (
     ChatMessage,
     ChatResponse,
-    ToolCall,
-    ToolCallFunction,
     UsageStats,
 )
-from mas_core.protocols.envelope import MessageEnvelope, TaskBudget
 from mas_core.protocols.enums import (
     AgentRole,
     MessageType,
     ReviewSeverity,
-    ReviewVerdict,
 )
-
+from mas_core.protocols.envelope import MessageEnvelope
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -684,7 +678,8 @@ class TestExecutiveAgent:
         )
 
         # First revision
-        from mas_core.protocols.domain import ReviewSummary, ReviewComment as RC
+        from mas_core.protocols.domain import ReviewComment as RC
+        from mas_core.protocols.domain import ReviewSummary
         summary = ReviewSummary(
             project_id="proj-001",
             document_id=uuid4(),
@@ -1041,11 +1036,11 @@ class TestPhase8Exports:
 
     def test_all_agent_types_importable(self):
         from mas_core.agent_runtime import (
-            WorkerAgent,
             AdminAgent,
-            SubAgent,
-            ExecutiveAgent,
             CSuiteAgent,
+            ExecutiveAgent,
+            SubAgent,
+            WorkerAgent,
         )
         assert WorkerAgent is not None
         assert AdminAgent is not None

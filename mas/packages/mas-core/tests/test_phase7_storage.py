@@ -2,7 +2,7 @@
 
 Test classes
 ------------
-TestModelsMetadata       — Verify 13 tables in SQLAlchemy metadata, columns, constraints.
+TestModelsMetadata       — Verify canonical 20 tables in SQLAlchemy metadata, columns, constraints.
 TestAgentStorageCRUD     — AgentStorage mocked-engine CRUD tests for all table families.
 TestCheckpointStore      — CheckpointStore save/load/delete with mocked engine.
 TestBlobClient           — BlobClient upload/download/delete/list with mocked S3.
@@ -13,22 +13,27 @@ TestMemoryInit           — Public API re-exports from mas_core.memory.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+
+# ── Blob ──────────────────────────────────────────────────────────────────────
+from mas_core.memory.blob import BlobClient, BlobRef
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+from mas_core.memory.checkpoints import CheckpointStore
 
 # ── Models ────────────────────────────────────────────────────────────────────
 from mas_core.memory.models import (
     agent_checkpoints,
     agent_profiles,
     approval_gates,
+    capabilities,
     dead_letters,
     documents,
+    infra_events,
     issues,
     kpi_snapshots,
     metadata,
@@ -36,19 +41,14 @@ from mas_core.memory.models import (
     projects,
     review_comments,
     review_sessions,
+    role_capability_map,
     sprints,
     system_config,
+    worker_registry,
 )
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 from mas_core.memory.storage import AgentStorage
-
-# ── Checkpoints ───────────────────────────────────────────────────────────────
-from mas_core.memory.checkpoints import CheckpointStore
-
-# ── Blob ──────────────────────────────────────────────────────────────────────
-from mas_core.memory.blob import BlobClient, BlobRef
-
 
 # ===========================================================================
 # Helpers
@@ -113,7 +113,7 @@ def _mock_mappings(rows: list[dict]) -> MagicMock:
 
 
 class TestModelsMetadata:
-    """Verify that all 13 tables are properly defined in metadata."""
+    """Verify that all canonical 20 tables are properly defined in metadata."""
 
     EXPECTED_TABLES = [
         "projects",
@@ -133,21 +133,38 @@ class TestModelsMetadata:
         "task_log",
         "artifacts",
         "infra_events",
+        "capabilities",
+        "worker_registry",
+        "role_capability_map",
     ]
 
-    def test_all_13_tables_present(self):
-        """metadata.tables should contain exactly 17 table names."""
-        assert len(metadata.tables) == 17
+    def test_all_20_tables_present(self):
+        """metadata.tables should contain exactly 20 table names."""
+        assert len(metadata.tables) == 20
         for name in self.EXPECTED_TABLES:
             assert name in metadata.tables, f"Missing table: {name}"
+
+    def test_capability_registry_tables_defined(self):
+        assert capabilities.name == "capabilities"
+        assert worker_registry.name == "worker_registry"
+        assert role_capability_map.name == "role_capability_map"
+        assert infra_events.name == "infra_events"
 
     def test_projects_columns(self):
         """projects table must have the expected column set."""
         cols = {c.name for c in projects.columns}
         expected = {
-            "id", "name", "description", "state", "failure_reason",
-            "failed_from_state", "created_by", "human_requester", "config",
-            "created_at", "updated_at",
+            "id",
+            "name",
+            "description",
+            "state",
+            "failure_reason",
+            "failed_from_state",
+            "created_by",
+            "human_requester",
+            "config",
+            "created_at",
+            "updated_at",
         }
         assert expected == cols
 
@@ -161,9 +178,17 @@ class TestModelsMetadata:
     def test_documents_columns(self):
         cols = {c.name for c in documents.columns}
         expected = {
-            "id", "project_id", "doc_type", "version", "status",
-            "blob_bucket", "blob_key", "blob_sha256",
-            "created_by", "created_at", "updated_at",
+            "id",
+            "project_id",
+            "doc_type",
+            "version",
+            "status",
+            "blob_bucket",
+            "blob_key",
+            "blob_sha256",
+            "created_by",
+            "created_at",
+            "updated_at",
         }
         assert expected == cols
 
@@ -203,9 +228,15 @@ class TestModelsMetadata:
     def test_kpi_snapshots_columns(self):
         cols = {c.name for c in kpi_snapshots.columns}
         expected_metrics = {
-            "estimation_accuracy", "task_completion_rate", "review_pass_rate",
-            "velocity", "defect_rate", "rework_rate", "budget_adherence",
-            "resource_utilization", "infra_lead_time_seconds",
+            "estimation_accuracy",
+            "task_completion_rate",
+            "review_pass_rate",
+            "velocity",
+            "defect_rate",
+            "rework_rate",
+            "budget_adherence",
+            "resource_utilization",
+            "infra_lead_time_seconds",
         }
         assert expected_metrics.issubset(cols)
 
@@ -226,7 +257,8 @@ class TestModelsMetadata:
     def test_agent_checkpoints_unique_constraint(self):
         """agent_checkpoints should have a unique constraint on (agent_id, task_message_id)."""
         constraints = [
-            c for c in agent_checkpoints.constraints
+            c
+            for c in agent_checkpoints.constraints
             if hasattr(c, "name") and c.name == "uq_checkpoint_agent_task"
         ]
         assert len(constraints) == 1
@@ -328,9 +360,11 @@ class TestAgentStorageCRUD:
         storage, engine = self._make_storage()
         conn = engine._mock_conn
         result_mock = MagicMock()
-        result_mock.mappings.return_value = _mock_mappings([
-            {"id": uuid4(), "name": "A", "state": "PDR_CREATION"},
-        ])
+        result_mock.mappings.return_value = _mock_mappings(
+            [
+                {"id": uuid4(), "name": "A", "state": "PDR_CREATION"},
+            ]
+        )
         conn.execute = AsyncMock(return_value=result_mock)
 
         rows = await storage.list_projects(state="PDR_CREATION")
@@ -501,7 +535,7 @@ class TestAgentStorageCRUD:
         )
         assert issue["title"] == "Implement login API"
         assert issue["issue_type"] == "STORY"
-        assert issue["status"] == "OPEN"
+        assert issue["status"] == "backlog"
         assert issue["priority"] == "HIGH"
 
     @pytest.mark.asyncio
@@ -582,9 +616,11 @@ class TestAgentStorageCRUD:
         storage, engine = self._make_storage()
         conn = engine._mock_conn
         result_mock = MagicMock()
-        result_mock.mappings.return_value = _mock_mappings([
-            {"key": "max_retries", "value": "5"},
-        ])
+        result_mock.mappings.return_value = _mock_mappings(
+            [
+                {"key": "max_retries", "value": "5"},
+            ]
+        )
         conn.execute = AsyncMock(return_value=result_mock)
 
         val = await storage.get_config("max_retries")
@@ -825,7 +861,9 @@ class TestBlobClient:
         sha = hashlib.sha256(data).hexdigest()
 
         ref = await blob.upload(
-            "proj-123", "documents/pdr_v1.json", data,
+            "proj-123",
+            "documents/pdr_v1.json",
+            data,
             content_type="application/json",
         )
 
@@ -889,9 +927,7 @@ class TestBlobClient:
 
         data = await blob.download_by_key("proj-1", "file.txt")
         assert data == b"content"
-        s3.get_object.assert_awaited_once_with(
-            Bucket="mas-agents", Key="proj-1/file.txt"
-        )
+        s3.get_object.assert_awaited_once_with(Bucket="mas-agents", Key="proj-1/file.txt")
 
     @pytest.mark.asyncio
     async def test_delete(self):
@@ -904,19 +940,19 @@ class TestBlobClient:
     async def test_delete_by_key(self):
         blob, s3 = self._make_client()
         await blob.delete_by_key("proj-1", "file.txt")
-        s3.delete_object.assert_awaited_once_with(
-            Bucket="mas-agents", Key="proj-1/file.txt"
-        )
+        s3.delete_object.assert_awaited_once_with(Bucket="mas-agents", Key="proj-1/file.txt")
 
     @pytest.mark.asyncio
     async def test_list_objects(self):
         blob, s3 = self._make_client()
-        s3.list_objects_v2 = AsyncMock(return_value={
-            "Contents": [
-                {"Key": "proj-1/a.txt", "Size": 100, "LastModified": "2024-01-01T00:00:00Z"},
-                {"Key": "proj-1/b.txt", "Size": 200, "LastModified": "2024-01-02T00:00:00Z"},
-            ]
-        })
+        s3.list_objects_v2 = AsyncMock(
+            return_value={
+                "Contents": [
+                    {"Key": "proj-1/a.txt", "Size": 100, "LastModified": "2024-01-01T00:00:00Z"},
+                    {"Key": "proj-1/b.txt", "Size": 200, "LastModified": "2024-01-02T00:00:00Z"},
+                ]
+            }
+        )
 
         objects = await blob.list_objects("proj-1")
         assert len(objects) == 2
@@ -996,6 +1032,7 @@ class TestMemoryInit:
             CheckpointStore,
             metadata,
         )
+
         assert AgentStorage is not None
         assert BlobClient is not None
         assert BlobRef is not None
@@ -1004,5 +1041,6 @@ class TestMemoryInit:
 
     def test_all_list(self):
         import mas_core.memory as mem
+
         expected = {"AgentStorage", "BlobClient", "BlobRef", "CheckpointStore", "metadata"}
         assert set(mem.__all__) == expected

@@ -23,7 +23,7 @@ Usage
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -102,17 +102,21 @@ class AgentStorage:
         description: str | None = None,
         state: str = "INIT",
         created_by: str,
+        human_requester: str | None = None,
+        config: dict | None = None,
         project_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Insert a new project row. Returns the full row as a dict."""
         pid = project_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": pid,
             "name": name,
             "description": description,
             "state": state,
             "created_by": created_by,
+            "human_requester": human_requester,
+            "config": config,
             "created_at": now,
             "updated_at": now,
         }
@@ -124,10 +128,10 @@ class AgentStorage:
         """Fetch a project by ID."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.projects.select().where(t.projects.c.id == project_id)
-                )
-            ).mappings().first()
+                (await conn.execute(t.projects.select().where(t.projects.c.id == project_id)))
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     async def list_projects(
@@ -156,25 +160,42 @@ class AgentStorage:
         payload: dict | None = None,
         failure_reason: str | None = None,
         failed_from_state: str | None = None,
+        expected_state: str | None = None,
     ) -> dict[str, Any] | None:
         """Atomically update project state and append a history row.
 
-        Returns the updated project row, or None if the project was not found.
+        Parameters
+        ----------
+        expected_state : str | None
+            If provided, the transition is only applied when the current DB row
+            state matches *expected_state* (CAS guard).  When the guard fails
+            ``None`` is returned — callers should treat this as a stale-state
+            rejection and re-read before retrying.
+
+        Returns the updated project row, or None if the project was not found
+        (or the expected_state guard failed).
         """
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             # Read current state
             current = (
-                await conn.execute(
-                    t.projects.select()
-                    .where(t.projects.c.id == project_id)
-                    .with_for_update()
+                (
+                    await conn.execute(
+                        t.projects.select().where(t.projects.c.id == project_id).with_for_update()
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not current:
                 return None
 
             from_state = current["state"]
+
+            # CAS guard — reject if the row state has moved since the caller
+            # last read it.
+            if expected_state is not None and from_state != expected_state:
+                return None
 
             # Update project
             update_values: dict[str, Any] = {
@@ -191,9 +212,7 @@ class AgentStorage:
                 update_values["failed_from_state"] = None
 
             await conn.execute(
-                t.projects.update()
-                .where(t.projects.c.id == project_id)
-                .values(**update_values)
+                t.projects.update().where(t.projects.c.id == project_id).values(**update_values)
             )
 
             # Append history
@@ -220,13 +239,17 @@ class AgentStorage:
         """Fetch transition history for a project, newest first."""
         async with self.engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    t.project_state_history.select()
-                    .where(t.project_state_history.c.project_id == project_id)
-                    .order_by(t.project_state_history.c.transitioned_at.desc())
-                    .limit(limit)
+                (
+                    await conn.execute(
+                        t.project_state_history.select()
+                        .where(t.project_state_history.c.project_id == project_id)
+                        .order_by(t.project_state_history.c.transitioned_at.desc())
+                        .limit(limit)
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(r) for r in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -246,7 +269,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Create a new document row (DRAFT state)."""
         did = document_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": did,
             "project_id": project_id,
@@ -268,30 +291,32 @@ class AgentStorage:
         """Fetch a document by ID."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.documents.select().where(t.documents.c.id == document_id)
-                )
-            ).mappings().first()
+                (await conn.execute(t.documents.select().where(t.documents.c.id == document_id)))
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
-    async def get_latest_document(
-        self, project_id: UUID, doc_type: str
-    ) -> dict[str, Any] | None:
+    async def get_latest_document(self, project_id: UUID, doc_type: str) -> dict[str, Any] | None:
         """Fetch the latest version of a document by project + type."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.documents.select()
-                    .where(
-                        sa.and_(
-                            t.documents.c.project_id == project_id,
-                            t.documents.c.doc_type == doc_type,
+                (
+                    await conn.execute(
+                        t.documents.select()
+                        .where(
+                            sa.and_(
+                                t.documents.c.project_id == project_id,
+                                t.documents.c.doc_type == doc_type,
+                            )
                         )
+                        .order_by(t.documents.c.version.desc())
+                        .limit(1)
                     )
-                    .order_by(t.documents.c.version.desc())
-                    .limit(1)
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     async def update_document_status(
@@ -305,7 +330,7 @@ class AgentStorage:
             await conn.execute(
                 t.documents.update()
                 .where(t.documents.c.id == document_id)
-                .values(status=status, updated_at=datetime.now(tz=timezone.utc))
+                .values(status=status, updated_at=datetime.now(tz=UTC))
             )
 
     async def list_documents(
@@ -339,7 +364,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Create a review session for parallel fan-out."""
         sid = session_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": sid,
             "project_id": project_id,
@@ -359,10 +384,14 @@ class AgentStorage:
         """Fetch a review session by ID."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.review_sessions.select().where(t.review_sessions.c.id == session_id)
+                (
+                    await conn.execute(
+                        t.review_sessions.select().where(t.review_sessions.c.id == session_id)
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     async def update_review_session(
@@ -393,7 +422,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Insert a review comment."""
         cid = comment_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": cid,
             "session_id": session_id,
@@ -410,18 +439,20 @@ class AgentStorage:
             await conn.execute(t.review_comments.insert().values(**values))
         return values
 
-    async def get_review_comments(
-        self, session_id: UUID
-    ) -> list[dict[str, Any]]:
+    async def get_review_comments(self, session_id: UUID) -> list[dict[str, Any]]:
         """Fetch all comments for a review session."""
         async with self.engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    t.review_comments.select()
-                    .where(t.review_comments.c.session_id == session_id)
-                    .order_by(t.review_comments.c.submitted_at)
+                (
+                    await conn.execute(
+                        t.review_comments.select()
+                        .where(t.review_comments.c.session_id == session_id)
+                        .order_by(t.review_comments.c.submitted_at)
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(r) for r in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -437,7 +468,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Create a pending approval gate."""
         gid = gate_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": gid,
             "project_id": project_id,
@@ -459,7 +490,7 @@ class AgentStorage:
         human_input: dict | None = None,
     ) -> None:
         """Record a decision on an approval gate."""
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             await conn.execute(
                 t.approval_gates.update()
@@ -490,7 +521,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Create a sprint record."""
         sid = sprint_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": sid,
             "project_id": project_id,
@@ -510,33 +541,33 @@ class AgentStorage:
         """Fetch a sprint by ID."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.sprints.select().where(t.sprints.c.id == sprint_id)
-                )
-            ).mappings().first()
+                (await conn.execute(t.sprints.select().where(t.sprints.c.id == sprint_id)))
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     async def list_sprints(self, project_id: UUID) -> list[dict[str, Any]]:
         """List sprints for a project ordered by sprint number."""
         async with self.engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    t.sprints.select()
-                    .where(t.sprints.c.project_id == project_id)
-                    .order_by(t.sprints.c.sprint_number)
+                (
+                    await conn.execute(
+                        t.sprints.select()
+                        .where(t.sprints.c.project_id == project_id)
+                        .order_by(t.sprints.c.sprint_number)
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(r) for r in rows]
 
-    async def update_sprint(
-        self, sprint_id: UUID, **kwargs: Any
-    ) -> None:
+    async def update_sprint(self, sprint_id: UUID, **kwargs: Any) -> None:
         """Update sprint fields (status, points, hours, dates, etc.)."""
         async with self.engine.begin() as conn:
             await conn.execute(
-                t.sprints.update()
-                .where(t.sprints.c.id == sprint_id)
-                .values(**kwargs)
+                t.sprints.update().where(t.sprints.c.id == sprint_id).values(**kwargs)
             )
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -552,7 +583,7 @@ class AgentStorage:
         sprint_id: UUID | None = None,
         parent_issue_id: UUID | None = None,
         description: str | None = None,
-        priority: str = "MEDIUM",
+        priority: str = "medium",
         assigned_team: str | None = None,
         assigned_agent: str | None = None,
         estimated_hours: Decimal | None = None,
@@ -562,7 +593,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Create an issue/work-item."""
         iid = issue_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": iid,
             "project_id": project_id,
@@ -571,7 +602,7 @@ class AgentStorage:
             "title": title,
             "description": description,
             "issue_type": issue_type,
-            "status": "OPEN",
+            "status": "backlog",
             "priority": priority,
             "assigned_team": assigned_team,
             "assigned_agent": assigned_agent,
@@ -588,10 +619,10 @@ class AgentStorage:
         """Fetch an issue by ID."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.issues.select().where(t.issues.c.id == issue_id)
-                )
-            ).mappings().first()
+                (await conn.execute(t.issues.select().where(t.issues.c.id == issue_id)))
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     async def list_issues(
@@ -617,16 +648,10 @@ class AgentStorage:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
 
-    async def update_issue(
-        self, issue_id: UUID, **kwargs: Any
-    ) -> None:
+    async def update_issue(self, issue_id: UUID, **kwargs: Any) -> None:
         """Update issue fields (status, hours, assignment, etc.)."""
         async with self.engine.begin() as conn:
-            await conn.execute(
-                t.issues.update()
-                .where(t.issues.c.id == issue_id)
-                .values(**kwargs)
-            )
+            await conn.execute(t.issues.update().where(t.issues.c.id == issue_id).values(**kwargs))
 
     # ═══════════════════════════════════════════════════════════════════════════
     # KPI snapshots
@@ -652,7 +677,7 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Insert a KPI snapshot."""
         kid = snapshot_id or uuid4()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "id": kid,
             "project_id": project_id,
@@ -707,7 +732,7 @@ class AgentStorage:
         total_actual_hours: Decimal = Decimal("0"),
     ) -> dict[str, Any]:
         """Insert or update an agent profile (upsert on agent_id PK)."""
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         values = {
             "agent_id": agent_id,
             "team_id": team_id,
@@ -725,11 +750,7 @@ class AgentStorage:
             .values(**values)
             .on_conflict_do_update(
                 index_elements=["agent_id"],
-                set_={
-                    k: v
-                    for k, v in values.items()
-                    if k != "agent_id"
-                },
+                set_={k: v for k, v in values.items() if k != "agent_id"},
             )
         )
         async with self.engine.begin() as conn:
@@ -740,11 +761,14 @@ class AgentStorage:
         """Fetch an agent's profile."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.agent_profiles.select()
-                    .where(t.agent_profiles.c.agent_id == agent_id)
+                (
+                    await conn.execute(
+                        t.agent_profiles.select().where(t.agent_profiles.c.agent_id == agent_id)
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row else None
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -804,20 +828,21 @@ class AgentStorage:
         """Read a system_config value."""
         async with self.engine.connect() as conn:
             row = (
-                await conn.execute(
-                    t.system_config.select().where(t.system_config.c.key == key)
-                )
-            ).mappings().first()
+                (await conn.execute(t.system_config.select().where(t.system_config.c.key == key)))
+                .mappings()
+                .first()
+            )
         return row["value"] if row else None
 
     async def set_config(self, key: str, value: str) -> None:
         """Insert-or-update a system_config key."""
+        now = datetime.now(tz=UTC)
         stmt = (
             pg_insert(t.system_config)
-            .values(key=key, value=value, updated_at=datetime.now(tz=timezone.utc))
+            .values(key=key, value=value, updated_at=now)
             .on_conflict_do_update(
                 index_elements=["key"],
-                set_={"value": value, "updated_at": datetime.now(tz=timezone.utc)},
+                set_={"value": value, "updated_at": now},
             )
         )
         async with self.engine.begin() as conn:
@@ -828,3 +853,556 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(t.system_config.select())).mappings().all()
         return {r["key"]: r["value"] for r in rows}
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Memory (per-agent key/value store)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def memory_set(
+        self,
+        *,
+        agent_id: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        """Set a key/value pair in the per-agent memory store (upsert)."""
+        stmt = (
+            pg_insert(t.memory)
+            .values(
+                agent_id=agent_id,
+                key=key,
+                value=value,
+                updated_at=datetime.now(tz=UTC),
+            )
+            .on_conflict_do_update(
+                constraint="uq_memory_agent_key",
+                set_={
+                    "value": value,
+                    "updated_at": datetime.now(tz=UTC),
+                },
+            )
+        )
+        async with self.engine.begin() as conn:
+            await conn.execute(stmt)
+
+    async def memory_get(self, agent_id: str, key: str) -> Any | None:
+        """Fetch a single value from the per-agent memory store."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.memory.select().where(
+                            sa.and_(
+                                t.memory.c.agent_id == agent_id,
+                                t.memory.c.key == key,
+                            )
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return row["value"] if row else None
+
+    async def memory_list(self, agent_id: str) -> dict[str, Any]:
+        """Fetch all key/value pairs for an agent."""
+        async with self.engine.connect() as conn:
+            rows = (
+                (await conn.execute(t.memory.select().where(t.memory.c.agent_id == agent_id)))
+                .mappings()
+                .all()
+            )
+        return {r["key"]: r["value"] for r in rows}
+
+    async def memory_delete(self, agent_id: str, key: str) -> None:
+        """Delete a single key from the per-agent memory store."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.memory.delete().where(
+                    sa.and_(
+                        t.memory.c.agent_id == agent_id,
+                        t.memory.c.key == key,
+                    )
+                )
+            )
+
+    async def memory_delete_all(self, agent_id: str) -> None:
+        """Delete all memory entries for an agent."""
+        async with self.engine.begin() as conn:
+            await conn.execute(t.memory.delete().where(t.memory.c.agent_id == agent_id))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Task log (task execution audit trail)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_task_log(
+        self,
+        *,
+        task_id: UUID,
+        agent_id: str,
+        team_id: str,
+        status: str,
+        parent_task_id: UUID | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        budget_snapshot: dict | None = None,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Insert a task log entry."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "parent_task_id": parent_task_id,
+            "team_id": team_id,
+            "status": status,
+            "input": input_data,
+            "output": output_data,
+            "budget_snapshot": budget_snapshot,
+            "trace_id": trace_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.task_log.insert().values(**values))
+        return values
+
+    async def get_task_log(self, task_id: UUID) -> dict[str, Any] | None:
+        """Fetch a task log entry by task ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (await conn.execute(t.task_log.select().where(t.task_log.c.task_id == task_id)))
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def list_task_logs(
+        self,
+        *,
+        agent_id: str | None = None,
+        team_id: str | None = None,
+        status: str | None = None,
+        trace_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List task log entries with optional filters."""
+        q = t.task_log.select()
+        if agent_id:
+            q = q.where(t.task_log.c.agent_id == agent_id)
+        if team_id:
+            q = q.where(t.task_log.c.team_id == team_id)
+        if status:
+            q = q.where(t.task_log.c.status == status)
+        if trace_id:
+            q = q.where(t.task_log.c.trace_id == trace_id)
+        q = q.order_by(t.task_log.c.created_at.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def update_task_log(
+        self,
+        task_id: UUID,
+        **kwargs: Any,
+    ) -> None:
+        """Update task log fields (status, output, budget_snapshot, etc.)."""
+        kwargs["updated_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.task_log.update().where(t.task_log.c.task_id == task_id).values(**kwargs)
+            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Artifacts (blob metadata)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_artifact(
+        self,
+        *,
+        agent_id: str,
+        path: str,
+        metadata: dict | None = None,
+        sha256: str | None = None,
+        size_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Register a new artifact (blob metadata pointer)."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "agent_id": agent_id,
+            "path": path,
+            "metadata": metadata,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.artifacts.insert().values(**values).returning(t.artifacts.c.id)
+            )
+            row = result.first()
+            if row is not None:
+                values["id"] = row[0]
+        return values
+
+    async def get_artifact(self, artifact_id: int) -> dict[str, Any] | None:
+        """Fetch an artifact by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (await conn.execute(t.artifacts.select().where(t.artifacts.c.id == artifact_id)))
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def list_artifacts(
+        self,
+        *,
+        agent_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List artifacts, optionally filtered by agent."""
+        q = t.artifacts.select()
+        if agent_id:
+            q = q.where(t.artifacts.c.agent_id == agent_id)
+        q = q.order_by(t.artifacts.c.created_at.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_artifact(self, artifact_id: int) -> None:
+        """Delete an artifact entry."""
+        async with self.engine.begin() as conn:
+            await conn.execute(t.artifacts.delete().where(t.artifacts.c.id == artifact_id))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Infrastructure events (DevOps tracking)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_infra_event(
+        self,
+        *,
+        project_id: UUID,
+        event_type: str,
+        sprint_id: UUID | None = None,
+        details: dict | None = None,
+        event_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Record an infrastructure event."""
+        eid = event_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": eid,
+            "project_id": project_id,
+            "sprint_id": sprint_id,
+            "event_type": event_type,
+            "details": details,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.infra_events.insert().values(**values))
+        return values
+
+    async def list_infra_events(
+        self,
+        *,
+        project_id: UUID | None = None,
+        sprint_id: UUID | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List infra events with optional filters."""
+        q = t.infra_events.select()
+        if project_id:
+            q = q.where(t.infra_events.c.project_id == project_id)
+        if sprint_id:
+            q = q.where(t.infra_events.c.sprint_id == sprint_id)
+        if event_type:
+            q = q.where(t.infra_events.c.event_type == event_type)
+        q = q.order_by(t.infra_events.c.created_at.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Capabilities (capability catalog)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_capability(
+        self,
+        *,
+        name: str,
+        version: str = "1.0",
+        description: str | None = None,
+        input_schema: dict | None = None,
+        output_schema: dict | None = None,
+        risk_level: str = "low",
+        cost_model: dict | None = None,
+        required_tools: list[str] | None = None,
+        required_role: str | None = None,
+        capability_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Register a capability in the catalog."""
+        cid = capability_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": cid,
+            "name": name,
+            "version": version,
+            "description": description,
+            "input_schema": input_schema,
+            "output_schema": output_schema,
+            "risk_level": risk_level,
+            "cost_model": cost_model,
+            "required_tools": required_tools or [],
+            "required_role": required_role,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.capabilities.insert().values(**values))
+        return values
+
+    async def get_capability(self, capability_id: UUID) -> dict[str, Any] | None:
+        """Fetch a capability by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.capabilities.select().where(t.capabilities.c.id == capability_id)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def get_capability_by_name(self, name: str) -> dict[str, Any] | None:
+        """Fetch a capability by unique name."""
+        async with self.engine.connect() as conn:
+            row = (
+                (await conn.execute(t.capabilities.select().where(t.capabilities.c.name == name)))
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def list_capabilities(
+        self,
+        *,
+        risk_level: str | None = None,
+        required_role: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List capabilities with optional filters."""
+        q = t.capabilities.select()
+        if risk_level:
+            q = q.where(t.capabilities.c.risk_level == risk_level)
+        if required_role:
+            q = q.where(t.capabilities.c.required_role == required_role)
+        q = q.order_by(t.capabilities.c.name)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_capability(self, capability_id: UUID) -> None:
+        """Delete a capability from the catalog."""
+        async with self.engine.begin() as conn:
+            await conn.execute(t.capabilities.delete().where(t.capabilities.c.id == capability_id))
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Worker registry
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def register_worker(
+        self,
+        *,
+        name: str,
+        adapter_type: str,
+        adapter_config: dict | None = None,
+        sandbox_profile: str = "standard",
+        capability_ids: list[UUID] | None = None,
+        team_id: str | None = None,
+        status: str = "ACTIVE",
+        worker_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Register or re-register a worker (upsert on name)."""
+        wid = worker_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": wid,
+            "name": name,
+            "adapter_type": adapter_type,
+            "adapter_config": adapter_config or {},
+            "sandbox_profile": sandbox_profile,
+            "capability_ids": capability_ids or [],
+            "team_id": team_id,
+            "status": status,
+            "created_at": now,
+            "updated_at": now,
+        }
+        stmt = (
+            pg_insert(t.worker_registry)
+            .values(**values)
+            .on_conflict_do_update(
+                constraint="uq_worker_registry_name",
+                set_={
+                    "adapter_type": adapter_type,
+                    "adapter_config": adapter_config or {},
+                    "sandbox_profile": sandbox_profile,
+                    "capability_ids": capability_ids or [],
+                    "team_id": team_id,
+                    "status": status,
+                    "updated_at": now,
+                },
+            )
+        )
+        async with self.engine.begin() as conn:
+            await conn.execute(stmt)
+        return values
+
+    async def get_worker(self, worker_id: UUID) -> dict[str, Any] | None:
+        """Fetch a worker by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.worker_registry.select().where(t.worker_registry.c.id == worker_id)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def get_worker_by_name(self, name: str) -> dict[str, Any] | None:
+        """Fetch a worker by unique name."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.worker_registry.select().where(t.worker_registry.c.name == name)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def list_workers(
+        self,
+        *,
+        team_id: str | None = None,
+        status: str | None = None,
+        adapter_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List workers with optional filters."""
+        q = t.worker_registry.select()
+        if team_id:
+            q = q.where(t.worker_registry.c.team_id == team_id)
+        if status:
+            q = q.where(t.worker_registry.c.status == status)
+        if adapter_type:
+            q = q.where(t.worker_registry.c.adapter_type == adapter_type)
+        q = q.order_by(t.worker_registry.c.name)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def update_worker_status(
+        self,
+        worker_id: UUID,
+        *,
+        status: str,
+    ) -> None:
+        """Update a worker's status."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(
+                    status=status,
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Role-capability map
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def bind_role_capability(
+        self,
+        *,
+        role: str,
+        capability_id: UUID,
+        priority: int = 0,
+        constraints: dict | None = None,
+    ) -> dict[str, Any]:
+        """Bind a role to a capability (upsert on unique role+capability)."""
+        stmt = (
+            pg_insert(t.role_capability_map)
+            .values(
+                role=role,
+                capability_id=capability_id,
+                priority=priority,
+                constraints=constraints,
+            )
+            .on_conflict_do_update(
+                constraint="uq_role_capability",
+                set_={
+                    "priority": priority,
+                    "constraints": constraints,
+                },
+            )
+        )
+        async with self.engine.begin() as conn:
+            await conn.execute(stmt)
+        return {
+            "role": role,
+            "capability_id": capability_id,
+            "priority": priority,
+            "constraints": constraints,
+        }
+
+    async def list_role_capabilities(
+        self,
+        role: str,
+    ) -> list[dict[str, Any]]:
+        """List all capabilities bound to a role, ordered by priority (desc)."""
+        q = (
+            t.role_capability_map.select()
+            .where(t.role_capability_map.c.role == role)
+            .order_by(t.role_capability_map.c.priority.desc())
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def list_capability_roles(
+        self,
+        capability_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """List all roles that have a given capability."""
+        q = (
+            t.role_capability_map.select()
+            .where(t.role_capability_map.c.capability_id == capability_id)
+            .order_by(t.role_capability_map.c.priority.desc())
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def unbind_role_capability(
+        self,
+        *,
+        role: str,
+        capability_id: UUID,
+    ) -> None:
+        """Remove a role-to-capability binding."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.role_capability_map.delete().where(
+                    sa.and_(
+                        t.role_capability_map.c.role == role,
+                        t.role_capability_map.c.capability_id == capability_id,
+                    )
+                )
+            )

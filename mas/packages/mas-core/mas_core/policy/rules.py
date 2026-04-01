@@ -23,9 +23,7 @@ C_SUITE_TEAMS: frozenset[str] = frozenset(
 )
 CTO_TEAM: str = "office_cto"
 
-DEPT_TEAMS: frozenset[str] = frozenset(
-    {"dept_production", "dept_system", "dept_qa", "dept_devops"}
-)
+DEPT_TEAMS: frozenset[str] = frozenset({"dept_production", "dept_system", "dept_qa", "dept_devops"})
 DEVOPS_TEAM: str = "dept_devops"
 
 #: Maps every known team_id to the AgentRole tier that *owns* that team stream.
@@ -86,13 +84,13 @@ C_SUITE_MSG_TYPES: frozenset[MessageType] = frozenset(
 #: Types that C-Suite **may** use when addressing a team outside their own.
 C_SUITE_CROSS_TEAM_TYPES: frozenset[MessageType] = frozenset(
     {
-        MessageType.REVIEW_REQUEST,   # Fan-out review to peers
+        MessageType.REVIEW_REQUEST,  # Fan-out review to peers
         MessageType.REVIEW_RESPONSE,  # Reply to a cross-team review request
-        MessageType.ESCALATION,       # Skip-one-level exception
-        MessageType.ADMIN_REPLY,      # Reply to admin directive
-        MessageType.SPRINT_PLAN,      # CTO → dept PMs
-        MessageType.DIRECTIVE,        # CTO / others directing departments
-        MessageType.INFRA_READY,      # DevOps notifies CTO (admin→c_suite path)
+        MessageType.ESCALATION,  # Skip-one-level exception
+        MessageType.ADMIN_REPLY,  # Reply to admin directive
+        MessageType.SPRINT_PLAN,  # CTO → dept PMs
+        MessageType.DIRECTIVE,  # CTO / others directing departments
+        MessageType.INFRA_READY,  # DevOps notifies CTO (admin→c_suite path)
     }
 )
 
@@ -131,9 +129,7 @@ WORKER_MSG_TYPES: frozenset[MessageType] = frozenset(
 )
 
 #: Sub-agent allowed message types (parent only).
-SUB_AGENT_MSG_TYPES: frozenset[MessageType] = frozenset(
-    {MessageType.RESULT, MessageType.QUERY}
-)
+SUB_AGENT_MSG_TYPES: frozenset[MessageType] = frozenset({MessageType.RESULT, MessageType.QUERY})
 
 # ---------------------------------------------------------------------------
 # Tool permissions — fnmatch glob patterns
@@ -147,10 +143,16 @@ EXECUTIVE_TOOLS: tuple[str, ...] = (
     "review.*",
     "project.status",
     "project.transition",
+    "project.list",
     "blob.*",
     "kpi.query_history",
     "department_task",
     "human.notify",
+    "approval.*",
+    "capability.register",
+    "capability.deregister",
+    "capability.search",
+    "capability.list_workers",
 )
 
 C_SUITE_BASE_TOOLS: tuple[str, ...] = (
@@ -161,6 +163,8 @@ C_SUITE_BASE_TOOLS: tuple[str, ...] = (
     "web_search",
     "web_fetch",
     "review.submit",
+    "review.submit_veto",
+    "approval.override_cso",
     "capability.search",
     "capability.list_workers",
 )
@@ -188,6 +192,10 @@ ADMIN_BASE_TOOLS: tuple[str, ...] = (
     "issue.update_status",
     "capability.search",
     "capability.list_workers",
+    "file_read",
+    "file_write",
+    "shared_memory_read",
+    "shared_memory_write",
 )
 
 #: Extra tools available only to the DevOps PM team (dept_devops).
@@ -206,6 +214,10 @@ WORKER_TOOLS: tuple[str, ...] = (
     "blob.list",
     "web_search",
     "web_fetch",
+    "file_read",
+    "file_write",
+    "shared_memory_read",
+    "shared_memory_write",
 )
 
 #: Tools explicitly blocked for workers regardless of any allowlist.

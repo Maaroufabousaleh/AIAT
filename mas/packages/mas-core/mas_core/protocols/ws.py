@@ -15,14 +15,13 @@ All frames are JSON-serialised and sent as WebSocket text messages.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, Field
 
 from .envelope import MessageEnvelope
-
 
 # ---------------------------------------------------------------------------
 # Base
@@ -79,10 +78,10 @@ class WSPingFrame(_WSFrameBase):
     type: Literal["PING"] = "PING"
 
     ping_id: str = Field(
-        default_factory=lambda: str(int(datetime.now(tz=timezone.utc).timestamp() * 1000)),
+        default_factory=lambda: str(int(datetime.now(tz=UTC).timestamp() * 1000)),
         description="Monotonic ping ID (ms timestamp). Echoed back in PONG.",
     )
-    sent_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    sent_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------

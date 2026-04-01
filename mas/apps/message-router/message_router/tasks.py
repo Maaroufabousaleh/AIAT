@@ -20,28 +20,19 @@ Two long-running asyncio tasks:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Reclaim loop
-# ---------------------------------------------------------------------------
-
-
 async def reclaim_loop() -> None:
     """Background task: XAUTOCLAIM idle PEL entries every N seconds."""
-    # Import here to avoid circular at module load time.
     from .dlq import make_dlq_system_event_fields, write_dead_letter
     from .redis_client import (
         get_redis,
         reclaim_idle_messages,
-        stream_key,
         xack,
         xadd_message,
         xdel,
@@ -61,9 +52,15 @@ async def reclaim_loop() -> None:
 
                     for entry_id, fields in entries:
                         await _handle_reclaimed_entry(
-                            team_id, entry_id, fields, redis,
-                            write_dead_letter, make_dlq_system_event_fields,
-                            xack, xdel, xadd_message,
+                            team_id,
+                            entry_id,
+                            fields,
+                            redis,
+                            write_dead_letter,
+                            make_dlq_system_event_fields,
+                            xack,
+                            xdel,
+                            xadd_message,
                         )
                 except Exception:
                     logger.exception("Reclaim error for team=%s", team_id)
@@ -89,9 +86,9 @@ async def _handle_reclaimed_entry(
     if not envelope_json:
         logger.warning(
             "Reclaimed entry has no 'envelope' field: team=%s entry_id=%s",
-            team_id, entry_id,
+            team_id,
+            entry_id,
         )
-        # ACK to stop it from looping forever
         await xack(team_id, entry_id, redis)
         return
 
@@ -100,16 +97,15 @@ async def _handle_reclaimed_entry(
     except Exception:
         logger.exception(
             "Failed to parse envelope from reclaimed entry: team=%s entry_id=%s",
-            team_id, entry_id,
+            team_id,
+            entry_id,
         )
         await xack(team_id, entry_id, redis)
         return
 
-    # Increment retry_count
     new_retry_count = envelope.retry_count + 1
     envelope = envelope.model_copy(update={"retry_count": new_retry_count})
 
-    # Check DLQ conditions
     is_exhausted = new_retry_count >= settings.max_delivery_attempts
     is_expired = envelope.is_expired()
 
@@ -117,7 +113,10 @@ async def _handle_reclaimed_entry(
         reason = "max_attempts_exceeded" if is_exhausted else "ttl_expired"
         logger.warning(
             "DLQ: message_id=%s team=%s reason=%s retries=%d",
-            envelope.message_id, team_id, reason, new_retry_count,
+            envelope.message_id,
+            team_id,
+            reason,
+            new_retry_count,
         )
         try:
             dlq_id = await write_dead_letter(
@@ -128,10 +127,8 @@ async def _handle_reclaimed_entry(
                 reason=reason,
                 retry_count=new_retry_count,
             )
-            # ACK + DEL from stream
             await xack(team_id, entry_id, redis)
             await xdel(team_id, entry_id, redis)
-            # Notify CEO
             notify_fields = make_dlq_system_event_fields(
                 dlq_id=dlq_id,
                 message_id=str(envelope.message_id),
@@ -140,32 +137,24 @@ async def _handle_reclaimed_entry(
             )
             await xadd_message("exec_ceo", notify_fields, redis)
         except Exception:
-            logger.exception(
-                "Failed to process DLQ for message_id=%s", envelope.message_id
-            )
+            logger.exception("Failed to process DLQ for message_id=%s", envelope.message_id)
     else:
-        # Update the envelope's retry_count in the stream by re-adding
-        # (XAUTOCLAIM already moved the entry to this reclaimer consumer;
-        # we update the stored JSON so the next subscriber sees the incremented count)
         updated_fields = {"envelope": envelope.model_dump_json()}
-        # Re-add with updated retry_count; XDEL old entry
         try:
             new_entry_id = await xadd_message(team_id, updated_fields, redis)
             await xack(team_id, entry_id, redis)
             await xdel(team_id, entry_id, redis)
             logger.debug(
                 "Re-queued reclaimed message: message_id=%s team=%s retry=%d new_entry=%s",
-                envelope.message_id, team_id, new_retry_count, new_entry_id,
+                envelope.message_id,
+                team_id,
+                new_retry_count,
+                new_entry_id,
             )
         except Exception:
             logger.exception(
                 "Failed to re-queue reclaimed message: message_id=%s", envelope.message_id
             )
-
-
-# ---------------------------------------------------------------------------
-# Trim loop
-# ---------------------------------------------------------------------------
 
 
 async def trim_loop() -> None:

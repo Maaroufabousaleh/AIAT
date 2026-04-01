@@ -13,7 +13,6 @@ TestListModels          — convenience list_models() on client
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,9 +22,8 @@ import pytest
 from mas_core.llm_gateway.client import (
     LLMGatewayClient,
     LLMGatewayError,
-    LLMRateLimited,
 )
-from mas_core.llm_gateway.models import ChatResponse, LLMConfig, UsageStats
+from mas_core.llm_gateway.models import LLMConfig
 from mas_core.llm_gateway.providers import (
     MODEL_REGISTRY,
     ApiStyle,
@@ -33,7 +31,6 @@ from mas_core.llm_gateway.providers import (
     ModelRegistry,
     ProviderConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -18,6 +18,12 @@ WS          : WSMessageFrame, WSPingFrame, WSAckFrame, WSNackFrame, WSPongFrame,
               AgentFrame, RouterFrame, parse_agent_frame
 """
 
+from .capability import (
+    CapabilityDef,
+    CapabilitySearchRequest,
+    CapabilitySearchResponse,
+    WorkerCapabilityRecord,
+)
 from .domain import (
     AgentProfile,
     FeasibilityReport,
@@ -33,20 +39,14 @@ from .domain import (
     ReviewSummary,
     Sprint,
 )
-from .capability import (
-    CapabilityDef,
-    CapabilitySearchRequest,
-    CapabilitySearchResponse,
-    WorkerCapabilityRecord,
-)
 from .enums import (
     AgentRole,
     DocumentState,
     DocumentType,
     FailureReason,
+    IssuePriority,
     IssueStatus,
     IssueType,
-    IssuePriority,
     KPIMetricType,
     MessageType,
     ProjectState,

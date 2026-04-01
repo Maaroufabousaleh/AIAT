@@ -34,13 +34,13 @@ Usage::
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import time
 from collections import deque
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
-from typing import Any, Callable, Sequence
+from enum import IntEnum
+from typing import Any
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -82,9 +82,9 @@ class AuditEvent:
 
     # Request context
     model: str = ""
-    resolved_model: str = ""          # after pool resolution
+    resolved_model: str = ""  # after pool resolution
     provider: str = ""
-    api_style: str = ""               # chat_completions | responses | cli
+    api_style: str = ""  # chat_completions | responses | cli
 
     # Request metadata
     message_count: int = 0
@@ -95,7 +95,7 @@ class AuditEvent:
     stream: bool = False
 
     # Response metadata
-    status: str = "success"           # success | error | rate_limited | timeout
+    status: str = "success"  # success | error | rate_limited | timeout
     status_code: int = 200
     finish_reason: str = "stop"
     latency_s: float = 0.0
@@ -114,7 +114,7 @@ class AuditEvent:
     tool_calls_returned: int = 0
 
     # FULL-level fields
-    content_fingerprint: str = ""     # SHA-256 of concatenated message content
+    content_fingerprint: str = ""  # SHA-256 of concatenated message content
     response_text_length: int = 0
     error_detail: str = ""
     pool_id: str | None = None
@@ -159,7 +159,7 @@ class AuditEvent:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "AuditEvent":
+    def from_dict(cls, d: dict[str, Any]) -> AuditEvent:
         """Deserialise from a to_dict() snapshot."""
         return cls(
             event_id=d.get("event_id", ""),
@@ -281,9 +281,7 @@ class AuditLog:
         self._total_tokens += event.total_tokens
         self._total_cost_usd += event.estimated_cost_usd
         model_key = event.resolved_model or event.model
-        self._per_model_requests[model_key] = (
-            self._per_model_requests.get(model_key, 0) + 1
-        )
+        self._per_model_requests[model_key] = self._per_model_requests.get(model_key, 0) + 1
         self._per_model_tokens[model_key] = (
             self._per_model_tokens.get(model_key, 0) + event.total_tokens
         )
@@ -293,9 +291,7 @@ class AuditLog:
 
         if event.status != "success":
             self._total_errors += 1
-            self._per_model_errors[model_key] = (
-                self._per_model_errors.get(model_key, 0) + 1
-            )
+            self._per_model_errors[model_key] = self._per_model_errors.get(model_key, 0) + 1
 
         # Forward to sinks (fire-and-forget, errors swallowed)
         for sink in self._sinks:
@@ -327,9 +323,7 @@ class AuditLog:
         self._total_tokens += event.total_tokens
         self._total_cost_usd += event.estimated_cost_usd
         model_key = event.resolved_model or event.model
-        self._per_model_requests[model_key] = (
-            self._per_model_requests.get(model_key, 0) + 1
-        )
+        self._per_model_requests[model_key] = self._per_model_requests.get(model_key, 0) + 1
         self._per_model_tokens[model_key] = (
             self._per_model_tokens.get(model_key, 0) + event.total_tokens
         )
@@ -338,9 +332,7 @@ class AuditLog:
         )
         if event.status != "success":
             self._total_errors += 1
-            self._per_model_errors[model_key] = (
-                self._per_model_errors.get(model_key, 0) + 1
-            )
+            self._per_model_errors[model_key] = self._per_model_errors.get(model_key, 0) + 1
 
     # ------------------------------------------------------------------
     # Querying
@@ -442,9 +434,7 @@ class AuditLog:
             "timeouts": sum(1 for e in events if e.status == "timeout"),
             "total_tokens": sum(tokens),
             "avg_tokens": round(sum(tokens) / len(tokens), 1) if tokens else 0,
-            "total_cost_usd": round(
-                sum(e.estimated_cost_usd for e in events), 6
-            ),
+            "total_cost_usd": round(sum(e.estimated_cost_usd for e in events), 6),
             "latency": {
                 "avg": round(sum(latencies) / len(latencies), 3) if latencies else 0,
                 "p50": round(_percentile(latencies, 50), 3),
@@ -491,7 +481,8 @@ class AuditLog:
 
         # Filter events
         events = [
-            e for e in self._events
+            e
+            for e in self._events
             if e.timestamp >= start
             and (model is None or e.model == model or e.resolved_model == model)
         ]
@@ -510,14 +501,16 @@ class AuditLog:
             latencies = [e.latency_s for e in in_bucket if e.status == "success"]
             avg_lat = (sum(latencies) / len(latencies)) if latencies else 0.0
 
-            series.append({
-                "t": round(mid, 2),
-                "requests": n,
-                "errors": errors,
-                "tokens": tokens,
-                "cost_usd": round(cost, 8),
-                "avg_latency_s": round(avg_lat, 4),
-            })
+            series.append(
+                {
+                    "t": round(mid, 2),
+                    "requests": n,
+                    "errors": errors,
+                    "tokens": tokens,
+                    "cost_usd": round(cost, 8),
+                    "avg_latency_s": round(avg_lat, 4),
+                }
+            )
 
         return series
 
@@ -547,7 +540,13 @@ class AuditLog:
             if e.timestamp >= cutoff:
                 key = e.resolved_model or e.model
                 if key not in counts:
-                    counts[key] = {"model": key, "requests": 0, "tokens": 0, "cost_usd": 0.0, "errors": 0}
+                    counts[key] = {
+                        "model": key,
+                        "requests": 0,
+                        "tokens": 0,
+                        "cost_usd": 0.0,
+                        "errors": 0,
+                    }
                 counts[key]["requests"] += 1
                 counts[key]["tokens"] += e.total_tokens
                 counts[key]["cost_usd"] += e.estimated_cost_usd

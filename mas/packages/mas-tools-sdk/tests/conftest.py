@@ -1,9 +1,9 @@
 """
 Root conftest for mas-tools-sdk tests.
 """
+
 import pytest
 import respx
-import httpx
 
 
 @pytest.fixture

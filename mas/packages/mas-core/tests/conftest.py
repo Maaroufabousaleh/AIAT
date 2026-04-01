@@ -2,11 +2,12 @@
 Root conftest for mas-core tests.
 Provides shared fixtures: fake Redis, async event loop, and log capture.
 """
+import asyncio
 import sys
 from pathlib import Path
-import asyncio
-import pytest
+
 import fakeredis.aioredis as fakeredis
+import pytest
 
 # Ensure workspace packages are importable without editable install.
 ROOT = Path(__file__).resolve().parents[3]

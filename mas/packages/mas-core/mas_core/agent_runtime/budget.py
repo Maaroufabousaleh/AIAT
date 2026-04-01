@@ -18,7 +18,7 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from ..protocols.envelope import TaskBudget
@@ -61,7 +61,7 @@ class BudgetTracker:
     # ----------------------------------------------------------------
 
     @classmethod
-    def from_task_budget(cls, budget: TaskBudget | None) -> "BudgetTracker":
+    def from_task_budget(cls, budget: TaskBudget | None) -> BudgetTracker:
         """Create a tracker from an optional ``TaskBudget`` envelope field.
 
         If ``budget`` is ``None``, all caps are uncapped.
@@ -186,7 +186,7 @@ class BudgetTracker:
     def _deadline_exceeded(self) -> bool:
         if self.deadline is None:
             return False
-        return datetime.now(tz=timezone.utc) >= self.deadline
+        return datetime.now(tz=UTC) >= self.deadline
 
     def _check_caps(self) -> str | None:
         """Return an exhaustion message if any cap is exceeded, else None."""
@@ -228,7 +228,7 @@ class BudgetTracker:
         }
 
     @classmethod
-    def restore_snapshot(cls, data: dict[str, Any]) -> "BudgetTracker":
+    def restore_snapshot(cls, data: dict[str, Any]) -> BudgetTracker:
         """Reconstruct a BudgetTracker from a saved ``snapshot()`` dict."""
         deadline = None
         if data.get("deadline"):

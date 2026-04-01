@@ -83,7 +83,7 @@ from typing import Any
 import httpx
 
 from .audit import AuditEvent, AuditLevel, AuditLog, fingerprint_messages
-from .metrics import MetricsCollector, Window
+from .metrics import MetricsCollector
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -137,7 +137,7 @@ class _ConversationContext:
 
     def __init__(
         self,
-        client: "LLMGatewayClient",
+        client: LLMGatewayClient,
         *,
         system: str | None = None,
         model: str | None = None,
@@ -154,7 +154,7 @@ class _ConversationContext:
         if system:
             self.history.append({"role": "system", "content": system})
 
-    async def __aenter__(self) -> "_ConversationContext":
+    async def __aenter__(self) -> _ConversationContext:
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -164,7 +164,7 @@ class _ConversationContext:
         self,
         message: str,
         *,
-        tools: list["ToolDefinition"] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] = "auto",
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -223,11 +223,11 @@ class _ConversationContext:
         self,
         message: str,
         *,
-        tools: list["ToolDefinition"] | None = None,
+        tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] = "auto",
         temperature: float | None = None,
         max_tokens: int | None = None,
-    ) -> "ChatResponse":
+    ) -> ChatResponse:
         """Like ``send()`` but returns the full ``ChatResponse`` object.
 
         Useful when you need access to tool calls or usage statistics.
@@ -358,7 +358,7 @@ class LLMGatewayClient:
             await pc.aclose()
         self._provider_clients.clear()
 
-    async def __aenter__(self) -> "LLMGatewayClient":
+    async def __aenter__(self) -> LLMGatewayClient:
         await self.start()
         return self
 
@@ -680,7 +680,7 @@ class LLMGatewayClient:
         - ``"gemma-think/standard"`` → 3-stage (default)
         - ``"gemma-think/deep"``     → 3-stage with self-critique
         """
-        from .thinking import ThinkingChain, Depth
+        from .thinking import Depth, ThinkingChain
 
         parts = resolved_model.split("/", 1)
         depth_str = parts[1] if len(parts) > 1 else "standard"
@@ -1440,7 +1440,7 @@ class LLMGatewayClient:
         task: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
-    ) -> "_ConversationContext":
+    ) -> _ConversationContext:
         """Return a stateful multi-turn conversation context manager.
 
         Usage::
@@ -1492,7 +1492,7 @@ class LLMGatewayClient:
         needs_tools: bool = False,
         needs_vision: bool = False,
         chain_length: int = 4,
-    ) -> "ChatResponse":
+    ) -> ChatResponse:
         """Call an LLM with automatic model fallback on failure.
 
         Builds a ranked fallback chain via ``ModelSelector`` and tries

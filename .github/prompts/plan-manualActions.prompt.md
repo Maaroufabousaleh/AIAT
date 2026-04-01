@@ -618,7 +618,7 @@ None — pure Python logic.
    - **Pull (polling)**: Paperclip polls `GET /projects/{id}/state-history` periodically. Simpler but less real-time.
    - Recommendation: **push** for real-time visibility.
 3. **Approval routing**: Should human approvals flow through Paperclip UI (Paperclip → MAS webhook) or directly via `POST /projects/{id}/decisions`? Both can be active simultaneously (last-writer-wins on `approval_gates.decided_at`).
-4. **KPI sync interval**: How often to sync `kpi_metrics` → Paperclip budget dashboards? Options: per-project-completion, per-sprint, or on-demand.
+4. **KPI sync interval**: How often to sync `kpi_snapshots` → Paperclip budget dashboards? Options: per-project-completion, per-sprint, or on-demand.
 
 ### Manual Actions
 

@@ -1,11 +1,12 @@
 """
 Conftest for team-runner tests.
 """
-import sys
-from pathlib import Path
 import os
+import sys
 import textwrap
+from pathlib import Path
 from uuid import uuid4
+
 import pytest
 
 # Ensure the team-runner package is importable.

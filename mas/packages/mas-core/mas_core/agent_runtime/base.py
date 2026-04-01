@@ -34,8 +34,9 @@ from typing import Any
 
 from ..llm_gateway.client import LLMGatewayClient
 from ..llm_gateway.models import ToolDefinition
-from ..protocols.envelope import MessageEnvelope
+from ..observability.metrics import MAS_BUDGET_EXHAUSTED_TOTAL, MAS_LLM_CALLS_TOTAL
 from ..protocols.enums import AgentRole
+from ..protocols.envelope import MessageEnvelope
 from ..protocols.ws import WSMessageFrame
 from .attachment_manager import TempAttachmentManager
 from .budget import BudgetExhausted, BudgetTracker
@@ -204,13 +205,16 @@ class AgentBase(ABC):
 
         if msg_id_str in self._processed_lru:
             logger.debug(
-                "Skipping duplicate message %s (LRU hit)", msg_id_str,
+                "Skipping duplicate message %s (LRU hit)",
+                msg_id_str,
                 extra=self._log_extra(),
             )
             return
 
         self._current_envelope = envelope
-        task_budget = envelope.budget if envelope.budget is not None else self.config.budget_defaults
+        task_budget = (
+            envelope.budget if envelope.budget is not None else self.config.budget_defaults
+        )
         self._budget = BudgetTracker.from_task_budget(task_budget)
 
         try:
@@ -218,7 +222,8 @@ class AgentBase(ABC):
         except BudgetExhausted as exc:
             logger.warning(
                 "Budget exhausted for message %s: %s",
-                msg_id_str, exc,
+                msg_id_str,
+                exc,
                 extra=self._log_extra(),
             )
             self._current_envelope = None
@@ -226,7 +231,8 @@ class AgentBase(ABC):
         except Exception as exc:
             logger.error(
                 "Unhandled exception in handle_message for %s: %s",
-                msg_id_str, exc,
+                msg_id_str,
+                exc,
                 extra=self._log_extra(),
             )
             self._current_envelope = None
@@ -426,7 +432,8 @@ class AgentBase(ABC):
                     budget = BudgetTracker.restore_snapshot(checkpoint["budget_snapshot"])
                     self._budget = budget
                 logger.info(
-                    "Resuming from checkpoint at iteration %d", iteration,
+                    "Resuming from checkpoint at iteration %d",
+                    iteration,
                     extra=self._log_extra(iteration=iteration),
                 )
 
@@ -444,6 +451,14 @@ class AgentBase(ABC):
                         iteration,
                         extra=self._log_extra(iteration=iteration),
                     )
+                    # Phase 12: budget exhaustion metric
+                    try:
+                        MAS_BUDGET_EXHAUSTED_TOTAL.labels(
+                            agent_id=self.agent_id,
+                            budget_type="pre_llm_check",
+                        ).inc()
+                    except Exception:
+                        pass
                     break
 
                 response = await self._llm.chat_completion(
@@ -452,11 +467,20 @@ class AgentBase(ABC):
                     tools=tools,
                     max_tokens=max_tokens or self.config.llm_max_tokens,
                     temperature=(
-                        self.config.llm_temperature
-                        if temperature is None else temperature
+                        self.config.llm_temperature if temperature is None else temperature
                     ),
                     stream=self.config.llm_stream if stream is None else stream,
                 )
+
+                # Phase 12: LLM call metric
+                try:
+                    MAS_LLM_CALLS_TOTAL.labels(
+                        model=model or self.config.llm_model,
+                        agent_id=self.agent_id,
+                    ).inc()
+                except Exception:
+                    pass  # metrics are best-effort
+
                 try:
                     budget.consume_llm_call(
                         tokens_in=response.usage.prompt_tokens,
@@ -469,6 +493,14 @@ class AgentBase(ABC):
                         iteration,
                         extra=self._log_extra(iteration=iteration),
                     )
+                    # Phase 12: budget exhaustion metric
+                    try:
+                        MAS_BUDGET_EXHAUSTED_TOTAL.labels(
+                            agent_id=self.agent_id,
+                            budget_type="llm_call",
+                        ).inc()
+                    except Exception:
+                        pass
                     break
 
                 messages.append(response.message.model_dump(exclude_none=True))
@@ -503,7 +535,8 @@ class AgentBase(ABC):
                             }
                         )
                         content = self._format_tool_result(
-                            result, attachment_mgr=attachment_mgr,
+                            result,
+                            attachment_mgr=attachment_mgr,
                         )
                         messages.append(
                             {
@@ -554,4 +587,3 @@ class AgentBase(ABC):
                 await self._llm.stop()
                 self._llm_started = False
         return messages
-
