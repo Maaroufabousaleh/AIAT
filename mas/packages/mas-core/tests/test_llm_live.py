@@ -170,7 +170,18 @@ def _assert_valid_vision_response(resp: ChatResponse, model_id: str) -> None:
     reason="GEMINI_API_KEY not set",
 )
 class TestGeminiLive:
-    """Live tests against all Google Gemma models on AI Studio."""
+    """Live tests against Google Gemini and Gemma models on AI Studio."""
+
+    @pytest.mark.asyncio
+    async def test_gemini31_flash_lite_preview(self):
+        """gemini-3.1-flash-lite-preview: high-throughput preview text model."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT,
+                model="gemini-3.1-flash-lite-preview",
+            )
+        _assert_valid_response(resp, "gemini-3.1-flash-lite-preview")
 
     @pytest.mark.asyncio
     async def test_gemma3_27b(self):

@@ -53,6 +53,56 @@ _CC = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 # Free-tier models (verified working Feb 2026)
 # ---------------------------------------------------------------------------
 
+# ---- Gemini 3.1 Flash-Lite Preview ---------------------------------------
+
+MODEL_REGISTRY.register(
+    ModelEntry(
+        model_id="gemini-3.1-flash-lite-preview",
+        provider="gemini",
+        api_style=ApiStyle.CHAT_COMPLETIONS,
+        endpoint=_CC,
+        description=(
+            "Google Gemini 3.1 Flash-Lite Preview - low-cost, high-throughput "
+            "multimodal preview model on AI Studio. Free-tier limits: "
+            "15 RPM / 250k TPM / 500 RPD."
+        ),
+        max_context_tokens=1_048_576,
+        supports_tools=True,
+        supports_streaming=True,
+        cost_per_1m_input=0.0,
+        cost_per_1m_output=0.0,
+        default_temperature=0.7,
+        capabilities=ModelCapabilities(
+            supports_images=True,
+            supports_pdf=False,
+            supports_video=False,
+            supports_reasoning=False,
+            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
+            pdf_how="extract text and send as message content",
+        ),
+        best_for=[
+            "general-purpose",
+            "fast-classification",
+            "summarisation",
+            "high-volume",
+            "cost-sensitive",
+        ],
+        limits=[
+            "preview-model",
+            "free-tier (15 RPM / 250k TPM / 500 RPD on AI Studio)",
+            "text-out model",
+            "1M context",
+        ],
+        compliance=[
+            "google-ai-studio-tos",
+            "free-tier",
+            "api-key-required",
+            "preview-model",
+            "data-used-for-improvement (free tier)",
+        ],
+    )
+)
+
 # ---- Gemma 3 27B (open-weight, free on AI Studio) -----------------------
 
 MODEL_REGISTRY.register(
