@@ -15,21 +15,15 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: cost_estimate
+- name: kpi.compute
   version: '1.0'
-  description: Capability mapped from tool cost_estimate
+  description: Compute KPI snapshot.
   risk_level: low
   required_tools:
-  - cost_estimate
-- name: market_research
-  version: '1.0'
-  description: Capability mapped from tool market_research
-  risk_level: low
-  required_tools:
-  - market_research
+  - kpi.compute
 - name: web_search
   version: '1.0'
-  description: Capability mapped from tool web_search
+  description: Search the web.
   risk_level: low
   required_tools:
   - web_search

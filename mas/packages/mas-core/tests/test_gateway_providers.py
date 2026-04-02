@@ -24,6 +24,13 @@ from mas_core.llm_gateway.client import (
     LLMGatewayError,
 )
 from mas_core.llm_gateway.models import LLMConfig
+from mas_core.llm_gateway.providers.api.openrouter import (
+    OPENROUTER_CHAT_COMPLETIONS_ENDPOINT,
+    OPENROUTER_FREE_ROUTER_MODEL_ID,
+    OPENROUTER_FREE_ROUTER_WIRE_MODEL,
+    _register as register_openrouter_model,
+    ensure_free_openrouter_model,
+)
 from mas_core.llm_gateway.providers import (
     MODEL_REGISTRY,
     ApiStyle,
@@ -661,6 +668,70 @@ class TestFallback:
                     model="custom-thing",
                 )
         assert resp.text == "fallback"
+
+    @pytest.mark.asyncio
+    async def test_raw_openrouter_paid_model_is_blocked(self):
+        reg = _make_registry()
+        config = _make_config()
+        client = LLMGatewayClient(config, registry=reg)
+
+        post = AsyncMock(side_effect=AssertionError("network call should not happen"))
+        with patch.object(httpx.AsyncClient, "post", new=post):
+            async with client:
+                with pytest.raises(LLMGatewayError, match="Unknown raw OpenRouter model blocked"):
+                    await client.chat_completion(
+                        [{"role": "user", "content": "hi"}],
+                        model="openrouter/auto",
+                    )
+        post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_openrouter_free_router_alias_uses_registered_entry(self):
+        config = _make_config()
+        client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
+        seen: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            seen["url"] = url
+            seen["json"] = kwargs["json"]
+            return _ok_chat_response("free router", OPENROUTER_FREE_ROUTER_WIRE_MODEL)
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "hi"}],
+                    model=OPENROUTER_FREE_ROUTER_WIRE_MODEL,
+                )
+
+        assert resp.text == "free router"
+        assert seen["url"] == OPENROUTER_CHAT_COMPLETIONS_ENDPOINT
+        assert seen["json"]["model"] == OPENROUTER_FREE_ROUTER_WIRE_MODEL
+
+
+class TestOpenRouterGuards:
+    def test_free_router_registered(self):
+        entry = MODEL_REGISTRY.get(OPENROUTER_FREE_ROUTER_MODEL_ID)
+        assert entry is not None
+        assert entry.provider == "openrouter"
+        assert entry.extra["api_model_name"] == OPENROUTER_FREE_ROUTER_WIRE_MODEL
+
+    def test_validator_blocks_paid_openrouter_model(self):
+        assert ensure_free_openrouter_model("openrouter/free") == "openrouter/free"
+        assert ensure_free_openrouter_model("openrouter/google/gemma-3-27b-it:free") == (
+            "google/gemma-3-27b-it:free"
+        )
+        with pytest.raises(ValueError, match="Paid or unapproved OpenRouter model blocked"):
+            ensure_free_openrouter_model("openrouter/auto")
+
+    def test_register_guard_rejects_paid_model(self):
+        with pytest.raises(ValueError, match="Paid or unapproved OpenRouter model blocked"):
+            register_openrouter_model(
+                ModelEntry(
+                    model_id="openrouter/openrouter/auto",
+                    provider="openrouter",
+                    endpoint=OPENROUTER_CHAT_COMPLETIONS_ENDPOINT,
+                )
+            )
 
 
 # ===========================================================================

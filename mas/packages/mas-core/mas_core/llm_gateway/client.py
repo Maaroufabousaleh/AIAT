@@ -515,6 +515,15 @@ class LLMGatewayClient:
             )
 
         # ── Pool resolution ──────────────────────────────────────────
+        from .providers.api.openrouter import (
+            OPENROUTER_FREE_ROUTER_MODEL_ID,
+            OPENROUTER_FREE_ROUTER_WIRE_MODEL,
+            ensure_free_openrouter_model,
+        )
+
+        if resolved_model == OPENROUTER_FREE_ROUTER_WIRE_MODEL:
+            resolved_model = OPENROUTER_FREE_ROUTER_MODEL_ID
+
         entry, pool = self._registry.resolve_pool(resolved_model)
         if pool is not None and entry is None:
             raise LLMRateLimited(
@@ -529,6 +538,17 @@ class LLMGatewayClient:
             if entry is not None
             else concrete_model
         )
+        if entry is not None and entry.provider == "openrouter":
+            try:
+                wire_model = ensure_free_openrouter_model(wire_model)
+            except ValueError as exc:
+                raise LLMGatewayError(400, str(exc)) from exc
+        elif entry is None and resolved_model.startswith("openrouter/"):
+            raise LLMGatewayError(
+                400,
+                "Unknown raw OpenRouter model blocked: use a registered "
+                "openrouter/...:free model or 'openrouter/free'.",
+            )
 
         # Populate audit context
         _audit_evt.resolved_model = concrete_model

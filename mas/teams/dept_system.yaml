@@ -42,7 +42,6 @@ workers:
     tools:
       - capability.search
       - web_search
-      - capability.search
       - blob.upload
 
   - agent_id: solution_designer
@@ -56,7 +55,6 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 1.25
     tools:
-      - capability.search
       - capability.search
       - web_search
       - blob.upload

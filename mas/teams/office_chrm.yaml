@@ -17,7 +17,6 @@ admin:
     max_cost_usd: 0.75
   tools:
     - capability.list_workers
-    - capability.list_workers
     - kpi.query_history
     - capability.search
 
@@ -33,6 +32,5 @@ workers:
       max_tool_calls: 8
       max_cost_usd: 0.30
     tools:
-      - capability.list_workers
       - capability.list_workers
       - kpi.query_history

@@ -7,7 +7,9 @@ when constructing each agent.
 
 from __future__ import annotations
 
-from pydantic import Field
+import os
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..protocols.enums import AgentRole
@@ -72,6 +74,18 @@ class AgentConfig(BaseSettings):
         default="gemma-3-27b-it",
         description="Default model name passed to LLMGatewayClient.chat_completion().",
     )
+
+    @field_validator("llm_model", mode="before")
+    @classmethod
+    def _resolve_llm_model(cls, v: str) -> str:
+        """Fall back to LLM_DEFAULT_MODEL env var if llm_model is the built-in default."""
+        env_model = os.environ.get("LLM_DEFAULT_MODEL", "").strip()
+        # If an explicit MAS_AGENT_LLM_MODEL was set, honour it.
+        # Otherwise use LLM_DEFAULT_MODEL if available.
+        if v == "gemma-3-27b-it" and env_model:
+            return env_model
+        return v
+
     llm_temperature: float = Field(
         default=0.7,
         ge=0.0,

@@ -39,12 +39,12 @@ capabilities:
   risk_level: low
   required_tools:
   - web_search
-- name: code_analyze
+- name: capability.search
   version: '1.0'
-  description: Capability mapped from tool code_analyze
+  description: Search for workers by capability.
   risk_level: low
   required_tools:
-  - code_analyze
+  - capability.search
 sandbox:
   profile: standard
   filesystem: {}

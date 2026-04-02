@@ -1,43 +1,37 @@
 # ── Dockerfile.orchestrator-api ───────────────────────────────────────────────
-# Multi-stage build: builder installs deps with uv; runtime image is slim.
+FROM python:3.11-slim
 
-FROM python:3.11-slim AS builder
-
-WORKDIR /build
-
-# Install uv
 RUN pip install --no-cache-dir uv==0.4.*
 
-# Copy workspace files needed to resolve the monorepo
-COPY pyproject.toml uv.lock* ./
-COPY packages/mas-core/pyproject.toml      packages/mas-core/pyproject.toml
-COPY packages/mas-core/mas_core/           packages/mas-core/mas_core/
-COPY packages/mas-tools-sdk/pyproject.toml packages/mas-tools-sdk/pyproject.toml
-COPY packages/mas-tools-sdk/mas_tools_sdk/ packages/mas-tools-sdk/mas_tools_sdk/
-COPY apps/orchestrator-api/pyproject.toml  apps/orchestrator-api/pyproject.toml
-COPY apps/orchestrator-api/orchestrator_api/ apps/orchestrator-api/orchestrator_api/
+COPY packages/mas-core/ /tmp/mas-core/
+COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
+COPY apps/orchestrator-api/ /tmp/orchestrator-api/
+COPY migrations/ /tmp/migrations/
 
-# Install only runtime deps for this service into a venv
-RUN uv sync --package orchestrator-api --no-dev --frozen \
-    --no-editable \
-    --virtualenv /venv
+RUN pip install --no-deps /tmp/mas-core && \
+    pip install --no-deps /tmp/mas-tools-sdk && \
+    pip install /tmp/orchestrator-api && \
+    pip install \
+        uvicorn \
+        httpx \
+        fastapi \
+        pydantic \
+        pydantic-settings \
+        redis \
+        structlog \
+        asyncpg \
+        psutil \
+        aiolimiter \
+        apscheduler \
+        alembic \
+        psycopg2-binary
 
-# ── Runtime image ─────────────────────────────────────────────────────────────
-FROM python:3.11-slim AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/venv/bin:$PATH"
-
-COPY --from=builder /venv /venv
 COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
+COPY alembic.ini /app/alembic.ini
 
 WORKDIR /app
 
 EXPOSE 8000
-
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
 
 CMD ["uvicorn", "orchestrator_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

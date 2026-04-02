@@ -41,6 +41,8 @@ dev = [
     "respx>=0.21",          # mock httpx calls
     "ruff>=0.6",
     "mypy>=1.11",
+    "alembic>=1.18.4",
+    "psycopg2-binary>=2.9.11",
 ]
 
 [tool.uv.sources]

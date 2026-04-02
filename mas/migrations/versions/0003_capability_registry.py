@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import JSONB  # noqa: F401 — sa.JSONB() resolved at runtime
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: F401 — JSONB() resolved at runtime
 
 revision: str = "0003_capability_registry"
 down_revision = "0002_missing_tables"
@@ -37,23 +37,23 @@ def upgrade() -> None:
             comment="Canonical capability name, e.g. 'implement_feature', 'write_test'",
         ),
         sa.UniqueConstraint("name", name="uq_capabilities_name"),
-        sa.Column("version", sa.Text(), nullable=False, server_default="'1.0'"),
+        sa.Column("version", sa.Text(), nullable=False, server_default=sa.text("'1.0'")),
         sa.Column("description", sa.Text()),
-        sa.Column("input_schema", sa.JSONB(), comment="JSON Schema for expected input"),
-        sa.Column("output_schema", sa.JSONB(), comment="JSON Schema for expected output"),
+        sa.Column("input_schema", JSONB(), comment="JSON Schema for expected input"),
+        sa.Column("output_schema", JSONB(), comment="JSON Schema for expected output"),
         sa.Column(
             "risk_level",
             sa.Text(),
             nullable=False,
-            server_default="'low'",
+            server_default=sa.text("'low'"),
             comment="low | medium | high | critical",
         ),
         sa.Column(
             "cost_model",
-            sa.JSONB(),
+            JSONB(),
             comment='Per-invocation cost estimate, e.g. {"per_invocation": 0.05, "currency": "USD"}',
         ),
-        sa.Column("required_tools", sa.ARRAY(sa.Text()), server_default="'{}'"),
+        sa.Column("required_tools", sa.ARRAY(sa.Text()), server_default=sa.text("'{}'")),
         sa.Column(
             "required_role",
             sa.Text(),
@@ -88,23 +88,23 @@ def upgrade() -> None:
         ),
         sa.Column(
             "adapter_config",
-            sa.JSONB(),
+            JSONB(),
             nullable=False,
-            server_default="'{}'",
+            server_default=sa.text("'{}'"),
             comment="Per-adapter connection config (cmd/args, URL, image, mcp_url, etc.)",
         ),
         sa.Column(
             "sandbox_profile",
             sa.Text(),
             nullable=False,
-            server_default="'standard'",
+            server_default=sa.text("'standard'"),
             comment="standard | restricted | gvisor | firecracker",
         ),
         sa.Column(
             "capability_ids",
             sa.ARRAY(sa.UUID()),
             nullable=False,
-            server_default="'{}'",
+            server_default=sa.text("'{}'"),
             comment="UUIDs referencing capabilities(id)",
         ),
         sa.Column(
@@ -116,7 +116,7 @@ def upgrade() -> None:
             "status",
             sa.Text(),
             nullable=False,
-            server_default="'ACTIVE'",
+            server_default=sa.text("'ACTIVE'"),
             comment="ACTIVE | INACTIVE | DRAINING",
         ),
         sa.Column(
@@ -161,7 +161,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "constraints",
-            sa.JSONB(),
+            JSONB(),
             comment='Role-specific constraints, e.g. {"max_concurrent": 2, "requires_approval": false}',
         ),
         sa.UniqueConstraint("role", "capability_id", name="uq_role_capability"),

@@ -17,9 +17,7 @@ admin:
     max_cost_usd: 1.00
   tools:
     - capability.search
-    - capability.search
     - web_search
-    - capability.search
 
 workers:
   - agent_id: tech_analyst_1
@@ -35,4 +33,3 @@ workers:
     tools:
       - capability.search
       - web_search
-      - capability.search

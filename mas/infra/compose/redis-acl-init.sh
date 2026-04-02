@@ -34,12 +34,13 @@ TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
 
 echo "Configuring Redis ACL users..."
 
-# Configure router_user
-redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER router_user on ">$ROUTER_PASS" "~stream:*" "~dedupe:*" "~heartbeat:*" +xadd +xreadgroup +xack +xautoclaim +xdel +xtrim +xlen +xinfo +xgroup +xgroup-create +xinfo-groups +xinfo-stream +xlen +xread +set +get +del +expire +ping
+# Configure router_user - use ACL categories (@stream) instead of individual commands
+# which provides better compatibility with Redis 7 ACL changes
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER router_user on ">$ROUTER_PASS" "~stream:*" "~dedupe:*" "~heartbeat:*" +@stream +@write +@read +@slow +ping
 echo "  - router_user configured"
 
 # Configure toolcache_user
-redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER toolcache_user on ">$TOOLCACHE_PASS" "~tool_cache:*" +get +set +del +expire +ping
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER toolcache_user on ">$TOOLCACHE_PASS" "~tool_cache:*" +@read +@write +@slow +ping
 echo "  - toolcache_user configured"
 
 # Disable default user

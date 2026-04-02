@@ -1,0 +1,61 @@
+# ── Dockerfile.dashboard ──────────────────────────────────────────────────────
+# Multi-stage build for the Next.js 14 MAS dashboard.
+# Build context is the repo root (mas/), so paths are relative to mas/.
+#
+# Build:
+#   docker build -f infra/docker/Dockerfile.dashboard -t mas/dashboard:latest .
+#
+# The next.config.ts must have output: "standalone" for the runner stage.
+
+# ── Stage 1: Install dependencies ─────────────────────────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+# Copy only package manifests first (layer cache)
+COPY apps/mas-dashboard/package.json apps/mas-dashboard/package-lock.json* ./
+
+# Install production deps + devDeps needed for build (omit-dev is for runner stage)
+RUN npm ci
+
+# ── Stage 2: Build ────────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# Copy source
+COPY apps/mas-dashboard/ .
+
+# Restore installed node_modules from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Build Next.js (produces .next/standalone thanks to output: "standalone")
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# ── Stage 3: Runner ───────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# Create a non-root user
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 nextjs
+
+# Copy static assets
+COPY --from=builder /app/public ./public
+
+# Copy the standalone server (includes all required node_modules inline)
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+
+# Copy the pre-rendered static files into the right location for standalone server
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+# The standalone output produces a server.js at the root of .next/standalone
+CMD ["node", "server.js"]

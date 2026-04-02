@@ -19,55 +19,41 @@ name: mas
 # ── Shared env vars (merged into each team's environment: block) ──────────────
 x-team-env: &team-env
   ROUTER_URL: "http://message-router:8001"
+  ROUTER_SECRET: "${ROUTER_SECRET}"
   TOOL_SERVICE_URL: "http://tool-service:8002"
-  PGBOUNCER_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
+  TOOL_SECRET: "${TOOL_SECRET}"
+  PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
   MINIO_ENDPOINT: "http://minio:9000"
   MINIO_ACCESS_KEY: "mas_agent"
   MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
   LOG_LEVEL: "INFO"
+  # ── LLM gateway defaults ──────────────────────────────────────────────────
+  LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
+  LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
+  LLM_API_KEY: "${LLM_API_KEY:-}"
+  # ── Provider API keys (read by mas-core provider modules at runtime) ──────
+  GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+  OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+  GROQ_API_KEY: "${GROQ_API_KEY:-}"
+  CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+  MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+  CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+  CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+  OPENCODE_API_KEY: "${OPENCODE_API_KEY:-public}"
 
-# ── Shared service-level defaults (no environment: key here) ──────────────────
+# ── Shared team defaults ───────────────────────────────────────────────────
 x-team-defaults: &team-defaults
   image: mas/team-runner:latest
   build:
     context: ../..
     dockerfile: infra/docker/Dockerfile.team-runner
   restart: unless-stopped
-  stop_grace_period: 60s          # give agents 60 s to checkpoint before SIGKILL
   networks:
     - internal
-  depends_on:
-    redis:
-      condition: service_healthy
-    postgres:
-      condition: service_healthy
-    pgbouncer:
-      condition: service_healthy
-    minio:
-      condition: service_healthy
-    orchestrator-api:
-      condition: service_healthy
-    message-router:
-      condition: service_healthy
-    tool-service:
-      condition: service_healthy
+    - public
   mem_limit: 512m
   cpus: "0.5"
-  # ── Sandbox tier enforcement (Phase 11) ────────────────────────────────────
-  cap_drop:
-    - ALL
-  read_only: true
-  tmpfs:
-    - /tmp:size=128m
-    - /var/tmp:size=32m
-  healthcheck:
-    test: ["CMD", "python", "-c",
-           "import httpx; httpx.get('http://localhost:8080/health').raise_for_status()"]
-    interval: 15s
-    timeout: 5s
-    start_period: 20s
-    retries: 3
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
@@ -75,7 +61,7 @@ networks:
     driver: bridge
   internal:
     driver: bridge
-    internal: true   # no direct internet access for agents
+    internal: true
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
@@ -97,8 +83,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      ROUTER_PASSWORD: "${ROUTER_PASSWORD:-router_default_pass}"
-      TOOLCACHE_PASSWORD: "${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+      ROUTER_PASSWORD: "${ROUTER_PASSWORD}"
+      TOOLCACHE_PASSWORD: "${TOOLCACHE_PASSWORD}"
     entrypoint: ["/bin/sh", "/usr/local/bin/redis-acl-init.sh"]
     volumes:
       - ./redis-acl-init.sh:/usr/local/bin/redis-acl-init.sh:ro
@@ -121,7 +107,7 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
-      test: ["CMD", "redis-cli", "-u", "redis://:router_default_pass@redis:6379", "ping"]
+      test: ["CMD", "redis-cli", "-u", "redis://:router_user@redis:6379", "ping"]
       interval: 10s
       timeout: 3s
       start_period: 5s
@@ -150,18 +136,18 @@ services:
 
   # ── 3. PgBouncer ────────────────────────────────────────────────────────────
   pgbouncer:
-    image: edoburu/pgbouncer:1.22
+    image: edoburu/pgbouncer:latest
     restart: unless-stopped
     environment:
-      DB_HOST: postgres
-      DB_NAME: mas
-      DB_USER: mas_user
-      DB_PASSWORD: "${POSTGRES_PASSWORD}"
+      DATABASE_URL: "postgres://mas_user:${POSTGRES_PASSWORD}@postgres:5432/mas"
       POOL_MODE: transaction
       MAX_CLIENT_CONN: "200"
       DEFAULT_POOL_SIZE: "20"
-      # CRITICAL: must be 0 for asyncpg compatibility in transaction pool mode
-      SERVER_RESET_QUERY_ALWAYS: "0"
+      MIN_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "5"
+      AUTH_TYPE: scram-sha-256
+      SERVER_RESET_QUERY: "DISCARD ALL"
+      LISTEN_PORT: "5432"
     networks:
       - internal
     depends_on:
@@ -169,12 +155,6 @@ services:
         condition: service_healthy
     mem_limit: 128m
     cpus: "0.25"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U mas_user -d mas || exit 1"]
-      interval: 10s
-      timeout: 3s
-      start_period: 10s
-      retries: 3
 
   # ── 4. MinIO ────────────────────────────────────────────────────────────────
   minio:
@@ -220,31 +200,24 @@ services:
   # ── 5. Message Router ───────────────────────────────────────────────────────
   message-router:
     image: mas/message-router:latest
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.message-router
     restart: unless-stopped
     networks:
       - internal
-    # No host port in production — only orchestrator-api (on public+internal)
-    # needs to reach the router.  Use docker-compose.dev.yml for local access.
     depends_on:
       redis-acl-init:
         condition: service_completed_successfully
       redis:
-        condition: service_healthy
+        condition: service_started
     environment:
-      # Redis ACL: connect as router_user
-      REDIS_URL: "redis://:${ROUTER_PASSWORD:-router_default_pass}@redis:6379/0"
+      REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       REDIS_USERNAME: "router_user"
-      REDIS_PASSWORD: "${ROUTER_PASSWORD:-router_default_pass}"
+      REDIS_PASSWORD: "${ROUTER_PASSWORD}"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
-      test: ["CMD", "python", "-c",
-             "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
       interval: 15s
       timeout: 5s
       start_period: 10s
@@ -259,18 +232,19 @@ services:
     restart: unless-stopped
     networks:
       - internal
+      - public
     # No host port in production — only team-runners (on internal) need it.
     # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
       redis-acl-init:
         condition: service_completed_successfully
       redis:
-        condition: service_healthy
+        condition: service_started
     environment:
       # Redis ACL: connect as toolcache_user (DB 1 for tool cache)
-      REDIS_URL: "redis://:${TOOLCACHE_PASSWORD:-toolcache_default_pass}@redis:6379/1"
+      REDIS_URL: "redis://toolcache_user:${TOOLCACHE_PASSWORD}@redis:6379/1"
       REDIS_USERNAME: "toolcache_user"
-      REDIS_PASSWORD: "${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+      REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
@@ -305,10 +279,10 @@ services:
       pgbouncer:
         condition: service_started
       message-router:
-        condition: service_healthy
+        condition: service_started
     environment:
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
-      PGBOUNCER_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
+      PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       ROUTER_URL: "http://message-router:8001"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
@@ -320,6 +294,48 @@ services:
       interval: 15s
       timeout: 5s
       start_period: 15s
+      retries: 3
+
+  # ── 8. Dashboard ────────────────────────────────────────────────────────────
+  dashboard:
+    image: mas/dashboard:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.dashboard
+    container_name: mas-dashboard
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    ports:
+      - "4000:3000"
+    depends_on:
+      orchestrator-api:
+        condition: service_healthy
+      message-router:
+        condition: service_healthy
+      tool-service:
+        condition: service_healthy
+    environment:
+      DASHBOARD_USERNAME: "${DASHBOARD_USERNAME}"
+      DASHBOARD_PASSWORD_HASH: "${DASHBOARD_PASSWORD_HASH}"
+      JWT_SECRET: "${JWT_SECRET}"
+      MAS_API_KEY: "${MAS_API_KEY}"
+      ROUTER_SECRET: "${ROUTER_SECRET}"
+      ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+      MESSAGE_ROUTER_URL: "http://message-router:8001"
+      TOOL_SERVICE_URL: "http://tool-service:8002"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      NODE_ENV: "production"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
       retries: 3
 
   # ── Team runners (11 containers) ────────────────────────────────────────────

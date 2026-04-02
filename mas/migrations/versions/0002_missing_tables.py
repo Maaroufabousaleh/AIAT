@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0002_missing_tables"
 down_revision = "0001_initial_schema"
@@ -36,7 +37,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "projects",
-        sa.Column("config", sa.JSONB(), comment="Project-level settings"),
+        sa.Column("config", JSONB(), comment="Project-level settings"),
     )
 
     # ── 14. memory ────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column("agent_id", sa.Text(), nullable=False),
         sa.Column("key", sa.Text(), nullable=False),
-        sa.Column("value", sa.JSONB()),
+        sa.Column("value", JSONB()),
         sa.Column(
             "updated_at",
             sa.TIMESTAMP(timezone=True),
@@ -69,9 +70,9 @@ def upgrade() -> None:
             nullable=False,
             comment="PENDING | RUNNING | COMPLETED | FAILED | CANCELLED",
         ),
-        sa.Column("input", sa.JSONB(), comment="Task input payload"),
-        sa.Column("output", sa.JSONB(), comment="Task output / result"),
-        sa.Column("budget_snapshot", sa.JSONB(), comment="Budget state at completion"),
+        sa.Column("input", JSONB(), comment="Task input payload"),
+        sa.Column("output", JSONB(), comment="Task output / result"),
+        sa.Column("budget_snapshot", JSONB(), comment="Budget state at completion"),
         sa.Column("trace_id", sa.Text(), comment="Distributed tracing correlation"),
         sa.Column(
             "created_at",
@@ -96,7 +97,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column("agent_id", sa.Text(), nullable=False),
         sa.Column("path", sa.Text(), nullable=False, comment="Blob key / virtual path"),
-        sa.Column("metadata", sa.JSONB(), comment="Arbitrary metadata"),
+        sa.Column("metadata", JSONB(), comment="Arbitrary metadata"),
         sa.Column("sha256", sa.Text(), comment="Content hash"),
         sa.Column("size_bytes", sa.BigInteger(), comment="Content size in bytes"),
         sa.Column(
@@ -125,7 +126,7 @@ def upgrade() -> None:
             nullable=False,
             comment="INFRA_REQUESTED | INFRA_READY | INFRA_FAILED",
         ),
-        sa.Column("details", sa.JSONB()),
+        sa.Column("details", JSONB()),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),

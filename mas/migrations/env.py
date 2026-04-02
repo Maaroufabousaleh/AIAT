@@ -43,8 +43,10 @@ _url = (
     or "postgresql://mas_user:change_me@localhost:5432/mas"
 )
 
-# PgBouncer transaction-mode: statement_cache_size MUST be 0.
-_connect_args: dict = {"statement_cache_size": 0}
+# statement_cache_size=0 is required for asyncpg through PgBouncer, but is
+# not a valid psycopg2 option.  We detect the driver from the URL and only
+# pass it when using asyncpg.
+_connect_args: dict = {"statement_cache_size": 0} if "asyncpg" in _url else {}
 
 
 def run_migrations_offline() -> None:

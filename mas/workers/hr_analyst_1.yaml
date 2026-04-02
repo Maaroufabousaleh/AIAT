@@ -15,24 +15,18 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: capacity_check
+- name: capability.list_workers
   version: '1.0'
-  description: Capability mapped from tool capacity_check
+  description: List registered workers and capabilities.
   risk_level: low
   required_tools:
-  - capacity_check
-- name: agent_registry_query
+  - capability.list_workers
+- name: kpi.query_history
   version: '1.0'
-  description: Capability mapped from tool agent_registry_query
+  description: Query KPI history.
   risk_level: low
   required_tools:
-  - agent_registry_query
-- name: workload_report
-  version: '1.0'
-  description: Capability mapped from tool workload_report
-  risk_level: low
-  required_tools:
-  - workload_report
+  - kpi.query_history
 sandbox:
   profile: standard
   filesystem: {}

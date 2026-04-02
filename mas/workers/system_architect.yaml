@@ -15,24 +15,18 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: tech_stack_analyze
+- name: capability.search
   version: '1.0'
-  description: Capability mapped from tool tech_stack_analyze
+  description: Search for workers by capability.
   risk_level: low
   required_tools:
-  - tech_stack_analyze
+  - capability.search
 - name: web_search
   version: '1.0'
-  description: Capability mapped from tool web_search
+  description: Search the web.
   risk_level: low
   required_tools:
   - web_search
-- name: code_analyze
-  version: '1.0'
-  description: Capability mapped from tool code_analyze
-  risk_level: low
-  required_tools:
-  - code_analyze
 - name: blob.upload
   version: '1.0'
   description: Capability mapped from tool blob.upload

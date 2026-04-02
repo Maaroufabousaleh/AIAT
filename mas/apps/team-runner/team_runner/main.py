@@ -189,7 +189,7 @@ class TeamRuntime:
         self.checkpoint_store: CheckpointStore | None = None
         self.router = RouterClient(
             router_url=settings.router_url,
-            agent_id=f"team_runner:{team_config.team_id}",
+            agent_id=f"team_runner_{team_config.team_id}",
             agent_secret=settings.router_secret,
         )
         self.admin_agent: AgentBase | None = None

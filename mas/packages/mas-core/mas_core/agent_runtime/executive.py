@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from ..llm_gateway.models import ToolDefinition, ToolFunction
 from ..protocols.domain import (
     ReviewComment,
     ReviewResponse,
@@ -69,7 +70,8 @@ class ExecutiveAgent(AdminAgent):
         **kwargs: Any,
     ) -> None:
         super().__init__(
-            config, storage,
+            config,
+            storage,
             tool_client=tool_client,
             system_prompt=system_prompt,
             **kwargs,
@@ -106,8 +108,242 @@ class ExecutiveAgent(AdminAgent):
             MessageType.APPROVAL_RESPONSE: self._handle_approval_response,
             MessageType.INFRA_READY: self._handle_infra_ready,
             MessageType.SPRINT_REPORT: self._handle_sprint_report,
+            MessageType.DIRECTIVE: self._handle_directive,
+            MessageType.SYSTEM_EVENT: self._handle_system_event,
         }
         return executive_handlers.get(msg_type) or super()._get_handler(msg_type)
+
+    # ------------------------------------------------------------------
+    # Directive dispatch — action-driven think() loop
+    # ------------------------------------------------------------------
+
+    async def _handle_directive(self, envelope: MessageEnvelope) -> None:
+        """Dispatch directive actions to the think() loop for COO.
+
+        Actions that require LLM reasoning trigger think() with appropriate
+        tools. Unknown actions fall through to AdminAgent's re-broadcast.
+        """
+        action = envelope.payload.get("action", "")
+        project_id = envelope.project_id or envelope.payload.get("project_id", "")
+
+        logger.info(
+            "executive_directive_%s",
+            action.lower(),
+            extra=self._log_extra(action=action),
+        )
+
+        # Skip directives for terminal/archived projects to avoid wasted LLM calls
+        if project_id and self._storage is not None:
+            try:
+                from uuid import UUID
+
+                project = await self._storage.get_project(UUID(project_id))
+                if project is not None and project.get("state") in (
+                    "ARCHIVED",
+                    "COMPLETED",
+                    "FAILED",
+                ):
+                    logger.info(
+                        "executive_directive_skip_terminal_project",
+                        extra=self._log_extra(
+                            action=action,
+                            project_id=project_id,
+                            state=project.get("state"),
+                        ),
+                    )
+                    return
+            except Exception:
+                pass  # If we can't check, proceed normally
+
+        # Actions that trigger LLM work for the COO
+        actionable = {
+            "RESUME",
+            "START_PDR",
+            "START_CDR",
+            "START_RR",
+            "START_SPRINT_PLANNING",
+            "START_RETROSPECTIVE",
+        }
+        if action.upper() in actionable:
+            await self._directive_think(envelope, action)
+        else:
+            # Unknown actions — broadcast to team (default AdminAgent behaviour)
+            await super()._handle_directive(envelope)
+
+    async def _directive_think(self, envelope: MessageEnvelope, action: str) -> None:
+        """Run think() in response to a directive action.
+
+        Builds a task-oriented prompt from the directive payload, then runs
+        the LLM loop with the COO's workflow tools.
+        """
+        project_id = envelope.project_id or envelope.payload.get("project_id", "unknown")
+        state = envelope.payload.get("state", "")
+        context_str = envelope.payload.get("context", "")
+
+        action_instructions: dict[str, str] = {
+            "RESUME": (
+                f"The system is resuming from a restart. Project is currently in state: **{state}**.\n\n"
+                "Check the current project status with `project.status`, then determine and "
+                "execute the next action required based on the current state.\n"
+                "If in FEASIBILITY_CHECK: perform feasibility analysis and call `review.aggregate` "
+                "with `event=all_reviews_in` and an appropriate verdict.\n"
+                "If in PDR_REVIEW or CDR_REVIEW: check if all reviews are in and call `review.aggregate`.\n"
+                "If in SPRINT_PLANNING: create sprint plan and call `project.transition` with "
+                "`event=sprints_created`.\n"
+                "If in RETROSPECTIVE: complete retrospective and call `project.transition` with "
+                "`event=retrospective_done`.\n"
+            ),
+            "START_PDR": (
+                "Coordinate the **Preliminary Design Review (PDR)**.\n\n"
+                "Fan-out REVIEW_REQUEST to all C-Suite reviewers, then once all reviews are "
+                "received call `review.aggregate` to advance the project."
+            ),
+            "START_CDR": (
+                "Coordinate the **Critical Design Review (CDR)**.\n\n"
+                "Fan-out REVIEW_REQUEST to all C-Suite reviewers, then once all reviews are "
+                "received call `review.aggregate` with the aggregate verdict."
+            ),
+            "START_SPRINT_PLANNING": (
+                "Coordinate **Sprint Planning** with the CTO.\n\n"
+                "Work with the CTO to create the sprint plan, then call `project.transition` "
+                "with `event=sprints_created` once the plan is ready."
+            ),
+            "START_RETROSPECTIVE": (
+                "Facilitate the **Retrospective** review.\n\n"
+                "Gather KPI data and team feedback, then call `project.transition` with "
+                "`event=retrospective_done` to complete the retrospective."
+            ),
+        }
+
+        task_instruction = action_instructions.get(
+            action.upper(),
+            f"Execute the required COO action for directive: {action}. "
+            "Check project status first and determine next steps.",
+        )
+
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"## Directive: {action}\n\n"
+                    f"## Project\n"
+                    f"- ID: {project_id}\n"
+                    + (f"- State: {state}\n" if state else "")
+                    + (f"- Context: {context_str}\n" if context_str else "")
+                    + f"\n{task_instruction}"
+                ),
+            },
+        ]
+
+        tools = self._build_workflow_tool_definitions()
+        await self.think(messages=messages, tools=tools)
+
+    def _build_workflow_tool_definitions(self) -> list[ToolDefinition]:
+        """Build ToolDefinition objects for the core workflow tools."""
+        return [
+            ToolDefinition(
+                function=ToolFunction(
+                    name="project.status",
+                    description="Get current project status and state.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            }
+                        },
+                        "required": ["project_id"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="review.aggregate",
+                    description=(
+                        "Aggregate all reviews and advance project state. "
+                        "Use for FEASIBILITY_CHECK → FEASIBILITY_REPORT (verdict required), "
+                        "PDR_REVIEW → CDR_CREATION, CDR_REVIEW → HUMAN_APPROVAL."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "verdict": {
+                                "type": "string",
+                                "enum": [
+                                    "APPROVED",
+                                    "APPROVED_WITH_COMMENTS",
+                                    "NEEDS_REVISION",
+                                    "REJECTED",
+                                ],
+                                "description": "Aggregate review verdict.",
+                            },
+                            "actor_id": {
+                                "type": "string",
+                                "description": "ID of the agent submitting the aggregate.",
+                            },
+                        },
+                        "required": ["project_id", "verdict"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="project.transition",
+                    description="Transition the project to a new state via a workflow event.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "event": {
+                                "type": "string",
+                                "description": (
+                                    "Workflow event name. Examples: "
+                                    "all_reviews_in, pdr_submitted, cdr_submitted, "
+                                    "sprints_created, infra_ready, all_sprints_done, "
+                                    "retrospective_done, kpi_saved."
+                                ),
+                            },
+                            "actor_id": {
+                                "type": "string",
+                                "description": "Agent performing the transition.",
+                            },
+                            "context": {
+                                "type": "object",
+                                "description": "Optional context for the transition.",
+                            },
+                        },
+                        "required": ["project_id", "event"],
+                    },
+                )
+            ),
+        ]
+
+    # ------------------------------------------------------------------
+    # SYSTEM_EVENT handler — react to orchestrator state transitions
+    # ------------------------------------------------------------------
+
+    async def _handle_system_event(self, envelope: MessageEnvelope) -> None:
+        """React to workflow state transition notifications.
+
+        For COO: log and no-op. Major actions are delegated by the
+        orchestrator via DIRECTIVE messages.
+        """
+        event = envelope.payload.get("event", "")
+        to_state = envelope.payload.get("to_state", "")
+        logger.info(
+            "executive_system_event_%s",
+            event.lower(),
+            extra=self._log_extra(event=event, to_state=to_state),
+        )
 
     # ------------------------------------------------------------------
     # Document lifecycle

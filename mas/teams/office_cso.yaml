@@ -25,9 +25,6 @@ admin:
     max_cost_usd: 1.00
   tools:
     - review.submit
-    - review.submit
-    - review.submit
-    - review.submit
     - review.submit_veto
 
 workers:
@@ -42,7 +39,4 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - review.submit
-      - review.submit
-      - review.submit
       - review.submit

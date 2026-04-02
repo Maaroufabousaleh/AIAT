@@ -15,34 +15,16 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: threat_model
+- name: review.submit
   version: '1.0'
-  description: Capability mapped from tool threat_model
+  description: Submit a review response.
   risk_level: low
   required_tools:
-  - threat_model
-- name: compliance_check
-  version: '1.0'
-  description: Capability mapped from tool compliance_check
-  risk_level: low
-  required_tools:
-  - compliance_check
-- name: security_scan
-  version: '1.0'
-  description: Capability mapped from tool security_scan
-  risk_level: low
-  required_tools:
-  - security_scan
-- name: risk_assess
-  version: '1.0'
-  description: Capability mapped from tool risk_assess
-  risk_level: low
-  required_tools:
-  - risk_assess
+  - review.submit
 - name: review.submit_veto
   version: '1.0'
-  description: Capability mapped from tool review.submit_veto
-  risk_level: low
+  description: Submit a CSO veto.
+  risk_level: high
   required_tools:
   - review.submit_veto
 sandbox:

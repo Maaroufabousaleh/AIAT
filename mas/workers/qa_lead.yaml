@@ -15,18 +15,18 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: document_create
+- name: document.create_draft
   version: '1.0'
-  description: Capability mapped from tool document_create
+  description: Create a document draft.
   risk_level: low
   required_tools:
-  - document_create
-- name: document_get
+  - document.create_draft
+- name: document.get_latest
   version: '1.0'
-  description: Capability mapped from tool document_get
+  description: Fetch latest document version.
   risk_level: low
   required_tools:
-  - document_get
+  - document.get_latest
 - name: blob.upload
   version: '1.0'
   description: Capability mapped from tool blob.upload

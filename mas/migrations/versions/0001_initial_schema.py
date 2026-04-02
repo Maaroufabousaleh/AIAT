@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0001_initial_schema"
 down_revision = None
@@ -86,7 +87,7 @@ def upgrade() -> None:
             "event", sa.Text(), nullable=False, comment="EventType that triggered transition"
         ),
         sa.Column("triggered_by", sa.Text(), comment="agent_id that emitted the event"),
-        sa.Column("payload", sa.JSONB(), comment="Event payload snapshot"),
+        sa.Column("payload", JSONB(), comment="Event payload snapshot"),
         sa.Column(
             "transitioned_at",
             sa.TIMESTAMP(timezone=True),
@@ -205,7 +206,7 @@ def upgrade() -> None:
             sa.Text(),
             comment="INFO | WARNING | BLOCKER — per reviewer",
         ),
-        sa.Column("comments", sa.JSONB(), comment="List of {section, body, suggested_change}"),
+        sa.Column("comments", JSONB(), comment="List of {section, body, suggested_change}"),
         sa.Column(
             "submitted_at",
             sa.TIMESTAMP(timezone=True),
@@ -240,7 +241,7 @@ def upgrade() -> None:
         ),
         sa.Column("decided_by", sa.Text(), comment="agent_id or 'human'"),
         sa.Column("justification", sa.Text(), comment="Mandatory for CEO_OVERRIDE_CSO"),
-        sa.Column("human_input", sa.JSONB(), comment="Raw human decision payload"),
+        sa.Column("human_input", JSONB(), comment="Raw human decision payload"),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
@@ -369,7 +370,7 @@ def upgrade() -> None:
         sa.Column(
             "infra_lead_time_seconds", sa.Integer(), comment="infra_ready_at - infra_requested_at"
         ),
-        sa.Column("raw_data", sa.JSONB(), comment="Full raw numbers for future recomputation"),
+        sa.Column("raw_data", JSONB(), comment="Full raw numbers for future recomputation"),
         sa.Column(
             "computed_at",
             sa.TIMESTAMP(timezone=True),
@@ -426,7 +427,7 @@ def upgrade() -> None:
         sa.Column("failure_reason", sa.Text(), comment="RETRY_EXHAUSTED | TTL_EXPIRED"),
         sa.Column(
             "envelope_json",
-            sa.JSONB(),
+            JSONB(),
             nullable=False,
             comment="Full serialised envelope for forensics",
         ),
@@ -484,14 +485,14 @@ def upgrade() -> None:
         sa.Column("iteration", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "messages_json",
-            sa.JSONB(),
+            JSONB(),
             nullable=False,
             comment="Full LLM chat history up to this checkpoint",
         ),
-        sa.Column("tool_results_json", sa.JSONB(), comment="Accumulated tool results"),
-        sa.Column("budget_state_json", sa.JSONB(), comment="Remaining budget counters"),
+        sa.Column("tool_results_json", JSONB(), comment="Accumulated tool results"),
+        sa.Column("budget_state_json", JSONB(), comment="Remaining budget counters"),
         sa.Column(
-            "task_envelope_json", sa.JSONB(), nullable=False, comment="Original TASK envelope"
+            "task_envelope_json", JSONB(), nullable=False, comment="Original TASK envelope"
         ),
         sa.Column(
             "saved_at",
