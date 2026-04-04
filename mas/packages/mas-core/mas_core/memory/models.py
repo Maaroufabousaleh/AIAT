@@ -442,11 +442,17 @@ flow_instances = sa.Table(
     sa.Column(
         "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     ),
+    sa.Column("task_id", sa.UUID(), nullable=True),
+    sa.Column("department_id", sa.UUID(), nullable=True),
     sa.Column("active_node_ids", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
     sa.Column("status", sa.Text(), nullable=False, server_default="NOT_STARTED"),
     sa.Column("context_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("retry_count", sa.Integer(), server_default="0"),
+    sa.Column("max_retries", sa.Integer(), server_default="3"),
+    sa.Column("escalated_to", sa.Text()),
+    sa.Column("escalation_reason", sa.Text()),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
@@ -473,6 +479,9 @@ flow_node_executions = sa.Table(
     sa.Column("input_json", JSONB()),
     sa.Column("output_json", JSONB()),
     sa.Column("error", sa.Text()),
+    sa.Column("retry_count", sa.Integer(), server_default="0"),
+    sa.Column("max_retries", sa.Integer(), server_default="3"),
+    sa.Column("timeout_at", sa.TIMESTAMP(timezone=True)),
     sa.Column(
         "started_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),

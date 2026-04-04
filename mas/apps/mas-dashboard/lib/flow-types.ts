@@ -1,4 +1,4 @@
-export type FlowNodeType = "start" | "end" | "task" | "approval" | "condition" | "parallel" | "join";
+export type FlowNodeType = "start" | "end" | "task" | "approval" | "condition" | "parallel" | "join" | "switch" | "escalate";
 
 export type FlowInstanceStatus = 
   | "NOT_STARTED" 
@@ -9,7 +9,7 @@ export type FlowInstanceStatus =
   | "COMPLETED" 
   | "FAILED";
 
-export type FlowExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+export type FlowExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED" | "RETRYING";
 
 export interface FlowNodeConfig {
   action?: string;
@@ -18,6 +18,12 @@ export interface FlowNodeConfig {
   approver_user?: string;
   expression?: string;
   branches?: string[];
+  switch_key?: string;
+  switch_cases?: Record<string, string>;
+  escalate_to_team?: string;
+  escalate_to_agent?: string;
+  timeout_seconds?: number;
+  retries?: number;
   [key: string]: unknown;
 }
 
@@ -49,6 +55,7 @@ export interface Flow {
   version: number;
   created_by: string;
   is_active: boolean;
+  metadata_json?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +70,10 @@ export interface FlowInstance {
   context_json: Record<string, unknown>;
   started_at?: string;
   completed_at?: string;
+  retry_count?: number;
+  max_retries?: number;
+  escalated_to?: string;
+  escalation_reason?: string;
   created_at: string;
   updated_at: string;
 }
@@ -89,6 +100,8 @@ export const FLOW_NODE_COLORS: Record<FlowNodeType, string> = {
   condition: "bg-purple-500",
   parallel: "bg-cyan-500",
   join: "bg-indigo-500",
+  switch: "bg-pink-500",
+  escalate: "bg-orange-500",
 };
 
 export const FLOW_STATUS_COLORS: Record<FlowInstanceStatus, string> = {
@@ -109,4 +122,6 @@ export const NODE_TYPE_LABELS: Record<FlowNodeType, string> = {
   condition: "Condition",
   parallel: "Parallel",
   join: "Join",
+  switch: "Switch",
+  escalate: "Escalate",
 };

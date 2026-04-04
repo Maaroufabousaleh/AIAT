@@ -361,6 +361,91 @@ class CSuiteAgent(AdminAgent):
                     },
                 )
             ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="flow.list",
+                    description="List all available orchestration flows. Returns flow ID, name, version, and active status.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "is_active": {
+                                "type": "boolean",
+                                "description": "Filter by active status.",
+                            },
+                        },
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="flow.invoke",
+                    description="Start or resume a flow for a project. The flow must be attached to the project first via the UI.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "action": {
+                                "type": "string",
+                                "enum": ["start", "pause", "resume", "cancel"],
+                                "description": "Action to perform on the flow.",
+                            },
+                        },
+                        "required": ["project_id", "action"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="flow.status",
+                    description="Get the current status of a flow attached to a project.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                        },
+                        "required": ["project_id"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="flow.advance",
+                    description="Manually advance a flow node (complete or fail a task node). Use when a task is done or failed.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "node_id": {
+                                "type": "string",
+                                "description": "ID of the node to advance.",
+                            },
+                            "action": {
+                                "type": "string",
+                                "enum": ["complete", "fail"],
+                                "description": "Complete or fail the node.",
+                            },
+                            "output": {
+                                "type": "object",
+                                "description": "Output from the node (optional).",
+                            },
+                            "approved": {
+                                "type": "boolean",
+                                "description": "For approval nodes: true to approve, false to reject.",
+                            },
+                        },
+                        "required": ["project_id", "node_id", "action"],
+                    },
+                )
+            ),
         ]
 
     # ------------------------------------------------------------------

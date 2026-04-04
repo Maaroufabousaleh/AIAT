@@ -105,6 +105,7 @@ class CreateProjectRequest(BaseModel):
     description: str | None = None
     human_requester: str | None = None
     config: dict[str, Any] | None = None
+    flow_id: UUID | None = None
 
 
 class TransitionRequest(BaseModel):
@@ -163,6 +164,8 @@ class UpdateFlowRequest(BaseModel):
 class CreateFlowInstanceRequest(BaseModel):
     flow_id: UUID
     project_id: UUID
+    task_id: UUID | None = None
+    department_id: UUID | None = None
 
 
 class FlowNodeActionRequest(BaseModel):
@@ -508,10 +511,15 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     bind_trace_id(tid)
 
     storage = _storage()
+    if req.flow_id is not None:
+        flow = await storage.get_flow(req.flow_id)
+        if flow is None:
+            raise HTTPException(404, f"Flow {req.flow_id} not found")
+
+    # Create project
     project = await storage.create_project(
         name=req.name,
         description=req.description,
-        state="INIT",
         created_by=req.human_requester or "human",
         human_requester=req.human_requester,
         config=req.config,
@@ -555,6 +563,70 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
     except Exception:
         logger.exception("Failed to publish project start directive")
+
+    if req.flow_id is not None:
+        try:
+            flow_for_instance = await storage.get_flow(req.flow_id)
+            if flow_for_instance is None:
+                raise HTTPException(404, f"Flow {req.flow_id} not found")
+            await storage.create_flow_instance(
+                flow_id=req.flow_id,
+                flow_version=flow_for_instance["version"],
+                project_id=project["id"],
+            )
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Failed to create flow instance for project %s", pid)
+
+    pid = str(project["id"])
+    MAS_PROJECT_STATE.labels(project_id=pid, state="INIT").set(1)
+    projects_created_total.inc()
+
+    # Trigger workflow: INIT → FEASIBILITY_CHECK
+    try:
+        await _controller().transition(
+            project_id=pid,
+            current_state=ProjectState.INIT,
+            event=WorkflowEvent.PROJECT_CREATED,
+            actor_id=req.human_requester or "human",
+            context={"name": req.name, "description": req.description},
+        )
+    except InvalidTransitionError:
+        logger.warning("Could not auto-transition new project %s", pid)
+
+    # Publish a DIRECTIVE to CEO to start feasibility
+    envelope = {
+        "message_id": str(uuid4()),
+        "correlation_id": pid,
+        "msg_type": MessageType.DIRECTIVE.value,
+        "sender_id": "orchestrator",
+        "sender_team": "orchestrator",
+        "sender_role": AgentRole.ORCHESTRATOR.value,
+        "recipient_team": "exec_ceo",
+        "project_id": pid,
+        "payload": {
+            "action": "START_FEASIBILITY",
+            "project_name": req.name,
+            "description": req.description,
+        },
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+    except Exception:
+        logger.exception("Failed to publish project start directive")
+
+    if req.flow_id is not None:
+        flow = await storage.get_flow(req.flow_id)
+        if flow is None:
+            raise HTTPException(404, f"Flow {req.flow_id} not found")
+        await storage.create_flow_instance(
+            flow_id=req.flow_id,
+            flow_version=flow["version"],
+            project_id=project["id"],
+        )
 
     return _serialize(project)
 
@@ -1547,6 +1619,8 @@ async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]
         flow_id=req.flow_id,
         flow_version=flow["version"],
         project_id=req.project_id,
+        task_id=req.task_id,
+        department_id=req.department_id,
     )
     return _serialize(instance)
 
@@ -1678,6 +1752,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         FlowDefinition,
         FlowInstanceStatus,
         FlowNodeType,
+        get_next_nodes,
         parse_flow_definition,
     )
 
@@ -1736,7 +1811,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 )
                 return _serialize(await storage.get_flow_instance(instance_id))
 
-        next_result = _compute_next_nodes(definition, completed_ids, set())
+        next_result = get_next_nodes(definition, completed_ids, set())
         if not next_result.node_ids:
             end_nodes = definition.get_end_nodes()
             all_completed = all(n.id in completed_ids for n in end_nodes)
@@ -1780,32 +1855,6 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         raise HTTPException(400, f"Unknown action: {req.action}")
 
 
-def _compute_next_nodes(
-    definition: FlowDefinition, completed_ids: set[str], parallel_ids: set[str]
-):
-    """Compute next nodes to execute after completed nodes."""
-    from mas_core.workflow import FlowTraversalResult
-
-    next_ids = []
-    for node_id in completed_ids:
-        outgoing = definition.get_outgoing_edges(node_id)
-        for edge in outgoing:
-            target = edge.target
-            target_node = definition.get_node(target)
-            if target_node is None:
-                continue
-            if target not in completed_ids and target not in next_ids:
-                next_ids.append(target)
-
-    if not next_ids:
-        end_nodes = definition.get_end_nodes()
-        if all(n.id in completed_ids for n in end_nodes):
-            return FlowTraversalResult(node_ids=[])
-        return FlowTraversalResult(node_ids=[], is_blocked=True, block_reason="No more nodes")
-
-    return FlowTraversalResult(node_ids=next_ids)
-
-
 @app.get("/flows/instances/{instance_id}/executions")
 async def list_flow_node_executions(
     instance_id: UUID,
@@ -1820,6 +1869,104 @@ async def list_flow_node_executions(
         offset=offset,
     )
     return [_serialize(e) for e in executions]
+
+
+@app.post("/flows/instances/{instance_id}/switch")
+async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[str, Any]:
+    """Switch a flow instance to a different flow definition."""
+    storage = _storage()
+
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    new_flow_id = req.get("flow_id")
+    if not new_flow_id:
+        raise HTTPException(400, "flow_id is required")
+
+    try:
+        new_flow_uuid = UUID(new_flow_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid flow_id format")
+
+    preserve_context = req.get("preserve_context", True)
+
+    updated = await storage.switch_flow_instance(
+        instance_id, new_flow_uuid, preserve_context=preserve_context
+    )
+    if updated is None:
+        raise HTTPException(404, "Failed to switch flow instance")
+
+    return _serialize(updated)
+
+
+@app.post("/flows/instances/{instance_id}/context")
+async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -> dict[str, Any]:
+    """Update the context for a flow instance."""
+    storage = _storage()
+
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    context_updates = req.get("context", {})
+    if not context_updates:
+        raise HTTPException(400, "context is required")
+
+    updated = await storage.update_flow_instance_context(instance_id, context_updates)
+    if updated is None:
+        raise HTTPException(404, "Failed to update context")
+
+    return _serialize(updated)
+
+
+@app.post("/flows/instances/{instance_id}/escalate")
+async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[str, Any]:
+    """Escalate a flow instance to a different team/agent."""
+    storage = _storage()
+
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    escalate_to = req.get("escalate_to")
+    if not escalate_to:
+        raise HTTPException(400, "escalate_to is required")
+
+    reason = req.get("reason")
+
+    updated = await storage.escalate_flow_instance(instance_id, escalate_to, reason)
+    if updated is None:
+        raise HTTPException(404, "Failed to escalate")
+
+    return _serialize(updated)
+
+
+@app.post("/flows/instances/{instance_id}/retry")
+async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
+    """Retry a failed or cancelled flow instance."""
+    storage = _storage()
+
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    if instance["status"] not in ("FAILED", "CANCELLED"):
+        raise HTTPException(409, f"Instance is not in FAILED or CANCELLED state")
+
+    updated = await storage.retry_flow_instance(instance_id)
+    if updated is None:
+        raise HTTPException(404, "Failed to retry instance")
+
+    return _serialize(updated)
+
+
+@app.get("/flows/instances/active")
+async def list_active_flow_instances() -> list[dict[str, Any]]:
+    """List all active (non-terminal) flow instances."""
+    storage = _storage()
+    instances = await storage.get_active_flow_instances()
+    return [_serialize(i) for i in instances]
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -6,6 +6,7 @@ interface FlowState {
   currentFlow: Flow | null;
   currentInstance: FlowInstance | null;
   nodeExecutions: FlowNodeExecution[];
+  activeInstances: FlowInstance[];
   loading: boolean;
   error: string | null;
   
@@ -13,6 +14,7 @@ interface FlowState {
   setCurrentFlow: (flow: Flow | null) => void;
   setCurrentInstance: (instance: FlowInstance | null) => void;
   setNodeExecutions: (executions: FlowNodeExecution[]) => void;
+  setActiveInstances: (instances: FlowInstance[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   
@@ -28,6 +30,11 @@ interface FlowState {
   executeFlowAction: (instanceId: string, action: string) => Promise<FlowInstance | null>;
   executeNodeAction: (instanceId: string, nodeId: string, action: string, data?: { output?: Record<string, unknown>; error?: string; approved?: boolean }) => Promise<FlowInstance | null>;
   fetchNodeExecutions: (instanceId: string) => Promise<FlowNodeExecution[]>;
+  switchFlowInstance: (instanceId: string, newFlowId: string, preserveContext?: boolean) => Promise<FlowInstance | null>;
+  updateInstanceContext: (instanceId: string, context: Record<string, unknown>) => Promise<FlowInstance | null>;
+  escalateFlowInstance: (instanceId: string, escalateTo: string, reason?: string) => Promise<FlowInstance | null>;
+  retryFlowInstance: (instanceId: string) => Promise<FlowInstance | null>;
+  fetchActiveInstances: () => Promise<FlowInstance[]>;
 }
 
 export const useFlowStore = create<FlowState>((set, get) => ({
@@ -35,6 +42,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   currentFlow: null,
   currentInstance: null,
   nodeExecutions: [],
+  activeInstances: [],
   loading: false,
   error: null,
 
@@ -42,6 +50,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   setCurrentFlow: (flow) => set({ currentFlow: flow }),
   setCurrentInstance: (instance) => set({ currentInstance: instance }),
   setNodeExecutions: (executions) => set({ nodeExecutions: executions }),
+  setActiveInstances: (instances) => set({ activeInstances: instances }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
 
@@ -230,6 +239,90 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       return data;
     } catch (e) {
       set({ error: (e as Error).message });
+      return [];
+    }
+  },
+
+  switchFlowInstance: async (instanceId, newFlowId, preserveContext = true) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/instances/${instanceId}/switch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: newFlowId, preserve_context: preserveContext }),
+      });
+      if (!res.ok) throw new Error("Failed to switch flow");
+      const data = await res.json();
+      set({ currentInstance: data, loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+      return null;
+    }
+  },
+
+  updateInstanceContext: async (instanceId, context) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/instances/${instanceId}/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context }),
+      });
+      if (!res.ok) throw new Error("Failed to update context");
+      const data = await res.json();
+      set({ currentInstance: data, loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+      return null;
+    }
+  },
+
+  escalateFlowInstance: async (instanceId, escalateTo, reason) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/instances/${instanceId}/escalate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ escalate_to: escalateTo, reason }),
+      });
+      if (!res.ok) throw new Error("Failed to escalate");
+      const data = await res.json();
+      set({ currentInstance: data, loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+      return null;
+    }
+  },
+
+  retryFlowInstance: async (instanceId) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/instances/${instanceId}/retry`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to retry");
+      const data = await res.json();
+      set({ currentInstance: data, loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+      return null;
+    }
+  },
+
+  fetchActiveInstances: async () => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch("/api/flows/instances/active");
+      if (!res.ok) throw new Error("Failed to fetch active instances");
+      const data = await res.json();
+      set({ activeInstances: Array.isArray(data) ? data : [], loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
       return [];
     }
   },

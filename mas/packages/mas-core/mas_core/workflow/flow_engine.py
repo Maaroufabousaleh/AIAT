@@ -5,20 +5,25 @@ This module provides:
 - Flow traversal (next node resolution for all node types)
 - Idempotent advance/complete methods for runtime execution
 - Execution result types
+- Retry, timeout, escalation, and branching condition support
+- Parallel branch tracking and join synchronization
 
 Node types (v1):
 - start      — entry point, has no incoming edges
 - end        — terminal node, has no outgoing edges
-- task       — executes an action, produces output
-- approval   — requires human approval to proceed
-- condition  — evaluates a simple expression, branches to true/false path
+- task       — executes an action via a team/agent, produces output
+- approval   — requires human or role-based approval to proceed
+- condition  — evaluates an expression, branches to true/false path
 - parallel   — spawns multiple branches, waits for all to complete
 - join       — waits for all incoming branches to arrive before proceeding
+- switch     — selects a branch based on context value
+- escalate   — delegates to a higher authority (agent/team) on failure
 """
 
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -34,6 +39,8 @@ class FlowNodeType(StrEnum):
     CONDITION = "condition"
     PARALLEL = "parallel"
     JOIN = "join"
+    SWITCH = "switch"
+    ESCALATE = "escalate"
 
 
 class FlowInstanceStatus(StrEnum):
@@ -51,6 +58,7 @@ class FlowExecutionStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
+    RETRYING = "RETRYING"
 
 
 VALID_NODE_TYPES = set(FlowNodeType)
@@ -65,6 +73,64 @@ class FlowNode:
     label: str
     config: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def team_id(self) -> str | None:
+        return self.config.get("team_id")
+
+    @property
+    def action(self) -> str | None:
+        return self.config.get("action")
+
+    @property
+    def approver_role(self) -> str | None:
+        return self.config.get("approver_role")
+
+    @property
+    def approver_user(self) -> str | None:
+        return self.config.get("approver_user")
+
+    @property
+    def expression(self) -> str | None:
+        return self.config.get("expression")
+
+    @property
+    def branches(self) -> list[str]:
+        return self.config.get("branches", [])
+
+    @property
+    def timeout_seconds(self) -> int | None:
+        val = self.config.get("timeout_seconds")
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def retries(self) -> int:
+        val = self.config.get("retries")
+        try:
+            return int(val) if val is not None else 0
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def escalate_to_team(self) -> str | None:
+        return self.config.get("escalate_to_team")
+
+    @property
+    def escalate_to_agent(self) -> str | None:
+        return self.config.get("escalate_to_agent")
+
+    @property
+    def switch_key(self) -> str | None:
+        return self.config.get("switch_key")
+
+    @property
+    def switch_cases(self) -> dict[str, str]:
+        return self.config.get("switch_cases", {})
+
 
 @dataclass(frozen=True)
 class FlowEdge:
@@ -72,12 +138,22 @@ class FlowEdge:
     source: str
     target: str
     condition: str | None = None
+    label: str | None = None
+
+    @property
+    def is_true_branch(self) -> bool:
+        return self.condition in (None, "true")
+
+    @property
+    def is_false_branch(self) -> bool:
+        return self.condition == "false"
 
 
 @dataclass(frozen=True)
 class FlowDefinition:
     nodes: list[FlowNode]
     edges: list[FlowEdge]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def get_node(self, node_id: str) -> FlowNode | None:
         for n in self.nodes:
@@ -96,6 +172,27 @@ class FlowDefinition:
 
     def get_end_nodes(self) -> list[FlowNode]:
         return [n for n in self.nodes if n.type == FlowNodeType.END]
+
+    def get_nodes_by_type(self, node_type: FlowNodeType) -> list[FlowNode]:
+        return [n for n in self.nodes if n.type == node_type]
+
+    def get_parallel_branches(self, parallel_node_id: str) -> list[str]:
+        node = self.get_node(parallel_node_id)
+        if node is None or node.type != FlowNodeType.PARALLEL:
+            return []
+        return node.branches
+
+    def validate_reachability(self) -> list[str]:
+        errors = []
+        start_nodes = self.get_start_nodes()
+        if not start_nodes:
+            return ["Flow has no start node"]
+        start_id = start_nodes[0].id
+        reachable = _compute_reachable(self, start_id)
+        for node in self.nodes:
+            if node.id not in reachable:
+                errors.append(f"Node '{node.id}' is unreachable from start")
+        return errors
 
 
 class FlowValidationError(ValueError):
@@ -163,10 +260,10 @@ def validate_flow(definition: FlowDefinition) -> list[str]:
 def _compute_reachable(definition: FlowDefinition, start_id: str) -> set[str]:
     """Compute all nodes reachable from a given start node."""
     visited: set[str] = set()
-    queue = [start_id]
+    queue = deque([start_id])
 
     while queue:
-        node_id = queue.pop(0)
+        node_id = queue.popleft()
         if node_id in visited:
             continue
         visited.add(node_id)
@@ -200,6 +297,18 @@ def _validate_node_config(node: FlowNode) -> list[str]:
     elif node.type == FlowNodeType.PARALLEL:
         if not config.get("branches") or not isinstance(config.get("branches"), list):
             errors.append(f"Node '{node.id}' (parallel): requires 'branches' as array of node IDs")
+
+    elif node.type == FlowNodeType.SWITCH:
+        if not config.get("switch_key"):
+            errors.append(f"Node '{node.id}' (switch): requires 'switch_key'")
+        if not config.get("switch_cases") or not isinstance(config.get("switch_cases"), dict):
+            errors.append(f"Node '{node.id}' (switch): requires 'switch_cases' as object")
+
+    elif node.type == FlowNodeType.ESCALATE:
+        if not config.get("escalate_to_team") and not config.get("escalate_to_agent"):
+            errors.append(
+                f"Node '{node.id}' (escalate): requires 'escalate_to_team' or 'escalate_to_agent'"
+            )
 
     return errors
 
@@ -243,10 +352,12 @@ def parse_flow_definition(data: dict[str, Any]) -> FlowDefinition:
                 source=str(e["source"]),
                 target=str(e["target"]),
                 condition=e.get("condition"),
+                label=e.get("label"),
             )
         )
 
-    return FlowDefinition(nodes=nodes, edges=edges)
+    metadata = data.get("metadata", {})
+    return FlowDefinition(nodes=nodes, edges=edges, metadata=metadata)
 
 
 @dataclass
@@ -262,6 +373,7 @@ def get_next_nodes(
     definition: FlowDefinition,
     completed_node_ids: set[str],
     active_parallel_ids: set[str],
+    context: dict[str, Any] | None = None,
 ) -> FlowTraversalResult:
     """Determine the next nodes that should execute.
 
@@ -300,7 +412,7 @@ def get_next_nodes(
 
             if target_node.type == FlowNodeType.CONDITION:
                 expr = target_node.config.get("expression", "")
-                result = _evaluate_condition(expr, completed_node_ids)
+                result = _evaluate_condition(expr, completed_node_ids, context)
                 if result and edge.condition in (None, "true"):
                     next_ids.append(target)
                 elif not result and edge.condition == "false":
@@ -318,6 +430,16 @@ def get_next_nodes(
                     if branch_id not in completed_node_ids and branch_id not in active_parallel_ids:
                         next_ids.append(branch_id)
 
+            elif target_node.type == FlowNodeType.SWITCH:
+                switch_key = target_node.config.get("switch_key", "")
+                switch_cases = target_node.config.get("switch_cases", {})
+                context_value = (context or {}).get(switch_key)
+                matched_target = (
+                    switch_cases.get(str(context_value)) if context_value is not None else None
+                )
+                if matched_target and matched_target not in completed_node_ids:
+                    next_ids.append(matched_target)
+
             else:
                 if target not in completed_node_ids:
                     next_ids.append(target)
@@ -333,30 +455,99 @@ def get_next_nodes(
     return FlowTraversalResult(node_ids=next_ids)
 
 
-def _evaluate_condition(expression: str, context: set[str]) -> bool:
-    """Evaluate a simple condition expression.
+def _evaluate_condition(
+    expression: str, completed_node_ids: set[str], context: dict[str, Any] | None = None
+) -> bool:
+    expr = expression.strip()
 
-    Supported v1 expressions:
-    - "node_X completed" — checks if node_X is in completed_node_ids
-    - "always true" — always returns True
-    - "always false" — always returns False
-
-    Examples:
-    - "node_approval completed" -> True if "node_approval" in context
-    - "always true" -> True
-    """
-    expr = expression.strip().lower()
-
-    if expr == "always true":
+    if expr.lower() == "always true":
         return True
-    if expr == "always false":
+    if expr.lower() == "always false":
         return False
 
-    if expr.endswith(" completed"):
-        node_id = expr[:-10].strip()
-        return node_id in context
+    if " AND " in expr:
+        parts = expr.split(" AND ", 1)
+        return _evaluate_condition(parts[0], completed_node_ids, context) and _evaluate_condition(
+            parts[1], completed_node_ids, context
+        )
+
+    if " OR " in expr:
+        parts = expr.split(" OR ", 1)
+        return _evaluate_condition(parts[0], completed_node_ids, context) or _evaluate_condition(
+            parts[1], completed_node_ids, context
+        )
+
+    if expr.lower().endswith(" completed"):
+        node_id = expr.lower()[:-10].strip()
+        return node_id in completed_node_ids
+
+    if expr.startswith("!context."):
+        key = expr[len("!context.") :]
+        if context is None:
+            return True
+        return not bool(context.get(key))
+
+    if expr.startswith("context."):
+        rest = expr[len("context.") :]
+        for op_sym in ("==", "!=", ">=", "<=", ">", "<"):
+            if op_sym in rest:
+                parts = rest.split(op_sym, 1)
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    val_str = parts[1].strip()
+                    if context is None:
+                        return False
+                    actual = context.get(key)
+                    if actual is None:
+                        return False
+                    if op_sym in ("==", "!="):
+                        expected = val_str.strip("\"'")
+                        if isinstance(actual, (int, float)):
+                            try:
+                                return _cmp(actual, float(expected), op_sym)
+                            except ValueError:
+                                return (
+                                    (str(actual) == expected)
+                                    if op_sym == "=="
+                                    else (str(actual) != expected)
+                                )
+                        return (
+                            (str(actual) == expected)
+                            if op_sym == "=="
+                            else (str(actual) != expected)
+                        )
+                    if not isinstance(actual, (int, float)):
+                        try:
+                            actual = float(actual)
+                        except (ValueError, TypeError):
+                            return False
+                    try:
+                        expected_num = float(val_str)
+                    except ValueError:
+                        return False
+                    return _cmp(actual, expected_num, op_sym)
+
+        if context is None:
+            return False
+        return bool(context.get(rest.strip()))
 
     logger.warning("Unknown condition expression: %s", expression)
+    return False
+
+
+def _cmp(a: float, b: float, op: str) -> bool:
+    if op == ">":
+        return a > b
+    if op == "<":
+        return a < b
+    if op == ">=":
+        return a >= b
+    if op == "<=":
+        return a <= b
+    if op == "==":
+        return a == b
+    if op == "!=":
+        return a != b
     return False
 
 
@@ -389,7 +580,9 @@ def serialize_flow_definition(definition: FlowDefinition) -> dict[str, Any]:
                 "source": e.source,
                 "target": e.target,
                 "condition": e.condition,
+                "label": e.label,
             }
             for e in definition.edges
         ],
+        "metadata": definition.metadata,
     }

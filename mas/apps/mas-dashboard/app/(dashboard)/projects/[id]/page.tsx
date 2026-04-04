@@ -6,7 +6,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, TERMINAL_STATES, type WorkflowState } from "@/lib/constants";
 import { formatDistanceToNow, format } from "date-fns";
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch } from "lucide-react";
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch, ArrowRightCircle } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -94,6 +94,8 @@ export default function ProjectDetailPage() {
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(null);
   const [nodeExecutions, setNodeExecutions] = useState<FlowNodeExecution[]>([]);
   const [flowLoading, setFlowLoading] = useState(false);
+  const [showFlowSwitch, setShowFlowSwitch] = useState(false);
+  const [availableFlows, setAvailableFlows] = useState<Flow[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
 
@@ -247,6 +249,59 @@ export default function ProjectDetailPage() {
     } finally {
       setActionLoading(null);
     }
+  }
+
+  async function handleSwitchFlow(newFlowId: string) {
+    if (!flowInstance) return;
+    setActionLoading("switch-flow");
+    try {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/switch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: newFlowId, preserve_context: true }),
+      });
+      if (res.ok) {
+        await loadFlowData();
+        setShowFlowSwitch(false);
+      } else {
+        const d = await res.json();
+        setFlowError(d.error || "Failed to switch flow");
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleRetry() {
+    if (!flowInstance) return;
+    setActionLoading("retry");
+    try {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/retry`, { method: "POST" });
+      if (res.ok) {
+        await loadFlowData();
+      } else {
+        const d = await res.json();
+        setFlowError(d.error || "Failed to retry flow");
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function openFlowSwitchModal() {
+    setActionLoading("load-flows");
+    try {
+      const res = await fetch('/api/flows?is_active=true');
+      if (res.ok) {
+        const flows = await res.json();
+        setAvailableFlows(flows || []);
+      }
+    } catch {
+      setAvailableFlows([]);
+    } finally {
+      setActionLoading(null);
+    }
+    setShowFlowSwitch(true);
   }
 
   if (loading) {
@@ -459,6 +514,14 @@ export default function ProjectDetailPage() {
                       <Play size={12} /> Resume
                     </button>
                   )}
+                  {(flowInstance.status === "FAILED" || flowInstance.status === "CANCELLED") && (
+                    <button onClick={handleRetry} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-800 rounded-lg">
+                      <RotateCcw size={12} /> Retry
+                    </button>
+                  )}
+                  <button onClick={openFlowSwitchModal} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-600/20 text-purple-400 border border-purple-800 rounded-lg">
+                    <ArrowRightCircle size={12} /> Switch Flow
+                  </button>
                 </div>
               </div>
 
@@ -525,6 +588,41 @@ export default function ProjectDetailPage() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {showFlowSwitch && flowInstance && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md">
+            <h2 className="text-lg font-semibold text-white mb-4">Switch Flow</h2>
+            <p className="text-sm text-gray-400 mb-4">Select a new flow to replace the current one.</p>
+            {actionLoading === "load-flows" ? (
+              <div className="text-sm text-gray-500 py-4 text-center">Loading flows...</div>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {availableFlows.filter(f => f.id !== flowInstance.flow_id).map((flow) => (
+                  <button
+                    key={flow.id}
+                    onClick={() => handleSwitchFlow(flow.id)}
+                    disabled={actionLoading === "switch-flow"}
+                    className="w-full text-left px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-sm"
+                  >
+                    <div className="text-gray-100 font-medium">{flow.name}</div>
+                    <div className="text-xs text-gray-500">v{flow.version}</div>
+                  </button>
+                ))}
+                {availableFlows.filter(f => f.id !== flowInstance.flow_id).length === 0 && (
+                  <div className="text-sm text-gray-500 py-4 text-center">No other active flows available</div>
+                )}
+              </div>
+            )}
+            <button
+              onClick={() => setShowFlowSwitch(false)}
+              className="mt-4 w-full px-3 py-2 border border-gray-700 rounded-lg text-sm text-gray-400 hover:text-gray-100"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>

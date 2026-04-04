@@ -1511,6 +1511,8 @@ class AgentStorage:
         flow_id: UUID,
         flow_version: int,
         project_id: UUID,
+        task_id: UUID | None = None,
+        department_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Create a new flow instance attached to a project."""
         now = datetime.now(tz=UTC)
@@ -1519,6 +1521,8 @@ class AgentStorage:
             "flow_id": flow_id,
             "flow_version": flow_version,
             "project_id": project_id,
+            "task_id": task_id,
+            "department_id": department_id,
             "active_node_ids": [],
             "status": "NOT_STARTED",
             "context_json": {},
@@ -1572,6 +1576,10 @@ class AgentStorage:
         context_json: dict | None = None,
         started_at: datetime | None = None,
         completed_at: datetime | None = None,
+        retry_count: int | None = None,
+        max_retries: int | None = None,
+        escalated_to: str | None = None,
+        escalation_reason: str | None = None,
     ) -> dict[str, Any] | None:
         """Update a flow instance."""
         now = datetime.now(tz=UTC)
@@ -1586,6 +1594,14 @@ class AgentStorage:
             updates["started_at"] = started_at
         if completed_at is not None:
             updates["completed_at"] = completed_at
+        if retry_count is not None:
+            updates["retry_count"] = retry_count
+        if max_retries is not None:
+            updates["max_retries"] = max_retries
+        if escalated_to is not None:
+            updates["escalated_to"] = escalated_to
+        if escalation_reason is not None:
+            updates["escalation_reason"] = escalation_reason
 
         async with self.engine.begin() as conn:
             await conn.execute(
@@ -1716,3 +1732,134 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def clear_flow_node_executions(
+        self,
+        instance_id: UUID,
+    ) -> None:
+        """Delete all node executions for a flow instance."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_node_executions.delete().where(
+                    t.flow_node_executions.c.instance_id == instance_id
+                )
+            )
+
+    async def update_flow_instance_context(
+        self,
+        instance_id: UUID,
+        context_updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Update the context_json for a flow instance (merge updates)."""
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+
+        current_context = dict(instance.get("context_json") or {})
+        current_context.update(context_updates)
+
+        return await self.update_flow_instance(
+            instance_id,
+            context_json=current_context,
+        )
+
+    async def switch_flow_instance(
+        self,
+        instance_id: UUID,
+        new_flow_id: UUID,
+        preserve_context: bool = True,
+    ) -> dict[str, Any] | None:
+        """Switch a flow instance to a different flow definition.
+
+        The instance will be reset to NOT_STARTED state with the new flow.
+        If preserve_context is True, the existing context is kept.
+        """
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+
+        new_flow = await self.get_flow(new_flow_id)
+        if new_flow is None:
+            return None
+
+        current_context = instance.get("context_json") if preserve_context else {}
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(
+                    flow_id=new_flow_id,
+                    flow_version=new_flow["version"],
+                    active_node_ids=[],
+                    status="NOT_STARTED",
+                    context_json=current_context,
+                    started_at=None,
+                    completed_at=None,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                t.flow_node_executions.delete().where(
+                    t.flow_node_executions.c.instance_id == instance_id
+                )
+            )
+
+        return await self.get_flow_instance(instance_id)
+
+    async def get_active_flow_instances(self) -> list[dict[str, Any]]:
+        """List all active (non-terminal) flow instances."""
+        q = (
+            t.flow_instances.select()
+            .where(
+                t.flow_instances.c.status.in_(
+                    ["NOT_STARTED", "RUNNING", "WAITING_APPROVAL", "PAUSED"]
+                )
+            )
+            .order_by(t.flow_instances.c.created_at.desc())
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def escalate_flow_instance(
+        self,
+        instance_id: UUID,
+        escalate_to: str,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Mark a flow instance as escalated."""
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+
+        return await self.update_flow_instance(
+            instance_id,
+            escalated_to=escalate_to,
+            escalation_reason=reason,
+        )
+
+    async def retry_flow_instance(
+        self,
+        instance_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Retry a failed flow instance by resetting to NOT_STARTED."""
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+
+        if instance["status"] not in ("FAILED", "CANCELLED"):
+            return None
+
+        await self.update_flow_instance(
+            instance_id,
+            status="NOT_STARTED",
+            active_node_ids=[],
+            retry_count=instance.get("retry_count", 0) + 1,
+            started_at=None,
+            completed_at=None,
+        )
+        await self.clear_flow_node_executions(instance_id)
+
+        return await self.get_flow_instance(instance_id)

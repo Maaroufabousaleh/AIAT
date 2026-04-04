@@ -55,7 +55,7 @@ function FlowNodeComponent({ data, selected }: { data: { label: string; type: Fl
 
 CUSTOM_NODE_TYPES.flowNode = FlowNodeComponent;
 
-const NODE_TYPES_OPTIONS: FlowNodeType[] = ["start", "task", "approval", "condition", "parallel", "join", "end"];
+const NODE_TYPES_OPTIONS: FlowNodeType[] = ["start", "task", "approval", "condition", "parallel", "join", "switch", "escalate", "end"];
 
 function convertToReactFlow(
   nodes: FlowNodeDefinition[],
@@ -112,6 +112,8 @@ export default function FlowEditorPage() {
   const [nodeConfig, setNodeConfig] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [rawSwitchCases, setRawSwitchCases] = useState("");
 
   const isNew = !currentFlow?.id;
 
@@ -145,6 +147,7 @@ export default function FlowEditorPage() {
     setSelectedNode(node);
     setShowConfig(true);
     setNodeConfig((node.data?.config as Record<string, unknown>) || {});
+    setRawSwitchCases(JSON.stringify((node.data?.config as Record<string, unknown>)?.switch_cases || {}, null, 2));
   }, []);
 
   const addNode = useCallback((type: FlowNodeType) => {
@@ -343,18 +346,150 @@ export default function FlowEditorPage() {
               </div>
             </div>
 
-            {(selectedNode.data.type === "task" || selectedNode.data.type === "approval") && (
+            {selectedNode.data.type === "task" && (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Team ID</label>
+                  <input
+                    value={(nodeConfig.team_id as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, team_id: e.target.value })}
+                    placeholder="dept_devops"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Action</label>
+                  <input
+                    value={(nodeConfig.action as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, action: e.target.value })}
+                    placeholder="execute_task"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Timeout (seconds)</label>
+                  <input
+                    type="number"
+                    value={Number(nodeConfig.timeout_seconds) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, timeout_seconds: parseInt(e.target.value) || 0 })}
+                    placeholder="300"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Retries</label>
+                  <input
+                    type="number"
+                    value={Number(nodeConfig.retries) || 0}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, retries: parseInt(e.target.value) || 0 })}
+                    placeholder="3"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === "approval" && (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Approver Role</label>
+                  <input
+                    value={(nodeConfig.approver_role as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, approver_role: e.target.value })}
+                    placeholder="exec_ceo"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Or Approver User</label>
+                  <input
+                    value={(nodeConfig.approver_user as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, approver_user: e.target.value })}
+                    placeholder="human"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === "condition" && (
               <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  {selectedNode.data.type === "task" ? "Team / Action" : "Approver Role"}
-                </label>
+                <label className="block text-xs text-gray-500 mb-1">Expression</label>
                 <input
-                  value={(nodeConfig.team_id as string) || (nodeConfig.approver_role as string) || ""}
-                  onChange={(e) => updateNodeConfig({
-                    ...nodeConfig,
-                    [selectedNode.data.type === "task" ? "team_id" : "approver_role"]: e.target.value,
+                  value={(nodeConfig.expression as string) || ""}
+                  onChange={(e) => updateNodeConfig({ ...nodeConfig, expression: e.target.value })}
+                  placeholder="node_X completed"
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                />
+              </div>
+            )}
+
+            {selectedNode.data.type === "switch" && (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Switch Key (context field)</label>
+                  <input
+                    value={(nodeConfig.switch_key as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, switch_key: e.target.value })}
+                    placeholder="decision_result"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Switch Cases (JSON)</label>
+                  <textarea
+                    value={rawSwitchCases}
+                    onChange={(e) => {
+                      setRawSwitchCases(e.target.value);
+                      try {
+                        const parsed = JSON.parse(e.target.value);
+                        updateNodeConfig({ ...nodeConfig, switch_cases: parsed });
+                        setJsonError(null);
+                      } catch (err) {
+                        setJsonError("Invalid JSON");
+                      }
+                    }}
+                    placeholder='{"approved": "node_approved", "rejected": "node_rejected"}'
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white h-20 font-mono"
+                  />
+                  {jsonError && <div className="text-xs text-red-400 mt-1">{jsonError}</div>}
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === "escalate" && (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Escalate To Team</label>
+                  <input
+                    value={(nodeConfig.escalate_to_team as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, escalate_to_team: e.target.value })}
+                    placeholder="exec_ceo"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Or Escalate To Agent</label>
+                  <input
+                    value={(nodeConfig.escalate_to_agent as string) || ""}
+                    onChange={(e) => updateNodeConfig({ ...nodeConfig, escalate_to_agent: e.target.value })}
+                    placeholder="agent_id"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNode.data.type === "parallel" && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Branches (comma-separated node IDs)</label>
+                <input
+                  value={((nodeConfig.branches as string[]) || []).join(", ")}
+                  onChange={(e) => updateNodeConfig({ 
+                    ...nodeConfig, 
+                    branches: e.target.value.split(",").map(s => s.trim()).filter(Boolean)
                   })}
-                  placeholder={selectedNode.data.type === "task" ? "dept_devops" : "exec_ceo"}
+                  placeholder="branch_1, branch_2"
                   className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white"
                 />
               </div>

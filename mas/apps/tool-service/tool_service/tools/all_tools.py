@@ -41,6 +41,7 @@ from .project import (
     ReviewSubmitResponseTool,
     ReviewSubmitVetoTool,
 )
+from .flow import FlowAdvanceTool, FlowInvokeTool, FlowListTool, FlowStatusTool
 from .sprint_kpi import (
     EstimationAdjustTool,
     IssueCreateTool,
@@ -87,6 +88,11 @@ def get_all_tools() -> list[BaseTool]:
         HumanNotifyTool(),
         HumanAwaitDecisionTool(),
         DepartmentTaskTool(),
+        # FLOW
+        FlowListTool(),
+        FlowInvokeTool(),
+        FlowStatusTool(),
+        FlowAdvanceTool(),
         # SPRINT_KPI
         SprintCreateTool(),
         SprintActivateTool(),
