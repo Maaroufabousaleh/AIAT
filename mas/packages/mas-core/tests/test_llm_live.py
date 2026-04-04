@@ -249,6 +249,43 @@ class TestGeminiLive:
             )
         _assert_valid_response(resp, "gemma-3n-e2b-it")
 
+    @pytest.mark.asyncio
+    async def test_gemma4_26b_a4b(self):
+        """gemma-4-26b-a4b-it: long-context Gemma 4 reasoning model."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT,
+                model="gemma-4-26b-a4b-it",
+            )
+        _assert_valid_response(resp, "gemma-4-26b-a4b-it")
+
+    @pytest.mark.asyncio
+    async def test_gemma4_31b(self):
+        """gemma-4-31b-it: flagship Gemma 4 reasoning model."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT,
+                model="gemma-4-31b-it",
+            )
+        _assert_valid_response(resp, "gemma-4-31b-it")
+
+    @pytest.mark.asyncio
+    async def test_gemma4_31b_search_grounding(self):
+        """gemma-4-31b-it: native Google Search grounding path."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=[{"role": "user", "content": "Who won Euro 2024?"}],
+                model="gemma-4-31b-it",
+                search_grounding=True,
+            )
+        assert resp is not None
+        assert resp.message is not None
+        assert "Spain" in resp.text or "spain" in resp.text
+        assert resp.extra.get("grounding_metadata") is not None
+
 
 # ---------------------------------------------------------------------------
 # Groq (free tier — ultra-fast LPU inference)
@@ -1410,8 +1447,8 @@ class TestRegistryCompleteness:
 
     def test_gemini_models_count(self):
         models = MODEL_REGISTRY.list_models("gemini")
-        assert len(models) >= 7, (
-            f"Expected >= 7 Gemini models (6 Gemma + gemma-think), got {len(models)}"
+        assert len(models) >= 10, (
+            f"Expected >= 10 Gemini models (Gemini preview, 8 Gemma variants, gemma-think), got {len(models)}"
         )
 
     def test_gemma_pool_registered(self):

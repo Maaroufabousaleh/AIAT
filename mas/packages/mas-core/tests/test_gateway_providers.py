@@ -239,6 +239,8 @@ class TestProviderConfigAuth:
 class TestGlobalRegistry:
     def test_builtin_models_registered(self):
         assert "gemma-3-27b-it" in MODEL_REGISTRY
+        assert "gemma-4-26b-a4b-it" in MODEL_REGISTRY
+        assert "gemma-4-31b-it" in MODEL_REGISTRY
         assert "big-pickle" in MODEL_REGISTRY
         assert "minimax-m2.5-free" in MODEL_REGISTRY
         assert "gpt-5-nano" in MODEL_REGISTRY
@@ -249,6 +251,23 @@ class TestGlobalRegistry:
         assert entry is not None
         assert entry.api_style == ApiStyle.CHAT_COMPLETIONS
         assert entry.provider == "gemini"
+
+    def test_gemma4_31b_metadata(self):
+        entry = MODEL_REGISTRY.get("gemma-4-31b-it")
+        assert entry is not None
+        assert entry.api_style == ApiStyle.CHAT_COMPLETIONS
+        assert entry.provider == "gemini"
+        assert entry.capabilities.supports_reasoning is True
+        assert entry.capabilities.supports_search_grounding is True
+        assert entry.supports_tools is True
+        assert entry.max_context_tokens == 262_144
+
+    @pytest.mark.asyncio
+    async def test_search_grounding_task_prefers_gemma4_models(self):
+        config = _make_config()
+        client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
+        ranking = client.model_selector.rank(task="search-grounding", top_n=2)
+        assert [c.model for c in ranking] == ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
 
     def test_zen_models_styles(self):
         pickle = MODEL_REGISTRY.get("big-pickle")
@@ -378,6 +397,56 @@ class TestChatCompletions:
                 )
         assert resp.text == "ok"
         assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_gemini_search_grounding_uses_native_endpoint(self):
+        config = _make_config()
+        client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
+        captured: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "responseId": "resp-123",
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {"text": "thinking", "thought": True},
+                                {"text": "Spain won Euro 2024."},
+                            ],
+                        },
+                        "finishReason": "STOP",
+                        "index": 0,
+                        "groundingMetadata": {"sources": ["google-search"]},
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 8,
+                    "candidatesTokenCount": 5,
+                    "totalTokenCount": 13,
+                },
+            }
+            return resp
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "Who won Euro 2024?"}],
+                    model="gemma-4-31b-it",
+                    search_grounding=True,
+                )
+
+        assert captured["url"].endswith("/models/gemma-4-31b-it:generateContent")
+        assert captured["json"]["tools"] == [{"google_search": {}}]
+        assert captured["json"]["contents"][0]["role"] == "user"
+        assert resp.text == "Spain won Euro 2024."
+        assert resp.extra["grounding_metadata"] == {"sources": ["google-search"]}
+        assert resp.usage.total_tokens == 13
 
 
 # ===========================================================================

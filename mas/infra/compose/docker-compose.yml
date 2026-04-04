@@ -200,6 +200,9 @@ services:
   # ── 5. Message Router ───────────────────────────────────────────────────────
   message-router:
     image: mas/message-router:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.message-router
     restart: unless-stopped
     networks:
       - internal

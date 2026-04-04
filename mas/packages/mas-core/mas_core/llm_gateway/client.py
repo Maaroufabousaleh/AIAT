@@ -142,12 +142,14 @@ class _ConversationContext:
         system: str | None = None,
         model: str | None = None,
         task: str | None = None,
+        search_grounding: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> None:
         self._client = client
         self._model = model
         self._task = task
+        self._search_grounding = search_grounding
         self._temperature = temperature
         self._max_tokens = max_tokens
         self.history: list[dict[str, Any]] = []
@@ -206,6 +208,7 @@ class _ConversationContext:
             model=model,
             tools=tools,
             tool_choice=tool_choice,
+            search_grounding=self._search_grounding,
             temperature=temperature if temperature is not None else self._temperature,
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
         )
@@ -244,6 +247,7 @@ class _ConversationContext:
             model=model,
             tools=tools,
             tool_choice=tool_choice,
+            search_grounding=self._search_grounding,
             temperature=temperature if temperature is not None else self._temperature,
             max_tokens=max_tokens if max_tokens is not None else self._max_tokens,
         )
@@ -376,6 +380,7 @@ class LLMGatewayClient:
         model: str | None = None,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] = "auto",
+        search_grounding: bool = False,
         max_tokens: int | None = None,
         temperature: float = 0.7,
         stream: bool = False,
@@ -428,13 +433,14 @@ class LLMGatewayClient:
             resp = await self._dispatch(
                 messages=messages,
                 resolved_model=resolved_model,
-                tools=tools,
-                tool_choice=tool_choice,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=stream,
-                _audit_evt=audit_evt,
-                _retry_counter_ref=retry_counter,
+            tools=tools,
+            tool_choice=tool_choice,
+            search_grounding=search_grounding,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=stream,
+            _audit_evt=audit_evt,
+            _retry_counter_ref=retry_counter,
             )
 
             # ── Post-call audit + metrics recording ──────────────────
@@ -498,6 +504,7 @@ class LLMGatewayClient:
         resolved_model: str,
         tools: list[ToolDefinition] | None,
         tool_choice: str | dict[str, Any],
+        search_grounding: bool,
         max_tokens: int | None,
         temperature: float,
         stream: bool,
@@ -586,6 +593,28 @@ class LLMGatewayClient:
                 entry=entry,
                 messages=messages,
                 model=concrete_model,
+            )
+            if pool is not None:
+                total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
+                pool.record_request(concrete_model, total_tokens)
+            return resp
+        if (
+            search_grounding
+            and entry is not None
+            and entry.provider == "gemini"
+            and entry.capabilities.supports_search_grounding
+        ):
+            if tools:
+                raise LLMGatewayError(
+                    400,
+                    "Gemini search-grounding mode does not yet combine with function tools.",
+                )
+            resp = await self._call_gemini_search_grounding_api(
+                entry=entry,
+                messages=messages,
+                model=wire_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
             if pool is not None:
                 total_tokens = resp.usage.prompt_tokens + resp.usage.completion_tokens
@@ -1048,6 +1077,211 @@ class LLMGatewayClient:
 
         return self._provider_clients[pid], entry.endpoint
 
+    @staticmethod
+    def _task_requests_search_grounding(task: str | None) -> bool:
+        """Return True when the task hint clearly asks for grounding."""
+        return task in {"search-grounding", "grounding", "web-search", "url-context"}
+
+    def _resolve_gemini_native_client_and_endpoint(
+        self,
+        entry: ModelEntry,
+    ) -> tuple[httpx.AsyncClient, str]:
+        """Return a Gemini-native client and ``generateContent`` endpoint."""
+        provider = self._registry.get_provider(entry.provider)
+        if provider is None:
+            return self._require_http(), f"/v1beta/models/{entry.model_id}:generateContent"
+
+        pid = f"{provider.provider_id}:native"
+        if pid not in self._provider_clients:
+            api_key = provider.resolve_api_key()
+            headers: dict[str, str] = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+                **provider.extra_headers,
+            }
+            self._provider_clients[pid] = httpx.AsyncClient(
+                headers=headers,
+                timeout=self._config.timeout_s,
+            )
+
+        base_url = provider.base_url[:-7] if provider.base_url.endswith("/openai") else provider.base_url
+        endpoint = f"{base_url}/models/{entry.model_id}:generateContent"
+        return self._provider_clients[pid], endpoint
+
+    @staticmethod
+    def _gemini_text_from_content(content: Any) -> str:
+        """Extract text content for Gemini-native requests.
+
+        Search grounding is currently implemented as a text-only path.
+        Images are rejected instead of being silently dropped.
+        """
+        text, image_urls = LLMGatewayClient._extract_text_and_images(content)
+        if image_urls:
+            raise LLMGatewayError(
+                400,
+                "Gemini search-grounding path currently supports text-only messages.",
+            )
+        return text
+
+    @classmethod
+    def _messages_to_gemini_contents(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Convert OpenAI-style messages into Gemini contents + system instruction."""
+        system_parts: list[str] = []
+        contents: list[dict[str, Any]] = []
+
+        for msg in messages:
+            role = msg.get("role", "user")
+            text = cls._gemini_text_from_content(msg.get("content", ""))
+            if not text and role != "system":
+                continue
+
+            if role == "system":
+                if text:
+                    system_parts.append(text)
+                continue
+
+            if role == "assistant":
+                gemini_role = "model"
+            else:
+                gemini_role = "user"
+
+            if role == "tool":
+                tool_name = msg.get("name") or "tool"
+                text = f"[Tool result: {tool_name}]\n{text}".strip()
+                gemini_role = "user"
+
+            contents.append(
+                {
+                    "role": gemini_role,
+                    "parts": [{"text": text}],
+                }
+            )
+
+        system_instruction = "\n\n".join(system_parts).strip()
+        return system_instruction, contents
+
+    @staticmethod
+    def _parse_gemini_native_response(
+        data: dict[str, Any],
+        *,
+        model: str = "",
+    ) -> ChatResponse:
+        """Parse Gemini REST ``generateContent`` output into ``ChatResponse``."""
+        candidates = data.get("candidates") or []
+        candidate = candidates[0] if candidates else {}
+        content = candidate.get("content") or {}
+        parts = content.get("parts") if isinstance(content, dict) else []
+
+        text_parts: list[str] = []
+        if isinstance(parts, list):
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("thought"):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    text_parts.append(text)
+
+        raw_usage = data.get("usageMetadata", {}) or {}
+        usage = UsageStats(
+            prompt_tokens=int(raw_usage.get("promptTokenCount", 0) or 0),
+            completion_tokens=int(raw_usage.get("candidatesTokenCount", 0) or 0),
+            total_tokens=int(
+                raw_usage.get(
+                    "totalTokenCount",
+                    int(raw_usage.get("promptTokenCount", 0) or 0)
+                    + int(raw_usage.get("candidatesTokenCount", 0) or 0),
+                )
+                or 0
+            ),
+        )
+        if usage.total_tokens == 0:
+            usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
+
+        finish_reason = str(candidate.get("finishReason", "stop")).lower()
+        extra = {
+            "response_id": data.get("responseId", ""),
+            "model_version": data.get("modelVersion", ""),
+            "grounding_metadata": candidate.get("groundingMetadata"),
+            "usage_metadata": raw_usage,
+        }
+
+        return ChatResponse(
+            response_id=data.get("responseId", ""),
+            model=model,
+            finish_reason=finish_reason,
+            message=ChatMessage(role="assistant", content="".join(text_parts).strip() or None),
+            usage=usage,
+            extra=extra,
+        )
+
+    async def _call_gemini_search_grounding_api(
+        self,
+        *,
+        entry: ModelEntry,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_tokens: int | None = None,
+        temperature: float = 0.7,
+    ) -> ChatResponse:
+        """Call Gemini's native ``generateContent`` endpoint with Google Search."""
+        client, endpoint = self._resolve_gemini_native_client_and_endpoint(entry)
+        system_instruction, contents = self._messages_to_gemini_contents(messages)
+        if not contents:
+            raise LLMGatewayError(
+                400,
+                "Gemini search-grounding path requires at least one non-system message.",
+            )
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "tools": [{"google_search": {}}],
+            "generationConfig": {"temperature": temperature},
+        }
+        if system_instruction:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction}],
+            }
+        if max_tokens is not None:
+            payload["generationConfig"]["maxOutputTokens"] = max_tokens
+
+        last_exc: Exception | None = None
+        wait_s = self._config.retry_min_wait_s
+        max_retries = self._config.max_retries
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = await client.post(endpoint, json=payload)
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+            if response.status_code == 200:
+                return self._parse_gemini_native_response(response.json(), model=model)
+
+            if self._is_retryable_status(response.status_code):
+                last_exc = (
+                    LLMRateLimited(response.status_code, response.text)
+                    if response.status_code == 429
+                    else LLMGatewayError(response.status_code, response.text)
+                )
+                self._log_retry(response.status_code, attempt, max_retries, wait_s)
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+            raise LLMGatewayError(response.status_code, response.text)
+
+        raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
     # ------------------------------------------------------------------
     # Responses API (gpt-5-nano, etc.)
     # ------------------------------------------------------------------
@@ -1381,6 +1615,7 @@ class LLMGatewayClient:
         task: str | None = None,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] = "auto",
+        search_grounding: bool = False,
         max_tokens: int | None = None,
         temperature: float = 0.7,
         use_fallback: bool = True,
@@ -1407,6 +1642,8 @@ class LLMGatewayClient:
             Tool definitions to pass to the LLM.
         tool_choice:
             Tool choice strategy.
+        search_grounding:
+            Enable Gemini search grounding when the selected model supports it.
         max_tokens:
             Hard cap on completion tokens.
         temperature:
@@ -1426,9 +1663,12 @@ class LLMGatewayClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        effective_search_grounding = search_grounding or self._task_requests_search_grounding(task)
+
         resolved_model = model or self._auto_select_model(
             task=task,
             needs_tools=bool(tools),
+            needs_search_grounding=effective_search_grounding,
         )
 
         if use_fallback and model is None:
@@ -1437,9 +1677,11 @@ class LLMGatewayClient:
                 task=task,
                 tools=tools,
                 tool_choice=tool_choice,
+                search_grounding=effective_search_grounding,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 needs_tools=bool(tools),
+                needs_search_grounding=effective_search_grounding,
             )
         else:
             resp = await self.chat_completion(
@@ -1447,6 +1689,7 @@ class LLMGatewayClient:
                 model=resolved_model,
                 tools=tools,
                 tool_choice=tool_choice,
+                search_grounding=effective_search_grounding,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -1458,6 +1701,7 @@ class LLMGatewayClient:
         system: str | None = None,
         model: str | None = None,
         task: str | None = None,
+        search_grounding: bool = False,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> _ConversationContext:
@@ -1478,6 +1722,8 @@ class LLMGatewayClient:
             Model to use.  ``None`` = auto-select.
         task:
             Optional task hint for model auto-selection.
+        search_grounding:
+            Enable Gemini search grounding for supported models.
         temperature:
             Sampling temperature for all turns in this conversation.
         max_tokens:
@@ -1494,6 +1740,7 @@ class LLMGatewayClient:
             system=system,
             model=model,
             task=task,
+            search_grounding=search_grounding or self._task_requests_search_grounding(task),
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -1506,11 +1753,13 @@ class LLMGatewayClient:
         model: str | None = None,
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] = "auto",
+        search_grounding: bool = False,
         max_tokens: int | None = None,
         temperature: float = 0.7,
         stream: bool = False,
         needs_tools: bool = False,
         needs_vision: bool = False,
+        needs_search_grounding: bool = False,
         chain_length: int = 4,
     ) -> ChatResponse:
         """Call an LLM with automatic model fallback on failure.
@@ -1534,6 +1783,8 @@ class LLMGatewayClient:
             Tool definitions to pass to the LLM.
         tool_choice:
             Tool choice strategy.
+        search_grounding:
+            Enable Gemini search grounding when supported by the selected model.
         max_tokens:
             Token cap.
         temperature:
@@ -1544,6 +1795,8 @@ class LLMGatewayClient:
             Require tool-calling support in the fallback chain.
         needs_vision:
             Require vision support in the fallback chain.
+        needs_search_grounding:
+            Require built-in search grounding support in the fallback chain.
         chain_length:
             Maximum number of models to try before giving up.
 
@@ -1568,6 +1821,7 @@ class LLMGatewayClient:
             task=task,
             needs_tools=needs_tools or bool(tools),
             needs_vision=needs_vision,
+            needs_search_grounding=needs_search_grounding or search_grounding,
             chain_length=chain_length,
         )
         for m in ranked:
@@ -1585,6 +1839,7 @@ class LLMGatewayClient:
                     model=candidate,
                     tools=tools,
                     tool_choice=tool_choice,
+                    search_grounding=search_grounding,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     stream=stream,
@@ -1618,6 +1873,7 @@ class LLMGatewayClient:
         needs_tools: bool = False,
         needs_vision: bool = False,
         needs_reasoning: bool = False,
+        needs_search_grounding: bool = False,
         min_context: int = 0,
         exclude: list[str] | None = None,
         fallback: str | None = None,
@@ -1638,6 +1894,8 @@ class LLMGatewayClient:
             Require vision support.
         needs_reasoning:
             Require explicit reasoning capability.
+        needs_search_grounding:
+            Require built-in search grounding support.
         min_context:
             Minimum context window size in tokens.
         exclude:
@@ -1655,6 +1913,7 @@ class LLMGatewayClient:
             needs_tools=needs_tools,
             needs_vision=needs_vision,
             needs_reasoning=needs_reasoning,
+            needs_search_grounding=needs_search_grounding,
             min_context=min_context,
             exclude=exclude,
             fallback=fallback,
@@ -1691,10 +1950,12 @@ class LLMGatewayClient:
         task: str | None = None,
         needs_tools: bool = False,
         needs_vision: bool = False,
+        needs_search_grounding: bool = False,
     ) -> str:
         """Return the best model ID (internal, no exclude support)."""
         return self.model_selector.pick(
             task=task,
             needs_tools=needs_tools,
             needs_vision=needs_vision,
+            needs_search_grounding=needs_search_grounding,
         )

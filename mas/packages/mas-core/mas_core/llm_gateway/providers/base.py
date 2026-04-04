@@ -128,6 +128,19 @@ class ModelCapabilities(BaseModel):
             "Useful for complex multi-step analysis and planning tasks."
         ),
     )
+    supports_search_grounding: bool = Field(
+        default=False,
+        description=(
+            "Model can ground responses with live web search or other "
+            "retrieval-backed search tooling."
+        ),
+    )
+    supports_url_context: bool = Field(
+        default=False,
+        description=(
+            "Model can ground responses with URL/doc retrieval tooling."
+        ),
+    )
     image_how: str = Field(
         default="",
         description=(

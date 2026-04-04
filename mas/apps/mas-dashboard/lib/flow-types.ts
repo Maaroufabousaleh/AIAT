@@ -1,0 +1,112 @@
+export type FlowNodeType = "start" | "end" | "task" | "approval" | "condition" | "parallel" | "join";
+
+export type FlowInstanceStatus = 
+  | "NOT_STARTED" 
+  | "RUNNING" 
+  | "WAITING_APPROVAL" 
+  | "PAUSED" 
+  | "CANCELLED" 
+  | "COMPLETED" 
+  | "FAILED";
+
+export type FlowExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+
+export interface FlowNodeConfig {
+  action?: string;
+  team_id?: string;
+  approver_role?: string;
+  approver_user?: string;
+  expression?: string;
+  branches?: string[];
+  [key: string]: unknown;
+}
+
+export interface FlowNodeDefinition {
+  id: string;
+  type: FlowNodeType;
+  label: string;
+  config: FlowNodeConfig;
+  position?: { x: number; y: number };
+}
+
+export interface FlowEdgeDefinition {
+  id: string;
+  source: string;
+  target: string;
+  condition?: string;
+}
+
+export interface FlowDefinition {
+  nodes: FlowNodeDefinition[];
+  edges: FlowEdgeDefinition[];
+}
+
+export interface Flow {
+  id: string;
+  name: string;
+  description?: string;
+  definition_json: FlowDefinition;
+  version: number;
+  created_by: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowInstance {
+  id: string;
+  flow_id: string;
+  flow_version: number;
+  project_id: string;
+  active_node_ids: string[];
+  status: FlowInstanceStatus;
+  context_json: Record<string, unknown>;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowNodeExecution {
+  id: string;
+  instance_id: string;
+  node_id: string;
+  node_type: FlowNodeType;
+  node_label?: string;
+  status: FlowExecutionStatus;
+  input_json?: Record<string, unknown>;
+  output_json?: Record<string, unknown>;
+  error?: string;
+  started_at: string;
+  completed_at?: string;
+}
+
+export const FLOW_NODE_COLORS: Record<FlowNodeType, string> = {
+  start: "bg-green-500",
+  end: "bg-red-500",
+  task: "bg-blue-500",
+  approval: "bg-amber-500",
+  condition: "bg-purple-500",
+  parallel: "bg-cyan-500",
+  join: "bg-indigo-500",
+};
+
+export const FLOW_STATUS_COLORS: Record<FlowInstanceStatus, string> = {
+  NOT_STARTED: "bg-gray-500",
+  RUNNING: "bg-blue-500",
+  WAITING_APPROVAL: "bg-amber-500",
+  PAUSED: "bg-yellow-500",
+  CANCELLED: "bg-stone-500",
+  COMPLETED: "bg-emerald-500",
+  FAILED: "bg-rose-500",
+};
+
+export const NODE_TYPE_LABELS: Record<FlowNodeType, string> = {
+  start: "Start",
+  end: "End",
+  task: "Task",
+  approval: "Approval",
+  condition: "Condition",
+  parallel: "Parallel",
+  join: "Join",
+};

@@ -38,3 +38,15 @@ opencode.json
 
 # Local dev utility scripts (Windows)
 guardian.bat
+
+next.txt
+
+# Node.js
+node_modules/
+
+# Next.js
+.next/
+next-env.d.ts
+
+# Cache directories
+.cache/

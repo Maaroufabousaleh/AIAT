@@ -6,6 +6,20 @@ from mas_core.workflow.controller import (
     WorkflowTransitionResult,
 )
 from mas_core.workflow.events import WorkflowEvent
+from mas_core.workflow.flow_engine import (
+    FlowAdvanceResult,
+    FlowDefinition,
+    FlowEdge,
+    FlowExecutionStatus,
+    FlowInstanceStatus,
+    FlowNode,
+    FlowNodeType,
+    FlowTraversalResult,
+    FlowValidationError,
+    parse_flow_definition,
+    serialize_flow_definition,
+    validate_flow,
+)
 from mas_core.workflow.states import ProjectState
 from mas_core.workflow.transitions import (
     RESTORE_LAST_SAFE_STATE,
@@ -22,6 +36,15 @@ from mas_core.workflow.watchdog import (
 )
 
 __all__ = [
+    "FlowAdvanceResult",
+    "FlowDefinition",
+    "FlowEdge",
+    "FlowExecutionStatus",
+    "FlowInstanceStatus",
+    "FlowNode",
+    "FlowNodeType",
+    "FlowTraversalResult",
+    "FlowValidationError",
     "InvalidTransitionError",
     "ProjectState",
     "RESTORE_LAST_SAFE_STATE",
@@ -33,7 +56,10 @@ __all__ = [
     "WorkflowEvent",
     "WorkflowTransitionResult",
     "is_terminal_state",
+    "parse_flow_definition",
     "resolve_transition",
+    "serialize_flow_definition",
     "should_watchdog_fire",
+    "validate_flow",
     "watchdog_elapsed_seconds",
 ]

@@ -14,11 +14,13 @@ import {
   Settings,
   Wrench,
   LogOut,
+  GitBranch,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/",         label: "Overview",     icon: LayoutDashboard },
   { href: "/projects", label: "Projects",     icon: FolderKanban },
+  { href: "/flows",    label: "Flows",        icon: GitBranch },
   { href: "/streams",  label: "Streams",      icon: Radio },
   { href: "/ceo",      label: "CEO Feed",     icon: Brain },
   { href: "/metrics",  label: "Metrics",      icon: BarChart3 },

@@ -79,6 +79,8 @@ logger = logging.getLogger(__name__)
 FREE_MODELS_GENERAL: list[str] = [
     "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "gemma-3-27b-it",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
     "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
@@ -93,6 +95,8 @@ FREE_MODELS_TOOLS: list[str] = [
     "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
     "groq/openai/gpt-oss-20b",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "gemma-3-27b-it",
     "openrouter/qwen/qwen3-coder:free",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
@@ -105,6 +109,8 @@ FREE_MODELS_TOOLS: list[str] = [
 #: Free models with vision support.
 FREE_MODELS_VISION: list[str] = [
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "gemma-3-27b-it",
     "openrouter/google/gemma-3-27b-it:free",
     "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
@@ -117,6 +123,8 @@ FREE_MODELS_CODE: list[str] = [
     "groq/openai/gpt-oss-120b",
     "groq/llama-3.3-70b-versatile",
     "groq/qwen/qwen3-32b",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "gemma-3-27b-it",
     "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
 ]
@@ -127,9 +135,17 @@ FREE_MODELS_REASONING: list[str] = [
     "groq/openai/gpt-oss-20b",
     "openrouter/qwen/qwen3-coder:free",
     "groq/qwen/qwen3-32b",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "big-pickle",
     "gemma-think",
     "gemma-3-27b-it",
+]
+
+#: Free models with search-grounding support.
+FREE_MODELS_GROUNDING: list[str] = [
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
 ]
 
 #: Fast / small models for quick classification, routing, and triage.
@@ -153,6 +169,10 @@ _TASK_SHORTLISTS: dict[str, list[str]] = {
     "complex-reasoning": FREE_MODELS_REASONING,
     "complex-analysis": FREE_MODELS_REASONING,
     "structured-synthesis": FREE_MODELS_REASONING,
+    # grounding / search
+    "search-grounding": FREE_MODELS_GROUNDING,
+    "grounding": FREE_MODELS_GROUNDING,
+    "web-search": FREE_MODELS_GROUNDING,
     # tool use
     "tool-calling": FREE_MODELS_TOOLS,
     "structured-output": FREE_MODELS_TOOLS,
@@ -253,6 +273,7 @@ class ModelSelector:
         needs_tools: bool = False,
         needs_vision: bool = False,
         needs_reasoning: bool = False,
+        needs_search_grounding: bool = False,
         min_context: int = 0,
         exclude: list[str] | None = None,
         fallback: str | None = None,
@@ -289,6 +310,7 @@ class ModelSelector:
             needs_tools=needs_tools,
             needs_vision=needs_vision,
             needs_reasoning=needs_reasoning,
+            needs_search_grounding=needs_search_grounding,
             min_context=min_context,
             exclude=exclude,
         )
@@ -320,6 +342,7 @@ class ModelSelector:
         needs_tools: bool = False,
         needs_vision: bool = False,
         needs_reasoning: bool = False,
+        needs_search_grounding: bool = False,
         min_context: int = 0,
         exclude: list[str] | None = None,
         top_n: int = 10,
@@ -330,12 +353,14 @@ class ModelSelector:
         ----------
         task:
             Optional task category (see ``pick()`` docs).
-        needs_tools:
+            needs_tools:
             Require tool-calling support.
         needs_vision:
             Require image/vision support.
         needs_reasoning:
             Require reasoning capability flag.
+        needs_search_grounding:
+            Require built-in search grounding support.
         min_context:
             Minimum context window size.
         exclude:
@@ -401,6 +426,8 @@ class ModelSelector:
                     continue
                 if needs_reasoning and not entry.capabilities.supports_reasoning:
                     continue
+                if needs_search_grounding and not entry.capabilities.supports_search_grounding:
+                    continue
                 if min_context > 0 and (
                     entry.max_context_tokens is None or entry.max_context_tokens < min_context
                 ):
@@ -450,6 +477,7 @@ class ModelSelector:
         task: str | None = None,
         needs_tools: bool = False,
         needs_vision: bool = False,
+        needs_search_grounding: bool = False,
         min_context: int = 0,
         chain_length: int = 4,
     ) -> list[str]:
@@ -480,6 +508,7 @@ class ModelSelector:
             task=task,
             needs_tools=needs_tools,
             needs_vision=needs_vision,
+            needs_search_grounding=needs_search_grounding,
             min_context=min_context,
             top_n=chain_length,
         )
@@ -495,6 +524,7 @@ class ModelSelector:
         task: str | None = None,
         needs_tools: bool = False,
         needs_vision: bool = False,
+        needs_search_grounding: bool = False,
         top_n: int = 10,
     ) -> dict[str, Any]:
         """Return a dictionary suitable for display / debugging."""
@@ -502,6 +532,7 @@ class ModelSelector:
             task=task,
             needs_tools=needs_tools,
             needs_vision=needs_vision,
+            needs_search_grounding=needs_search_grounding,
             top_n=top_n,
         )
         return {

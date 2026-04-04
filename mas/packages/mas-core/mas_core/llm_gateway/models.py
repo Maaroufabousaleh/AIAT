@@ -156,6 +156,7 @@ class ChatResponse(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
 
     usage: UsageStats = Field(default_factory=UsageStats)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:

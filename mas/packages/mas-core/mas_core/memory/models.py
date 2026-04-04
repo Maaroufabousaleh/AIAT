@@ -367,7 +367,7 @@ capabilities = sa.Table(
     sa.Column("output_schema", JSONB()),
     sa.Column("risk_level", sa.Text(), nullable=False, server_default="'low'"),
     sa.Column("cost_model", JSONB()),
-    sa.Column("required_tools", sa.ARRAY(sa.Text()), server_default="'{}'"),
+    sa.Column("required_tools", sa.ARRAY(sa.Text()), server_default="{}"),
     sa.Column("required_role", sa.Text()),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
@@ -382,9 +382,9 @@ worker_registry = sa.Table(
     sa.Column("id", sa.UUID(), primary_key=True),
     sa.Column("name", sa.Text(), nullable=False),
     sa.Column("adapter_type", sa.Text(), nullable=False),
-    sa.Column("adapter_config", JSONB(), nullable=False, server_default="'{}'"),
+    sa.Column("adapter_config", JSONB(), nullable=False, server_default="{}"),
     sa.Column("sandbox_profile", sa.Text(), nullable=False, server_default="'standard'"),
-    sa.Column("capability_ids", sa.ARRAY(sa.UUID()), nullable=False, server_default="'{}'"),
+    sa.Column("capability_ids", sa.ARRAY(sa.UUID()), nullable=False, server_default="{}"),
     sa.Column("team_id", sa.Text()),
     sa.Column("status", sa.Text(), nullable=False, server_default="'ACTIVE'"),
     sa.Column(
@@ -411,4 +411,70 @@ role_capability_map = sa.Table(
     sa.Column("priority", sa.Integer(), nullable=False, server_default="0"),
     sa.Column("constraints", JSONB()),
     sa.UniqueConstraint("role", "capability_id", name="uq_role_capability"),
+)
+
+# ── 21. flows ─────────────────────────────────────────────────────────────────
+flows = sa.Table(
+    "flows",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("description", sa.Text()),
+    sa.Column("definition_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
+    sa.Column("created_by", sa.Text(), nullable=False, server_default="system"),
+    sa.Column("is_active", sa.Boolean(), nullable=False, server_default="false"),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 22. flow_instances ────────────────────────────────────────────────────────
+flow_instances = sa.Table(
+    "flow_instances",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("flow_id", sa.UUID(), sa.ForeignKey("flows.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("flow_version", sa.Integer(), nullable=False),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
+    sa.Column("active_node_ids", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="NOT_STARTED"),
+    sa.Column("context_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 23. flow_node_executions ─────────────────────────────────────────────────
+flow_node_executions = sa.Table(
+    "flow_node_executions",
+    metadata,
+    sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+    sa.Column(
+        "instance_id",
+        sa.UUID(),
+        sa.ForeignKey("flow_instances.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("node_id", sa.Text(), nullable=False),
+    sa.Column("node_type", sa.Text(), nullable=False),
+    sa.Column("node_label", sa.Text()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="RUNNING"),
+    sa.Column("input_json", JSONB()),
+    sa.Column("output_json", JSONB()),
+    sa.Column("error", sa.Text()),
+    sa.Column(
+        "started_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
 )

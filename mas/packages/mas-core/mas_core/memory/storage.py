@@ -1406,3 +1406,313 @@ class AgentStorage:
                     )
                 )
             )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Flows
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_flow(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        definition_json: dict,
+        created_by: str = "system",
+        is_active: bool = False,
+    ) -> dict[str, Any]:
+        """Create a new flow definition."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "name": name,
+            "description": description,
+            "definition_json": definition_json,
+            "version": 1,
+            "created_by": created_by,
+            "is_active": is_active,
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.flows.insert().values(**values))
+        return values
+
+    async def get_flow(self, flow_id: UUID) -> dict[str, Any] | None:
+        """Fetch a flow by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (await conn.execute(t.flows.select().where(t.flows.c.id == flow_id)))
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def update_flow(
+        self,
+        flow_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        definition_json: dict | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a flow definition. Increments version on definition change."""
+        now = datetime.now(tz=UTC)
+        flow = await self.get_flow(flow_id)
+        if flow is None:
+            return None
+
+        updates: dict[str, Any] = {"updated_at": now}
+        if name is not None:
+            updates["name"] = name
+        if description is not None:
+            updates["description"] = description
+        if definition_json is not None:
+            updates["definition_json"] = definition_json
+            updates["version"] = flow["version"] + 1
+        if is_active is not None:
+            updates["is_active"] = is_active
+
+        async with self.engine.begin() as conn:
+            await conn.execute(t.flows.update().where(t.flows.c.id == flow_id).values(**updates))
+
+        return await self.get_flow(flow_id)
+
+    async def list_flows(
+        self,
+        *,
+        is_active: bool | None = None,
+        created_by: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List flows, optionally filtered."""
+        q = t.flows.select().order_by(t.flows.c.updated_at.desc())
+        if is_active is not None:
+            q = q.where(t.flows.c.is_active == is_active)
+        if created_by is not None:
+            q = q.where(t.flows.c.created_by == created_by)
+        q = q.limit(limit).offset(offset)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_flow(self, flow_id: UUID) -> bool:
+        """Delete a flow. Returns True if deleted."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.flows.delete().where(t.flows.c.id == flow_id))
+        return result.rowcount > 0
+
+    # Flow Instances
+
+    async def create_flow_instance(
+        self,
+        *,
+        flow_id: UUID,
+        flow_version: int,
+        project_id: UUID,
+    ) -> dict[str, Any]:
+        """Create a new flow instance attached to a project."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "flow_id": flow_id,
+            "flow_version": flow_version,
+            "project_id": project_id,
+            "active_node_ids": [],
+            "status": "NOT_STARTED",
+            "context_json": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.flow_instances.insert().values(**values))
+        return values
+
+    async def get_flow_instance(self, instance_id: UUID) -> dict[str, Any] | None:
+        """Fetch a flow instance by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def get_flow_instance_by_project(self, project_id: UUID) -> dict[str, Any] | None:
+        """Fetch the active flow instance for a project (if any)."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.flow_instances.select()
+                        .where(t.flow_instances.c.project_id == project_id)
+                        .where(
+                            t.flow_instances.c.status.in_(
+                                ["NOT_STARTED", "RUNNING", "WAITING_APPROVAL", "PAUSED"]
+                            )
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def update_flow_instance(
+        self,
+        instance_id: UUID,
+        *,
+        status: str | None = None,
+        active_node_ids: list[str] | None = None,
+        context_json: dict | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a flow instance."""
+        now = datetime.now(tz=UTC)
+        updates: dict[str, Any] = {"updated_at": now}
+        if status is not None:
+            updates["status"] = status
+        if active_node_ids is not None:
+            updates["active_node_ids"] = active_node_ids
+        if context_json is not None:
+            updates["context_json"] = context_json
+        if started_at is not None:
+            updates["started_at"] = started_at
+        if completed_at is not None:
+            updates["completed_at"] = completed_at
+
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(**updates)
+            )
+
+        return await self.get_flow_instance(instance_id)
+
+    async def list_flow_instances(
+        self,
+        *,
+        flow_id: UUID | None = None,
+        project_id: UUID | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List flow instances, optionally filtered."""
+        q = t.flow_instances.select().order_by(t.flow_instances.c.created_at.desc())
+        if flow_id is not None:
+            q = q.where(t.flow_instances.c.flow_id == flow_id)
+        if project_id is not None:
+            q = q.where(t.flow_instances.c.project_id == project_id)
+        if status is not None:
+            q = q.where(t.flow_instances.c.status == status)
+        q = q.limit(limit).offset(offset)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    # Flow Node Executions
+
+    async def create_flow_node_execution(
+        self,
+        *,
+        instance_id: UUID,
+        node_id: str,
+        node_type: str,
+        node_label: str,
+        input_json: dict | None = None,
+    ) -> dict[str, Any]:
+        """Create a new node execution record."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "instance_id": instance_id,
+            "node_id": node_id,
+            "node_type": node_type,
+            "node_label": node_label,
+            "status": "RUNNING",
+            "input_json": input_json,
+            "started_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.flow_node_executions.insert().values(**values))
+        return values
+
+    async def get_flow_node_execution(self, execution_id: int) -> dict[str, Any] | None:
+        """Fetch a node execution by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.flow_node_executions.select().where(
+                            t.flow_node_executions.c.id == execution_id
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def update_flow_node_execution(
+        self,
+        execution_id: int,
+        *,
+        status: str | None = None,
+        output_json: dict | None = None,
+        error: str | None = None,
+        completed_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a node execution."""
+        updates: dict[str, Any] = {}
+        if status is not None:
+            updates["status"] = status
+        if output_json is not None:
+            updates["output_json"] = output_json
+        if error is not None:
+            updates["error"] = error
+        if completed_at is not None:
+            updates["completed_at"] = completed_at
+
+        if not updates:
+            return await self.get_flow_node_execution(execution_id)
+
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_node_executions.update()
+                .where(t.flow_node_executions.c.id == execution_id)
+                .values(**updates)
+            )
+
+        return await self.get_flow_node_execution(execution_id)
+
+    async def list_flow_node_executions(
+        self,
+        *,
+        instance_id: UUID,
+        node_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List node executions for an instance."""
+        q = (
+            t.flow_node_executions.select()
+            .where(t.flow_node_executions.c.instance_id == instance_id)
+            .order_by(t.flow_node_executions.c.started_at.asc())
+        )
+        if node_id is not None:
+            q = q.where(t.flow_node_executions.c.node_id == node_id)
+        if status is not None:
+            q = q.where(t.flow_node_executions.c.status == status)
+        q = q.limit(limit).offset(offset)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]

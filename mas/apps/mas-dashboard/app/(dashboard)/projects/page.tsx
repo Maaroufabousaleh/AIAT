@@ -16,25 +16,42 @@ interface Project {
   updated_at: string;
 }
 
+interface Flow {
+  id: string;
+  name: string;
+  version: number;
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [flows, setFlows] = useState<Flow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("");
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [error, setError] = useState("");
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/projects");
-      if (!res.ok) { setProjects([]); return; }
-      const data = await res.json();
-      setProjects(Array.isArray(data) ? data : data.projects ?? []);
+      const [projRes, flowRes] = await Promise.all([
+        fetch("/api/projects"),
+        fetch("/api/flows?is_active=true"),
+      ]);
+      if (projRes.ok) {
+        const projData = await projRes.json();
+        setProjects(Array.isArray(projData) ? projData : projData.projects ?? []);
+      }
+      if (flowRes.ok) {
+        const flowData = await flowRes.json();
+        setFlows(Array.isArray(flowData) ? flowData : []);
+      }
     } catch {
       setProjects([]);
+      setFlows([]);
     } finally {
       setLoading(false);
     }
@@ -53,9 +70,24 @@ export default function ProjectsPage() {
         body: JSON.stringify({ name: newName, description: newDesc }),
       });
       if (res.ok) {
+        const project = await res.json();
+        
+        if (selectedFlowId) {
+          try {
+            await fetch("/api/flows/instances", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ flow_id: selectedFlowId, project_id: project.id }),
+            });
+          } catch {
+            console.error("Failed to attach flow to project");
+          }
+        }
+        
         setShowCreate(false);
         setNewName("");
         setNewDesc("");
+        setSelectedFlowId("");
         await load();
       } else {
         const d = await res.json();
@@ -206,6 +238,27 @@ export default function ProjectsPage() {
                   placeholder="What should the agents build?"
                 />
               </div>
+              {flows.length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1.5">Attach Flow (optional)</label>
+                  <select
+                    value={selectedFlowId}
+                    onChange={(e) => setSelectedFlowId(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
+                               text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">None — use default workflow</option>
+                    {flows.map((flow) => (
+                      <option key={flow.id} value={flow.id}>
+                        {flow.name} (v{flow.version})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The selected flow will replace the default 18-state workflow for this project.
+                  </p>
+                </div>
+              )}
               {error && <p className="text-sm text-red-400">{error}</p>}
               <div className="flex gap-2 pt-1">
                 <button

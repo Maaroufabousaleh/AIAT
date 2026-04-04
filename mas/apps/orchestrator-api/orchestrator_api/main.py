@@ -145,6 +145,39 @@ class RegisterWorkerRequest(BaseModel):
     team_id: str | None = None
 
 
+class CreateFlowRequest(BaseModel):
+    name: str
+    description: str | None = None
+    definition_json: dict[str, Any]
+    created_by: str = "human"
+    is_active: bool = False
+
+
+class UpdateFlowRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    definition_json: dict[str, Any] | None = None
+    is_active: bool | None = None
+
+
+class CreateFlowInstanceRequest(BaseModel):
+    flow_id: UUID
+    project_id: UUID
+
+
+class FlowNodeActionRequest(BaseModel):
+    node_id: str
+    action: str = Field(..., description="advance | complete | fail")
+    output: dict[str, Any] | None = None
+    error: str | None = None
+    approved: bool | None = None
+
+
+class FlowInstanceActionRequest(BaseModel):
+    action: str = Field(..., description="start | pause | resume | cancel")
+    node_id: str | None = None
+
+
 # ── Event publisher (sends SYSTEM_EVENT via message-router) ──────────────────
 
 
@@ -1398,6 +1431,395 @@ async def deregister_worker(worker_id: UUID) -> dict[str, str]:
     storage = _storage()
     await storage.update_worker_status(worker_id, status="DEREGISTERED")
     return {"status": "deregistered"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Orchestration Flows (Phase 14)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/flows", status_code=201)
+async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
+    """Create a new flow definition."""
+    from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
+
+    try:
+        definition = parse_flow_definition(req.definition_json)
+    except FlowValidationError as e:
+        raise HTTPException(400, f"Invalid flow definition: {e}")
+
+    errors = validate_flow(definition)
+    if errors:
+        raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
+
+    storage = _storage()
+    flow = await storage.create_flow(
+        name=req.name,
+        description=req.description,
+        definition_json=req.definition_json,
+        created_by=req.created_by,
+        is_active=req.is_active,
+    )
+    return _serialize(flow)
+
+
+@app.get("/flows")
+async def list_flows(
+    is_active: bool | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    """List flows, optionally filtered by active status."""
+    storage = _storage()
+    flows = await storage.list_flows(is_active=is_active, limit=limit, offset=offset)
+    return [_serialize(f) for f in flows]
+
+
+@app.get("/flows/{flow_id}")
+async def get_flow(flow_id: UUID) -> dict[str, Any]:
+    """Get a flow definition."""
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(flow)
+
+
+@app.put("/flows/{flow_id}")
+async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
+    """Update a flow definition."""
+    from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
+
+    if req.definition_json is not None:
+        try:
+            definition = parse_flow_definition(req.definition_json)
+        except FlowValidationError as e:
+            raise HTTPException(400, f"Invalid flow definition: {e}")
+
+        errors = validate_flow(definition)
+        if errors:
+            raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
+
+    storage = _storage()
+    flow = await storage.update_flow(
+        flow_id,
+        name=req.name,
+        description=req.description,
+        definition_json=req.definition_json,
+        is_active=req.is_active,
+    )
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(flow)
+
+
+@app.delete("/flows/{flow_id}")
+async def delete_flow(flow_id: UUID) -> dict[str, str]:
+    """Delete a flow."""
+    storage = _storage()
+    deleted = await storage.delete_flow(flow_id)
+    if not deleted:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return {"status": "deleted"}
+
+
+# Flow Instances
+
+
+@app.post("/flows/instances")
+async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]:
+    """Create a flow instance attached to a project."""
+    storage = _storage()
+
+    flow = await storage.get_flow(req.flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {req.flow_id} not found")
+
+    project = await storage.get_project(req.project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {req.project_id} not found")
+
+    existing = await storage.get_flow_instance_by_project(req.project_id)
+    if existing is not None:
+        raise HTTPException(409, f"Project {req.project_id} already has an active flow instance")
+
+    instance = await storage.create_flow_instance(
+        flow_id=req.flow_id,
+        flow_version=flow["version"],
+        project_id=req.project_id,
+    )
+    return _serialize(instance)
+
+
+@app.get("/flows/instances")
+async def list_flow_instances(
+    flow_id: UUID | None = None,
+    project_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    """List flow instances, optionally filtered."""
+    storage = _storage()
+    instances = await storage.list_flow_instances(
+        flow_id=flow_id,
+        project_id=project_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [_serialize(i) for i in instances]
+
+
+@app.get("/flows/instances/{instance_id}")
+async def get_flow_instance(instance_id: UUID) -> dict[str, Any]:
+    """Get a flow instance."""
+    storage = _storage()
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+    return _serialize(instance)
+
+
+@app.get("/projects/{project_id}/flow-instance")
+async def get_project_flow_instance(project_id: UUID) -> dict[str, Any]:
+    """Get the active flow instance for a project."""
+    storage = _storage()
+    instance = await storage.get_flow_instance_by_project(project_id)
+    if instance is None:
+        raise HTTPException(404, f"No active flow instance for project {project_id}")
+    return _serialize(instance)
+
+
+@app.post("/flows/instances/{instance_id}/action")
+async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest) -> dict[str, Any]:
+    """Perform an action on a flow instance (start, pause, resume, cancel)."""
+    from datetime import UTC, datetime
+    from mas_core.workflow import (
+        FlowDefinition,
+        FlowInstanceStatus,
+        FlowNodeType,
+        parse_flow_definition,
+        serialize_flow_definition,
+    )
+
+    storage = _storage()
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    current_status = instance["status"]
+    active_node_ids = list(instance.get("active_node_ids") or [])
+    context = dict(instance.get("context_json") or {})
+
+    if req.action == "start":
+        if current_status != "NOT_STARTED":
+            raise HTTPException(
+                409, f"Instance is not in NOT_STARTED state (current: {current_status})"
+            )
+
+        definition = parse_flow_definition(flow["definition_json"])
+        start_nodes = definition.get_start_nodes()
+        if not start_nodes:
+            raise HTTPException(400, "Flow has no start node")
+
+        now = datetime.now(tz=UTC)
+        await storage.update_flow_instance(
+            instance_id,
+            status="RUNNING",
+            active_node_ids=[start_nodes[0].id],
+            started_at=now,
+        )
+
+        await storage.create_flow_node_execution(
+            instance_id=instance_id,
+            node_id=start_nodes[0].id,
+            node_type=start_nodes[0].type.value,
+            node_label=start_nodes[0].label,
+            input_json=context,
+        )
+
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    elif req.action == "pause":
+        if current_status != "RUNNING":
+            raise HTTPException(409, f"Instance is not RUNNING (current: {current_status})")
+
+        await storage.update_flow_instance(instance_id, status="PAUSED")
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    elif req.action == "resume":
+        if current_status != "PAUSED":
+            raise HTTPException(409, f"Instance is not PAUSED (current: {current_status})")
+
+        await storage.update_flow_instance(instance_id, status="RUNNING")
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    elif req.action == "cancel":
+        if current_status in ("COMPLETED", "FAILED", "CANCELLED"):
+            raise HTTPException(409, f"Instance is already in terminal state: {current_status}")
+
+        await storage.update_flow_instance(instance_id, status="CANCELLED")
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    else:
+        raise HTTPException(400, f"Unknown action: {req.action}")
+
+
+@app.post("/flows/instances/{instance_id}/node-action")
+async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dict[str, Any]:
+    """Perform an action on a node within a flow instance."""
+    from datetime import UTC, datetime
+    from mas_core.workflow import (
+        FlowDefinition,
+        FlowInstanceStatus,
+        FlowNodeType,
+        parse_flow_definition,
+    )
+
+    storage = _storage()
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    if instance["status"] not in ("RUNNING", "WAITING_APPROVAL"):
+        raise HTTPException(
+            409, f"Instance is not RUNNING or WAITING_APPROVAL (current: {instance['status']})"
+        )
+
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    definition = parse_flow_definition(flow["definition_json"])
+    node = definition.get_node(req.node_id)
+    if node is None:
+        raise HTTPException(404, f"Node {req.node_id} not found in flow")
+
+    active_node_ids = list(instance.get("active_node_ids") or [])
+    if req.node_id not in active_node_ids:
+        raise HTTPException(409, f"Node {req.node_id} is not currently active")
+
+    now = datetime.now(tz=UTC)
+
+    if req.action == "complete":
+        executions = await storage.list_flow_node_executions(
+            instance_id=instance_id, node_id=req.node_id, limit=1
+        )
+        if executions:
+            await storage.update_flow_node_execution(
+                executions[0]["id"],
+                status="COMPLETED",
+                output_json=req.output,
+                completed_at=now,
+            )
+
+        completed_ids = set(active_node_ids)
+        completed_ids.discard(req.node_id)
+        new_active = list(completed_ids)
+
+        if node.type == FlowNodeType.APPROVAL:
+            if req.approved is True:
+                pass
+            elif req.approved is False:
+                await storage.update_flow_instance(
+                    instance_id, status="FAILED", active_node_ids=new_active
+                )
+                return _serialize(await storage.get_flow_instance(instance_id))
+            else:
+                await storage.update_flow_instance(
+                    instance_id, status="WAITING_APPROVAL", active_node_ids=new_active
+                )
+                return _serialize(await storage.get_flow_instance(instance_id))
+
+        next_result = _compute_next_nodes(definition, completed_ids, set())
+        if not next_result.node_ids:
+            end_nodes = definition.get_end_nodes()
+            all_completed = all(n.id in completed_ids for n in end_nodes)
+            if all_completed:
+                await storage.update_flow_instance(
+                    instance_id, status="COMPLETED", active_node_ids=[], completed_at=now
+                )
+            else:
+                await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
+        else:
+            for nid in next_result.node_ids:
+                n = definition.get_node(nid)
+                if n:
+                    await storage.create_flow_node_execution(
+                        instance_id=instance_id,
+                        node_id=nid,
+                        node_type=n.type.value,
+                        node_label=n.label,
+                        input_json=instance.get("context_json"),
+                    )
+            await storage.update_flow_instance(instance_id, active_node_ids=next_result.node_ids)
+
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    elif req.action == "fail":
+        executions = await storage.list_flow_node_executions(
+            instance_id=instance_id, node_id=req.node_id, limit=1
+        )
+        if executions:
+            await storage.update_flow_node_execution(
+                executions[0]["id"],
+                status="FAILED",
+                error=req.error,
+                completed_at=now,
+            )
+
+        await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
+        return _serialize(await storage.get_flow_instance(instance_id))
+
+    else:
+        raise HTTPException(400, f"Unknown action: {req.action}")
+
+
+def _compute_next_nodes(
+    definition: FlowDefinition, completed_ids: set[str], parallel_ids: set[str]
+):
+    """Compute next nodes to execute after completed nodes."""
+    from mas_core.workflow import FlowTraversalResult
+
+    next_ids = []
+    for node_id in completed_ids:
+        outgoing = definition.get_outgoing_edges(node_id)
+        for edge in outgoing:
+            target = edge.target
+            target_node = definition.get_node(target)
+            if target_node is None:
+                continue
+            if target not in completed_ids and target not in next_ids:
+                next_ids.append(target)
+
+    if not next_ids:
+        end_nodes = definition.get_end_nodes()
+        if all(n.id in completed_ids for n in end_nodes):
+            return FlowTraversalResult(node_ids=[])
+        return FlowTraversalResult(node_ids=[], is_blocked=True, block_reason="No more nodes")
+
+    return FlowTraversalResult(node_ids=next_ids)
+
+
+@app.get("/flows/instances/{instance_id}/executions")
+async def list_flow_node_executions(
+    instance_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    """List all node executions for a flow instance."""
+    storage = _storage()
+    executions = await storage.list_flow_node_executions(
+        instance_id=instance_id,
+        limit=limit,
+        offset=offset,
+    )
+    return [_serialize(e) for e in executions]
 
 
 # ═════════════════════════════════════════════════════════════════════════════

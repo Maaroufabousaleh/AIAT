@@ -8,7 +8,7 @@ changes to the gateway client.
 Authentication uses a Google AI Studio API key sent as ``Bearer`` token.
 Get a free key at: https://aistudio.google.com/apikey
 
-Free-tier rate limits per Gemma model (AI Studio, as of 2026):
+Free-tier rate limits per pooled Gemma 3 model (AI Studio, as of 2026):
 - gemma-3-27b-it:   30 RPM / 15 k TPM / 14 000 RPD
 - gemma-3-12b-it:   30 RPM / 15 k TPM / 14 000 RPD
 - gemma-3-4b-it:    30 RPM / 15 k TPM / 14 000 RPD
@@ -16,8 +16,15 @@ Free-tier rate limits per Gemma model (AI Studio, as of 2026):
 - gemma-3n-e4b-it:  30 RPM / 15 k TPM / 14 000 RPD
 - gemma-3n-e2b-it:  30 RPM / 15 k TPM / 14 000 RPD
 
-All six models are pooled under ``gemma-pool`` for automatic load balancing
-(aggregate ~84 k RPD / 90 k TPM).
+All six Gemma 3 models are pooled under ``gemma-pool`` for automatic load
+balancing (aggregate ~84 k RPD / 90 k TPM).
+
+Newer Gemma 4 models are registered individually:
+- gemma-4-26b-a4b-it
+- gemma-4-31b-it
+
+They are intentionally excluded from ``gemma-pool`` because their AI Studio
+quotas differ from the pooled Gemma 3 family.
 """
 
 from __future__ import annotations
@@ -280,6 +287,112 @@ MODEL_REGISTRY.register(
             "very-small-model (1B, limited reasoning)",
             "32k context",
             "no-vision",
+        ],
+        compliance=[
+            "google-ai-studio-tos",
+            "free-tier",
+            "api-key-required",
+            "gemma-open-weight",
+            "data-used-for-improvement (free tier)",
+        ],
+    )
+)
+
+# ---- Gemma 4 26B A4B (reasoning-capable, long-context) -------------------
+
+MODEL_REGISTRY.register(
+    ModelEntry(
+        model_id="gemma-4-26b-a4b-it",
+        provider="gemini",
+        api_style=ApiStyle.CHAT_COMPLETIONS,
+        endpoint=_CC,
+        description=(
+            "Google Gemma 4 26B A4B IT - reasoning-capable open-weight model "
+            "on AI Studio with 262k context and 32k output. Registered "
+            "standalone because its quota differs from gemma-pool."
+        ),
+        max_context_tokens=262_144,
+        supports_tools=True,
+        supports_streaming=True,
+        cost_per_1m_input=0.0,
+        cost_per_1m_output=0.0,
+        default_temperature=0.7,
+        capabilities=ModelCapabilities(
+            supports_images=True,
+            supports_pdf=False,
+            supports_video=False,
+            supports_reasoning=True,
+            supports_search_grounding=True,
+            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
+            pdf_how="extract text and send as message content",
+        ),
+        best_for=[
+            "reasoning",
+            "code-generation",
+            "tool-calling",
+            "search-grounding",
+            "structured-output",
+            "long-context",
+        ],
+        limits=[
+            "free-tier on AI Studio",
+            "standalone-quota (not included in gemma-pool)",
+            "262k context",
+            "32k output",
+            "search-grounding",
+        ],
+        compliance=[
+            "google-ai-studio-tos",
+            "free-tier",
+            "api-key-required",
+            "gemma-open-weight",
+            "data-used-for-improvement (free tier)",
+        ],
+    )
+)
+
+# ---- Gemma 4 31B (reasoning-capable flagship) ----------------------------
+
+MODEL_REGISTRY.register(
+    ModelEntry(
+        model_id="gemma-4-31b-it",
+        provider="gemini",
+        api_style=ApiStyle.CHAT_COMPLETIONS,
+        endpoint=_CC,
+        description=(
+            "Google Gemma 4 31B IT - flagship reasoning-capable open-weight "
+            "model on AI Studio with 262k context and 32k output. Registered "
+            "standalone because its quota differs from gemma-pool."
+        ),
+        max_context_tokens=262_144,
+        supports_tools=True,
+        supports_streaming=True,
+        cost_per_1m_input=0.0,
+        cost_per_1m_output=0.0,
+        default_temperature=0.7,
+        capabilities=ModelCapabilities(
+            supports_images=True,
+            supports_pdf=False,
+            supports_video=False,
+            supports_reasoning=True,
+            supports_search_grounding=True,
+            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
+            pdf_how="extract text and send as message content",
+        ),
+        best_for=[
+            "general-purpose",
+            "reasoning",
+            "code-generation",
+            "tool-calling",
+            "search-grounding",
+            "structured-output",
+        ],
+        limits=[
+            "free-tier on AI Studio",
+            "standalone-quota (not included in gemma-pool)",
+            "262k context",
+            "32k output",
+            "search-grounding",
         ],
         compliance=[
             "google-ai-studio-tos",
