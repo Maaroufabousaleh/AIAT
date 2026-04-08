@@ -8,6 +8,9 @@ metadata:
   tags:
   - c_suite
   - office_cio
+  version_pin: null
+  update_policy: manual
+  evaluation_status: approved
 runtime:
   transport: process
   adapter_config:
@@ -45,3 +48,14 @@ observability:
   logs_format: json
   metrics_enabled: true
   traces_enabled: true
+integration:
+  adapter_entrypoint: CSuiteAgent
+  adapter_module: null
+  wrapper_config: {}
+  compatibility_tests: []
+  isolation_mode: native
+limits:
+  max_concurrent_tasks: 10
+  max_instances: 1
+  rate_limit_per_minute: 60
+  max_payload_size_bytes: 10485760

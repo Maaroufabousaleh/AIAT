@@ -387,6 +387,21 @@ worker_registry = sa.Table(
     sa.Column("capability_ids", sa.ARRAY(sa.UUID()), nullable=False, server_default="{}"),
     sa.Column("team_id", sa.Text()),
     sa.Column("status", sa.Text(), nullable=False, server_default="'ACTIVE'"),
+    sa.Column("version", sa.Text(), nullable=True),
+    sa.Column("source_repo", sa.Text(), nullable=True),
+    sa.Column("source_revision", sa.Text(), nullable=True),
+    sa.Column("version_pin", sa.Text(), nullable=True),
+    sa.Column("update_policy", sa.Text(), nullable=False, server_default="'manual'"),
+    sa.Column("evaluation_status", sa.Text(), nullable=True),
+    sa.Column("adapter_entrypoint", sa.Text(), nullable=False, server_default="'WorkerAgent'"),
+    sa.Column("adapter_module", sa.Text(), nullable=True),
+    sa.Column("wrapper_config", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("isolation_mode", sa.Text(), nullable=False, server_default="'native'"),
+    sa.Column("last_upstream_sync", sa.TIMESTAMP(timezone=True), nullable=True),
+    sa.Column("upstream_commit_sha", sa.Text(), nullable=True),
+    sa.Column("health_status", sa.Text(), nullable=False, server_default="'unknown'"),
+    sa.Column("last_seen_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    sa.Column("error_count", sa.Integer(), nullable=False, server_default="0"),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
@@ -394,6 +409,30 @@ worker_registry = sa.Table(
         "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
     sa.UniqueConstraint("name", name="uq_worker_registry_name"),
+)
+
+# ── 20a. evaluation_reports ──────────────────────────────────────────────────
+evaluation_reports = sa.Table(
+    "evaluation_reports",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "worker_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_registry.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column(
+        "evaluated_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    ),
+    sa.Column("checks", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("overall_score", sa.Float(), nullable=True),
+    sa.Column("verdict", sa.Text(), nullable=False, server_default="'PENDING'"),
+    sa.Column("evaluator_version", sa.Text(), nullable=True),
+    sa.Column("notes", sa.Text(), nullable=True),
 )
 
 # ── 20. role_capability_map ───────────────────────────────────────────────────

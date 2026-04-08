@@ -146,6 +146,42 @@ class RegisterWorkerRequest(BaseModel):
     team_id: str | None = None
 
 
+class UpdateWorkerRequest(BaseModel):
+    adapter_type: str | None = None
+    adapter_config: dict[str, Any] | None = None
+    sandbox_profile: str | None = None
+    capability_ids: list[UUID] | None = None
+    team_id: str | None = None
+    version: str | None = None
+    version_pin: str | None = None
+    update_policy: str | None = None
+    adapter_entrypoint: str | None = None
+    adapter_module: str | None = None
+    wrapper_config: dict[str, Any] | None = None
+    isolation_mode: str | None = None
+
+
+class WorkerStatusTransition(BaseModel):
+    action: str  # ACTIVATE, DEACTIVATE, DRAIN, RECLASSIFY
+    new_status: str | None = None
+    new_role: str | None = None
+
+
+class WorkerUpgradeRequest(BaseModel):
+    source_revision: str | None = None
+    run_compat_tests: bool = True
+
+
+class WorkerEvaluateRequest(BaseModel):
+    source_repo: str | None = None
+    checks: list[str] | None = None
+
+
+class ImportWorkersRequest(BaseModel):
+    workers_dir: str = "workers"
+    dry_run: bool = False
+
+
 class CreateFlowRequest(BaseModel):
     name: str
     description: str | None = None
@@ -407,6 +443,39 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         app.state.watchdog_task = asyncio.create_task(
             watchdog_loop(storage, controller, watchdog_config, boot_at, stop_event)
         )
+
+        # Seed workers from YAML manifests
+        try:
+            from pathlib import Path
+            from mas_core.worker_registry.seeder import seed_workers_from_directory
+
+            workers_dir = Path(os.environ.get("WORKERS_DIR", "workers"))
+            if workers_dir.is_dir():
+                results = await seed_workers_from_directory(
+                    storage=storage,
+                    workers_dir=workers_dir,
+                    dry_run=False,
+                )
+                errors = [r for r in results if r.action == "error"]
+                if errors:
+                    logger.error(
+                        "Worker manifest seeding completed with %d error(s): %s",
+                        len(errors),
+                        ", ".join(f"{r.worker_id}: {r.details}" for r in errors),
+                    )
+                    if os.environ.get("SEEDING_STRICT") == "1":
+                        raise RuntimeError(
+                            f"Worker manifest seeding failed with {len(errors)} error(s). "
+                            f"Set SEEDING_STRICT=0 to allow startup despite seeding failures."
+                        )
+                else:
+                    logger.info("Worker manifest seeding completed successfully")
+            else:
+                logger.warning("Workers directory %s not found; skipping seeding", workers_dir)
+        except RuntimeError:
+            raise
+        except Exception:
+            logger.exception("Worker manifest seeding failed; continuing anyway")
 
     yield
 
@@ -1503,6 +1572,292 @@ async def deregister_worker(worker_id: UUID) -> dict[str, str]:
     storage = _storage()
     await storage.update_worker_status(worker_id, status="DEREGISTERED")
     return {"status": "deregistered"}
+
+
+@app.put("/capabilities/workers/{worker_id}")
+async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, Any]:
+    """Update a worker's configuration."""
+    storage = _storage()
+    existing = await storage.get_worker(worker_id)
+    if existing is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    update_kwargs: dict[str, Any] = {}
+    if req.adapter_type is not None:
+        update_kwargs["adapter_type"] = req.adapter_type
+    if req.adapter_config is not None:
+        update_kwargs["adapter_config"] = req.adapter_config
+    if req.sandbox_profile is not None:
+        update_kwargs["sandbox_profile"] = req.sandbox_profile
+    if req.capability_ids is not None:
+        update_kwargs["capability_ids"] = req.capability_ids
+    if req.team_id is not None:
+        update_kwargs["team_id"] = req.team_id
+    if req.version is not None:
+        update_kwargs["version"] = req.version
+    if req.version_pin is not None:
+        update_kwargs["version_pin"] = req.version_pin
+    if req.update_policy is not None:
+        update_kwargs["update_policy"] = req.update_policy
+    if req.adapter_entrypoint is not None:
+        update_kwargs["adapter_entrypoint"] = req.adapter_entrypoint
+    if req.adapter_module is not None:
+        update_kwargs["adapter_module"] = req.adapter_module
+    if req.wrapper_config is not None:
+        update_kwargs["wrapper_config"] = req.wrapper_config
+    if req.isolation_mode is not None:
+        update_kwargs["isolation_mode"] = req.isolation_mode
+
+    if update_kwargs:
+        await storage.update_worker_config(worker_id, **update_kwargs)
+
+    updated = await storage.get_worker(worker_id)
+    return _serialize(updated)  # type: ignore[arg-type]
+
+
+@app.patch("/capabilities/workers/{worker_id}/status")
+async def transition_worker_status(
+    worker_id: UUID,
+    req: WorkerStatusTransition,
+) -> dict[str, Any]:
+    """Transition a worker's lifecycle status.
+
+    Actions:
+    - ACTIVATE: set status to ACTIVE
+    - DEACTIVATE: set status to INACTIVE
+    - DRAIN: set status to DRAINING (finish current tasks, no new ones)
+    - RECLASSIFY: change the worker's role (e.g. worker -> tool)
+    """
+    storage = _storage()
+    existing = await storage.get_worker(worker_id)
+    if existing is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    action_map = {
+        "ACTIVATE": "ACTIVE",
+        "DEACTIVATE": "INACTIVE",
+        "DRAIN": "DRAINING",
+    }
+
+    if req.action in action_map:
+        new_status = req.new_status or action_map[req.action]
+        await storage.update_worker_status(worker_id, status=new_status)
+    elif req.action == "RECLASSIFY":
+        updates: dict[str, Any] = {}
+        if req.new_status:
+            await storage.update_worker_status(worker_id, status=req.new_status)
+        if req.new_role:
+            updates["adapter_entrypoint"] = req.new_role
+        if updates:
+            await storage.update_worker_config(worker_id, **updates)
+    else:
+        raise HTTPException(400, f"Unknown action: {req.action}")
+
+    updated = await storage.get_worker(worker_id)
+    return _serialize(updated)  # type: ignore[arg-type]
+
+
+@app.post("/capabilities/workers/{worker_id}/upgrade")
+async def upgrade_worker(
+    worker_id: UUID,
+    req: WorkerUpgradeRequest,
+) -> dict[str, Any]:
+    """Trigger an upgrade for a worker from its upstream source.
+
+    Pulls latest from the upstream repo, runs compatibility tests,
+    and updates the worker if successful.
+    """
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    if not worker.get("source_repo"):
+        raise HTTPException(400, "Worker has no source_repo configured")
+
+    from mas_core.worker_registry.ingestion import pull_upstream
+    from mas_core.worker_registry.compat_tests import run_compatibility_tests
+
+    try:
+        commit_sha = await pull_upstream(
+            worker_id=worker_id,
+            source_repo=worker["source_repo"],
+            storage=storage,
+            target_revision=req.source_revision,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Upstream pull failed: {exc}")
+
+    test_results = None
+    if req.run_compat_tests:
+        try:
+            test_results = await run_compatibility_tests(worker_id=worker_id, storage=storage)
+        except Exception as exc:
+            await storage.update_worker_health(worker_id, health_status="degraded")
+            raise HTTPException(500, f"Compatibility tests failed: {exc}")
+
+    if test_results and not test_results.get("passed", True):
+        await storage.update_worker_health(worker_id, health_status="degraded")
+        raise HTTPException(409, "Compatibility tests did not pass — upgrade not applied")
+
+    await storage.update_worker_upstream(
+        worker_id=worker_id,
+        upstream_commit_sha=commit_sha,
+    )
+    await storage.update_worker_health(worker_id, health_status="healthy")
+
+    updated = await storage.get_worker(worker_id)
+    return {
+        **_serialize(updated),  # type: ignore[arg-type]
+        "compat_tests": test_results,
+    }
+
+
+@app.post("/capabilities/workers/import")
+async def import_workers(req: ImportWorkersRequest) -> dict[str, Any]:
+    """Bulk import workers from a directory of YAML manifests."""
+    from pathlib import Path
+
+    from mas_core.worker_registry.seeder import seed_workers_from_directory
+
+    storage = _storage()
+    workers_dir = Path(req.workers_dir).resolve()
+
+    base = Path(os.getcwd()).resolve()
+    try:
+        workers_dir.relative_to(base)
+    except ValueError:
+        raise HTTPException(400, f"Workers directory must be within {base}")
+
+    if not workers_dir.is_dir():
+        raise HTTPException(400, f"Workers directory not found: {workers_dir}")
+
+    results = await seed_workers_from_directory(
+        storage=storage,
+        workers_dir=workers_dir,
+        dry_run=req.dry_run,
+    )
+
+    summary = {
+        "total": len(results),
+        "created": sum(1 for r in results if r.action == "created"),
+        "updated": sum(1 for r in results if r.action == "updated"),
+        "skipped": sum(1 for r in results if r.action == "skipped"),
+        "errors": sum(1 for r in results if r.action == "error"),
+        "details": [
+            {"worker_id": r.worker_id, "action": r.action, "details": r.details} for r in results
+        ],
+    }
+    return summary
+
+
+@app.get("/capabilities/workers/{worker_id}/health")
+async def get_worker_health(worker_id: UUID) -> dict[str, Any]:
+    """Get health status for a worker."""
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    return {
+        "worker_id": str(worker_id),
+        "name": worker["name"],
+        "health_status": worker.get("health_status", "unknown"),
+        "last_seen_at": worker.get("last_seen_at"),
+        "error_count": worker.get("error_count", 0),
+        "status": worker["status"],
+        "uptime_since": worker.get("created_at"),
+    }
+
+
+@app.post("/capabilities/workers/{worker_id}/evaluate")
+async def evaluate_worker(
+    worker_id: UUID,
+    req: WorkerEvaluateRequest,
+) -> dict[str, Any]:
+    """Trigger a repository evaluation for a worker.
+
+    Evaluates the worker's source repo for architectural fit,
+    maintenance quality, licensing, security, and compatibility.
+    """
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    source_repo = req.source_repo or worker.get("source_repo")
+    if not source_repo:
+        raise HTTPException(400, "No source_repo configured for this worker")
+
+    from mas_core.worker_registry.evaluator import evaluate_repository
+
+    checks = req.checks or ["architecture", "maintenance", "licensing", "security", "compatibility"]
+
+    try:
+        report = await evaluate_repository(
+            worker_id=worker_id,
+            source_repo=source_repo,
+            storage=storage,
+            checks=checks,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Evaluation failed: {exc}")
+
+    await storage.update_worker_config(
+        worker_id=worker_id,
+        evaluation_status=report["verdict"].lower(),
+    )
+
+    return _serialize(report)  # type: ignore[arg-type]
+
+
+@app.get("/capabilities/workers/{worker_id}/upstream")
+async def get_worker_upstream(worker_id: UUID) -> dict[str, Any]:
+    """Get upstream repository info and pending updates for a worker."""
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    from mas_core.worker_registry.ingestion import check_for_updates
+
+    pending = None
+    if worker.get("source_repo"):
+        try:
+            pending = await check_for_updates(
+                source_repo=worker["source_repo"],
+                current_revision=worker.get("source_revision"),
+                current_commit=worker.get("upstream_commit_sha"),
+            )
+        except Exception:
+            pending = {"error": "Unable to check for updates"}
+
+    return {
+        "worker_id": str(worker_id),
+        "name": worker["name"],
+        "source_repo": worker.get("source_repo"),
+        "source_revision": worker.get("source_revision"),
+        "version_pin": worker.get("version_pin"),
+        "update_policy": worker.get("update_policy", "manual"),
+        "last_upstream_sync": worker.get("last_upstream_sync"),
+        "upstream_commit_sha": worker.get("upstream_commit_sha"),
+        "pending_updates": pending,
+    }
+
+
+@app.get("/capabilities/workers/{worker_id}/evaluations")
+async def get_worker_evaluations(
+    worker_id: UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[dict[str, Any]]:
+    """Get evaluation history for a worker."""
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+
+    reports = await storage.get_evaluation_reports(worker_id, limit=limit)
+    return [_serialize(r) for r in reports]
 
 
 # ═════════════════════════════════════════════════════════════════════════════

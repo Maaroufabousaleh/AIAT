@@ -2,18 +2,55 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import httpx
+
 from mas_core.protocols.enums import AgentRole
+from mas_core.memory.blob import BlobClient
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
+from ..config import get_settings
+
+logger = logging.getLogger(__name__)
+
+_blob_client: BlobClient | None = None
+
+
+async def get_blob_client() -> BlobClient:
+    """Get or create BlobClient connection."""
+    global _blob_client
+    if _blob_client is None:
+        settings = get_settings()
+        _blob_client = BlobClient(
+            endpoint_url=settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            bucket=settings.minio_bucket,
+        )
+        await _blob_client.connect()
+    return _blob_client
+
+
+async def close_blob_client() -> None:
+    """Close BlobClient connection."""
+    global _blob_client
+    if _blob_client:
+        await _blob_client.close()
+        _blob_client = None
+
 
 _ADMIN = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
-_WORKER = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN, AgentRole.WORKER]
+_WORKER = [
+    AgentRole.ORCHESTRATOR,
+    AgentRole.EXECUTIVE,
+    AgentRole.C_SUITE,
+    AgentRole.ADMIN,
+    AgentRole.WORKER,
+]
 _ALL = list(AgentRole)
 
-
-# ── Infrastructure provisioning ────────────────────────────────────────────
 
 class InfraProvisionTool(BaseTool):
     name = "infra.provision"
@@ -25,7 +62,9 @@ class InfraProvisionTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"resource": kwargs.get("resource", ""), "provisioned": True}
+        resource = kwargs.get("resource", "")
+        config = kwargs.get("config", {})
+        return {"resource": resource, "config": config, "provisioned": True}
 
 
 class CICDConfigureTool(BaseTool):
@@ -38,7 +77,9 @@ class CICDConfigureTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"pipeline": kwargs.get("pipeline", ""), "configured": True}
+        pipeline = kwargs.get("pipeline", "")
+        config = kwargs.get("config", {})
+        return {"pipeline": pipeline, "config": config, "configured": True}
 
 
 class MonitoringSetupTool(BaseTool):
@@ -51,7 +92,8 @@ class MonitoringSetupTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"rules": kwargs.get("rules", []), "setup": True}
+        rules = kwargs.get("rules", [])
+        return {"rules": rules, "setup": True}
 
 
 class SecretsManageTool(BaseTool):
@@ -64,7 +106,10 @@ class SecretsManageTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"action": kwargs.get("action", "create"), "secret_name": kwargs.get("name", ""), "ok": True}
+        action = kwargs.get("action", "create")
+        name = kwargs.get("name", "")
+        value = kwargs.get("value", "")
+        return {"action": action, "secret_name": name, "ok": True}
 
 
 class InfraReadySignalTool(BaseTool):
@@ -77,10 +122,9 @@ class InfraReadySignalTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"signaled": True, "target": kwargs.get("target", "")}
+        target = kwargs.get("target", "")
+        return {"signaled": True, "target": target}
 
-
-# ── Blob storage ───────────────────────────────────────────────────────────
 
 class BlobUploadTool(BaseTool):
     name = "blob.upload"
@@ -91,27 +135,62 @@ class BlobUploadTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {
-            "bucket": kwargs.get("bucket", "default"),
-            "key": kwargs.get("key", ""),
-            "size_bytes": len(kwargs.get("content", "")),
-            "uploaded": True,
-        }
+        project_id = kwargs.get("project_id", "default")
+        key = kwargs.get("key", "")
+        content = kwargs.get("content", "")
+        content_type = kwargs.get("content_type", "text/plain")
+
+        if not key:
+            raise ValueError("key is required")
+        if not content:
+            raise ValueError("content is required")
+
+        blob = await get_blob_client()
+        try:
+            ref = await blob.upload(
+                project_id=project_id,
+                key=key,
+                data=content.encode("utf-8"),
+                content_type=content_type,
+            )
+            return {
+                "bucket": ref.bucket,
+                "key": ref.key,
+                "size_bytes": ref.size_bytes,
+                "sha256": ref.sha256,
+                "uploaded": True,
+            }
+        except Exception as e:
+            logger.error("blob_upload_error", extra={"key": key, "error": str(e)}, exc_info=True)
+            raise RuntimeError(f"Blob upload failed: {e}")
 
 
 class BlobDownloadTool(BaseTool):
     name = "blob.download"
     group = ToolGroup.KPI_UTILITY
     description = "Download a file from MinIO blob storage."
-    allowed_roles = _ALL  # Even sub-agents can download
+    allowed_roles = _ALL
     cache_ttl_seconds = 30
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {
-            "bucket": kwargs.get("bucket", "default"),
-            "key": kwargs.get("key", ""),
-            "content": "[stub] blob content",
-        }
+        project_id = kwargs.get("project_id", "default")
+        key = kwargs.get("key", "")
+
+        if not key:
+            raise ValueError("key is required")
+
+        blob = await get_blob_client()
+        try:
+            data = await blob.download_by_key(project_id=project_id, key=key)
+            return {
+                "bucket": blob._bucket,
+                "key": f"{project_id}/{key}",
+                "content": data.decode("utf-8"),
+                "size_bytes": len(data),
+            }
+        except Exception as e:
+            logger.error("blob_download_error", extra={"key": key, "error": str(e)}, exc_info=True)
+            raise RuntimeError(f"Blob download failed: {e}")
 
 
 class BlobListTool(BaseTool):
@@ -122,8 +201,20 @@ class BlobListTool(BaseTool):
     cache_ttl_seconds = 15
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {
-            "bucket": kwargs.get("bucket", "default"),
-            "prefix": kwargs.get("prefix", ""),
-            "objects": [],
-        }
+        project_id = kwargs.get("project_id", "default")
+        prefix = kwargs.get("prefix", "")
+
+        blob = await get_blob_client()
+        try:
+            objects = await blob.list_objects(project_id=project_id, prefix=prefix)
+            return {
+                "project_id": project_id,
+                "prefix": prefix,
+                "objects": objects,
+                "count": len(objects),
+            }
+        except Exception as e:
+            logger.error(
+                "blob_list_error", extra={"project_id": project_id, "error": str(e)}, exc_info=True
+            )
+            raise RuntimeError(f"Blob list failed: {e}")

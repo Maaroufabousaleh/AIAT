@@ -12,6 +12,7 @@ dependencies = [
     "redis[hiredis]>=5.0",
     "aiolimiter>=1.1",          # token-bucket rate limiting per tool group
     "httpx[http2]>=0.27",       # web_search, external API calls
+    "playwright>=1.42",         # browser automation
     "pydantic-settings>=2.3",
     "structlog>=24.2",
     "prometheus-fastapi-instrumentator>=7.0",

@@ -83,6 +83,14 @@ class ToolRegistry:
         tool_name = request.tool_name
         resolved_tool_name = resolve_tool_name(tool_name)
         if resolved_tool_name is None:
+            logger.warning(
+                "tool_not_found",
+                extra={
+                    "tool_name": tool_name,
+                    "caller_role": request.caller_role.value if request.caller_role else None,
+                    "caller_id": request.caller_id,
+                },
+            )
             return self._error_response(
                 request, error=f"Tool '{tool_name}' not found.", error_code="TOOL_NOT_FOUND"
             )
@@ -91,9 +99,28 @@ class ToolRegistry:
 
         tool = self._tools.get(resolved_tool_name)
         if tool is None:
+            logger.warning(
+                "tool_not_registered",
+                extra={
+                    "tool_name": tool_name,
+                    "resolved_tool_name": resolved_tool_name,
+                    "caller_role": request.caller_role.value if request.caller_role else None,
+                },
+            )
             return self._error_response(
                 request, error=f"Tool '{tool_name}' not found.", error_code="TOOL_NOT_FOUND"
             )
+
+        logger.info(
+            "tool_call_start",
+            extra={
+                "tool": resolved_tool_name,
+                "caller_role": request.caller_role.value if request.caller_role else None,
+                "caller_id": request.caller_id,
+                "caller_team": request.caller_team,
+                "project_id": request.project_id,
+            },
+        )
 
         result = self._policy.can_use_tool(
             request.caller_role,
@@ -101,6 +128,14 @@ class ToolRegistry:
             sender_team=request.caller_team,
         )
         if result is not True:
+            logger.warning(
+                "tool_access_denied",
+                extra={
+                    "tool": resolved_tool_name,
+                    "caller_role": request.caller_role.value if request.caller_role else None,
+                    "reason": result,
+                },
+            )
             return self._error_response(
                 request,
                 error=f"Access denied: {result}",
@@ -110,6 +145,13 @@ class ToolRegistry:
 
         breaker = self._breakers[resolved_tool_name]
         if not await breaker.allow_request():
+            logger.warning(
+                "tool_circuit_open",
+                extra={
+                    "tool": resolved_tool_name,
+                    "circuit_state": breaker.state.value,
+                },
+            )
             return self._error_response(
                 request,
                 error=f"Circuit breaker OPEN for '{tool_name}'.",
@@ -121,6 +163,13 @@ class ToolRegistry:
         if self._rate_limiter:
             allowed, remaining, reset_at = await self._rate_limiter.acquire(group)
             if not allowed:
+                logger.warning(
+                    "tool_rate_limited",
+                    extra={
+                        "tool": resolved_tool_name,
+                        "group": group.value,
+                    },
+                )
                 return self._error_response(
                     request,
                     error=f"Rate limit exceeded for group '{group.value}'.",
@@ -137,6 +186,13 @@ class ToolRegistry:
             cached = await self._cache.get(resolved_tool_name, kwargs)
             if cached is not None:
                 duration = (time.monotonic() - t0) * 1000
+                logger.info(
+                    "tool_call_cache_hit",
+                    extra={
+                        "tool": resolved_tool_name,
+                        "duration_ms": round(duration, 2),
+                    },
+                )
                 return ToolResponse(
                     tool_name=tool_name,
                     idempotency_key=request.idempotency_key,
@@ -164,7 +220,16 @@ class ToolRegistry:
             set_tool_circuit_state(resolved_tool_name, breaker.state.value)
             logger.error(
                 "tool_execution_error",
-                extra={"tool": resolved_tool_name, "requested_tool": tool_name, "error": str(exc)},
+                extra={
+                    "tool": resolved_tool_name,
+                    "requested_tool": tool_name,
+                    "caller_role": request.caller_role.value if request.caller_role else None,
+                    "caller_id": request.caller_id,
+                    "caller_team": request.caller_team,
+                    "project_id": request.project_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
                 exc_info=True,
             )
             return self._error_response(
@@ -191,6 +256,16 @@ class ToolRegistry:
         if is_alias and isinstance(result_val, dict):
             result_val = dict(result_val)
             result_val.setdefault("_canonical_tool", resolved_tool_name)
+
+        logger.info(
+            "tool_call_success",
+            extra={
+                "tool": resolved_tool_name,
+                "duration_ms": round(duration, 2),
+                "caller_role": request.caller_role.value if request.caller_role else None,
+                "caller_id": request.caller_id,
+            },
+        )
 
         return ToolResponse(
             tool_name=tool_name,

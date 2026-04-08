@@ -1223,6 +1223,16 @@ class AgentStorage:
         team_id: str | None = None,
         status: str = "ACTIVE",
         worker_id: UUID | None = None,
+        version: str | None = None,
+        source_repo: str | None = None,
+        source_revision: str | None = None,
+        version_pin: str | None = None,
+        update_policy: str = "manual",
+        evaluation_status: str | None = None,
+        adapter_entrypoint: str = "WorkerAgent",
+        adapter_module: str | None = None,
+        wrapper_config: dict | None = None,
+        isolation_mode: str = "native",
     ) -> dict[str, Any]:
         """Register or re-register a worker (upsert on name)."""
         wid = worker_id or uuid4()
@@ -1236,6 +1246,16 @@ class AgentStorage:
             "capability_ids": capability_ids or [],
             "team_id": team_id,
             "status": status,
+            "version": version,
+            "source_repo": source_repo,
+            "source_revision": source_revision,
+            "version_pin": version_pin,
+            "update_policy": update_policy,
+            "evaluation_status": evaluation_status,
+            "adapter_entrypoint": adapter_entrypoint,
+            "adapter_module": adapter_module,
+            "wrapper_config": wrapper_config or {},
+            "isolation_mode": isolation_mode,
             "created_at": now,
             "updated_at": now,
         }
@@ -1251,6 +1271,16 @@ class AgentStorage:
                     "capability_ids": capability_ids or [],
                     "team_id": team_id,
                     "status": status,
+                    "version": version,
+                    "source_repo": source_repo,
+                    "source_revision": source_revision,
+                    "version_pin": version_pin,
+                    "update_policy": update_policy,
+                    "evaluation_status": evaluation_status,
+                    "adapter_entrypoint": adapter_entrypoint,
+                    "adapter_module": adapter_module,
+                    "wrapper_config": wrapper_config or {},
+                    "isolation_mode": isolation_mode,
                     "updated_at": now,
                 },
             )
@@ -1323,6 +1353,152 @@ class AgentStorage:
                     updated_at=datetime.now(tz=UTC),
                 )
             )
+
+    async def update_worker_config(
+        self,
+        worker_id: UUID,
+        *,
+        adapter_type: str | None = None,
+        adapter_config: dict | None = None,
+        sandbox_profile: str | None = None,
+        capability_ids: list[UUID] | None = None,
+        team_id: str | None = None,
+        version: str | None = None,
+        version_pin: str | None = None,
+        update_policy: str | None = None,
+        evaluation_status: str | None = None,
+        adapter_entrypoint: str | None = None,
+        adapter_module: str | None = None,
+        wrapper_config: dict | None = None,
+        isolation_mode: str | None = None,
+    ) -> None:
+        """Update a worker's configuration fields (partial update)."""
+        values: dict[str, Any] = {"updated_at": datetime.now(tz=UTC)}
+        if adapter_type is not None:
+            values["adapter_type"] = adapter_type
+        if adapter_config is not None:
+            values["adapter_config"] = adapter_config
+        if sandbox_profile is not None:
+            values["sandbox_profile"] = sandbox_profile
+        if capability_ids is not None:
+            values["capability_ids"] = capability_ids
+        if team_id is not None:
+            values["team_id"] = team_id
+        if version is not None:
+            values["version"] = version
+        if version_pin is not None:
+            values["version_pin"] = version_pin
+        if update_policy is not None:
+            values["update_policy"] = update_policy
+        if evaluation_status is not None:
+            values["evaluation_status"] = evaluation_status
+        if adapter_entrypoint is not None:
+            values["adapter_entrypoint"] = adapter_entrypoint
+        if adapter_module is not None:
+            values["adapter_module"] = adapter_module
+        if wrapper_config is not None:
+            values["wrapper_config"] = wrapper_config
+        if isolation_mode is not None:
+            values["isolation_mode"] = isolation_mode
+        if len(values) == 1:
+            return
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(**values)
+            )
+
+    async def update_worker_health(
+        self,
+        worker_id: UUID,
+        *,
+        health_status: str | None = None,
+        error_count: int | None = None,
+    ) -> None:
+        """Update a worker's health status and/or error count."""
+        values: dict[str, Any] = {
+            "last_seen_at": datetime.now(tz=UTC),
+            "updated_at": datetime.now(tz=UTC),
+        }
+        if health_status is not None:
+            values["health_status"] = health_status
+        if error_count is not None:
+            values["error_count"] = error_count
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(**values)
+            )
+
+    async def update_worker_upstream(
+        self,
+        worker_id: UUID,
+        *,
+        last_upstream_sync: datetime | None = None,
+        upstream_commit_sha: str | None = None,
+        source_revision: str | None = None,
+    ) -> None:
+        """Update a worker's upstream tracking fields."""
+        values: dict[str, Any] = {"updated_at": datetime.now(tz=UTC)}
+        if last_upstream_sync is not None:
+            values["last_upstream_sync"] = last_upstream_sync
+        if upstream_commit_sha is not None:
+            values["upstream_commit_sha"] = upstream_commit_sha
+        if source_revision is not None:
+            values["source_revision"] = source_revision
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(**values)
+            )
+
+    async def create_evaluation_report(
+        self,
+        *,
+        worker_id: UUID,
+        checks: dict[str, Any],
+        overall_score: float | None = None,
+        verdict: str = "PENDING",
+        evaluator_version: str | None = None,
+        notes: str | None = None,
+        report_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Store an evaluation report for a worker."""
+        rid = report_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": rid,
+            "worker_id": worker_id,
+            "evaluated_at": now,
+            "checks": checks,
+            "overall_score": overall_score,
+            "verdict": verdict,
+            "evaluator_version": evaluator_version,
+            "notes": notes,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.evaluation_reports.insert().values(**values))
+        return values
+
+    async def get_evaluation_reports(
+        self,
+        worker_id: UUID,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Get evaluation reports for a worker, newest first."""
+        q = (
+            t.evaluation_reports.select()
+            .where(t.evaluation_reports.c.worker_id == worker_id)
+            .order_by(t.evaluation_reports.c.evaluated_at.desc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Role-capability map

@@ -161,6 +161,12 @@ export default function ProjectDetailPage() {
         setNodeExecutions([]);
         setNodes([]);
         setEdges([]);
+        
+        const flowsRes = await fetch('/api/flows?is_active=true');
+        if (flowsRes.ok) {
+          const flows = await flowsRes.json();
+          setAvailableFlows(flows || []);
+        }
       }
     } catch {
       setFlowInstance(null);
@@ -302,6 +308,27 @@ export default function ProjectDetailPage() {
       setActionLoading(null);
     }
     setShowFlowSwitch(true);
+  }
+
+  async function handleAssignFlow(flowId: string) {
+    setActionLoading("assign-flow");
+    try {
+      const res = await fetch(`/api/projects/${id}/flow-instance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: flowId }),
+      });
+      if (res.ok) {
+        await loadFlowData();
+      } else {
+        const d = await res.json();
+        setFlowError(d.error || "Failed to assign flow");
+      }
+    } catch {
+      setFlowError("Failed to assign flow");
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   if (loading) {
@@ -469,10 +496,33 @@ export default function ProjectDetailPage() {
       {activeTab === "flow" && (
         <div className="space-y-4">
           {!flowInstance ? (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
-              <GitBranch size={32} className="mx-auto text-gray-600 mb-3" />
-              <p className="text-gray-400 text-sm">No flow attached to this project.</p>
-              <p className="text-gray-500 text-xs mt-1">Create a flow and attach it when creating a new project.</p>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <div className="text-center">
+                <GitBranch size={32} className="mx-auto text-gray-600 mb-3" />
+                <p className="text-gray-400 text-sm">No flow attached to this project.</p>
+                <p className="text-gray-500 text-xs mt-1 mb-4">Select a flow below to start orchestrating this project.</p>
+              </div>
+              {actionLoading === "load-flows" ? (
+                <div className="text-sm text-gray-500 py-4 text-center">Loading flows...</div>
+              ) : (
+                <div className="space-y-2 mt-4">
+                  {availableFlows.length > 0 ? (
+                    availableFlows.map((flow) => (
+                      <button
+                        key={flow.id}
+                        onClick={() => handleAssignFlow(flow.id)}
+                        disabled={actionLoading === "assign-flow"}
+                        className="w-full text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
+                      >
+                        <div className="text-gray-100 font-medium text-sm">{flow.name}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">v{flow.version} · {flow.description || "No description"}</div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="text-sm text-gray-500 py-4 text-center">No active flows available. <Link href="/flows" className="text-blue-400">Create one first →</Link></div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <>

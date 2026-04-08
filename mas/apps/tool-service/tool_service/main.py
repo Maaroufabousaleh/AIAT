@@ -69,6 +69,10 @@ async def lifespan(app: FastAPI):
 
     rate_limiter = RateLimiterPool()
 
+    from .tools.browser import close_browser_pool
+    from .tools.infra import close_blob_client
+    from .tools.memory import close_shared_memory_redis
+
     registry = ToolRegistry(settings, cache=cache, rate_limiter=rate_limiter)
     registry.register_all(get_all_tools())
     logger.info("Registered %d tools", len(registry.tool_names))
@@ -79,6 +83,10 @@ async def lifespan(app: FastAPI):
     app.state.redis = redis_client
 
     yield
+
+    await close_browser_pool()
+    await close_blob_client()
+    await close_shared_memory_redis()
 
     if redis_client:
         await redis_client.aclose()

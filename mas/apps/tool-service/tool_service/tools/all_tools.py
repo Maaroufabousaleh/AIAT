@@ -11,6 +11,14 @@ from .capability import (
     CapabilitySearchTool,
 )
 from .file import FileReadTool, FileWriteTool
+from .browser import (
+    BrowserNavigateTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserScreenshotTool,
+    BrowserEvaluateTool,
+    BrowserCloseTool,
+)
 from .infra import (
     BlobDownloadTool,
     BlobListTool,
@@ -41,7 +49,7 @@ from .project import (
     ReviewSubmitResponseTool,
     ReviewSubmitVetoTool,
 )
-from .flow import FlowAdvanceTool, FlowInvokeTool, FlowListTool, FlowStatusTool
+from .flow import FlowAdvanceTool, FlowAssignTool, FlowInvokeTool, FlowListTool, FlowStatusTool
 from .sprint_kpi import (
     EstimationAdjustTool,
     IssueCreateTool,
@@ -67,6 +75,13 @@ def get_all_tools() -> list[BaseTool]:
         # FILE
         FileReadTool(),
         FileWriteTool(),
+        # BROWSER
+        BrowserNavigateTool(),
+        BrowserClickTool(),
+        BrowserTypeTool(),
+        BrowserScreenshotTool(),
+        BrowserEvaluateTool(),
+        BrowserCloseTool(),
         # MEMORY
         SharedMemoryReadTool(),
         SharedMemoryWriteTool(),
@@ -93,6 +108,7 @@ def get_all_tools() -> list[BaseTool]:
         FlowInvokeTool(),
         FlowStatusTool(),
         FlowAdvanceTool(),
+        FlowAssignTool(),
         # SPRINT_KPI
         SprintCreateTool(),
         SprintActivateTool(),

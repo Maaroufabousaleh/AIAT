@@ -56,6 +56,7 @@ class AgentSpec(BaseModel):
     class_name: str = Field(..., alias="class")
     display_name: str
     system_prompt_file: str | None = None
+    worker_manifest_ref: str | None = None
     budget_defaults: TaskBudget = Field(default_factory=TaskBudget)
     tools: list[str] = Field(default_factory=list)
     min_instances: int = 1
