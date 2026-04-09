@@ -6,7 +6,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, TERMINAL_STATES, type WorkflowState } from "@/lib/constants";
 import { formatDistanceToNow, format } from "date-fns";
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch, ArrowRightCircle, FileText, Upload, Link, Trash2, Plus } from "lucide-react";
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch, ArrowRightCircle, FileText, Upload, Trash2, Plus, Link as LinkIcon } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -114,6 +114,7 @@ export default function ProjectDetailPage() {
   const [flowLoading, setFlowLoading] = useState(false);
   const [showFlowSwitch, setShowFlowSwitch] = useState(false);
   const [availableFlows, setAvailableFlows] = useState<Flow[]>([]);
+  const [flowError, setFlowError] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
@@ -875,7 +876,7 @@ export default function ProjectDetailPage() {
                       item.item_type === "URL" ? "bg-purple-900/30 text-purple-400" :
                       "bg-amber-900/30 text-amber-400"
                     )}>
-                      {item.item_type === "FILE" ? <FileText size={16} /> : item.item_type === "URL" ? <Link size={16} /> : <FileText size={16} />}
+                      {item.item_type === "FILE" ? <FileText size={16} /> : item.item_type === "URL" ? <LinkIcon size={16} /> : <FileText size={16} />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-white truncate">{item.name}</div>
