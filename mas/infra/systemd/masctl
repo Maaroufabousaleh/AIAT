@@ -1,0 +1,53 @@
+#!/bin/bash
+# MAS Control Script for systemd integration
+# Usage: masctl <service_name> <command>
+# Commands: start, stop, restart, status, logs
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_DIR="${SCRIPT_DIR}/../compose"
+
+if [ ! -f "${COMPOSE_DIR}/docker-compose.yml" ]; then
+    echo "Error: docker-compose.yml not found in ${COMPOSE_DIR}"
+    exit 1
+fi
+
+SERVICE_NAME="$1"
+COMMAND="$2"
+
+if [ -z "$SERVICE_NAME" ] || [ -z "$COMMAND" ]; then
+    echo "Usage: $0 <service_name> <command>"
+    echo "Commands: start, stop, restart, status, logs"
+    exit 1
+fi
+
+cd "${COMPOSE_DIR}"
+
+case "$COMMAND" in
+    start)
+        echo "Starting $SERVICE_NAME..."
+        docker compose up -d "$SERVICE_NAME"
+        ;;
+    stop)
+        echo "Stopping $SERVICE_NAME..."
+        docker compose stop "$SERVICE_NAME"
+        ;;
+    restart)
+        echo "Restarting $SERVICE_NAME..."
+        docker compose restart "$SERVICE_NAME"
+        ;;
+    status)
+        echo "Status of $SERVICE_NAME:"
+        docker compose ps "$SERVICE_NAME"
+        ;;
+    logs)
+        echo "Showing logs for $SERVICE_NAME (press Ctrl+C to exit)..."
+        docker compose logs -f "$SERVICE_NAME"
+        ;;
+    *)
+        echo "Unknown command: $COMMAND"
+        echo "Valid commands: start, stop, restart, status, logs"
+        exit 1
+        ;;
+esac

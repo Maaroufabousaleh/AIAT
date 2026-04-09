@@ -1,0 +1,26 @@
+# ── exec_coo — COO office ──────────────────────────────────────────────────────
+# MAS role: executive
+# Operational coordinator, document lifecycle owner, department tasking.
+# Routes: all departments + all C-Suite + CEO.
+
+team_id: exec_coo
+
+admin:
+  agent_id: coo
+  role: executive
+  class: ExecutiveAgent
+  display_name: "Chief Operating Officer"
+  system_prompt_file: prompts/coo.md
+  budget_defaults:
+    max_llm_calls: 80
+    max_tool_calls: 40
+    max_cost_usd: 3.00
+  tools:
+    - document.create_draft
+    - document.get_latest
+    - review.aggregate
+    - review.start_session
+    - department_task
+    - project.status
+
+workers: []    # COO operates alone in this revision; workers could be added later

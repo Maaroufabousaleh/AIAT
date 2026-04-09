@@ -1,0 +1,36 @@
+# ── office_chrm — CHRM office ─────────────────────────────────────────────────
+# MAS role: c_suite
+# Resource planning, agent capacity assessment, team composition.
+# Reviews for: resource feasibility (Step 1), PDR resource/planning sections (Step 4).
+
+team_id: office_chrm
+
+admin:
+  agent_id: chrm
+  role: c_suite
+  class: CSuiteAgent
+  display_name: "Chief Human Resource Manager"
+  system_prompt_file: prompts/chrm.md
+  budget_defaults:
+    max_llm_calls: 25
+    max_tool_calls: 12
+    max_cost_usd: 0.75
+  tools:
+    - capability.list_workers
+    - kpi.query_history
+    - capability.search
+
+workers:
+  - agent_id: hr_analyst_1
+    role: worker
+    class: WorkerAgent
+    display_name: "HR Analyst"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 15
+      max_tool_calls: 8
+      max_cost_usd: 0.30
+    tools:
+      - capability.list_workers
+      - kpi.query_history

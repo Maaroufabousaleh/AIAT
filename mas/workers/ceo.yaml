@@ -1,0 +1,91 @@
+metadata:
+  id: ceo
+  name: Chief Executive Officer
+  version: '1.0'
+  description: Auto-generated baseline manifest for ceo
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - orchestrator
+  - exec_ceo
+  version_pin: null
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: CSuiteAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: project.create
+  version: '1.0'
+  description: Capability mapped from tool project.create
+  risk_level: low
+  required_tools:
+  - project.create
+- name: project.status
+  version: '1.0'
+  description: Capability mapped from tool project.status
+  risk_level: low
+  required_tools:
+  - project.status
+- name: project.transition
+  version: '1.0'
+  description: Capability mapped from tool project.transition
+  risk_level: low
+  required_tools:
+  - project.transition
+- name: human.notify
+  version: '1.0'
+  description: Capability mapped from tool human.notify
+  risk_level: low
+  required_tools:
+  - human.notify
+- name: human.await_decision
+  version: '1.0'
+  description: Capability mapped from tool human.await_decision
+  risk_level: low
+  required_tools:
+  - human.await_decision
+- name: review.aggregate
+  version: '1.0'
+  description: Capability mapped from tool review.aggregate
+  risk_level: low
+  required_tools:
+  - review.aggregate
+- name: approval.override_cso
+  version: '1.0'
+  description: Capability mapped from tool approval.override_cso
+  risk_level: low
+  required_tools:
+  - approval.override_cso
+sandbox:
+  profile: restricted
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true
+integration:
+  adapter_entrypoint: CSuiteAgent
+  adapter_module: null
+  wrapper_config: {}
+  compatibility_tests: []
+  isolation_mode: native
+limits:
+  max_concurrent_tasks: 10
+  max_instances: 1
+  rate_limit_per_minute: 60
+  max_payload_size_bytes: 10485760

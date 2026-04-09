@@ -1,0 +1,79 @@
+# ── dept_devops — DevOps Department ──────────────────────────────────────────
+# MAS role: admin (DevOps PM) + worker
+# Purpose: Infrastructure provisioning, CI/CD, environments, monitoring,
+#          secrets management.  CRITICAL PATH: must signal INFRA_READY before
+#          any dev sprint can begin.
+#
+# INFRA_READY Gate
+# ----------------
+# CTO cannot activate dev sprint issues until DevOps PM sends INFRA_READY.
+# Controller enforces: INFRA_PROVISIONING → infra_ready event → IN_PROGRESS.
+# If DevOps exceeds SLA (default 30 min), watchdog escalates CTO → CEO.
+#
+# Internal workflow:
+#   1. DevOps PM receives SPRINT_PLAN from CTO with INFRA-type issues.
+#   2. devops_eng  → provisions environments (dev, staging, prod stubs),
+#                    configures CI/CD pipelines.
+#   3. sre_agent   → sets up monitoring, alerting, logging infrastructure.
+#   4. DevOps PM   → manages secrets rotation, validates environment health.
+#   5. DevOps PM   → runs smoke tests against provisioned infra.
+#   6. DevOps PM   → sends INFRA_READY message to CTO (triggers controller gate).
+#
+# During sprints: DevOps receives ongoing INFRA issues (CI fixes, env scaling,
+# deployment tasks) like any other department.
+
+team_id: dept_devops
+
+admin:
+  agent_id: devops_pm
+  role: admin
+  class: AdminAgent
+  display_name: "DevOps PM"
+  system_prompt_file: prompts/devops_pm.md
+  budget_defaults:
+    max_llm_calls: 25
+    max_tool_calls: 40    # high — lots of infra tool calls
+    max_cost_usd: 1.00
+  tools:
+    - infra.provision
+    - cicd.configure
+    - monitoring.setup
+    - secrets.manage
+    - infra.ready_signal   # sends INFRA_READY event to controller via CTO
+    - blob.upload
+    - blob.download
+    - project.status
+
+workers:
+  - agent_id: devops_eng_1
+    role: worker
+    class: WorkerAgent
+    display_name: "DevOps Engineer"
+    min_instances: 1
+    max_instances: 2
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 30
+      max_cost_usd: 0.75
+    tools:
+      - infra.provision
+      - cicd.configure
+      - blob.upload
+      - web_search
+      - capability.search
+
+  - agent_id: sre_agent_1
+    role: worker
+    class: WorkerAgent
+    display_name: "SRE Agent"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 15
+      max_tool_calls: 20
+      max_cost_usd: 0.50
+    tools:
+      - monitoring.setup
+      - secrets.manage
+      - web_search
+      - blob.upload

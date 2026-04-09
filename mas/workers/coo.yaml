@@ -1,0 +1,85 @@
+metadata:
+  id: coo
+  name: Chief Operating Officer
+  version: '1.0'
+  description: Auto-generated baseline manifest for coo
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - executive
+  - exec_coo
+  version_pin: null
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: ExecutiveAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: document.create_draft
+  version: '1.0'
+  description: Create a document draft.
+  risk_level: low
+  required_tools:
+  - document.create_draft
+- name: document.get_latest
+  version: '1.0'
+  description: Fetch latest document version.
+  risk_level: low
+  required_tools:
+  - document.get_latest
+- name: review.aggregate
+  version: '1.0'
+  description: Aggregate review responses.
+  risk_level: low
+  required_tools:
+  - review.aggregate
+- name: review.start_session
+  version: '1.0'
+  description: Capability mapped from tool review.start_session
+  risk_level: low
+  required_tools:
+  - review.start_session
+- name: department_task
+  version: '1.0'
+  description: Capability mapped from tool department_task
+  risk_level: low
+  required_tools:
+  - department_task
+- name: project.status
+  version: '1.0'
+  description: Capability mapped from tool project.status
+  risk_level: low
+  required_tools:
+  - project.status
+sandbox:
+  profile: restricted
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true
+integration:
+  adapter_entrypoint: ExecutiveAgent
+  adapter_module: null
+  wrapper_config: {}
+  compatibility_tests: []
+  isolation_mode: native
+limits:
+  max_concurrent_tasks: 10
+  max_instances: 1
+  rate_limit_per_minute: 60
+  max_payload_size_bytes: 10485760

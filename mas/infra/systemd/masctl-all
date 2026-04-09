@@ -1,0 +1,77 @@
+#!/bin/bash
+# MAS Control Script for managing all services via systemd
+# Usage: masctl-all <command>
+# Commands: start, stop, restart, status
+
+set -e
+
+SERVICES=(
+    redis-acl-init
+    redis
+    postgres
+    pgbouncer
+    minio
+    minio-init
+    message-router
+    tool-service
+    orchestrator-api
+    dashboard
+    team-exec-ceo
+    team-exec-coo
+    team-office-cfo
+    team-office-cio
+    team-office-chrm
+    team-office-cso
+    team-office-cto
+    team-dept-production
+    team-dept-system
+    team-dept-qa
+    team-dept-devops
+)
+
+COMMAND="$1"
+
+if [ -z "$COMMAND" ]; then
+    echo "Usage: $0 <command>"
+    echo "Commands: start, stop, restart, status"
+    exit 1
+fi
+
+case "$COMMAND" in
+    start)
+        echo "Starting all MAS services..."
+        for service in "${SERVICES[@]}"; do
+            echo "Starting $service..."
+            systemctl start mas-$service.service || echo "Warning: Failed to start $service"
+        done
+        echo "All services started. Use '$0 status' to check status."
+        ;;
+    stop)
+        echo "Stopping all MAS services..."
+        # Stop in reverse order for dependencies
+        for (( i=${#SERVICES[@]}-1; i>=0; i-- )); do
+            service="${SERVICES[$i]}"
+            echo "Stopping $service..."
+            systemctl stop mas-$service.service || echo "Warning: Failed to stop $service"
+        done
+        ;;
+    restart)
+        echo "Restarting all MAS services..."
+        $0 stop
+        sleep 5
+        $0 start
+        ;;
+    status)
+        echo "MAS Services Status:"
+        echo "===================="
+        for service in "${SERVICES[@]}"; do
+            status=$(systemctl is-active mas-$service.service 2>/dev/null || echo "inactive")
+            printf "%-25s %s\n" "mas-$service.service" "$status"
+        done
+        ;;
+    *)
+        echo "Unknown command: $COMMAND"
+        echo "Valid commands: start, stop, restart, status"
+        exit 1
+        ;;
+esac

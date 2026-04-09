@@ -1,0 +1,31 @@
+# ── Dockerfile.team-runner ────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY packages/mas-core/ /tmp/mas-core/
+COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
+COPY apps/team-runner/ /tmp/team-runner/
+COPY teams/ /tmp/teams/
+
+RUN pip install --no-deps /tmp/mas-core && \
+    pip install --no-deps /tmp/mas-tools-sdk && \
+    pip install /tmp/team-runner && \
+    pip install \
+        httpx \
+        pydantic \
+        pydantic-settings \
+        redis \
+        structlog \
+        asyncpg \
+        psutil
+
+COPY apps/team-runner/team_runner/ /app/team_runner/
+COPY teams/ /app/teams/
+
+WORKDIR /app
+
+ENV TEAM_CONFIG=/app/teams/exec_ceo.yaml
+EXPOSE 8080
+
+CMD ["python", "-m", "team_runner.main"]

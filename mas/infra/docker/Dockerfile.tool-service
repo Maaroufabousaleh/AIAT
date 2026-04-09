@@ -1,0 +1,30 @@
+# ── Dockerfile.tool-service ───────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY packages/mas-core/ /tmp/mas-core/
+COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
+COPY apps/tool-service/ /tmp/tool-service/
+
+RUN pip install --no-deps /tmp/mas-core && \
+    pip install --no-deps /tmp/mas-tools-sdk && \
+    pip install /tmp/tool-service && \
+    pip install \
+        uvicorn \
+        httpx \
+        fastapi \
+        pydantic \
+        pydantic-settings \
+        redis \
+        structlog \
+        psutil \
+        aiolimiter
+
+COPY apps/tool-service/tool_service/ /app/tool_service/
+
+WORKDIR /app
+
+EXPOSE 8002
+
+CMD ["uvicorn", "tool_service.main:app", "--host", "0.0.0.0", "--port", "8002"]

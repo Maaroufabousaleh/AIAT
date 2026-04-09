@@ -1,0 +1,32 @@
+# ── Dockerfile.message-router ─────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir uv==0.4.*
+
+COPY packages/mas-core/ /tmp/mas-core/
+COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
+COPY apps/message-router/ /tmp/message-router/
+
+RUN pip install --no-deps /tmp/mas-core && \
+    pip install --no-deps /tmp/mas-tools-sdk && \
+    pip install /tmp/message-router && \
+    pip install \
+        uvicorn \
+        httpx \
+        fastapi \
+        pydantic \
+        pydantic-settings \
+        redis \
+        structlog \
+        prometheus-client \
+        asyncpg \
+        psutil \
+        aiolimiter
+
+COPY apps/message-router/message_router/ /app/message_router/
+
+WORKDIR /app
+
+EXPOSE 8001
+
+CMD ["uvicorn", "message_router.main:app", "--host", "0.0.0.0", "--port", "8001"]

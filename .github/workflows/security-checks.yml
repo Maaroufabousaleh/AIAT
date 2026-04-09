@@ -1,0 +1,52 @@
+name: Security Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  credentials:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for default credentials in non-test files
+        run: |
+          # Patterns that indicate default/weak credentials
+          patterns=(
+            "changeme"
+            "toolcache_default_pass"
+            "change_me"
+            "mas_pass"
+            "dev-secret"
+          )
+          
+          # Files to skip (test files, config defaults)
+          skip_dirs=".git .venv node_modules __pycache__ .pytest_cache dist build"
+          
+          issues=""
+          
+          for pattern in "${patterns[@]}"; do
+            # Search in Python, TypeScript, YAML files, excluding test files
+            while IFS= read -r -d '' file; do
+              # Skip test files and this workflow
+              if [[ "$file" == *"_test.py" ]] || [[ "$file" == *".test." ]] || [[ "$file" == *"credentials.yml" ]]; then
+                continue
+              fi
+              # Check if it's a config default (line with Field(default=... or similar)
+              if grep -q "default=.*$pattern" "$file" 2>/dev/null; then
+                continue
+              fi
+              issues="$issues\n  $file: found '$pattern'"
+            done < <(grep -rlZ "$pattern" --include="*.py" --include="*.ts" --include="*.tsx" --include="*.yml" --include="*.yaml" . 2>/dev/null | grep -zv "^\\./\\.git")
+          done
+          
+          if [ -n "$issues" ]; then
+            echo "Found potential credential leaks:"
+            echo "$issues"
+            exit 1
+          fi
+          
+          echo "No default credentials found in source files."

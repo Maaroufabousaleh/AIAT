@@ -1,0 +1,74 @@
+# ── dept_production — Production Department ───────────────────────────────────
+# MAS role: admin (PM) + worker
+# Purpose: Create the Primary Design Review (PDR) document.
+#
+# Internal workflow:
+#   1. PM receives TASK from COO, decomposes into subtasks.
+#   2. requirements_writer  → functional & non-functional requirements.
+#   3. planner              → timeline, milestones, resource plan.
+#   4. cost_estimator       → financial plan and budget breakdown.
+#   5. PM aggregates → PDR → MinIO → DOCUMENT_SUBMIT event to controller.
+
+team_id: dept_production
+
+admin:
+  agent_id: production_pm
+  role: admin
+  class: AdminAgent
+  display_name: "Production PM"
+  system_prompt_file: prompts/production_pm.md
+  budget_defaults:
+    max_llm_calls: 20
+    max_tool_calls: 15
+    max_cost_usd: 0.75
+  tools:
+    - document.create_draft
+    - document.get_latest
+    - blob.upload
+    - blob.download
+    - project.status
+
+workers:
+  - agent_id: requirements_writer
+    role: worker
+    class: WorkerAgent
+    display_name: "Requirements Writer"
+    min_instances: 1
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 30
+      max_tool_calls: 10
+      max_cost_usd: 1.00
+    tools:
+      - web_search
+      - file_read
+      - blob.upload
+
+  - agent_id: planner
+    role: worker
+    class: WorkerAgent
+    display_name: "Planner"
+    min_instances: 1
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 8
+      max_cost_usd: 0.75
+    tools:
+      - web_search
+      - blob.upload
+
+  - agent_id: cost_estimator
+    role: worker
+    class: WorkerAgent
+    display_name: "Cost Estimator"
+    min_instances: 1
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 8
+      max_cost_usd: 0.50
+    tools:
+      - kpi.compute
+      - web_search
+      - blob.upload

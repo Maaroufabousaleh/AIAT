@@ -1,0 +1,6 @@
+name: tier0-standard
+profile: standard
+read_only_root: false
+drop_capabilities: false
+network_mode: unrestricted
+egress_allowlist: []

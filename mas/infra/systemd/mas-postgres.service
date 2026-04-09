@@ -1,0 +1,28 @@
+[Unit]
+Description=MAS postgres Service
+After=network.target local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/mas
+EnvironmentFile=-/opt/mas/.env
+ExecStart=/usr/local/bin/masctl postgres start
+ExecStop=/usr/local/bin/masctl postgres stop
+ExecReload=/usr/local/bin/masctl postgres restart
+Restart=unless-stopped
+RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Resource limits (adjust based on service needs)
+MemoryLimit=512M
+CPUQuota=50%
+# Uncomment for more restrictive sandboxing
+# ProtectSystem=full
+# ProtectHome=yes
+# PrivateTmp=yes
+# NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

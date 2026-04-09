@@ -1,0 +1,27 @@
+# ── exec_ceo — CEO office ──────────────────────────────────────────────────────
+# MAS role: orchestrator
+# Human interface, top-level orchestration, project lifecycle management.
+# The CEO is the only agent that interacts directly with the Human API.
+
+team_id: exec_ceo
+
+admin:
+  agent_id: ceo
+  role: orchestrator
+  class: CSuiteAgent           # uses ExecutiveAgent override in Phase 8
+  display_name: "Chief Executive Officer"
+  system_prompt_file: prompts/ceo.md   # populated in Phase 8
+  budget_defaults:
+    max_llm_calls: 50
+    max_tool_calls: 20
+    max_cost_usd: 2.00
+  tools:
+    - project.create
+    - project.status
+    - project.transition
+    - human.notify
+    - human.await_decision
+    - review.aggregate
+    - approval.override_cso
+
+workers: []    # CEO operates alone; no worker agents in this team

@@ -1,0 +1,8 @@
+name: tier1-restricted
+profile: restricted
+read_only_root: true
+drop_capabilities: true
+network_mode: egress-allowlist
+egress_allowlist:
+  - api.github.com:443
+  - pypi.org:443

@@ -1,0 +1,79 @@
+metadata:
+  id: kpi_analyst_1
+  name: KPI Analyst
+  version: '1.0'
+  description: Auto-generated baseline manifest for kpi_analyst_1
+  source_repo: local
+  source_revision: working-tree
+  tags:
+  - worker
+  - office_cto
+  version_pin: null
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: kpi.compute
+  version: '1.0'
+  description: Capability mapped from tool kpi.compute
+  risk_level: low
+  required_tools:
+  - kpi.compute
+- name: kpi.query_history
+  version: '1.0'
+  description: Capability mapped from tool kpi.query_history
+  risk_level: low
+  required_tools:
+  - kpi.query_history
+- name: kpi.update_agent_profile
+  version: '1.0'
+  description: Capability mapped from tool kpi.update_agent_profile
+  risk_level: low
+  required_tools:
+  - kpi.update_agent_profile
+- name: velocity.report
+  version: '1.0'
+  description: Capability mapped from tool velocity.report
+  risk_level: low
+  required_tools:
+  - velocity.report
+- name: estimation.adjust
+  version: '1.0'
+  description: Capability mapped from tool estimation.adjust
+  risk_level: low
+  required_tools:
+  - estimation.adjust
+sandbox:
+  profile: standard
+  filesystem: {}
+  network_mode: egress-allowlist
+  egress_allowlist:
+  - api.github.com:443
+  linux_security: {}
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true
+integration:
+  adapter_entrypoint: WorkerAgent
+  adapter_module: null
+  wrapper_config: {}
+  compatibility_tests: []
+  isolation_mode: native
+limits:
+  max_concurrent_tasks: 10
+  max_instances: 1
+  rate_limit_per_minute: 60
+  max_payload_size_bytes: 10485760

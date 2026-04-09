@@ -1,0 +1,35 @@
+# ── office_cio — CIO office ───────────────────────────────────────────────────
+# MAS role: c_suite
+# Technical feasibility, tech-stack assessment, integration analysis.
+# Reviews for: technical feasibility (Step 1), PDR technical sections (Step 4).
+
+team_id: office_cio
+
+admin:
+  agent_id: cio
+  role: c_suite
+  class: CSuiteAgent
+  display_name: "Chief Information Officer"
+  system_prompt_file: prompts/cio.md
+  budget_defaults:
+    max_llm_calls: 30
+    max_tool_calls: 15
+    max_cost_usd: 1.00
+  tools:
+    - capability.search
+    - web_search
+
+workers:
+  - agent_id: tech_analyst_1
+    role: worker
+    class: WorkerAgent
+    display_name: "Tech Analyst"
+    min_instances: 0
+    max_instances: 2
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - capability.search
+      - web_search
