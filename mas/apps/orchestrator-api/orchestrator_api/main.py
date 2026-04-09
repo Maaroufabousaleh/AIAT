@@ -17,6 +17,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1005,6 +1006,281 @@ async def get_sprints(project_id: UUID) -> list[dict[str, Any]]:
     storage = _storage()
     sprints = await storage.list_sprints(project_id)
     return [_serialize(s) for s in sprints]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Project Context Items
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class ChunkingStrategy(str, Enum):
+    FIXED_SIZE = "fixed_size"
+    SEMANTIC = "semantic"
+    SLIDING_WINDOW = "sliding_window"
+
+
+class CreateContextItemRequest(BaseModel):
+    item_type: str = Field(..., description="FILE | URL | TEXT | DOCUMENT")
+    name: str
+    description: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    blob_bucket: str | None = None
+    blob_key: str | None = None
+    blob_sha256: str | None = None
+    url: str | None = None
+    content_text: str | None = None
+    metadata: dict | None = None
+    tags: list[str] | None = None
+    chunking_strategy: ChunkingStrategy = ChunkingStrategy.FIXED_SIZE
+    chunk_size: int = Field(1000, ge=100, le=10000)
+    chunk_overlap: int = Field(200, ge=0, le=1000)
+    generate_embeddings: bool = False
+
+
+@app.get("/projects/{project_id}/context")
+async def list_project_context(
+    project_id: UUID,
+    item_type: str | None = None,
+    tags: str | None = None,
+) -> list[dict[str, Any]]:
+    """List all context items (attachments, URLs, text notes) for a project."""
+    storage = _storage()
+    tag_list = tags.split(",") if tags else None
+    items = await storage.list_context_items(project_id, item_type=item_type, tags=tag_list)
+    return [_serialize(item) for item in items]
+
+
+@app.post("/projects/{project_id}/context", status_code=201)
+async def create_project_context_item(
+    project_id: UUID,
+    req: CreateContextItemRequest,
+) -> dict[str, Any]:
+    """Add a new context item to a project."""
+    storage = _storage()
+    # Verify project exists
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    item = await storage.create_context_item(
+        project_id=project_id,
+        item_type=req.item_type,
+        name=req.name,
+        description=req.description,
+        mime_type=req.mime_type,
+        size_bytes=req.size_bytes,
+        blob_bucket=req.blob_bucket,
+        blob_key=req.blob_key,
+        blob_sha256=req.blob_sha256,
+        url=req.url,
+        content_text=req.content_text,
+        metadata=req.metadata,
+        tags=req.tags,
+        created_by="human",
+    )
+    return _serialize(item)
+
+
+@app.get("/projects/{project_id}/context/{item_id}")
+async def get_project_context_item(
+    project_id: UUID,
+    item_id: UUID,
+) -> dict[str, Any]:
+    """Get a specific context item."""
+    storage = _storage()
+    item = await storage.get_context_item(item_id)
+    if item is None or item.get("project_id") != project_id:
+        raise HTTPException(404, f"Context item {item_id} not found")
+    return _serialize(item)
+
+
+@app.delete("/projects/{project_id}/context/{item_id}")
+async def delete_project_context_item(
+    project_id: UUID,
+    item_id: UUID,
+) -> dict[str, Any]:
+    """Delete a context item."""
+    storage = _storage()
+    item = await storage.get_context_item(item_id)
+    if item is None or item.get("project_id") != project_id:
+        raise HTTPException(404, f"Context item {item_id} not found")
+    deleted = await storage.delete_context_item(item_id)
+    if not deleted:
+        raise HTTPException(500, f"Failed to delete context item {item_id}")
+    return {"status": "deleted", "item_id": str(item_id)}
+
+
+class SearchContextRequest(BaseModel):
+    query: str
+    limit: int = 5
+
+
+@app.post("/projects/{project_id}/context/search")
+async def search_project_context(
+    project_id: UUID,
+    req: SearchContextRequest,
+) -> list[dict[str, Any]]:
+    """Search project context items using basic text matching.
+
+    For full RAG capability with embeddings, this would integrate with
+    a vector database. Currently provides keyword-based filtering.
+    """
+    storage = _storage()
+    items = await storage.list_context_items(project_id)
+
+    query_lower = req.query.lower()
+    results = []
+    for item in items:
+        searchable_text = " ".join(
+            [
+                item.get("name", ""),
+                item.get("description", ""),
+                item.get("content_text", ""),
+                " ".join(item.get("tags", [])),
+            ]
+        ).lower()
+
+        if query_lower in searchable_text:
+            results.append(item)
+            if len(results) >= req.limit:
+                break
+
+    return [_serialize(item) for item in results]
+
+
+class HybridSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+    use_semantic: bool = False
+    query_vector: list[float] | None = None
+    filters: dict | None = None
+
+
+@app.post("/projects/{project_id}/context/hybrid-search")
+async def hybrid_search_context(
+    project_id: UUID,
+    req: HybridSearchRequest,
+) -> dict[str, Any]:
+    """Hybrid search over project context using keyword + optional semantic search.
+
+    Strategy:
+    1. Filter by project_id (always)
+    2. Keyword match on chunks.content_text
+    3. If use_semantic=True and query_vector provided, compute similarity
+    4. Combine results using hybrid scoring
+    5. Return ranked results with source item info
+    """
+    storage = _storage()
+
+    if req.use_semantic and req.query_vector:
+        results = await storage.search_context_hybrid(
+            project_id=project_id,
+            query=req.query,
+            query_vector=req.query_vector,
+            limit=req.limit,
+            filters=req.filters,
+        )
+        return {
+            "query": req.query,
+            "results": [
+                {
+                    "chunk": r,
+                    "item_id": str(r.get("context_item_id")),
+                    "match_type": "semantic",
+                    "score": r.get("hybrid_score", 1.0),
+                }
+                for r in results
+            ],
+            "total": len(results),
+        }
+
+    keyword_results = await storage.search_context_chunks_keyword(
+        project_id=project_id,
+        query=req.query,
+        limit=req.limit * 2,
+    )
+
+    results = []
+    seen_items: set[str] = set()
+
+    for chunk in keyword_results:
+        item_id = str(chunk.get("context_item_id"))
+        if item_id not in seen_items:
+            seen_items.add(item_id)
+            results.append(
+                {
+                    "chunk": chunk,
+                    "item_id": item_id,
+                    "match_type": "keyword",
+                    "score": 1.0,
+                }
+            )
+            if len(results) >= req.limit:
+                break
+
+    return {
+        "query": req.query,
+        "results": results,
+        "total": len(results),
+    }
+
+
+@app.post("/projects/{project_id}/context/chunks")
+async def create_context_chunk(
+    project_id: UUID,
+    req: CreateContextItemRequest,
+) -> dict[str, Any]:
+    """Create a context item and auto-chunk its content for RAG."""
+    storage = _storage()
+
+    item = await storage.create_context_item(
+        project_id=project_id,
+        item_type=req.item_type,
+        name=req.name,
+        description=req.description,
+        mime_type=req.mime_type,
+        size_bytes=req.size_bytes,
+        blob_bucket=req.blob_bucket,
+        blob_key=req.blob_key,
+        blob_sha256=req.blob_sha256,
+        url=req.url,
+        content_text=req.content_text,
+        metadata=req.metadata,
+        tags=req.tags,
+        created_by="human",
+    )
+
+    if req.content_text and len(req.content_text) > 100:
+        text = req.content_text
+        chunk_size = req.chunk_size
+        overlap = req.chunk_overlap
+
+        if req.chunking_strategy == ChunkingStrategy.SLIDING_WINDOW:
+            step = chunk_size - overlap
+            for i in range(0, len(text), step):
+                chunk_text = text[i : i + chunk_size]
+                await storage.create_context_chunk(
+                    context_item_id=UUID(item["id"]),
+                    project_id=project_id,
+                    chunk_index=i // step,
+                    content_text=chunk_text,
+                    token_count=len(chunk_text.split()),
+                    metadata={"source_location": f"chars {i}-{i + len(chunk_text)}"},
+                )
+        else:
+            for i in range(0, len(text), chunk_size):
+                chunk_text = text[i : i + chunk_size]
+                await storage.create_context_chunk(
+                    context_item_id=UUID(item["id"]),
+                    project_id=project_id,
+                    chunk_index=i // chunk_size,
+                    content_text=chunk_text,
+                    token_count=len(chunk_text.split()),
+                    metadata={"source_location": f"chars {i}-{i + len(chunk_text)}"},
+                )
+
+    return _serialize(item)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

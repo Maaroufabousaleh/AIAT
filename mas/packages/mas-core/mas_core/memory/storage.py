@@ -349,6 +349,393 @@ class AgentStorage:
         return [dict(r) for r in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # Project Context Items
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_context_item(
+        self,
+        *,
+        project_id: UUID,
+        item_type: str,
+        name: str,
+        description: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        blob_bucket: str | None = None,
+        blob_key: str | None = None,
+        blob_sha256: str | None = None,
+        url: str | None = None,
+        content_text: str | None = None,
+        metadata: dict | None = None,
+        tags: list[str] | None = None,
+        created_by: str,
+        item_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Create a new project context item (file attachment, URL, text, etc.)."""
+        iid = item_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": iid,
+            "project_id": project_id,
+            "item_type": item_type,
+            "name": name,
+            "description": description,
+            "mime_type": mime_type,
+            "size_bytes": size_bytes,
+            "blob_bucket": blob_bucket,
+            "blob_key": blob_key,
+            "blob_sha256": blob_sha256,
+            "url": url,
+            "content_text": content_text,
+            "metadata": metadata,
+            "tags": tags or [],
+            "created_by": created_by,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_context_items.insert().values(**values))
+        return values
+
+    async def get_context_item(self, item_id: UUID) -> dict[str, Any] | None:
+        """Fetch a context item by ID."""
+        async with self.engine.connect() as conn:
+            row = (
+                (
+                    await conn.execute(
+                        t.project_context_items.select().where(
+                            t.project_context_items.c.id == item_id
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row else None
+
+    async def list_context_items(
+        self,
+        project_id: UUID,
+        *,
+        item_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List context items for a project with optional filters."""
+        q = t.project_context_items.select().where(
+            t.project_context_items.c.project_id == project_id
+        )
+        if item_type:
+            q = q.where(t.project_context_items.c.item_type == item_type)
+        if tags:
+            q = q.where(t.project_context_items.c.tags.overlap(tags))
+        q = q.order_by(t.project_context_items.c.created_at.desc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_context_item(self, item_id: UUID) -> bool:
+        """Delete a context item. Returns True if deleted, False if not found."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.project_context_items.delete().where(t.project_context_items.c.id == item_id)
+            )
+            return result.rowcount > 0
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Project Context Chunks (RAG)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_context_chunk(
+        self,
+        *,
+        context_item_id: UUID,
+        project_id: UUID,
+        chunk_index: int,
+        content_text: str,
+        content_vector: list[float] | None = None,
+        source_location: str | None = None,
+        metadata: dict | None = None,
+        token_count: int | None = None,
+        chunk_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Create a chunk from a context item for RAG."""
+        cid = chunk_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": cid,
+            "context_item_id": context_item_id,
+            "project_id": project_id,
+            "chunk_index": chunk_index,
+            "content_text": content_text,
+            "content_vector": content_vector,
+            "source_location": source_location,
+            "metadata": metadata,
+            "token_count": token_count,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_context_chunks.insert().values(**values))
+        return values
+
+    async def list_context_chunks(
+        self,
+        project_id: UUID,
+        *,
+        context_item_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """List chunks for a project, optionally filtered by context item."""
+        q = t.project_context_chunks.select().where(
+            t.project_context_chunks.c.project_id == project_id
+        )
+        if context_item_id:
+            q = q.where(t.project_context_chunks.c.context_item_id == context_item_id)
+        q = q.order_by(t.project_context_chunks.c.chunk_index)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def search_context_chunks_keyword(
+        self,
+        project_id: UUID,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Keyword search over context chunks."""
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q = (
+            t.project_context_chunks.select()
+            .where(t.project_context_chunks.c.project_id == project_id)
+            .where(t.project_context_chunks.c.content_text.ilike(f"%{escaped}%"))
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def search_context_chunks_semantic(
+        self,
+        project_id: UUID,
+        query_vector: list[float],
+        *,
+        limit: int = 10,
+        filters: dict | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic search over context chunks using cosine similarity.
+
+        Requires pgvector extension and content_vector to be populated.
+        """
+        q = (
+            t.project_context_chunks.select()
+            .where(t.project_context_chunks.c.project_id == project_id)
+            .where(t.project_context_chunks.c.content_vector.isnot(None))
+        )
+
+        if filters:
+            if tag_ids := filters.get("tag_ids"):
+                q = q.where(t.project_context_chunks.c.metadata["tags"].has_any(tag_ids))
+            if source_types := filters.get("source_types"):
+                q = q.where(t.project_context_chunks.c.metadata["source_type"].in_(source_types))
+
+        q = q.order_by(t.project_context_chunks.c.content_vector.op("<=>")(query_vector)).limit(
+            limit
+        )
+
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def search_context_hybrid(
+        self,
+        project_id: UUID,
+        query: str,
+        query_vector: list[float] | None = None,
+        *,
+        limit: int = 10,
+        filters: dict | None = None,
+    ) -> list[dict[str, Any]]:
+        """Hybrid search combining keyword, metadata, and semantic search.
+
+        Strategy:
+        1. Always filter by project_id first
+        2. Run keyword search to get baseline results
+        3. If query_vector provided, compute semantic similarity
+        4. Combine and rank results by hybrid scoring
+        5. Apply metadata filters
+        """
+        keyword_results = await self.search_context_chunks_keyword(
+            project_id=project_id,
+            query=query,
+            limit=limit * 3,
+        )
+
+        if not query_vector:
+            return keyword_results[:limit]
+
+        semantic_results = await self.search_context_chunks_semantic(
+            project_id=project_id,
+            query_vector=query_vector,
+            limit=limit * 3,
+            filters=filters,
+        )
+
+        scored: dict[str, dict[str, Any]] = {}
+
+        for rank, chunk in enumerate(keyword_results):
+            chunk_id = str(chunk["id"])
+            scored[chunk_id] = {
+                **chunk,
+                "keyword_rank": rank + 1,
+                "semantic_rank": None,
+                "hybrid_score": 1.0 - (rank / (limit * 3)),
+                "match_types": ["keyword"],
+            }
+
+        for rank, chunk in enumerate(semantic_results):
+            chunk_id = str(chunk["id"])
+            if chunk_id in scored:
+                scored[chunk_id]["semantic_rank"] = rank + 1
+                scored[chunk_id]["hybrid_score"] = (
+                    scored[chunk_id]["hybrid_score"] + (1.0 - (rank / (limit * 3)))
+                ) / 2
+                scored[chunk_id]["match_types"].append("semantic")
+            else:
+                scored[chunk_id] = {
+                    **chunk,
+                    "keyword_rank": None,
+                    "semantic_rank": rank + 1,
+                    "hybrid_score": 1.0 - (rank / (limit * 3)),
+                    "match_types": ["semantic"],
+                }
+
+        if filters:
+            for chunk_id in list(scored.keys()):
+                chunk = scored[chunk_id]
+                metadata = chunk.get("metadata", {}) or {}
+                if date_range := filters.get("date_range"):
+                    chunk_date = metadata.get("created_at") or chunk.get("created_at")
+                    if chunk_date:
+                        if date_range.get("from") and chunk_date < date_range["from"]:
+                            del scored[chunk_id]
+                            continue
+                        if date_range.get("to") and chunk_date > date_range["to"]:
+                            del scored[chunk_id]
+                            continue
+
+        sorted_results = sorted(
+            scored.values(),
+            key=lambda x: x["hybrid_score"],
+            reverse=True,
+        )
+
+        return sorted_results[:limit]
+
+    async def delete_context_chunks(self, context_item_id: UUID) -> None:
+        """Delete all chunks for a context item."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.project_context_chunks.delete().where(
+                    t.project_context_chunks.c.context_item_id == context_item_id
+                )
+            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Project Context Tags
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_context_tag(
+        self,
+        *,
+        project_id: UUID,
+        name: str,
+        color: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a tag for project context items."""
+        tid = uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": tid,
+            "project_id": project_id,
+            "name": name,
+            "color": color,
+            "description": description,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_context_tags.insert().values(**values))
+        return values
+
+    async def list_context_tags(self, project_id: UUID) -> list[dict[str, Any]]:
+        """List all tags for a project."""
+        q = t.project_context_tags.select().where(t.project_context_tags.c.project_id == project_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_context_tag(self, tag_id: UUID) -> None:
+        """Delete a context tag."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.project_context_tags.delete().where(t.project_context_tags.c.id == tag_id)
+            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Project Context Relations
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_context_relation(
+        self,
+        *,
+        project_id: UUID,
+        source_item_id: UUID,
+        target_item_id: UUID,
+        relation_type: str,
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
+        """Create a relation between two context items."""
+        rid = uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": rid,
+            "project_id": project_id,
+            "source_item_id": source_item_id,
+            "target_item_id": target_item_id,
+            "relation_type": relation_type,
+            "metadata": metadata,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_context_relations.insert().values(**values))
+        return values
+
+    async def list_context_relations(
+        self,
+        project_id: UUID,
+        *,
+        source_item_id: UUID | None = None,
+        target_item_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """List relations for a project."""
+        q = t.project_context_relations.select().where(
+            t.project_context_relations.c.project_id == project_id
+        )
+        if source_item_id:
+            q = q.where(t.project_context_relations.c.source_item_id == source_item_id)
+        if target_item_id:
+            q = q.where(t.project_context_relations.c.target_item_id == target_item_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def delete_context_relation(self, relation_id: UUID) -> None:
+        """Delete a context relation."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.project_context_relations.delete().where(
+                    t.project_context_relations.c.id == relation_id
+                )
+            )
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # Review sessions & comments
     # ═══════════════════════════════════════════════════════════════════════════
 

@@ -269,6 +269,95 @@ system_config = sa.Table(
     ),
 )
 
+# ── 14. project_context_items ─────────────────────────────────────────────────
+project_context_items = sa.Table(
+    "project_context_items",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
+    sa.Column("item_type", sa.Text(), nullable=False),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("description", sa.Text()),
+    sa.Column("mime_type", sa.Text()),
+    sa.Column("size_bytes", sa.Integer()),
+    sa.Column("blob_bucket", sa.Text()),
+    sa.Column("blob_key", sa.Text()),
+    sa.Column("blob_sha256", sa.Text()),
+    sa.Column("url", sa.Text()),
+    sa.Column("content_text", sa.Text()),
+    sa.Column("metadata", JSONB()),
+    sa.Column("tags", sa.ARRAY(sa.Text())),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 14a. project_context_chunks ──────────────────────────────────────────────
+project_context_chunks = sa.Table(
+    "project_context_chunks",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "context_item_id",
+        sa.UUID(),
+        sa.ForeignKey("project_context_items.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("project_id", sa.UUID(), nullable=False),
+    sa.Column("chunk_index", sa.Integer(), nullable=False),
+    sa.Column("content_text", sa.Text(), nullable=False),
+    sa.Column("content_vector", JSONB()),
+    sa.Column("source_location", sa.Text()),
+    sa.Column("metadata", JSONB()),
+    sa.Column("token_count", sa.Integer()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
+# ── 14b. project_context_tags ────────────────────────────────────────────────
+project_context_tags = sa.Table(
+    "project_context_tags",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("project_id", sa.UUID(), nullable=False),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("color", sa.Text()),
+    sa.Column("description", sa.Text()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.UniqueConstraint("project_id", "name", name="uq_tags_project_name"),
+)
+
+# ── 14c. project_context_relations ──────────────────────────────────────────
+project_context_relations = sa.Table(
+    "project_context_relations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("project_id", sa.UUID(), nullable=False),
+    sa.Column(
+        "source_item_id",
+        sa.UUID(),
+        sa.ForeignKey("project_context_items.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column(
+        "target_item_id",
+        sa.UUID(),
+        sa.ForeignKey("project_context_items.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("relation_type", sa.Text(), nullable=False),
+    sa.Column("metadata", JSONB()),
+    sa.Column(
+        "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+)
+
 # ── 13. agent_checkpoints ────────────────────────────────────────────────────
 agent_checkpoints = sa.Table(
     "agent_checkpoints",

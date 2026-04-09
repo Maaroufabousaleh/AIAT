@@ -142,9 +142,9 @@ class TestModelsMetadata:
         "flow_node_executions",
     ]
 
-    def test_all_24_tables_present(self):
-        """metadata.tables should contain exactly 24 table names."""
-        assert len(metadata.tables) == 24
+    def test_all_28_tables_present(self):
+        """metadata.tables should contain exactly 28 table names."""
+        assert len(metadata.tables) == 28
         for name in self.EXPECTED_TABLES:
             assert name in metadata.tables, f"Missing table: {name}"
 

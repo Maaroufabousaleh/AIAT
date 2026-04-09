@@ -6,7 +6,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, TERMINAL_STATES, type WorkflowState } from "@/lib/constants";
 import { formatDistanceToNow, format } from "date-fns";
-import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch, ArrowRightCircle } from "lucide-react";
+import { ArrowLeft, RefreshCw, CheckCircle, XCircle, RotateCcw, Archive, Play, Pause, StopCircle, GitBranch, ArrowRightCircle, FileText, Upload, Link, Trash2, Plus } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -36,6 +36,24 @@ interface Decision {
   decision_type: string;
   prompt: string;
   context?: unknown;
+  created_at: string;
+}
+
+interface ContextItem {
+  id: string;
+  project_id: string;
+  item_type: "FILE" | "URL" | "TEXT" | "DOCUMENT";
+  name: string;
+  description?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  blob_bucket?: string;
+  blob_key?: string;
+  url?: string;
+  content_text?: string;
+  metadata?: Record<string, unknown>;
+  tags?: string[];
+  created_by: string;
   created_at: string;
 }
 
@@ -89,7 +107,7 @@ export default function ProjectDetailPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
   
-  const [activeTab, setActiveTab] = useState<"workflow" | "flow">("workflow");
+  const [activeTab, setActiveTab] = useState<"workflow" | "flow" | "context">("workflow");
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(null);
   const [nodeExecutions, setNodeExecutions] = useState<FlowNodeExecution[]>([]);
@@ -98,6 +116,14 @@ export default function ProjectDetailPage() {
   const [availableFlows, setAvailableFlows] = useState<Flow[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
+  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [showContextUpload, setShowContextUpload] = useState(false);
+  const [newContextName, setNewContextName] = useState("");
+  const [newContextType, setNewContextType] = useState<"FILE" | "URL" | "TEXT">("FILE");
+  const [newContextUrl, setNewContextUrl] = useState("");
+  const [newContextText, setNewContextText] = useState("");
+  const [newContextTags, setNewContextTags] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -175,6 +201,23 @@ export default function ProjectDetailPage() {
     }
   }, [id, setNodes, setEdges]);
 
+  const loadContextData = useCallback(async () => {
+    setContextLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/context`);
+      if (res.ok) {
+        const data = await res.json();
+        setContextItems(Array.isArray(data) ? data : []);
+      } else {
+        setContextItems([]);
+      }
+    } catch {
+      setContextItems([]);
+    } finally {
+      setContextLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => { load(); }, [load]);
   
   useEffect(() => {
@@ -182,6 +225,12 @@ export default function ProjectDetailPage() {
       loadFlowData();
     }
   }, [activeTab, loadFlowData]);
+
+  useEffect(() => {
+    if (activeTab === "context") {
+      loadContextData();
+    }
+  }, [activeTab, loadContextData]);
 
   useEffect(() => {
     if (!project || TERMINAL_STATES.includes(project.state)) return;
@@ -331,6 +380,51 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function handleAddContextItem() {
+    if (!newContextName.trim()) return;
+    setActionLoading("add-context");
+    try {
+      const body: Record<string, unknown> = {
+        item_type: newContextType,
+        name: newContextName,
+        tags: newContextTags.split(",").map(t => t.trim()).filter(Boolean),
+      };
+      if (newContextType === "URL" && newContextUrl) {
+        body.url = newContextUrl;
+      } else if (newContextType === "TEXT" && newContextText) {
+        body.content_text = newContextText;
+      }
+      const res = await fetch(`/api/projects/${id}/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        await loadContextData();
+        setNewContextName("");
+        setNewContextUrl("");
+        setNewContextText("");
+        setNewContextTags("");
+        setShowContextUpload(false);
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleDeleteContextItem(itemId: string) {
+    if (!confirm("Delete this context item?")) return;
+    setActionLoading(`delete-${itemId}`);
+    try {
+      const res = await fetch(`/api/projects/${id}/context/${itemId}`, { method: "DELETE" });
+      if (res.ok) {
+        await loadContextData();
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6 flex items-center justify-center h-full">
@@ -406,6 +500,23 @@ export default function ProjectDetailPage() {
               FLOW_STATUS_COLORS[flowInstance.status as FlowInstanceStatus]
             )}>
               {flowInstance.status}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("context")}
+          className={clsx(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            activeTab === "context"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-gray-400 hover:text-gray-200"
+          )}
+        >
+          <FileText size={14} />
+          Context
+          {contextItems.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded text-xxs bg-gray-600">
+              {contextItems.length}
             </span>
           )}
         </button>
@@ -637,6 +748,165 @@ export default function ProjectDetailPage() {
                 </div>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {activeTab === "context" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-400">
+              {contextItems.length} context items attached to this project
+            </div>
+            <button
+              onClick={() => setShowContextUpload(!showContextUpload)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-700 rounded-lg hover:bg-blue-600/40"
+            >
+              <Plus size={12} />
+              Add Item
+            </button>
+          </div>
+
+          {showContextUpload && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Type</label>
+                  <select
+                    value={newContextType}
+                    onChange={(e) => setNewContextType(e.target.value as "FILE" | "URL" | "TEXT")}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                  >
+                    <option value="FILE">File Attachment</option>
+                    <option value="URL">URL Link</option>
+                    <option value="TEXT">Text Note</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Name</label>
+                  <input
+                    value={newContextName}
+                    onChange={(e) => setNewContextName(e.target.value)}
+                    placeholder="Item name..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                  />
+                </div>
+              </div>
+
+              {newContextType === "URL" && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">URL</label>
+                  <input
+                    value={newContextUrl}
+                    onChange={(e) => setNewContextUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                  />
+                </div>
+              )}
+
+              {newContextType === "TEXT" && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Content</label>
+                  <textarea
+                    value={newContextText}
+                    onChange={(e) => setNewContextText(e.target.value)}
+                    placeholder="Enter text content..."
+                    rows={4}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                  />
+                </div>
+              )}
+
+              {newContextType === "FILE" && (
+                <div className="border border-dashed border-gray-700 rounded-lg p-4 text-center">
+                  <Upload size={24} className="mx-auto text-gray-500 mb-2" />
+                  <p className="text-xs text-gray-500">File upload UI would go here</p>
+                  <p className="text-xxs text-gray-600 mt-1">For now, enter file details manually</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Tags (comma-separated)</label>
+                <input
+                  value={newContextTags}
+                  onChange={(e) => setNewContextTags(e.target.value)}
+                  placeholder="requirements, architecture, notes"
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAddContextItem}
+                  disabled={actionLoading === "add-context" || !newContextName.trim()}
+                  className="px-3 py-1.5 text-xs font-medium bg-green-600/20 text-green-400 border border-green-800 rounded-lg hover:bg-green-600/40 disabled:opacity-50"
+                >
+                  {actionLoading === "add-context" ? "Adding..." : "Add Item"}
+                </button>
+                <button
+                  onClick={() => setShowContextUpload(false)}
+                  className="px-3 py-1.5 text-xs font-medium bg-gray-600/20 text-gray-400 border border-gray-700 rounded-lg"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {contextLoading ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center text-gray-500 text-sm">
+              Loading context items...
+            </div>
+          ) : contextItems.length === 0 ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
+              <FileText size={32} className="mx-auto text-gray-600 mb-3" />
+              <p className="text-gray-400 text-sm">No context items yet</p>
+              <p className="text-gray-500 text-xs mt-1">Add files, URLs, or notes to build project context</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {contextItems.map((item) => (
+                <div key={item.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <div className={clsx(
+                      "p-2 rounded-lg",
+                      item.item_type === "FILE" ? "bg-blue-900/30 text-blue-400" :
+                      item.item_type === "URL" ? "bg-purple-900/30 text-purple-400" :
+                      "bg-amber-900/30 text-amber-400"
+                    )}>
+                      {item.item_type === "FILE" ? <FileText size={16} /> : item.item_type === "URL" ? <Link size={16} /> : <FileText size={16} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{item.name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {item.item_type}
+                        {item.size_bytes && ` · ${(item.size_bytes / 1024).toFixed(1)} KB`}
+                      </div>
+                      {item.description && (
+                        <div className="text-xs text-gray-400 mt-1 line-clamp-2">{item.description}</div>
+                      )}
+                      {item.tags && item.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {item.tags.map((tag) => (
+                            <span key={tag} className="px-1.5 py-0.5 bg-gray-800 text-gray-400 text-xxs rounded">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleDeleteContextItem(item.id)}
+                      disabled={actionLoading === `delete-${item.id}`}
+                      className="p-1 text-gray-500 hover:text-red-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
