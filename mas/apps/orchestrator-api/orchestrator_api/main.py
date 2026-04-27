@@ -25,7 +25,7 @@ import httpx
 import prometheus_client
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel, Field
 
@@ -109,6 +109,29 @@ class CreateProjectRequest(BaseModel):
     flow_id: UUID | None = None
 
 
+# ── Credentials Manager request models ──────────────────────────────────────
+
+
+class CreateCredentialRequest(BaseModel):
+    name: str
+    value: str
+    description: str = ""
+    secret_type: str = "other"
+    policy: dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "human"
+
+
+class UpdateCredentialRequest(BaseModel):
+    value: str | None = None
+    description: str | None = None
+    policy: dict[str, Any] | None = None
+
+
+class ResolveCredentialRequest(BaseModel):
+    requester: str = "anonymous"
+    context: str = "default"
+
+
 class TransitionRequest(BaseModel):
     event: str
     actor_id: str
@@ -145,6 +168,9 @@ class RegisterWorkerRequest(BaseModel):
     sandbox_profile: str = "standard"
     capability_ids: list[UUID] = Field(default_factory=list)
     team_id: str | None = None
+    source_repo: str | None = None
+    version_pin: str | None = None
+    update_policy: str = "manual"
 
 
 class UpdateWorkerRequest(BaseModel):
@@ -160,6 +186,7 @@ class UpdateWorkerRequest(BaseModel):
     adapter_module: str | None = None
     wrapper_config: dict[str, Any] | None = None
     isolation_mode: str | None = None
+    source_repo: str | None = None
 
 
 class WorkerStatusTransition(BaseModel):
@@ -516,6 +543,11 @@ app.state.boot_at = datetime.now(tz=UTC)
 app.state.stop_event = asyncio.Event()
 app.state.watchdog_task = None
 
+# ── LLM Gateway compatibility router (OpenAI-compatible) ─────────────────────
+from orchestrator_api.llm_gateway_compat import router as llm_compat_router  # noqa: E402
+
+app.include_router(llm_compat_router)
+
 
 # ── Prometheus /metrics endpoint ─────────────────────────────────────────────
 
@@ -581,9 +613,10 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     bind_trace_id(tid)
 
     storage = _storage()
+    flow_for_instance: dict[str, Any] | None = None
     if req.flow_id is not None:
-        flow = await storage.get_flow(req.flow_id)
-        if flow is None:
+        flow_for_instance = await storage.get_flow(req.flow_id)
+        if flow_for_instance is None:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
 
     # Create project
@@ -634,11 +667,8 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     except Exception:
         logger.exception("Failed to publish project start directive")
 
-    if req.flow_id is not None:
+    if req.flow_id is not None and flow_for_instance is not None:
         try:
-            flow_for_instance = await storage.get_flow(req.flow_id)
-            if flow_for_instance is None:
-                raise HTTPException(404, f"Flow {req.flow_id} not found")
             await storage.create_flow_instance(
                 flow_id=req.flow_id,
                 flow_version=flow_for_instance["version"],
@@ -648,55 +678,6 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             raise
         except Exception:
             logger.exception("Failed to create flow instance for project %s", pid)
-
-    pid = str(project["id"])
-    MAS_PROJECT_STATE.labels(project_id=pid, state="INIT").set(1)
-    projects_created_total.inc()
-
-    # Trigger workflow: INIT → FEASIBILITY_CHECK
-    try:
-        await _controller().transition(
-            project_id=pid,
-            current_state=ProjectState.INIT,
-            event=WorkflowEvent.PROJECT_CREATED,
-            actor_id=req.human_requester or "human",
-            context={"name": req.name, "description": req.description},
-        )
-    except InvalidTransitionError:
-        logger.warning("Could not auto-transition new project %s", pid)
-
-    # Publish a DIRECTIVE to CEO to start feasibility
-    envelope = {
-        "message_id": str(uuid4()),
-        "correlation_id": pid,
-        "msg_type": MessageType.DIRECTIVE.value,
-        "sender_id": "orchestrator",
-        "sender_team": "orchestrator",
-        "sender_role": AgentRole.ORCHESTRATOR.value,
-        "recipient_team": "exec_ceo",
-        "project_id": pid,
-        "payload": {
-            "action": "START_FEASIBILITY",
-            "project_name": req.name,
-            "description": req.description,
-        },
-        "created_at": datetime.now(tz=UTC).isoformat(),
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
-    except Exception:
-        logger.exception("Failed to publish project start directive")
-
-    if req.flow_id is not None:
-        flow = await storage.get_flow(req.flow_id)
-        if flow is None:
-            raise HTTPException(404, f"Flow {req.flow_id} not found")
-        await storage.create_flow_instance(
-            flow_id=req.flow_id,
-            flow_version=flow["version"],
-            project_id=project["id"],
-        )
 
     return _serialize(project)
 
@@ -1082,35 +1063,6 @@ async def create_project_context_item(
     return _serialize(item)
 
 
-@app.get("/projects/{project_id}/context/{item_id}")
-async def get_project_context_item(
-    project_id: UUID,
-    item_id: UUID,
-) -> dict[str, Any]:
-    """Get a specific context item."""
-    storage = _storage()
-    item = await storage.get_context_item(item_id)
-    if item is None or item.get("project_id") != project_id:
-        raise HTTPException(404, f"Context item {item_id} not found")
-    return _serialize(item)
-
-
-@app.delete("/projects/{project_id}/context/{item_id}")
-async def delete_project_context_item(
-    project_id: UUID,
-    item_id: UUID,
-) -> dict[str, Any]:
-    """Delete a context item."""
-    storage = _storage()
-    item = await storage.get_context_item(item_id)
-    if item is None or item.get("project_id") != project_id:
-        raise HTTPException(404, f"Context item {item_id} not found")
-    deleted = await storage.delete_context_item(item_id)
-    if not deleted:
-        raise HTTPException(500, f"Failed to delete context item {item_id}")
-    return {"status": "deleted", "item_id": str(item_id)}
-
-
 class SearchContextRequest(BaseModel):
     query: str
     limit: int = 5
@@ -1134,10 +1086,10 @@ async def search_project_context(
     for item in items:
         searchable_text = " ".join(
             [
-                item.get("name", ""),
-                item.get("description", ""),
-                item.get("content_text", ""),
-                " ".join(item.get("tags", [])),
+                item.get("name") or "",
+                item.get("description") or "",
+                item.get("content_text") or "",
+                " ".join(item.get("tags") or []),
             ]
         ).lower()
 
@@ -1261,7 +1213,7 @@ async def create_context_chunk(
             for i in range(0, len(text), step):
                 chunk_text = text[i : i + chunk_size]
                 await storage.create_context_chunk(
-                    context_item_id=UUID(item["id"]),
+                    context_item_id=item["id"],
                     project_id=project_id,
                     chunk_index=i // step,
                     content_text=chunk_text,
@@ -1272,7 +1224,7 @@ async def create_context_chunk(
             for i in range(0, len(text), chunk_size):
                 chunk_text = text[i : i + chunk_size]
                 await storage.create_context_chunk(
-                    context_item_id=UUID(item["id"]),
+                    context_item_id=item["id"],
                     project_id=project_id,
                     chunk_index=i // chunk_size,
                     content_text=chunk_text,
@@ -1281,6 +1233,35 @@ async def create_context_chunk(
                 )
 
     return _serialize(item)
+
+
+@app.get("/projects/{project_id}/context/{item_id}")
+async def get_project_context_item(
+    project_id: UUID,
+    item_id: UUID,
+) -> dict[str, Any]:
+    """Get a specific context item."""
+    storage = _storage()
+    item = await storage.get_context_item(item_id)
+    if item is None or item.get("project_id") != project_id:
+        raise HTTPException(404, f"Context item {item_id} not found")
+    return _serialize(item)
+
+
+@app.delete("/projects/{project_id}/context/{item_id}")
+async def delete_project_context_item(
+    project_id: UUID,
+    item_id: UUID,
+) -> dict[str, Any]:
+    """Delete a context item."""
+    storage = _storage()
+    item = await storage.get_context_item(item_id)
+    if item is None or item.get("project_id") != project_id:
+        raise HTTPException(404, f"Context item {item_id} not found")
+    deleted = await storage.delete_context_item(item_id)
+    if not deleted:
+        raise HTTPException(500, f"Failed to delete context item {item_id}")
+    return {"status": "deleted", "item_id": str(item_id)}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1838,6 +1819,9 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         sandbox_profile=req.sandbox_profile,
         capability_ids=req.capability_ids,
         team_id=req.team_id,
+        source_repo=req.source_repo,
+        version_pin=req.version_pin,
+        update_policy=req.update_policy or "manual",
     )
     return _serialize(worker)
 
@@ -1883,6 +1867,8 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
         update_kwargs["wrapper_config"] = req.wrapper_config
     if req.isolation_mode is not None:
         update_kwargs["isolation_mode"] = req.isolation_mode
+    if req.source_repo is not None:
+        update_kwargs["source_repo"] = req.source_repo
 
     if update_kwargs:
         await storage.update_worker_config(worker_id, **update_kwargs)
@@ -2178,6 +2164,53 @@ async def list_flows(
     return [_serialize(f) for f in flows]
 
 
+@app.post("/flows/instances")
+async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]:
+    """Create a flow instance attached to a project."""
+    storage = _storage()
+
+    flow = await storage.get_flow(req.flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {req.flow_id} not found")
+
+    project = await storage.get_project(req.project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {req.project_id} not found")
+
+    existing = await storage.get_flow_instance_by_project(req.project_id)
+    if existing is not None:
+        raise HTTPException(409, f"Project {req.project_id} already has an active flow instance")
+
+    instance = await storage.create_flow_instance(
+        flow_id=req.flow_id,
+        flow_version=flow["version"],
+        project_id=req.project_id,
+        task_id=req.task_id,
+        department_id=req.department_id,
+    )
+    return _serialize(instance)
+
+
+@app.get("/flows/instances")
+async def list_flow_instances_early(
+    flow_id: UUID | None = None,
+    project_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    """List flow instances, optionally filtered. Defined before /{flow_id} to avoid routing conflict."""
+    storage = _storage()
+    instances = await storage.list_flow_instances(
+        flow_id=flow_id,
+        project_id=project_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [_serialize(i) for i in instances]
+
+
 @app.get("/flows/{flow_id}")
 async def get_flow(flow_id: UUID) -> dict[str, Any]:
     """Get a flow definition."""
@@ -2229,50 +2262,11 @@ async def delete_flow(flow_id: UUID) -> dict[str, str]:
 # Flow Instances
 
 
-@app.post("/flows/instances")
-async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]:
-    """Create a flow instance attached to a project."""
+@app.get("/flows/instances/active")
+async def list_active_flow_instances_early() -> list[dict[str, Any]]:
+    """List all active (non-terminal) flow instances. Defined before the /{instance_id} route to avoid routing conflict."""
     storage = _storage()
-
-    flow = await storage.get_flow(req.flow_id)
-    if flow is None:
-        raise HTTPException(404, f"Flow {req.flow_id} not found")
-
-    project = await storage.get_project(req.project_id)
-    if project is None:
-        raise HTTPException(404, f"Project {req.project_id} not found")
-
-    existing = await storage.get_flow_instance_by_project(req.project_id)
-    if existing is not None:
-        raise HTTPException(409, f"Project {req.project_id} already has an active flow instance")
-
-    instance = await storage.create_flow_instance(
-        flow_id=req.flow_id,
-        flow_version=flow["version"],
-        project_id=req.project_id,
-        task_id=req.task_id,
-        department_id=req.department_id,
-    )
-    return _serialize(instance)
-
-
-@app.get("/flows/instances")
-async def list_flow_instances(
-    flow_id: UUID | None = None,
-    project_id: UUID | None = None,
-    status: str | None = None,
-    limit: int = Query(default=100, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-) -> list[dict[str, Any]]:
-    """List flow instances, optionally filtered."""
-    storage = _storage()
-    instances = await storage.list_flow_instances(
-        flow_id=flow_id,
-        project_id=project_id,
-        status=status,
-        limit=limit,
-        offset=offset,
-    )
+    instances = await storage.get_active_flow_instances()
     return [_serialize(i) for i in instances]
 
 
@@ -2424,9 +2418,10 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 completed_at=now,
             )
 
-        completed_ids = set(active_node_ids)
-        completed_ids.discard(req.node_id)
-        new_active = list(completed_ids)
+        # Remove completed node from active set; track it separately for traversal
+        remaining_active = set(active_node_ids)
+        remaining_active.discard(req.node_id)
+        new_active = list(remaining_active)
 
         if node.type == FlowNodeType.APPROVAL:
             if req.approved is True:
@@ -2442,18 +2437,53 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 )
                 return _serialize(await storage.get_flow_instance(instance_id))
 
-        next_result = get_next_nodes(definition, completed_ids, set())
-        if not next_result.node_ids:
+        # Build the full historically-completed set (needed for join nodes)
+        all_executions = await storage.list_flow_node_executions(
+            instance_id=instance_id, limit=1000
+        )
+        historically_completed = {
+            e["node_id"] for e in all_executions if e["status"] == "COMPLETED"
+        }
+        historically_completed.add(req.node_id)  # include the node we just completed
+
+        # Pass the just-completed node so get_next_nodes can walk outgoing edges,
+        # and pass the full historical set so join nodes can check all branches.
+        next_result = get_next_nodes(
+            definition, historically_completed, set(), context=instance.get("context_json")
+        )
+        # Filter: only activate nodes that are genuinely new (not already done or active)
+        already_active = set(active_node_ids) - {req.node_id}
+        new_nodes = [
+            nid
+            for nid in next_result.node_ids
+            if nid not in historically_completed and nid not in already_active
+        ]
+        if not new_nodes and not next_result.is_blocked:
+            # Check if an end node was just completed
             end_nodes = definition.get_end_nodes()
-            all_completed = all(n.id in completed_ids for n in end_nodes)
-            if all_completed:
+            if any(n.id == req.node_id for n in end_nodes):
                 await storage.update_flow_instance(
                     instance_id, status="COMPLETED", active_node_ids=[], completed_at=now
                 )
+            elif not already_active:
+                # No more nodes to run and no active work remaining — check if all end nodes done
+                all_ends_done = all(n.id in historically_completed for n in end_nodes)
+                if all_ends_done:
+                    await storage.update_flow_instance(
+                        instance_id, status="COMPLETED", active_node_ids=[], completed_at=now
+                    )
+                else:
+                    # Still waiting for parallel branches — stay RUNNING
+                    await storage.update_flow_instance(
+                        instance_id, active_node_ids=list(already_active)
+                    )
             else:
-                await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
+                # Other branches still active — just remove this node from active
+                await storage.update_flow_instance(
+                    instance_id, active_node_ids=list(already_active)
+                )
         else:
-            for nid in next_result.node_ids:
+            for nid in new_nodes:
                 n = definition.get_node(nid)
                 if n:
                     await storage.create_flow_node_execution(
@@ -2463,7 +2493,8 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                         node_label=n.label,
                         input_json=instance.get("context_json"),
                     )
-            await storage.update_flow_instance(instance_id, active_node_ids=next_result.node_ids)
+            merged_active = list(already_active | set(new_nodes))
+            await storage.update_flow_instance(instance_id, active_node_ids=merged_active)
 
         return _serialize(await storage.get_flow_instance(instance_id))
 
@@ -2592,14 +2623,6 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     return _serialize(updated)
 
 
-@app.get("/flows/instances/active")
-async def list_active_flow_instances() -> list[dict[str, Any]]:
-    """List all active (non-terminal) flow instances."""
-    storage = _storage()
-    instances = await storage.get_active_flow_instances()
-    return [_serialize(i) for i in instances]
-
-
 # ═════════════════════════════════════════════════════════════════════════════
 # Utilities
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2637,3 +2660,296 @@ def _serialize_scalar(v: Any) -> Any:
     if hasattr(v, "__str__") and type(v).__name__ == "Decimal":
         return str(v)
     return v
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Credentials Manager endpoints
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _credentials_manager() -> Any:
+    """Return a CredentialsManager bound to the current engine."""
+    from mas_core.credentials import CredentialsManager
+
+    storage = _storage()
+    engine = storage.engine  # AsyncEngine
+    return CredentialsManager(engine.begin)
+
+
+@app.get("/credentials")
+async def list_credentials() -> list[dict[str, Any]]:
+    """List all credential names and metadata (never exposes real values)."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    secrets = await mgr.list()
+    return [s.to_dict() for s in secrets]
+
+
+@app.post("/credentials", status_code=201)
+async def create_credential(req: CreateCredentialRequest) -> dict[str, Any]:
+    """Store a new named secret."""
+    from mas_core.credentials.models import SecretPolicy, SecretType
+
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    policy = SecretPolicy.model_validate(req.policy) if req.policy else None
+    try:
+        stype = SecretType(req.secret_type)
+    except ValueError:
+        stype = SecretType.OTHER
+    meta = await mgr.create(
+        req.name,
+        req.value,
+        description=req.description,
+        secret_type=stype,
+        policy=policy,
+        created_by=req.created_by,
+    )
+    return meta.to_dict()
+
+
+@app.get("/credentials/{name}")
+async def get_credential(name: str) -> dict[str, Any]:
+    """Return metadata for a single secret (no value)."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    meta = await mgr.get(name)
+    if meta is None:
+        raise HTTPException(404, f"Credential '{name}' not found")
+    return meta.to_dict()
+
+
+@app.patch("/credentials/{name}")
+async def update_credential(name: str, req: UpdateCredentialRequest) -> dict[str, Any]:
+    """Update value and/or policy of an existing credential."""
+    from mas_core.credentials.models import SecretPolicy
+
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    policy = SecretPolicy.model_validate(req.policy) if req.policy else None
+    meta = await mgr.update(
+        name,
+        value=req.value,
+        description=req.description,
+        policy=policy,
+    )
+    if meta is None:
+        raise HTTPException(404, f"Credential '{name}' not found")
+    return meta.to_dict()
+
+
+@app.delete("/credentials/{name}", status_code=204)
+async def delete_credential(name: str) -> None:
+    """Delete a credential."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    deleted = await mgr.delete(name)
+    if not deleted:
+        raise HTTPException(404, f"Credential '{name}' not found")
+
+
+@app.post("/credentials/{name}/resolve")
+async def resolve_credential(name: str, req: ResolveCredentialRequest) -> dict[str, Any]:
+    """Resolve a credential to its real value (policy-gated + audited).
+
+    Only used by internal system components.  Agents should send a
+    ResolveCredentialRequest with their own identity as the requester.
+    """
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    value = await mgr.resolve(name, requester=req.requester, context=req.context)
+    if value is None:
+        raise HTTPException(
+            403, f"Credential '{name}' could not be resolved (policy denied or not found)"
+        )
+    return {"name": name, "value": value}
+
+
+@app.get("/credentials/{name}/audit")
+async def credential_audit_log(name: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Return audit log entries for a specific credential."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    return await mgr.audit_log(limit=limit, secret_name=name)
+
+
+@app.get("/credentials-audit")
+async def full_audit_log(limit: int = 100) -> list[dict[str, Any]]:
+    """Return the full credential resolve audit log."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    return await mgr.audit_log(limit=limit)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CEO Privileged Operations Gate
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _priv_gate() -> Any:
+    """Return a PrivilegedOpsGate bound to the current engine."""
+    from mas_core.policy.privileged_ops import PrivilegedOpsGate
+
+    storage = _storage()
+    engine = storage.engine
+    return PrivilegedOpsGate(engine.begin)
+
+
+class PrivilegedActionRequest(BaseModel):
+    action: str
+    actor_id: str = "ceo"
+    actor_role: str = "ceo"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class PrivilegedApprovalRequest(BaseModel):
+    approved: bool
+    decided_by: str
+    reason: str = ""
+
+
+@app.post("/ceo/privileged-action")
+async def request_privileged_action(req: PrivilegedActionRequest) -> dict[str, Any]:
+    """Request a privileged (Layer 2) action — gated through approval policy."""
+    gate = _priv_gate()
+    await gate.ensure_tables()
+    result = await gate.check(
+        req.action,
+        actor_id=req.actor_id,
+        actor_role=req.actor_role,
+        payload=req.payload,
+    )
+    return result
+
+
+@app.post("/ceo/privileged-action/{record_id}/approve")
+async def approve_privileged_action(
+    record_id: str, req: PrivilegedApprovalRequest
+) -> dict[str, Any]:
+    """Human approval or rejection of a pending privileged action."""
+    gate = _priv_gate()
+    await gate.ensure_tables()
+    ok = await gate.approve(
+        record_id,
+        decided_by=req.decided_by,
+        approved=req.approved,
+        reason=req.reason,
+    )
+    if not ok:
+        raise HTTPException(404, f"Pending record {record_id} not found")
+    return {"record_id": record_id, "decision": "approved" if req.approved else "rejected"}
+
+
+@app.get("/ceo/privileged-actions/pending")
+async def list_pending_privileged_actions() -> list[dict[str, Any]]:
+    """List privileged action requests awaiting human approval."""
+    gate = _priv_gate()
+    await gate.ensure_tables()
+    rows = await gate.list_pending()
+    return [_serialize(r) for r in rows]
+
+
+@app.get("/ceo/privileged-actions/audit")
+async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
+    """Return full privileged ops audit log."""
+    gate = _priv_gate()
+    await gate.ensure_tables()
+    rows = await gate.audit_log(limit=limit)
+    return [_serialize(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# System logs — stream container logs via SSE
+# ---------------------------------------------------------------------------
+
+ALLOWED_CONTAINERS: set[str] = {
+    # Infrastructure
+    "redis",
+    "postgres",
+    "pgbouncer",
+    "minio",
+    "minio-init",
+    "redis-acl-init",
+    # Core services
+    "orchestrator-api",
+    "message-router",
+    "tool-service",
+    "dashboard",
+    # Team runners
+    "team-exec-ceo",
+    "team-exec-coo",
+    "team-office-cfo",
+    "team-office-cio",
+    "team-office-chrm",
+    "team-office-cso",
+    "team-office-cto",
+    "team-dept-production",
+    "team-dept-system",
+    "team-dept-qa",
+    "team-dept-devops",
+    # Legacy / alternative names that may appear in other environments
+    "mas-orchestrator-api",
+    "mas-message-router",
+    "mas-tool-service",
+    "mas-dashboard",
+    "mas-team-exec-ceo",
+    "mas-team-exec-coo",
+    "mas-team-office-cfo",
+    "mas-team-office-cio",
+    "mas-team-office-chrm",
+    "mas-team-office-cso",
+    "mas-team-office-cto",
+    "mas-team-dept-production",
+    "mas-team-dept-system",
+    "mas-team-dept-qa",
+    "mas-team-dept-devops",
+}
+
+
+async def _stream_container_logs(container: str, tail: int, follow: bool):
+    """Async generator that yields SSE lines from docker logs."""
+    cmd = ["docker", "logs", container, f"--tail={tail}", "--timestamps"]
+    if follow:
+        cmd.append("--follow")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        async for line in proc.stdout:
+            text = line.decode("utf-8", errors="replace").rstrip()
+            yield f"data: {text}\n\n"
+        await proc.wait()
+    except FileNotFoundError:
+        yield 'data: {"error": "docker not found — logs unavailable in this environment"}\n\n'
+    except Exception as exc:  # noqa: BLE001
+        yield f'data: {{"error": "{exc}"}}\n\n'
+
+
+@app.get("/system/logs/{container}")
+async def stream_container_logs(
+    container: str,
+    tail: int = Query(default=200, ge=1, le=5000),
+    follow: bool = Query(default=False),
+) -> StreamingResponse:
+    """Stream docker logs for a named container as Server-Sent Events.
+
+    Container name is validated against an allowlist to prevent arbitrary
+    command injection.
+    """
+    # Sanitize: only allow known container names
+    if container not in ALLOWED_CONTAINERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown container '{container}'. Allowed: {sorted(ALLOWED_CONTAINERS)}",
+        )
+    return StreamingResponse(
+        _stream_container_logs(container, tail=tail, follow=follow),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

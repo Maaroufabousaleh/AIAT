@@ -466,12 +466,13 @@ class AgentStorage:
             "project_id": project_id,
             "chunk_index": chunk_index,
             "content_text": content_text,
-            "content_vector": content_vector,
             "source_location": source_location,
             "metadata": metadata,
             "token_count": token_count,
             "created_at": now,
         }
+        if content_vector is not None:
+            values["content_vector"] = content_vector
         async with self.engine.begin() as conn:
             await conn.execute(t.project_context_chunks.insert().values(**values))
         return values
@@ -2211,7 +2212,6 @@ class AgentStorage:
         """Create a new node execution record."""
         now = datetime.now(tz=UTC)
         values = {
-            "id": uuid4(),
             "instance_id": instance_id,
             "node_id": node_id,
             "node_type": node_type,
@@ -2221,7 +2221,13 @@ class AgentStorage:
             "started_at": now,
         }
         async with self.engine.begin() as conn:
-            await conn.execute(t.flow_node_executions.insert().values(**values))
+            result = await conn.execute(
+                t.flow_node_executions.insert()
+                .values(**values)
+                .returning(t.flow_node_executions.c.id)
+            )
+            row = result.first()
+            values["id"] = row[0] if row else None
         return values
 
     async def get_flow_node_execution(self, execution_id: int) -> dict[str, Any] | None:

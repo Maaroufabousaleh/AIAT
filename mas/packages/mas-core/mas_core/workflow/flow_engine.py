@@ -402,7 +402,27 @@ def get_next_nodes(
     next_ids: list[str] = []
 
     for node_id in completed_node_ids:
+        source_node = definition.get_node(node_id)
         outgoing = definition.get_outgoing_edges(node_id)
+
+        # ── CONDITION node completed: evaluate expression and follow matching branch ──
+        if source_node is not None and source_node.type == FlowNodeType.CONDITION:
+            expr = source_node.config.get("expression", "")
+            result = _evaluate_condition(expr, completed_node_ids, context)
+            for edge in outgoing:
+                target = edge.target
+                if target in completed_node_ids:
+                    continue
+                # edge.condition or edge.label determine the branch ("pass"/"true" vs "fail"/"false")
+                edge_cond = (
+                    edge.condition or edge.label
+                )  # label is used as condition when condition is absent
+                if result and edge_cond in (None, "true", "pass"):
+                    next_ids.append(target)
+                elif not result and edge_cond in ("false", "fail"):
+                    next_ids.append(target)
+            continue  # condition node handled; skip generic outgoing logic
+
         for edge in outgoing:
             target = edge.target
 
@@ -411,11 +431,8 @@ def get_next_nodes(
                 continue
 
             if target_node.type == FlowNodeType.CONDITION:
-                expr = target_node.config.get("expression", "")
-                result = _evaluate_condition(expr, completed_node_ids, context)
-                if result and edge.condition in (None, "true"):
-                    next_ids.append(target)
-                elif not result and edge.condition == "false":
+                # Activate the condition node itself; branching happens when it completes
+                if target not in completed_node_ids:
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.JOIN:
@@ -425,10 +442,10 @@ def get_next_nodes(
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.PARALLEL:
-                branches = target_node.config.get("branches", [])
-                for branch_id in branches:
-                    if branch_id not in completed_node_ids and branch_id not in active_parallel_ids:
-                        next_ids.append(branch_id)
+                # Activate the parallel node itself; fan-out to branches happens
+                # when the parallel node is completed (via its outgoing edges).
+                if target not in completed_node_ids:
+                    next_ids.append(target)
 
             elif target_node.type == FlowNodeType.SWITCH:
                 switch_key = target_node.config.get("switch_key", "")
@@ -502,6 +519,15 @@ def _evaluate_condition(
                         return False
                     if op_sym in ("==", "!="):
                         expected = val_str.strip("\"'")
+                        # Handle boolean literals
+                        if expected.lower() == "true":
+                            coerced = True
+                        elif expected.lower() == "false":
+                            coerced = False
+                        else:
+                            coerced = None
+                        if coerced is not None and isinstance(actual, bool):
+                            return (actual == coerced) if op_sym == "==" else (actual != coerced)
                         if isinstance(actual, (int, float)):
                             try:
                                 return _cmp(actual, float(expected), op_sym)
@@ -512,9 +538,9 @@ def _evaluate_condition(
                                     else (str(actual) != expected)
                                 )
                         return (
-                            (str(actual) == expected)
+                            (str(actual).lower() == expected.lower())
                             if op_sym == "=="
-                            else (str(actual) != expected)
+                            else (str(actual).lower() != expected.lower())
                         )
                     if not isinstance(actual, (int, float)):
                         try:

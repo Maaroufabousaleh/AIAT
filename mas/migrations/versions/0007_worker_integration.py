@@ -81,7 +81,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "worker_registry",
-        sa.Column("health_status", sa.Text(), nullable=False, server_default="'unknown'"),
+        sa.Column("health_status", sa.Text(), nullable=False, server_default="unknown"),
     )
     op.add_column(
         "worker_registry",

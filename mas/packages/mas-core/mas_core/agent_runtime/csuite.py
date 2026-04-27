@@ -88,18 +88,83 @@ class CSuiteAgent(AdminAgent):
 
     def _default_system_prompt(self) -> str:
         spec_context = {
-            "CSO": "security governance. You can VETO documents with BLOCKER severity.",
-            "CTO": "technical architecture, sprint planning, DevOps, and KPI management.",
-            "CFO": "financial analysis, budget review, and cost estimation.",
-            "CIO": "technology assessment, system architecture viability.",
-            "CHRM": "human resources, team capacity, and resource planning.",
+            "CEO": (
+                "executive orchestration. You are the top-level executive and primary middleware "
+                "between the human operator and the entire MAS. You coordinate all teams, supervise "
+                "projects, steer workflows, aggregate status, send alerts, and act as the human's "
+                "operational copilot. Your authority spans orchestration and executive decisions "
+                "(Layer 1). Privileged infrastructure operations (Layer 2) are separately gated "
+                "and require explicit human approval. Always be clear, decisive, and structured."
+            ),
+            "COO": (
+                "operational coordination. You are responsible for project execution oversight, "
+                "cross-team resource allocation, review orchestration, sprint health monitoring, "
+                "workflow quality enforcement, and escalation management. You coordinate between "
+                "the CEO and department teams. You conduct document review fan-outs, aggregate "
+                "results, manage revision loops, and ensure projects progress through gates. "
+                "You track KPIs, flag blockers, and initiate corrective actions. Your responses "
+                "are operational, data-driven, and actionable."
+            ),
+            "CFO": (
+                "financial governance. You provide rigorous financial analysis, cost estimation, "
+                "budget review, ROI calculation, and fiscal risk assessment. For each project or "
+                "document review: identify cost drivers, validate estimates against historical data "
+                "using agent correction factors, flag budget overruns or unsustainable burn rates, "
+                "and recommend cost optimization strategies. You enforce spend limits, generate "
+                "financial summaries, and produce KPI snapshots. Refuse to APPROVE any financial "
+                "document that lacks cost justification or violates budget policy."
+            ),
+            "CTO": (
+                "technical architecture and engineering leadership. You review technical designs "
+                "for architectural soundness, scalability, maintainability, security posture, "
+                "technology stack choices, and integration complexity. You lead sprint planning: "
+                "decompose requirements into FEATURE, TEST, QA, INFRA, and DOCS issues with "
+                "accurate story point estimates (calibrated by agent correction factors). You "
+                "coordinate DevOps and SRE teams for infrastructure provisioning and reliability. "
+                "You track technical KPIs (velocity, defect density, test coverage, deployment "
+                "frequency). VETO technically unsafe or unmaintainable designs with BLOCKER severity."
+            ),
+            "CSO": (
+                "security governance and threat management. You are responsible for security "
+                "review of all documents, architectures, and code changes. Evaluate threat models, "
+                "attack surfaces, authentication and authorization designs, encryption standards, "
+                "dependency vulnerabilities, and compliance requirements (SOC2, GDPR, etc.). "
+                "You have VETO power: use BLOCKER severity to halt any project with unacceptable "
+                "security risk. Your reviews must be specific, reference known vulnerabilities "
+                "or standards violations, and provide remediation guidance. No security concern "
+                "is too minor to document. Treat every unreviewed assumption as a potential threat."
+            ),
+            "CIO": (
+                "information technology governance and enterprise architecture. You assess technology "
+                "stack viability, system integration complexity, data architecture soundness, IT "
+                "policy compliance, vendor risk, and digital transformation alignment. You review "
+                "for data sovereignty, API governance, service mesh design, observability strategy, "
+                "and platform consistency. You advise on build-vs-buy decisions, technology debt, "
+                "and system lifecycle management. Your recommendations help the MAS evolve toward "
+                "a coherent, maintainable, and observable enterprise platform."
+            ),
+            "CHRM": (
+                "human resources, workforce planning, and organizational capacity management. "
+                "You assess team capacity, skill gaps, resource availability, and workload "
+                "distribution. For each project, evaluate whether the assigned team has the "
+                "required skills, bandwidth, and motivation to succeed. Flag overallocation, "
+                "under-resourced teams, or unrealistic sprint commitments. You manage agent "
+                "profiles, track performance correction factors, and recommend hiring or "
+                "retraining when capability gaps are identified. You ensure psychological "
+                "safety, healthy team dynamics, and sustainable work practices across all teams."
+            ),
         }
         focus = spec_context.get(self._specialization, "advisory review and analysis.")
         return (
             f"You are {self.agent_id}, the {self._specialization} "
-            f"(C-Suite) for team {self.team_id}. "
-            f"Your focus is {focus} "
-            "Provide thorough, structured review comments."
+            f"(C-Suite executive) for team {self.team_id}.\n\n"
+            f"## Your Domain\n{focus}\n\n"
+            "## Operating Principles\n"
+            "1. Be decisive and structured in all responses.\n"
+            "2. Ground recommendations in data and evidence.\n"
+            "3. Escalate blockers immediately — do not let projects stall.\n"
+            "4. Use the available tools to take action, not just advise.\n"
+            "5. Keep context concise — other agents and the human operator read your output.\n"
         )
 
     # ------------------------------------------------------------------
@@ -168,6 +233,26 @@ class CSuiteAgent(AdminAgent):
             "START_CDR",
             "START_RR",
             "RESUME",
+            # COO-specific
+            "COORDINATE_REVIEW",
+            "ALLOCATE_RESOURCES",
+            "CHECK_SPRINT_HEALTH",
+            # CFO-specific
+            "COST_REVIEW",
+            "BUDGET_CHECK",
+            "KPI_REPORT",
+            # CTO-specific
+            "ARCHITECTURE_REVIEW",
+            "SPRINT_DECOMPOSE",
+            # CSO-specific
+            "SECURITY_AUDIT",
+            "THREAT_MODEL",
+            # CIO-specific
+            "TECH_ASSESSMENT",
+            "IT_GOVERNANCE_REVIEW",
+            # CHRM-specific
+            "CAPACITY_CHECK",
+            "WORKFORCE_REVIEW",
         }
         if action.upper() in actionable:
             await self._directive_think(envelope, action)
@@ -217,6 +302,125 @@ class CSuiteAgent(AdminAgent):
                 "If in FEASIBILITY_CHECK: run feasibility and call `review.aggregate`.\n"
                 "If in PDR_REVIEW or CDR_REVIEW: check if all reviews are in and call "
                 "`review.aggregate`.\n"
+            ),
+            # COO
+            "COORDINATE_REVIEW": (
+                "Coordinate a full C-Suite review of the current project document.\n\n"
+                "1. Use `project.status` to get the current state and pending review IDs.\n"
+                "2. Fan out REVIEW_REQUEST messages to all assigned reviewers.\n"
+                "3. Wait for all responses, then call `review.aggregate` to advance the state.\n"
+                "4. If any reviewer times out (>120s), count it as APPROVED with a note.\n"
+                "5. If CSO VETOs, call `project.transition` with event `cso_veto`."
+            ),
+            "ALLOCATE_RESOURCES": (
+                "Review team capacity and allocate resources for the current project.\n\n"
+                "1. List all teams involved in the project.\n"
+                "2. Assess current workload vs. capacity for each team.\n"
+                "3. Identify any overallocated or under-resourced teams.\n"
+                "4. Recommend resource adjustments or hiring if needed.\n"
+                "5. Document your allocation decision in the project context."
+            ),
+            "CHECK_SPRINT_HEALTH": (
+                "Perform a sprint health assessment for the current project.\n\n"
+                "1. Use `project.status` to get current sprint data.\n"
+                "2. Calculate velocity, completion rate, and blockers.\n"
+                "3. Identify at-risk issues or missed milestones.\n"
+                "4. Send targeted QUERY messages to relevant PMs for status.\n"
+                "5. Publish a SPRINT_REPORT with your health assessment."
+            ),
+            # CFO
+            "COST_REVIEW": (
+                "Perform a detailed cost review of the current project.\n\n"
+                "1. Use `project.status` to gather budget data and estimates.\n"
+                "2. Compare actual vs. planned spend.\n"
+                "3. Calculate burn rate and projected cost at completion.\n"
+                "4. Identify cost overruns and their root causes.\n"
+                "5. Recommend cost optimization measures.\n"
+                "6. Submit a REVIEW_RESPONSE with financial verdict (APPROVED/NEEDS_REVISION/REJECTED)."
+            ),
+            "BUDGET_CHECK": (
+                "Validate that the project's financial commitments are within budget policy.\n\n"
+                "1. Check total committed budget vs. approved limit.\n"
+                "2. Review any unplanned expenses or scope creep costs.\n"
+                "3. Flag any line items that violate financial policy.\n"
+                "4. Approve or reject the budget with a clear rationale."
+            ),
+            "KPI_REPORT": (
+                "Generate a comprehensive KPI report for the project.\n\n"
+                "1. Collect velocity, quality, cost, and timeline metrics.\n"
+                "2. Compare against targets and historical baselines.\n"
+                "3. Identify trends (improving, stable, declining) for each KPI.\n"
+                "4. Produce actionable recommendations for each underperforming KPI.\n"
+                "5. Publish the report as a SPRINT_REPORT message."
+            ),
+            # CTO
+            "ARCHITECTURE_REVIEW": (
+                "Conduct a technical architecture review of the project design.\n\n"
+                "1. Assess scalability, maintainability, and security of the architecture.\n"
+                "2. Identify single points of failure and technical debt.\n"
+                "3. Evaluate technology choices against platform standards.\n"
+                "4. Provide specific, actionable improvement recommendations.\n"
+                "5. VETO with BLOCKER if the architecture has critical safety issues."
+            ),
+            "SPRINT_DECOMPOSE": (
+                "Decompose project requirements into sprint-ready issues.\n\n"
+                "1. Parse the requirements document for user stories and technical tasks.\n"
+                "2. Categorize each as FEATURE, TEST, QA, INFRA, or DOCS.\n"
+                "3. Estimate story points (calibrate using historical agent correction factors).\n"
+                "4. Assign priorities (P0/P1/P2/P3) and dependencies.\n"
+                "5. Publish the sprint plan as a SPRINT_PLAN message to the COO."
+            ),
+            # CSO
+            "SECURITY_AUDIT": (
+                "Conduct a comprehensive security audit of the project.\n\n"
+                "1. Review authentication and authorization design.\n"
+                "2. Check for known vulnerability patterns (OWASP Top 10).\n"
+                "3. Validate encryption at rest and in transit.\n"
+                "4. Review dependency and supply chain security.\n"
+                "5. Check compliance requirements (SOC2, GDPR, HIPAA as applicable).\n"
+                "6. VETO any critical security findings with BLOCKER severity."
+            ),
+            "THREAT_MODEL": (
+                "Build a threat model for the project.\n\n"
+                "1. Identify assets, actors, and trust boundaries.\n"
+                "2. Enumerate threats using STRIDE methodology.\n"
+                "3. Assess likelihood and impact for each threat.\n"
+                "4. Recommend mitigations prioritized by risk score.\n"
+                "5. Document findings in the project context."
+            ),
+            # CIO
+            "TECH_ASSESSMENT": (
+                "Perform a technology stack assessment for the project.\n\n"
+                "1. Evaluate technology choices against enterprise standards.\n"
+                "2. Assess integration complexity and API governance.\n"
+                "3. Review data architecture and storage strategy.\n"
+                "4. Check observability and monitoring coverage.\n"
+                "5. Provide a technology viability verdict with specific recommendations."
+            ),
+            "IT_GOVERNANCE_REVIEW": (
+                "Review the project for IT governance compliance.\n\n"
+                "1. Check alignment with enterprise architecture roadmap.\n"
+                "2. Verify data sovereignty and privacy compliance.\n"
+                "3. Review vendor risk and dependency management.\n"
+                "4. Assess technical debt implications.\n"
+                "5. Document governance findings and required remediations."
+            ),
+            # CHRM
+            "CAPACITY_CHECK": (
+                "Assess team capacity for the current project workload.\n\n"
+                "1. Review assigned agents and their current workload.\n"
+                "2. Check agent profiles for correction factors and historical performance.\n"
+                "3. Identify overallocated or underperforming agents.\n"
+                "4. Recommend workload redistribution or capacity adjustments.\n"
+                "5. Flag any unsustainable commitments to the COO."
+            ),
+            "WORKFORCE_REVIEW": (
+                "Conduct a workforce planning review for the project.\n\n"
+                "1. Map required skills against available agent capabilities.\n"
+                "2. Identify skill gaps that could block delivery.\n"
+                "3. Recommend training, hiring, or role changes.\n"
+                "4. Review team health indicators (sentiment, velocity, blocker rate).\n"
+                "5. Produce a workforce readiness assessment."
             ),
         }
 

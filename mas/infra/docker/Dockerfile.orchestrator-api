@@ -1,6 +1,8 @@
 # ── Dockerfile.orchestrator-api ───────────────────────────────────────────────
 FROM python:3.11-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir uv==0.4.*
 
 COPY packages/mas-core/ /tmp/mas-core/
@@ -24,11 +26,13 @@ RUN pip install --no-deps /tmp/mas-core && \
         aiolimiter \
         apscheduler \
         alembic \
-        psycopg2-binary
+        psycopg2-binary \
+        cryptography
 
 COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
+COPY workers/ /app/workers/
 
 WORKDIR /app
 

@@ -43,10 +43,17 @@ _url = (
     or "postgresql://mas_user:change_me@localhost:5432/mas"
 )
 
-# statement_cache_size=0 is required for asyncpg through PgBouncer, but is
-# not a valid psycopg2 option.  We detect the driver from the URL and only
-# pass it when using asyncpg.
-_connect_args: dict = {"statement_cache_size": 0} if "asyncpg" in _url else {}
+# Alembic uses synchronous SQLAlchemy; strip async driver specs so that
+# postgresql+asyncpg:// → postgresql+psycopg2:// (or plain postgresql://).
+# This lets the same PGBOUNCER_DSN env var work for both the app (asyncpg)
+# and for migration runs (psycopg2).
+if "+asyncpg" in _url:
+    _url = _url.replace("+asyncpg", "+psycopg2", 1)
+elif _url.startswith("postgresql://") or _url.startswith("postgres://"):
+    pass  # already a sync-compatible URL
+
+# statement_cache_size=0 is an asyncpg-only option; not needed for psycopg2.
+_connect_args: dict = {}
 
 
 def run_migrations_offline() -> None:

@@ -1,52 +1,70 @@
-# Environment secrets — NEVER commit
-.env
-*.env
-!*.env.example
-
 # Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
 
-# Virtual environments
+# uv / pip
 .venv/
 venv/
+env/
+.uv/
+uv.lock
 
-# Testing / linting caches
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# pytest / coverage
 .pytest_cache/
-.ruff_cache/
-.mypy_cache/
 .coverage
+coverage.xml
 htmlcov/
+.ruff_cache/
+
+# mypy
+.mypy_cache/
+
+# Environment secrets — NEVER commit the real .env
+infra/compose/.env
+.env
+*.env
+!.env.example
+!*.env.example
 
 # IDE / editor
 .vscode/settings.json
 .idea/
+*.iml
 *.swp
 *.swo
 *~
-.VSCodeCounter
 
-# OS artifacts
+# OS
 .DS_Store
 Thumbs.db
 desktop.ini
-nul
 
-# OpenCode config (developer-local)
-opencode.json
+# Docker build context leftovers
+*.tar.gz
 
-# Local dev utility scripts (Windows)
-guardian.bat
+# Alembic generated (keep the versions dir, not compiled caches)
+migrations/__pycache__/
+migrations/versions/__pycache__/
 
-next.txt
+# Logs
+*.log
+logs/
 
-# Node.js
+# Local runtime/test temp directories
+codex_tmp/
+.tmp/
+.pytest_tmp/
+temp_pytest/
+pytest_base/
+tmp_work/
 node_modules/
-
-# Next.js
 .next/
-next-env.d.ts
-
-# Cache directories
-.cache/

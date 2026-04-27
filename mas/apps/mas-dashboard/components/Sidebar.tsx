@@ -16,20 +16,24 @@ import {
   LogOut,
   GitBranch,
   Network,
+  Lock,
+  Users,
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { href: "/",         label: "Overview",     icon: LayoutDashboard },
-  { href: "/projects", label: "Projects",     icon: FolderKanban },
-  { href: "/flows",    label: "Flows",        icon: GitBranch },
-  { href: "/system-viz", label: "System Viz", icon: Network },
-  { href: "/streams",  label: "Streams",      icon: Radio },
-  { href: "/ceo",      label: "CEO Feed",     icon: Brain },
-  { href: "/metrics",  label: "Metrics",      icon: BarChart3 },
-  { href: "/dlq",      label: "Dead Letters", icon: Inbox },
-  { href: "/logs",     label: "Logs",         icon: ScrollText },
-  { href: "/system",   label: "System",       icon: Settings },
-  { href: "/tools",    label: "Tools",        icon: Wrench },
+  { href: "/",             label: "Overview",     icon: LayoutDashboard },
+  { href: "/projects",     label: "Projects",     icon: FolderKanban },
+  { href: "/flows",        label: "Flows",        icon: GitBranch },
+  { href: "/system-viz",   label: "System Viz",   icon: Network },
+  { href: "/streams",      label: "Streams",      icon: Radio },
+  { href: "/ceo",          label: "CEO Feed",     icon: Brain },
+  { href: "/workers",      label: "Workers",      icon: Users },
+  { href: "/credentials",  label: "Credentials",  icon: Lock },
+  { href: "/metrics",      label: "Metrics",      icon: BarChart3 },
+  { href: "/dlq",          label: "Dead Letters", icon: Inbox },
+  { href: "/logs",         label: "Logs",         icon: ScrollText },
+  { href: "/system",       label: "System",       icon: Settings },
+  { href: "/tools",        label: "Tools",        icon: Wrench },
 ];
 
 export default function Sidebar() {

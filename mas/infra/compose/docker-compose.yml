@@ -68,6 +68,7 @@ volumes:
   redis_data:
   postgres_data:
   minio_data:
+  worker_mirrors:
 
 # ── Services ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ services:
 
   # ── 2. Postgres ─────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: mas
@@ -289,6 +290,20 @@ services:
       ROUTER_URL: "http://message-router:8001"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
+      LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
+      LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+      OPENCODE_API_KEY: "${OPENCODE_API_KEY:-public}"
+      WORKER_MIRROR_DIR: "/data/worker-mirrors"
+    volumes:
+      - worker_mirrors:/data/worker-mirrors
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:

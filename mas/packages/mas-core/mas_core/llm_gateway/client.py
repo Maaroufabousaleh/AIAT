@@ -78,7 +78,7 @@ import asyncio
 import json
 import logging
 import time as _time
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -433,14 +433,14 @@ class LLMGatewayClient:
             resp = await self._dispatch(
                 messages=messages,
                 resolved_model=resolved_model,
-            tools=tools,
-            tool_choice=tool_choice,
-            search_grounding=search_grounding,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=stream,
-            _audit_evt=audit_evt,
-            _retry_counter_ref=retry_counter,
+                tools=tools,
+                tool_choice=tool_choice,
+                search_grounding=search_grounding,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=stream,
+                _audit_evt=audit_evt,
+                _retry_counter_ref=retry_counter,
             )
 
             # ── Post-call audit + metrics recording ──────────────────
@@ -493,6 +493,191 @@ class LLMGatewayClient:
                 str(exc),
             )
             raise
+
+    # ------------------------------------------------------------------
+    # Streaming: true first-token SSE proxy
+    # ------------------------------------------------------------------
+
+    async def stream_raw_sse(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+        request_id: str = "",
+    ) -> AsyncIterator[str]:
+        """Yield raw OpenAI-compatible SSE data strings for a streaming completion.
+
+        For ``chat_completions``-style providers this is a true first-token
+        streaming path — ``data: ...`` lines are forwarded to the caller as
+        the provider generates them, so time-to-first-token equals the actual
+        provider TTFT.
+
+        For non-streamable API styles (Responses API, CLI, thinking chains)
+        the full response is collected first and re-chunked; TTFT equals the
+        full round-trip for those paths.
+        """
+        import uuid as _uuid
+
+        from .providers.api.openrouter import (
+            OPENROUTER_FREE_ROUTER_MODEL_ID,
+            OPENROUTER_FREE_ROUTER_WIRE_MODEL,
+            ensure_free_openrouter_model,
+        )
+
+        rid = request_id or _uuid.uuid4().hex[:16]
+        resolved_model = model or self._config.default_model
+
+        # ── Thinking chain / non-streamable shortcut ─────────────────
+        if resolved_model.startswith("gemma-think"):
+            resp = await self.chat_completion(
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            async for line in self._chat_response_to_sse(resp, rid):
+                yield line
+            return
+
+        # ── OpenRouter wire model normalisation ───────────────────────
+        if resolved_model == OPENROUTER_FREE_ROUTER_WIRE_MODEL:
+            resolved_model = OPENROUTER_FREE_ROUTER_MODEL_ID
+
+        # ── Pool / entry resolution ───────────────────────────────────
+        entry, pool = self._registry.resolve_pool(resolved_model)
+        if pool is not None and entry is None:
+            raise LLMRateLimited(
+                429,
+                f"All models in pool '{resolved_model}' are rate-limited.",
+            )
+
+        concrete_model = entry.model_id if entry is not None else resolved_model
+        wire_model = (
+            entry.extra.get("api_model_name", concrete_model)
+            if entry is not None
+            else concrete_model
+        )
+        if entry is not None and entry.provider == "openrouter":
+            try:
+                wire_model = ensure_free_openrouter_model(wire_model)
+            except ValueError as exc:
+                raise LLMGatewayError(400, str(exc)) from exc
+
+        # ── Non-chat_completions styles → collect + re-chunk ─────────
+        if entry is not None and entry.api_style != ApiStyle.CHAT_COMPLETIONS:
+            resp = await self.chat_completion(
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+            async for line in self._chat_response_to_sse(resp, rid):
+                yield line
+            return
+
+        # ── chat_completions style — true SSE streaming ───────────────
+        payload: dict[str, Any] = {
+            "model": wire_model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = [t.model_dump() for t in tools]
+            payload["tool_choice"] = tool_choice
+
+        http_client, endpoint = self._resolve_http_client_and_endpoint(entry)
+        wait_s = self._config.retry_min_wait_s
+        max_retries = self._config.max_retries
+        last_exc: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with http_client.stream("POST", endpoint, json=payload) as response:
+                    if response.status_code == 200:
+                        async for raw_line in response.aiter_lines():
+                            if raw_line:
+                                yield raw_line + "\n\n"
+                        if pool is not None:
+                            # Token counts aren't available without parsing;
+                            # record a nominal request so pool headroom is tracked.
+                            pool.record_request(concrete_model, 0)
+                        return
+                    detail = (await response.aread()).decode("utf-8", errors="replace")
+                    if self._is_retryable_status(response.status_code):
+                        last_exc = (
+                            LLMRateLimited(response.status_code, detail)
+                            if response.status_code == 429
+                            else LLMGatewayError(response.status_code, detail)
+                        )
+                        self._log_retry(response.status_code, attempt, max_retries, wait_s)
+                        if attempt < max_retries:
+                            await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                            wait_s *= 2
+                        continue
+                    raise LLMGatewayError(response.status_code, detail)
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+        raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
+    @staticmethod
+    async def _chat_response_to_sse(
+        resp: ChatResponse,
+        request_id: str,
+    ) -> AsyncIterator[str]:
+        """Yield OpenAI-compatible SSE data lines from a collected ChatResponse.
+
+        Used as a fallback for non-streamable API styles (Responses API, CLI,
+        Gemini native, thinking chains).
+        """
+        import json as _json
+        import time as _t
+
+        content = resp.message.content or ""
+        model = resp.model or ""
+        chunk_size = 20
+        for i in range(0, max(1, len(content)), chunk_size):
+            chunk_content = content[i : i + chunk_size]
+            chunk = {
+                "id": f"chatcmpl-{request_id}",
+                "object": "chat.completion.chunk",
+                "created": int(_t.time()),
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": chunk_content}
+                        if i == 0
+                        else {"content": chunk_content},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            yield f"data: {_json.dumps(chunk)}\n\n"
+
+        final_chunk = {
+            "id": f"chatcmpl-{request_id}",
+            "object": "chat.completion.chunk",
+            "created": int(_t.time()),
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": resp.finish_reason or "stop"}],
+        }
+        yield f"data: {_json.dumps(final_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
 
     # ------------------------------------------------------------------
     # Core dispatch (separated for audit wrapping)
@@ -1104,7 +1289,9 @@ class LLMGatewayClient:
                 timeout=self._config.timeout_s,
             )
 
-        base_url = provider.base_url[:-7] if provider.base_url.endswith("/openai") else provider.base_url
+        base_url = (
+            provider.base_url[:-7] if provider.base_url.endswith("/openai") else provider.base_url
+        )
         endpoint = f"{base_url}/models/{entry.model_id}:generateContent"
         return self._provider_clients[pid], endpoint
 
