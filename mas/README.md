@@ -1,188 +1,200 @@
-# MAS — Multi-Agent System
+# AIAT MAS
 
-> **Status:** Phases 0-6 are implemented and aligned to the updated plans; repository baseline is prepared for Phase 7+.
+AIAT MAS is a self-hosted multi-agent system for software-project orchestration.
+The active workspace is this `mas/` directory; run service, test, migration, and
+dashboard commands from here.
 
-A self-hosted, fully autonomous multi-agent system built on FastAPI, Redis Streams,
-PostgreSQL, and MinIO. Eleven specialised agent teams cover the full software delivery
-lifecycle — from CEO vision to DevOps deployment.
+Status on 2026-05-18: the core MAS stack, configurable flows, project context
+layer, worker registry, credentials manager, privileged-operation policy,
+dashboard, and compose/systemd deployment files are implemented in code. The next
+work is validation and production hardening, tracked in
+`../.github/prompts/AIAT_PLAN.md`.
 
----
+## What Is Included
 
-## Architecture at a Glance
+- FastAPI services: orchestrator API, message router, tool service, and team runner.
+- Shared Python packages: `mas-core` and `mas-tools-sdk`.
+- Next.js dashboard at `apps/mas-dashboard`, exposed at `http://localhost:4000`.
+- 11 configured teams, 26 worker manifests, and 11 system prompts.
+- Postgres-first workflow and knowledge model with MinIO blob storage and
+  optional pgvector semantic retrieval.
+- Configurable orchestration flows with API and dashboard support.
+- Worker registry, upstream repository metadata, evaluation reports, and worker
+  lifecycle endpoints.
+- Centralized tool-service layer with grants, rate limiting, caching, audit, and
+  circuit breakers.
+- Credentials manager and CEO privileged-operation audit/policy layer.
+- Prometheus/Grafana dev overlay, metrics endpoints, DLQ inspection, and system
+  visualization pages.
 
+## Repository Layout
+
+```text
+apps/
+  orchestrator-api/      FastAPI project/workflow/control API
+  message-router/        Redis Streams broker and WebSocket subscriptions
+  tool-service/          Central tool execution service
+  team-runner/           Per-team agent process
+  mas-dashboard/         Next.js operator dashboard
+packages/
+  mas-core/              Protocols, policy, workflow, storage, agents, LLM gateway
+  mas-tools-sdk/         Tool manifest and client SDK
+migrations/              Alembic schema migrations
+infra/
+  compose/               Docker Compose files and env example
+  docker/                Dockerfiles
+  systemd/               masctl and systemd service units
+  sandbox/               Sandbox profile notes/templates
+teams/                   11 team YAML configs
+workers/                 26 worker manifests
+prompts/                 11 role system prompts
+docs/                    Architecture notes
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  orchestrator-api  (workflow controller + REST)  :8000      │
-│  message-router    (policy + Redis Streams)      :8001      │
-│  tool-service      (7 tool groups, rate-limited) :8002      │
-│  team-runner ×11   (one container per team)      internal   │
-├─────────────────────────────────────────────────────────────┤
-│  Redis 7.2   PostgreSQL 16   PgBouncer 1.22   MinIO         │
-└─────────────────────────────────────────────────────────────┘
-```
 
-18 containers total: 7 infra + 11 team-runners.
+## Prerequisites
 
-### Teams
-| Container | Team ID | Leader role |
-|---|---|---|
-| `mas-team-exec-ceo` | exec_ceo | CEO |
-| `mas-team-exec-coo` | exec_coo | COO |
-| `mas-team-office-cfo` | office_cfo | CFO |
-| `mas-team-office-cio` | office_cio | CIO |
-| `mas-team-office-chrm` | office_chrm | CHRM |
-| `mas-team-office-cso` | office_cso | CSO |
-| `mas-team-office-cto` | office_cto | CTO |
-| `mas-team-dept-production` | dept_production | Production PM |
-| `mas-team-dept-system` | dept_system | System PM |
-| `mas-team-dept-qa` | dept_qa | QA Lead |
-| `mas-team-dept-devops` | dept_devops | DevOps PM |
+- Docker Desktop or Docker Engine with Compose v2.
+- Python 3.11+.
+- `uv`.
+- Node.js 20+ for dashboard development and password-hash generation.
+- Enough local Docker resources for the full stack; use at least 8 GB RAM and 4 CPUs.
 
----
+## First Run
 
-## Quick Start
-
-### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 24+
-- [uv](https://docs.astral.sh/uv/) 0.4+ (Python workspace manager)
-
-### 1 — Configure secrets
+From this directory:
 
 ```bash
 cp infra/compose/.env.example infra/compose/.env
-# Edit .env and fill in all secrets (never commit the real .env)
 ```
 
-### 2 — Start all services
+Edit `infra/compose/.env` and set real values for at least:
+
+- `POSTGRES_PASSWORD`
+- `MINIO_ROOT_PASSWORD`
+- `ROUTER_PASSWORD`
+- `TOOLCACHE_PASSWORD`
+- `ROUTER_SECRET`
+- `TOOL_SECRET`
+- `LLM_GATEWAY_URL`
+- `LLM_API_KEY` or provider-specific API keys
+- `DASHBOARD_USERNAME`
+- `DASHBOARD_PASSWORD_HASH`
+- `JWT_SECRET`
+- `MAS_API_KEY`
+
+Generate a dashboard password hash from the dashboard package:
 
 ```bash
-cd mas
-docker compose -f infra/compose/docker-compose.yml --env-file infra/compose/.env up -d
+cd apps/mas-dashboard
+npm install
+node -e "const b=require('bcryptjs'); console.log(b.hashSync('replace-me', 12))"
+cd ../..
 ```
 
-### 3 — Run database migrations
+Paste the hash into `infra/compose/.env` as `DASHBOARD_PASSWORD_HASH`.
+
+Start the base stack:
 
 ```bash
-# Inside the orchestrator container or locally with uv:
-cd mas
+docker compose -f infra/compose/docker-compose.yml --env-file infra/compose/.env up -d --build
+```
+
+Run migrations:
+
+```bash
 uv run alembic upgrade head
 ```
 
-### 4 — Check health
+Check health:
 
 ```bash
-curl http://localhost:8000/health    # orchestrator-api
-curl http://localhost:8001/health    # message-router
-curl http://localhost:8002/health    # tool-service
+curl http://localhost:8000/health
+curl http://localhost:8001/health
+curl http://localhost:8002/health
+curl http://localhost:4000/api/health
 ```
 
-### Development mode (hot-reload + exposed ports)
+Open the dashboard at `http://localhost:4000`.
+
+## Development Mode
+
+The dev overlay exposes Redis, Postgres, MinIO, message-router, tool-service,
+Prometheus, Grafana, pgAdmin, and RedisInsight ports:
 
 ```bash
 docker compose \
   -f infra/compose/docker-compose.yml \
   -f infra/compose/docker-compose.dev.yml \
   --env-file infra/compose/.env \
-  up -d
+  up -d --build
 ```
 
-Dev additions: pgAdmin (`:5050`), RedisInsight (`:8003`), hot-reload on all FastAPI services.
+Useful local URLs:
 
----
+| Service | URL |
+|---|---|
+| Dashboard | `http://localhost:4000` |
+| Orchestrator API | `http://localhost:8000` |
+| Message router | `http://localhost:8001` |
+| Tool service | `http://localhost:8002` |
+| RedisInsight | `http://localhost:8003` |
+| pgAdmin | `http://localhost:5050` |
+| MinIO Console | `http://localhost:9001` |
+| Prometheus | `http://localhost:9090` |
+| Grafana | `http://localhost:3000` |
 
-## Repository Layout
+## Tests
 
-```
-mas/
-├── pyproject.toml              # uv workspace root
-├── alembic.ini                 # Alembic config
-├── migrations/                 # DB migrations
-│   └── versions/
-│       └── 0001_initial_schema.py
-├── packages/
-│   ├── mas-core/               # Shared library (protocols, policy, LLM gateway…)
-│   └── mas-tools-sdk/          # Tool interface + HTTP client
-├── apps/
-│   ├── orchestrator-api/       # Workflow controller + REST API
-│   ├── message-router/         # Policy enforcement + Redis Streams broker
-│   ├── tool-service/           # Tool gateway (7 groups, rate-limited)
-│   └── team-runner/            # Per-team agent process (×11 at runtime)
-├── teams/                      # YAML configs for each team (11 files)
-├── prompts/                    # Agent system prompt stubs (11 Markdown files)
-└── infra/
-    ├── docker/                 # Dockerfiles (multi-stage uv builds)
-    └── compose/                # docker-compose.yml, .dev.yml, redis.conf, .env.example
-```
-
----
-
-## Development
-
-### Install all workspace packages
+Python workspace:
 
 ```bash
-cd mas
 uv sync
-```
-
-### Run tests
-
-```bash
-uv run pytest                    # all packages + apps
-uv run pytest packages/mas-core  # single package
-```
-
-```bash
-# live/provider tests are opt-in:
-MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live.py
-```
-
-### Lint + type-check
-
-```bash
+uv run pytest
 uv run ruff check .
 uv run mypy .
 ```
 
----
+Dashboard:
 
-## Port Map
+```bash
+cd apps/mas-dashboard
+npm install
+npm run build
+npm run test:e2e
+```
 
-| Service | Port | Notes |
-|---|---|---|
-| orchestrator-api | 8000 | HTTP only in prod; TLS terminated by reverse proxy |
-| message-router | 8001 | HTTP + WebSocket |
-| tool-service | 8002 | HTTP only |
-| Redis | 6379 | Dev only (not exposed in prod compose) |
-| PostgreSQL | 5432 | Dev only |
-| MinIO API | 9000 | Dev only |
-| MinIO Console | 9001 | Dev only |
-| pgAdmin | 5050 | Dev only |
-| RedisInsight | 8003 | Dev only |
+Live/provider tests remain opt-in:
 
----
+```bash
+MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live.py
+```
 
-## Phase Roadmap
+## Runtime Shape
 
-| Phase | Description |
-|---|---|
-| 0 | Repo scaffold |
-| 1 | Protocols and core models |
-| 2 | Policy engine |
-| 5 | LLM gateway |
-| 4b | Deterministic workflow controller |
-| 3 | Message router |
-| 6 | Tool service implementation (7 groups) |
-| 7 | Storage layer (Postgres + MinIO + capability registry) |
-| 4 + 8 | Agent runtime + agent types |
-| 9 + 10 | Team runner + orchestrator API |
-| 11 | Docker Compose baseline |
-| 12 | Observability |
-| 13 | Shutdown and resume |
-| 14 (optional) | Paperclip control-plane integration |
+Base compose defines 19 long-running services plus two one-shot init jobs:
 
----
+- Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
+  orchestrator-api, message-router, tool-service, dashboard, and 11 team runners.
+- One-shot init jobs: Redis ACL init and MinIO bucket/user init.
+- Dev overlay adds pgAdmin, RedisInsight, Prometheus, and Grafana.
+
+The dashboard is an authenticated server-side proxy. Browser code calls
+Next.js API routes, and those routes hold service credentials server-side.
+
+## Planning
+
+The merged plan is `../.github/prompts/AIAT_PLAN.md`. It includes:
+
+- current implementation baseline
+- priority roadmap
+- worker integration policy
+- next features from `../next.txt`
+- validation checklist
+- known technical debt
+
+Do not add new scattered plan files under `.github/prompts/`; update the merged
+plan instead.
 
 ## License
 
-Proprietary — internal use only.
+Proprietary - internal use only.

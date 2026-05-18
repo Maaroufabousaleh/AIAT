@@ -1,0 +1,575 @@
+Date : 2026-05-18 13:35:16
+Directory : c:\projects\AIAT
+Total : 380 files,  81595 codes, 9000 comments, 12135 blanks, all 102730 lines
+
+Languages
++--------------------+------------+------------+------------+------------+------------+
+| language           | files      | code       | comment    | blank      | total      |
++--------------------+------------+------------+------------+------------+------------+
+| Python             |        192 |     46,569 |      8,669 |      9,178 |     64,416 |
+| JSON               |          9 |     14,865 |          0 |          5 |     14,870 |
+| Markdown           |         30 |      7,009 |          0 |      1,816 |      8,825 |
+| TypeScript JSX     |         23 |      6,509 |         49 |        475 |      7,033 |
+| YAML               |         45 |      3,031 |        154 |        144 |      3,329 |
+| TypeScript         |         61 |      2,822 |         69 |        391 |      3,282 |
+| Shell Script       |          2 |        350 |         30 |         49 |        429 |
+| Batch              |          2 |        119 |         10 |         30 |        159 |
+| JavaScript         |          6 |        102 |          4 |          8 |        114 |
+| Ini                |          3 |         82 |          0 |         24 |        106 |
+| Ignore             |          2 |         53 |          0 |          2 |         55 |
+| JSON with Comments |          3 |         49 |          0 |          3 |         52 |
+| PostCSS            |          1 |         28 |          0 |          3 |         31 |
+| Properties         |          1 |          7 |         15 |          7 |         29 |
++--------------------+------------+------------+------------+------------+------------+
+
+Directories
++---------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                          | files      | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                             |        380 |     81,595 |      9,000 |     12,135 |    102,730 |
+| . (Files)                                                                                                     |          8 |      1,126 |         20 |        273 |      1,419 |
+| .github                                                                                                       |         10 |      4,497 |          5 |      1,169 |      5,671 |
+| .github\prompts                                                                                               |          9 |      4,458 |          0 |      1,160 |      5,618 |
+| .github\workflows                                                                                             |          1 |         39 |          5 |          9 |         53 |
+| Docs                                                                                                          |          1 |        492 |          0 |        132 |        624 |
+| apps                                                                                                          |          9 |      6,979 |          8 |         19 |      7,006 |
+| apps\mas-dashboard                                                                                            |          9 |      6,979 |          8 |         19 |      7,006 |
+| mas                                                                                                           |        350 |     67,255 |      8,965 |     10,505 |     86,725 |
+| mas (Files)                                                                                                   |          4 |        211 |         12 |         58 |        281 |
+| mas\apps                                                                                                      |        160 |     33,647 |      2,660 |      5,073 |     41,380 |
+| mas\apps\mas-dashboard                                                                                        |         92 |     16,339 |        114 |        865 |     17,318 |
+| mas\apps\mas-dashboard (Files)                                                                                |         11 |      7,062 |          8 |         22 |      7,092 |
+| mas\apps\mas-dashboard\app                                                                                    |         64 |      7,261 |         47 |        586 |      7,894 |
+| mas\apps\mas-dashboard\app (Files)                                                                            |          2 |         41 |          0 |          6 |         47 |
+| mas\apps\mas-dashboard\app\(dashboard)                                                                        |         17 |      5,650 |         44 |        396 |      6,090 |
+| mas\apps\mas-dashboard\app\(dashboard) (Files)                                                                |          3 |        175 |          3 |         22 |        200 |
+| mas\apps\mas-dashboard\app\(dashboard)\ceo                                                                    |          1 |        169 |          3 |         14 |        186 |
+| mas\apps\mas-dashboard\app\(dashboard)\credentials                                                            |          1 |        425 |          3 |         19 |        447 |
+| mas\apps\mas-dashboard\app\(dashboard)\dlq                                                                    |          1 |        250 |          1 |         17 |        268 |
+| mas\apps\mas-dashboard\app\(dashboard)\flows                                                                  |          3 |      1,240 |          3 |         91 |      1,334 |
+| mas\apps\mas-dashboard\app\(dashboard)\flows (Files)                                                          |          1 |        145 |          0 |         10 |        155 |
+| mas\apps\mas-dashboard\app\(dashboard)\flows\[id]                                                             |          1 |        619 |          0 |         45 |        664 |
+| mas\apps\mas-dashboard\app\(dashboard)\flows\new                                                              |          1 |        476 |          3 |         36 |        515 |
+| mas\apps\mas-dashboard\app\(dashboard)\metrics                                                                |          1 |        273 |          1 |         25 |        299 |
+| mas\apps\mas-dashboard\app\(dashboard)\projects                                                               |          2 |      1,395 |          4 |         83 |      1,482 |
+| mas\apps\mas-dashboard\app\(dashboard)\projects (Files)                                                       |          1 |        269 |          4 |         15 |        288 |
+| mas\apps\mas-dashboard\app\(dashboard)\projects\[id]                                                          |          1 |      1,126 |          0 |         68 |      1,194 |
+| mas\apps\mas-dashboard\app\(dashboard)\streams                                                                |          1 |        171 |          4 |         19 |        194 |
+| mas\apps\mas-dashboard\app\(dashboard)\system                                                                 |          1 |        355 |          9 |         23 |        387 |
+| mas\apps\mas-dashboard\app\(dashboard)\system-viz                                                             |          1 |        399 |          0 |         30 |        429 |
+| mas\apps\mas-dashboard\app\(dashboard)\tools                                                                  |          1 |        289 |          8 |         27 |        324 |
+| mas\apps\mas-dashboard\app\(dashboard)\workers                                                                |          1 |        509 |          5 |         26 |        540 |
+| mas\apps\mas-dashboard\app\api                                                                                |         44 |      1,470 |          1 |        174 |      1,645 |
+| mas\apps\mas-dashboard\app\api\auth                                                                           |          2 |         36 |          0 |          7 |         43 |
+| mas\apps\mas-dashboard\app\api\auth\login                                                                     |          1 |         29 |          0 |          5 |         34 |
+| mas\apps\mas-dashboard\app\api\auth\logout                                                                    |          1 |          7 |          0 |          2 |          9 |
+| mas\apps\mas-dashboard\app\api\credentials                                                                    |          2 |         61 |          0 |         10 |         71 |
+| mas\apps\mas-dashboard\app\api\credentials (Files)                                                            |          1 |         25 |          0 |          4 |         29 |
+| mas\apps\mas-dashboard\app\api\credentials\[name]                                                             |          1 |         36 |          0 |          6 |         42 |
+| mas\apps\mas-dashboard\app\api\dlq                                                                            |          2 |         23 |          0 |          5 |         28 |
+| mas\apps\mas-dashboard\app\api\dlq (Files)                                                                    |          1 |         11 |          0 |          2 |         13 |
+| mas\apps\mas-dashboard\app\api\dlq\[id]                                                                       |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\dlq\[id]\replay                                                                |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\flows                                                                          |         13 |        320 |          0 |         35 |        355 |
+| mas\apps\mas-dashboard\app\api\flows (Files)                                                                  |          1 |         37 |          0 |          4 |         41 |
+| mas\apps\mas-dashboard\app\api\flows\[id]                                                                     |          1 |         51 |          0 |          4 |         55 |
+| mas\apps\mas-dashboard\app\api\flows\instances                                                                |         11 |        232 |          0 |         27 |        259 |
+| mas\apps\mas-dashboard\app\api\flows\instances (Files)                                                        |          1 |         38 |          0 |          5 |         43 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]                                                           |          9 |        181 |          0 |         20 |        201 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id] (Files)                                                   |          1 |         17 |          0 |          2 |         19 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\action                                                    |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\context                                                   |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\escalate                                                  |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\executions                                                |          1 |         17 |          0 |          2 |         19 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\node-action                                               |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\override                                                  |          1 |         21 |          0 |          4 |         25 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\retry                                                     |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\[id]\switch                                                    |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\api\flows\instances\active                                                         |          1 |         13 |          0 |          2 |         15 |
+| mas\apps\mas-dashboard\app\api\health                                                                         |          1 |          4 |          0 |          2 |          6 |
+| mas\apps\mas-dashboard\app\api\metrics                                                                        |          1 |         24 |          0 |          4 |         28 |
+| mas\apps\mas-dashboard\app\api\projects                                                                       |         11 |        240 |          0 |         39 |        279 |
+| mas\apps\mas-dashboard\app\api\projects (Files)                                                               |          1 |         28 |          0 |          3 |         31 |
+| mas\apps\mas-dashboard\app\api\projects\[id]                                                                  |         10 |        212 |          0 |         36 |        248 |
+| mas\apps\mas-dashboard\app\api\projects\[id] (Files)                                                          |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\archive                                                          |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\context                                                          |          2 |         48 |          0 |          8 |         56 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\context (Files)                                                  |          1 |         25 |          0 |          4 |         29 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\context\[item_id]                                                |          1 |         23 |          0 |          4 |         27 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\decisions                                                        |          1 |         25 |          0 |          4 |         29 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\documents                                                        |          1 |         20 |          0 |          3 |         23 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\flow-instance                                                    |          1 |         44 |          0 |          5 |         49 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\retry                                                            |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\state-history                                                    |          1 |         12 |          0 |          3 |         15 |
+| mas\apps\mas-dashboard\app\api\projects\[id]\transition                                                       |          1 |         27 |          0 |          4 |         31 |
+| mas\apps\mas-dashboard\app\api\streams                                                                        |          1 |         51 |          0 |         11 |         62 |
+| mas\apps\mas-dashboard\app\api\streams\[team_id]                                                              |          1 |         51 |          0 |         11 |         62 |
+| mas\apps\mas-dashboard\app\api\system                                                                         |          7 |        564 |          1 |         43 |        608 |
+| mas\apps\mas-dashboard\app\api\system\hierarchy                                                               |          1 |        169 |          0 |         19 |        188 |
+| mas\apps\mas-dashboard\app\api\system\orchestration                                                           |          1 |        161 |          1 |          5 |        167 |
+| mas\apps\mas-dashboard\app\api\system\permissions                                                             |          1 |        186 |          0 |         11 |        197 |
+| mas\apps\mas-dashboard\app\api\system\resume                                                                  |          1 |         11 |          0 |          2 |         13 |
+| mas\apps\mas-dashboard\app\api\system\schedule                                                                |          1 |         15 |          0 |          2 |         17 |
+| mas\apps\mas-dashboard\app\api\system\shutdown                                                                |          1 |         11 |          0 |          2 |         13 |
+| mas\apps\mas-dashboard\app\api\system\status                                                                  |          1 |         11 |          0 |          2 |         13 |
+| mas\apps\mas-dashboard\app\api\tools                                                                          |          1 |         29 |          0 |          6 |         35 |
+| mas\apps\mas-dashboard\app\api\workers                                                                        |          3 |        118 |          0 |         12 |        130 |
+| mas\apps\mas-dashboard\app\api\workers (Files)                                                                |          1 |         53 |          0 |          6 |         59 |
+| mas\apps\mas-dashboard\app\api\workers\[worker_id]                                                            |          2 |         65 |          0 |          6 |         71 |
+| mas\apps\mas-dashboard\app\api\workers\[worker_id] (Files)                                                    |          1 |         44 |          0 |          4 |         48 |
+| mas\apps\mas-dashboard\app\api\workers\[worker_id]\status                                                     |          1 |         21 |          0 |          2 |         23 |
+| mas\apps\mas-dashboard\app\login                                                                              |          1 |        100 |          2 |         10 |        112 |
+| mas\apps\mas-dashboard\components                                                                             |          4 |        746 |          3 |         66 |        815 |
+| mas\apps\mas-dashboard\components (Files)                                                                     |          1 |         89 |          3 |          8 |        100 |
+| mas\apps\mas-dashboard\components\system-viz                                                                  |          3 |        657 |          0 |         58 |        715 |
+| mas\apps\mas-dashboard\e2e                                                                                    |          3 |        470 |         54 |        112 |        636 |
+| mas\apps\mas-dashboard\lib                                                                                    |          9 |        796 |          2 |         79 |        877 |
+| mas\apps\mas-dashboard\test-results                                                                           |          1 |          4 |          0 |          0 |          4 |
+| mas\apps\message-router                                                                                       |         12 |      1,562 |        359 |        389 |      2,310 |
+| mas\apps\message-router\message_router                                                                        |          8 |      1,031 |        242 |        237 |      1,510 |
+| mas\apps\message-router\tests                                                                                 |          4 |        531 |        117 |        152 |        800 |
+| mas\apps\orchestrator-api                                                                                     |         26 |     10,523 |      1,696 |      2,707 |     14,926 |
+| mas\apps\orchestrator-api\orchestrator_api                                                                    |          3 |      2,742 |        338 |        601 |      3,681 |
+| mas\apps\orchestrator-api\tests                                                                               |         23 |      7,781 |      1,358 |      2,106 |     11,245 |
+| mas\apps\team-runner                                                                                          |          5 |      1,017 |         51 |        168 |      1,236 |
+| mas\apps\team-runner\team_runner                                                                              |          2 |        580 |         27 |         90 |        697 |
+| mas\apps\team-runner\tests                                                                                    |          3 |        437 |         24 |         78 |        539 |
+| mas\apps\tool-service                                                                                         |         25 |      4,206 |        440 |        944 |      5,590 |
+| mas\apps\tool-service\tests                                                                                   |          5 |      1,342 |        171 |        328 |      1,841 |
+| mas\apps\tool-service\tool_service                                                                            |         20 |      2,864 |        269 |        616 |      3,749 |
+| mas\apps\tool-service\tool_service (Files)                                                                    |          8 |        937 |        178 |        196 |      1,311 |
+| mas\apps\tool-service\tool_service\tools                                                                      |         12 |      1,927 |         91 |        420 |      2,438 |
+| mas\docs                                                                                                      |          1 |        110 |          0 |         36 |        146 |
+| mas\infra                                                                                                     |         13 |      1,056 |        112 |        169 |      1,337 |
+| mas\infra\compose                                                                                             |          9 |        952 |        112 |        131 |      1,195 |
+| mas\infra\compose (Files)                                                                                     |          8 |        944 |        111 |        129 |      1,184 |
+| mas\infra\compose\grafana                                                                                     |          1 |          8 |          1 |          2 |         11 |
+| mas\infra\compose\grafana\provisioning                                                                        |          1 |          8 |          1 |          2 |         11 |
+| mas\infra\compose\grafana\provisioning\datasources                                                            |          1 |          8 |          1 |          2 |         11 |
+| mas\infra\sandbox                                                                                             |          3 |         22 |          0 |          6 |         28 |
+| mas\infra\systemd                                                                                             |          1 |         82 |          0 |         32 |        114 |
+| mas\migrations                                                                                                |         13 |      1,460 |        243 |        146 |      1,849 |
+| mas\migrations (Files)                                                                                        |          1 |         45 |         31 |         17 |         93 |
+| mas\migrations\versions                                                                                       |         12 |      1,415 |        212 |        129 |      1,756 |
+| mas\packages                                                                                                  |        111 |     27,788 |      5,854 |      4,793 |     38,435 |
+| mas\packages\mas-core                                                                                         |        104 |     27,041 |      5,729 |      4,711 |     37,481 |
+| mas\packages\mas-core\capabilities                                                                            |          1 |          7 |          0 |          5 |         12 |
+| mas\packages\mas-core\mas_core                                                                                |         79 |     18,523 |      4,725 |      2,795 |     26,043 |
+| mas\packages\mas-core\mas_core (Files)                                                                        |          1 |          0 |         13 |          1 |         14 |
+| mas\packages\mas-core\mas_core\agent_runtime                                                                  |         11 |      3,305 |        950 |        470 |      4,725 |
+| mas\packages\mas-core\mas_core\capabilities                                                                   |          2 |         23 |          2 |         15 |         40 |
+| mas\packages\mas-core\mas_core\credentials                                                                    |          3 |        357 |         91 |         63 |        511 |
+| mas\packages\mas-core\mas_core\llm_gateway                                                                    |         27 |      7,970 |      2,210 |      1,082 |     11,262 |
+| mas\packages\mas-core\mas_core\llm_gateway (Files)                                                            |         12 |      4,229 |      1,607 |        727 |      6,563 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers                                                          |         15 |      3,741 |        603 |        355 |      4,699 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers (Files)                                                  |          2 |        345 |        202 |         78 |        625 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers\api                                                      |         11 |      3,127 |        289 |        219 |      3,635 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers\api (Files)                                              |          8 |      1,785 |        269 |        156 |      2,210 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers\api\openrouter                                           |          3 |      1,342 |         20 |         63 |      1,425 |
+| mas\packages\mas-core\mas_core\llm_gateway\providers\cli                                                      |          2 |        269 |        112 |         58 |        439 |
+| mas\packages\mas-core\mas_core\memory                                                                         |          5 |      2,946 |        432 |        258 |      3,636 |
+| mas\packages\mas-core\mas_core\observability                                                                  |          4 |        165 |         76 |         48 |        289 |
+| mas\packages\mas-core\mas_core\policy                                                                         |          4 |        768 |        210 |        111 |      1,089 |
+| mas\packages\mas-core\mas_core\protocols                                                                      |          8 |      1,064 |        356 |        319 |      1,739 |
+| mas\packages\mas-core\mas_core\util                                                                           |          1 |          0 |         16 |          1 |         17 |
+| mas\packages\mas-core\mas_core\worker_registry                                                                |          6 |      1,114 |        226 |        257 |      1,597 |
+| mas\packages\mas-core\mas_core\workflow                                                                       |          7 |        811 |        143 |        170 |      1,124 |
+| mas\packages\mas-core\scripts                                                                                 |          5 |        647 |        103 |        150 |        900 |
+| mas\packages\mas-core\tests                                                                                   |         17 |      7,670 |        901 |      1,753 |     10,324 |
+| mas\packages\mas-core\workflow                                                                                |          2 |        194 |          0 |          8 |        202 |
+| mas\packages\mas-tools-sdk                                                                                    |          7 |        747 |        125 |         82 |        954 |
+| mas\packages\mas-tools-sdk\mas_tools_sdk                                                                      |          5 |        733 |        120 |         73 |        926 |
+| mas\packages\mas-tools-sdk\tests                                                                              |          2 |         14 |          5 |          9 |         28 |
+| mas\prompts                                                                                                   |         11 |        701 |          0 |        154 |        855 |
+| mas\teams                                                                                                     |         11 |        408 |         84 |         50 |        542 |
+| mas\workers                                                                                                   |         26 |      1,874 |          0 |         26 |      1,900 |
+| prompts                                                                                                       |          1 |      1,038 |          0 |          1 |      1,039 |
+| scripts                                                                                                       |          1 |        208 |          2 |         36 |        246 |
++---------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++---------------------------------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
+| filename                                                                                                      | language           | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
+| c:\projects\AIAT\.dockerignore                                                                                | Ignore             |         24 |          0 |          1 |         25 |
+| c:\projects\AIAT\.github\prompts\eval-plan-manualActions.md                                                   | Markdown           |        216 |          0 |         74 |        290 |
+| c:\projects\AIAT\.github\prompts\eval-plan-masArchitectureUpgrade.md                                          | Markdown           |        187 |          0 |         94 |        281 |
+| c:\projects\AIAT\.github\prompts\eval-plan-orgArchitecture.md                                                 | Markdown           |        170 |          0 |         87 |        257 |
+| c:\projects\AIAT\.github\prompts\eval-plan-phase4-manualTodo.md                                               | Markdown           |        133 |          0 |         61 |        194 |
+| c:\projects\AIAT\.github\prompts\plan-manualActions.prompt.md                                                 | Markdown           |        559 |          0 |        199 |        758 |
+| c:\projects\AIAT\.github\prompts\plan-masArchitectureUpgrade.prompt.md                                        | Markdown           |        674 |          0 |        139 |        813 |
+| c:\projects\AIAT\.github\prompts\plan-orgArchitecture.prompt.md                                               | Markdown           |      2,098 |          0 |        371 |      2,469 |
+| c:\projects\AIAT\.github\prompts\plan-phase4-manualTodo.prompt.md                                             | Markdown           |        251 |          0 |         90 |        341 |
+| c:\projects\AIAT\.github\prompts\workers.md                                                                   | Markdown           |        170 |          0 |         45 |        215 |
+| c:\projects\AIAT\.github\workflows\security-checks.yml                                                        | YAML               |         39 |          5 |          9 |         53 |
+| c:\projects\AIAT\DASHBOARD_PLAN.md                                                                            | Markdown           |        636 |          0 |        136 |        772 |
+| c:\projects\AIAT\Docs\deep-research-report.md                                                                 | Markdown           |        492 |          0 |        132 |        624 |
+| c:\projects\AIAT\PROJECT_STATUS.md                                                                            | Markdown           |        215 |          0 |         67 |        282 |
+| c:\projects\AIAT\README.md                                                                                    | Markdown           |        146 |          0 |         43 |        189 |
+| c:\projects\AIAT\alembic.ini                                                                                  | Ini                |         33 |          0 |         10 |         43 |
+| c:\projects\AIAT\apps\mas-dashboard\middleware.ts                                                             | TypeScript         |         37 |          2 |         10 |         49 |
+| c:\projects\AIAT\apps\mas-dashboard\next-env.d.ts                                                             | TypeScript         |          0 |          4 |          2 |          6 |
+| c:\projects\AIAT\apps\mas-dashboard\next.config.mjs                                                           | JavaScript         |         30 |          1 |          2 |         33 |
+| c:\projects\AIAT\apps\mas-dashboard\package-lock.json                                                         | JSON               |      6,827 |          0 |          1 |      6,828 |
+| c:\projects\AIAT\apps\mas-dashboard\package.json                                                              | JSON               |         40 |          0 |          1 |         41 |
+| c:\projects\AIAT\apps\mas-dashboard\postcss.config.js                                                         | JavaScript         |          6 |          0 |          1 |          7 |
+| c:\projects\AIAT\apps\mas-dashboard\tailwind.config.js                                                        | JavaScript         |         15 |          1 |          1 |         17 |
+| c:\projects\AIAT\apps\mas-dashboard\tsconfig.json                                                             | JSON with Comments |         23 |          0 |          1 |         24 |
+| c:\projects\AIAT\apps\mas-dashboard\tsconfig.tsbuildinfo                                                      | JSON               |          1 |          0 |          0 |          1 |
+| c:\projects\AIAT\guardian.bat                                                                                 | Batch              |         50 |          8 |         12 |         70 |
+| c:\projects\AIAT\mas\.dockerignore                                                                            | Ignore             |         29 |          0 |          1 |         30 |
+| c:\projects\AIAT\mas\README.md                                                                                | Markdown           |        146 |          0 |         43 |        189 |
+| c:\projects\AIAT\mas\alembic.ini                                                                              | Ini                |         33 |          0 |         10 |         43 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\.eslintrc.json                                                        | JSON with Comments |          3 |          0 |          1 |          4 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\ceo\page.tsx                                          | TypeScript JSX     |        169 |          3 |         14 |        186 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\credentials\page.tsx                                  | TypeScript JSX     |        425 |          3 |         19 |        447 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\dlq\page.tsx                                          | TypeScript JSX     |        250 |          1 |         17 |        268 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\error.tsx                                             | TypeScript JSX     |         36 |          0 |          4 |         40 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\flows\[id]\page.tsx                                   | TypeScript JSX     |        619 |          0 |         45 |        664 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\flows\new\page.tsx                                    | TypeScript JSX     |        476 |          3 |         36 |        515 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\flows\page.tsx                                        | TypeScript JSX     |        145 |          0 |         10 |        155 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\layout.tsx                                            | TypeScript JSX     |         11 |          0 |          2 |         13 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\metrics\page.tsx                                      | TypeScript JSX     |        273 |          1 |         25 |        299 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\page.tsx                                              | TypeScript JSX     |        128 |          3 |         16 |        147 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\projects\[id]\page.tsx                                | TypeScript JSX     |      1,126 |          0 |         68 |      1,194 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\projects\page.tsx                                     | TypeScript JSX     |        269 |          4 |         15 |        288 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\streams\page.tsx                                      | TypeScript JSX     |        171 |          4 |         19 |        194 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\system-viz\page.tsx                                   | TypeScript JSX     |        399 |          0 |         30 |        429 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\system\page.tsx                                       | TypeScript JSX     |        355 |          9 |         23 |        387 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\tools\page.tsx                                        | TypeScript JSX     |        289 |          8 |         27 |        324 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\(dashboard)\workers\page.tsx                                      | TypeScript JSX     |        509 |          5 |         26 |        540 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\auth\login\route.ts                                           | TypeScript         |         29 |          0 |          5 |         34 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\auth\logout\route.ts                                          | TypeScript         |          7 |          0 |          2 |          9 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\credentials\[name]\route.ts                                   | TypeScript         |         36 |          0 |          6 |         42 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\credentials\route.ts                                          | TypeScript         |         25 |          0 |          4 |         29 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\dlq\[id]\replay\route.ts                                      | TypeScript         |         12 |          0 |          3 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\dlq\route.ts                                                  | TypeScript         |         11 |          0 |          2 |         13 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\[id]\route.ts                                           | TypeScript         |         51 |          0 |          4 |         55 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\action\route.ts                          | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\context\route.ts                         | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\escalate\route.ts                        | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\executions\route.ts                      | TypeScript         |         17 |          0 |          2 |         19 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\node-action\route.ts                     | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\override\route.ts                        | TypeScript         |         21 |          0 |          4 |         25 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\retry\route.ts                           | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\route.ts                                 | TypeScript         |         17 |          0 |          2 |         19 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\[id]\switch\route.ts                          | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\active\route.ts                               | TypeScript         |         13 |          0 |          2 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\instances\route.ts                                      | TypeScript         |         38 |          0 |          5 |         43 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\flows\route.ts                                                | TypeScript         |         37 |          0 |          4 |         41 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\health\route.ts                                               | TypeScript         |          4 |          0 |          2 |          6 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\metrics\route.ts                                              | TypeScript         |         24 |          0 |          4 |         28 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\archive\route.ts                                | TypeScript         |         12 |          0 |          3 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\context\[item_id]\route.ts                      | TypeScript         |         23 |          0 |          4 |         27 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\context\route.ts                                | TypeScript         |         25 |          0 |          4 |         29 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\decisions\route.ts                              | TypeScript         |         25 |          0 |          4 |         29 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\documents\route.ts                              | TypeScript         |         20 |          0 |          3 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\flow-instance\route.ts                          | TypeScript         |         44 |          0 |          5 |         49 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\retry\route.ts                                  | TypeScript         |         12 |          0 |          3 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\route.ts                                        | TypeScript         |         12 |          0 |          3 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\state-history\route.ts                          | TypeScript         |         12 |          0 |          3 |         15 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\[id]\transition\route.ts                             | TypeScript         |         27 |          0 |          4 |         31 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\projects\route.ts                                             | TypeScript         |         28 |          0 |          3 |         31 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\streams\[team_id]\route.ts                                    | TypeScript         |         51 |          0 |         11 |         62 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\hierarchy\route.ts                                     | TypeScript         |        169 |          0 |         19 |        188 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\orchestration\route.ts                                 | TypeScript         |        161 |          1 |          5 |        167 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\permissions\route.ts                                   | TypeScript         |        186 |          0 |         11 |        197 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\resume\route.ts                                        | TypeScript         |         11 |          0 |          2 |         13 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\schedule\route.ts                                      | TypeScript         |         15 |          0 |          2 |         17 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\shutdown\route.ts                                      | TypeScript         |         11 |          0 |          2 |         13 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\system\status\route.ts                                        | TypeScript         |         11 |          0 |          2 |         13 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\tools\route.ts                                                | TypeScript         |         29 |          0 |          6 |         35 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\workers\[worker_id]\route.ts                                  | TypeScript         |         44 |          0 |          4 |         48 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\workers\[worker_id]\status\route.ts                           | TypeScript         |         21 |          0 |          2 |         23 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\api\workers\route.ts                                              | TypeScript         |         53 |          0 |          6 |         59 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\globals.css                                                       | PostCSS            |         28 |          0 |          3 |         31 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\layout.tsx                                                        | TypeScript JSX     |         13 |          0 |          3 |         16 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\app\login\page.tsx                                                    | TypeScript JSX     |        100 |          2 |         10 |        112 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\components\Sidebar.tsx                                                | TypeScript JSX     |         89 |          3 |          8 |        100 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\components\system-viz\HierarchyViz.tsx                                | TypeScript JSX     |        162 |          0 |         23 |        185 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\components\system-viz\OrchestrationViz.tsx                            | TypeScript JSX     |        254 |          0 |         19 |        273 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\components\system-viz\PermissionsViz.tsx                              | TypeScript JSX     |        241 |          0 |         16 |        257 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\e2e\app-operations.spec.ts                                            | TypeScript         |        100 |          0 |         21 |        121 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\e2e\flow-builder.spec.ts                                              | TypeScript         |        122 |          0 |         27 |        149 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\e2e\flow-runtime-test2.spec.ts                                        | TypeScript         |        248 |         54 |         64 |        366 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\auth.ts                                                           | TypeScript         |         28 |          0 |          6 |         34 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\constants.ts                                                      | TypeScript         |         84 |          0 |          8 |         92 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\flow-editor.ts                                                    | TypeScript         |         42 |          0 |          4 |         46 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\flow-store.ts                                                     | TypeScript         |        305 |          0 |         25 |        330 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\flow-types.ts                                                     | TypeScript         |        115 |          0 |         13 |        128 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\orchestrator.ts                                                   | TypeScript         |         28 |          2 |          5 |         35 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\prometheus.ts                                                     | TypeScript         |         40 |          0 |          5 |         45 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\system-viz-store.ts                                               | TypeScript         |         43 |          0 |          3 |         46 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\lib\system-viz-types.ts                                               | TypeScript         |        111 |          0 |         10 |        121 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\middleware.ts                                                         | TypeScript         |         37 |          2 |         10 |         49 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\next-env.d.ts                                                         | TypeScript         |          0 |          4 |          2 |          6 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\next.config.mjs                                                       | JavaScript         |         30 |          1 |          2 |         33 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\package-lock.json                                                     | JSON               |      6,892 |          0 |          1 |      6,893 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\package.json                                                          | JSON               |         43 |          0 |          1 |         44 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\playwright.config.ts                                                  | TypeScript         |         12 |          0 |          2 |         14 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\postcss.config.js                                                     | JavaScript         |          6 |          0 |          1 |          7 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\tailwind.config.js                                                    | JavaScript         |         15 |          1 |          1 |         17 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\test-results\.last-run.json                                           | JSON               |          4 |          0 |          0 |          4 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\tsconfig.json                                                         | JSON with Comments |         23 |          0 |          1 |         24 |
+| c:\projects\AIAT\mas\apps\mas-dashboard\tsconfig.tsbuildinfo                                                  | JSON               |          1 |          0 |          0 |          1 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\__init__.py                                           | Python             |          0 |          1 |          1 |          2 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\config.py                                             | Python             |        113 |         17 |         23 |        153 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\dlq.py                                                | Python             |         82 |         36 |         18 |        136 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\main.py                                               | Python             |         90 |         28 |         32 |        150 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\redis_client.py                                       | Python             |        173 |         93 |         58 |        324 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\routes_publish.py                                     | Python             |        183 |          7 |         37 |        227 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\routes_ws.py                                          | Python             |        260 |         39 |         47 |        346 |
+| c:\projects\AIAT\mas\apps\message-router\message_router\tasks.py                                              | Python             |        130 |         21 |         21 |        172 |
+| c:\projects\AIAT\mas\apps\message-router\tests\conftest.py                                                    | Python             |         13 |          3 |          5 |         21 |
+| c:\projects\AIAT\mas\apps\message-router\tests\test_health.py                                                 | Python             |          5 |          1 |          3 |          9 |
+| c:\projects\AIAT\mas\apps\message-router\tests\test_metrics.py                                                | Python             |         43 |         18 |         17 |         78 |
+| c:\projects\AIAT\mas\apps\message-router\tests\test_phase3.py                                                 | Python             |        470 |         95 |        127 |        692 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\orchestrator_api\__init__.py                                       | Python             |          0 |          1 |          1 |          2 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\orchestrator_api\llm_gateway_compat.py                             | Python             |        273 |         64 |         54 |        391 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\orchestrator_api\main.py                                           | Python             |      2,469 |        273 |        546 |      3,288 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\conftest.py                                                  | Python             |         45 |         19 |         18 |         82 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_capabilities.py                                         | Python             |        194 |         37 |         81 |        312 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_dead_letters.py                                         | Python             |        141 |         25 |         65 |        231 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_decisions.py                                            | Python             |        210 |         31 |         70 |        311 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_documents.py                                            | Python             |        132 |         28 |         62 |        222 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_flows.py                                                | Python             |        543 |          0 |         86 |        629 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_flows_operator_integration.py                           | Python             |        751 |         36 |         83 |        870 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_flows_test2_runtime.py                                  | Python             |        745 |        136 |        131 |      1,012 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_health.py                                               | Python             |          7 |          1 |          3 |         11 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_metrics.py                                              | Python             |         50 |         15 |         19 |         84 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_projects.py                                             | Python             |        219 |         45 |         87 |        351 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_system.py                                               | Python             |        315 |         55 |        127 |        497 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test10_ops_scripts.py                                   | Python             |        272 |         92 |        102 |        466 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test11_hierarchy.py                                     | Python             |        232 |        107 |         98 |        437 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test12_comms_policy.py                                  | Python             |        199 |        155 |        116 |        470 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test13_security_governance.py                           | Python             |        794 |        118 |        210 |      1,122 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test7_operator_ui.py                                    | Python             |        559 |         73 |        132 |        764 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test8_retrieval.py                                      | Python             |        408 |         70 |         75 |        553 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_test9_db_architecture.py                                | Python             |        381 |         74 |         93 |        548 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_transitions.py                                          | Python             |        150 |         23 |         57 |        230 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_watchdog.py                                             | Python             |        177 |         20 |         57 |        254 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_workers_test4_config.py                                 | Python             |        561 |         83 |        137 |        781 |
+| c:\projects\AIAT\mas\apps\orchestrator-api\tests\test_workers_test5_lifecycle.py                              | Python             |        696 |        115 |        197 |      1,008 |
+| c:\projects\AIAT\mas\apps\team-runner\team_runner\__init__.py                                                 | Python             |          0 |          1 |          1 |          2 |
+| c:\projects\AIAT\mas\apps\team-runner\team_runner\main.py                                                     | Python             |        580 |         26 |         89 |        695 |
+| c:\projects\AIAT\mas\apps\team-runner\tests\conftest.py                                                       | Python             |         39 |          5 |          5 |         49 |
+| c:\projects\AIAT\mas\apps\team-runner\tests\test_shutdown.py                                                  | Python             |        326 |         17 |         60 |        403 |
+| c:\projects\AIAT\mas\apps\team-runner\tests\test_team_config.py                                               | Python             |         72 |          2 |         13 |         87 |
+| c:\projects\AIAT\mas\apps\tool-service\tests\conftest.py                                                      | Python             |        106 |         23 |         38 |        167 |
+| c:\projects\AIAT\mas\apps\tool-service\tests\test_metrics.py                                                  | Python             |         43 |         13 |         17 |         73 |
+| c:\projects\AIAT\mas\apps\tool-service\tests\test_phase6.py                                                   | Python             |        526 |         29 |        117 |        672 |
+| c:\projects\AIAT\mas\apps\tool-service\tests\test_test6_tool_layer.py                                         | Python             |        650 |        105 |        150 |        905 |
+| c:\projects\AIAT\mas\apps\tool-service\tests\test_tools.py                                                    | Python             |         17 |          1 |          6 |         24 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\__init__.py                                               | Python             |          0 |          1 |          1 |          2 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\cache.py                                                  | Python             |         55 |         21 |         14 |         90 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\circuit_breaker.py                                        | Python             |         71 |         31 |         18 |        120 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\config.py                                                 | Python             |         54 |          6 |         21 |         81 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\main.py                                                   | Python             |         69 |         25 |         25 |        119 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\rate_limiter.py                                           | Python             |         85 |         14 |         18 |        117 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\registry.py                                               | Python             |        449 |         41 |         49 |        539 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\routes.py                                                 | Python             |        154 |         39 |         50 |        243 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\__init__.py                                         | Python             |          0 |          6 |          1 |          7 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\_orch_client.py                                     | Python             |         14 |          7 |          9 |         30 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\all_tools.py                                        | Python             |        144 |         11 |          7 |        162 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\browser.py                                          | Python             |        419 |         23 |         97 |        539 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\capability.py                                       | Python             |         67 |          5 |         19 |         91 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\file.py                                             | Python             |         92 |          1 |         20 |        113 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\flow.py                                             | Python             |        174 |          5 |         44 |        223 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\infra.py                                            | Python             |        176 |          3 |         42 |        221 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\memory.py                                           | Python             |        105 |          3 |         27 |        135 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\project.py                                          | Python             |        345 |         15 |         69 |        429 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\sprint_kpi.py                                       | Python             |        279 |         11 |         62 |        352 |
+| c:\projects\AIAT\mas\apps\tool-service\tool_service\tools\web.py                                              | Python             |        112 |          1 |         23 |        136 |
+| c:\projects\AIAT\mas\docs\ARCHITECTURE.md                                                                     | Markdown           |        110 |          0 |         36 |        146 |
+| c:\projects\AIAT\mas\infra\compose\docker-compose.dev.yml                                                     | YAML               |        110 |         15 |         14 |        139 |
+| c:\projects\AIAT\mas\infra\compose\docker-compose.yml                                                         | YAML               |        370 |         42 |         30 |        442 |
+| c:\projects\AIAT\mas\infra\compose\grafana\provisioning\datasources\prometheus.yml                            | YAML               |          8 |          1 |          2 |         11 |
+| c:\projects\AIAT\mas\infra\compose\mas.bat                                                                    | Batch              |         69 |          2 |         18 |         89 |
+| c:\projects\AIAT\mas\infra\compose\mas.sh                                                                     | Shell Script       |        312 |         18 |         36 |        366 |
+| c:\projects\AIAT\mas\infra\compose\pgbouncer.ini                                                              | Ini                |         16 |          0 |          4 |         20 |
+| c:\projects\AIAT\mas\infra\compose\prometheus.yml                                                             | YAML               |         22 |          7 |          7 |         36 |
+| c:\projects\AIAT\mas\infra\compose\redis-acl-init.sh                                                          | Shell Script       |         38 |         12 |         13 |         63 |
+| c:\projects\AIAT\mas\infra\compose\redis.conf                                                                 | Properties         |          7 |         15 |          7 |         29 |
+| c:\projects\AIAT\mas\infra\sandbox\README.md                                                                  | Markdown           |          8 |          0 |          4 |         12 |
+| c:\projects\AIAT\mas\infra\sandbox\tier0-standard.yaml                                                        | YAML               |          6 |          0 |          1 |          7 |
+| c:\projects\AIAT\mas\infra\sandbox\tier1-restricted.yaml                                                      | YAML               |          8 |          0 |          1 |          9 |
+| c:\projects\AIAT\mas\infra\systemd\README.md                                                                  | Markdown           |         82 |          0 |         32 |        114 |
+| c:\projects\AIAT\mas\migrations\env.py                                                                        | Python             |         45 |         31 |         17 |         93 |
+| c:\projects\AIAT\mas\migrations\versions\0001_initial_schema.py                                               | Python             |        466 |         40 |         20 |        526 |
+| c:\projects\AIAT\mas\migrations\versions\0002_missing_tables.py                                               | Python             |        112 |         23 |         12 |        147 |
+| c:\projects\AIAT\mas\migrations\versions\0002_project_context.py                                              | Python             |         56 |         10 |          8 |         74 |
+| c:\projects\AIAT\mas\migrations\versions\0003_capability_registry.py                                          | Python             |        149 |         18 |         10 |        177 |
+| c:\projects\AIAT\mas\migrations\versions\0003_project_context_knowledge.py                                    | Python             |         87 |         12 |         10 |        109 |
+| c:\projects\AIAT\mas\migrations\versions\0004_orchestration_flows.py                                          | Python             |        205 |         24 |         10 |        239 |
+| c:\projects\AIAT\mas\migrations\versions\0005_flow_execution_config.py                                        | Python             |         87 |         19 |         10 |        116 |
+| c:\projects\AIAT\mas\migrations\versions\0006_flow_instance_targets.py                                        | Python             |         29 |         17 |          8 |         54 |
+| c:\projects\AIAT\mas\migrations\versions\0007_worker_integration.py                                           | Python             |        107 |         19 |          9 |        135 |
+| c:\projects\AIAT\mas\migrations\versions\0008_pgvector_support.py                                             | Python             |         35 |         13 |         13 |         61 |
+| c:\projects\AIAT\mas\migrations\versions\0009_credentials_manager.py                                          | Python             |         48 |         11 |         11 |         70 |
+| c:\projects\AIAT\mas\migrations\versions\0010_privileged_ops.py                                               | Python             |         34 |          6 |          8 |         48 |
+| c:\projects\AIAT\mas\packages\mas-core\capabilities\README.md                                                 | Markdown           |          7 |          0 |          5 |         12 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\__init__.py                                                   | Python             |          0 |         13 |          1 |         14 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\__init__.py                                     | Python             |         26 |         17 |          3 |         46 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\admin.py                                        | Python             |        268 |         77 |         32 |        377 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\attachment_manager.py                           | Python             |        355 |        148 |         63 |        566 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\base.py                                         | Python             |        371 |        154 |         65 |        590 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\budget.py                                       | Python             |        145 |         75 |         33 |        253 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\config.py                                       | Python             |         76 |         21 |         17 |        114 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\csuite.py                                       | Python             |        997 |        133 |         82 |      1,212 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\executive.py                                    | Python             |        645 |        117 |         82 |        844 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\router_client.py                                | Python             |        155 |        108 |         43 |        306 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\sub_agent.py                                    | Python             |        101 |         50 |         22 |        173 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\agent_runtime\worker.py                                       | Python             |        166 |         50 |         28 |        244 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\capabilities\__init__.py                                      | Python             |          2 |          1 |          4 |          7 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\capabilities\registry.py                                      | Python             |         21 |          1 |         11 |         33 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\credentials\__init__.py                                       | Python             |          3 |         14 |          3 |         20 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\credentials\manager.py                                        | Python             |        287 |         65 |         43 |        395 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\credentials\models.py                                         | Python             |         67 |         12 |         17 |         96 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\__init__.py                                       | Python             |         79 |         33 |          3 |        115 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\audit.py                                          | Python             |        369 |        122 |         69 |        560 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\client.py                                         | Python             |      1,426 |        529 |        194 |      2,149 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\dashboard.py                                      | Python             |        461 |         16 |         51 |        528 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\metrics.py                                        | Python             |        372 |        112 |         78 |        562 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\model_selector.py                                 | Python             |        304 |        197 |         45 |        546 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\models.py                                         | Python             |         90 |         38 |         41 |        169 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\persistence.py                                    | Python             |        202 |        153 |         46 |        401 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\__init__.py                             | Python             |         21 |         46 |          6 |         73 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\__init__.py                         | Python             |          7 |          5 |          2 |         14 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\cerebras.py                         | Python             |        102 |         35 |         12 |        149 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\cloudflare.py                       | Python             |        192 |         45 |         17 |        254 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\gemini.py                           | Python             |        486 |         80 |         31 |        597 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\groq.py                             | Python             |        284 |         48 |         21 |        353 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\mistral.py                          | Python             |        514 |         38 |         59 |        611 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\openai.py                           | Python             |          0 |          5 |          3 |          8 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\openrouter\__init__.py              | Python             |        112 |          7 |         24 |        143 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\openrouter\generated_free_models.py | Python             |      1,071 |          2 |          2 |      1,075 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\openrouter\sync_free_models.py      | Python             |        159 |         11 |         37 |        207 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\api\zen.py                              | Python             |        200 |         13 |         11 |        224 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\base.py                                 | Python             |        324 |        156 |         72 |        552 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\cli\__init__.py                         | Python             |          8 |          5 |          3 |         16 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\providers\cli\copilot.py                          | Python             |        261 |        107 |         55 |        423 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\rate_limits.py                                    | Python             |        341 |        135 |         68 |        544 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\routes_observability.py                           | Python             |        149 |         72 |         34 |        255 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\smart_router.py                                   | Python             |        128 |         85 |         33 |        246 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\llm_gateway\thinking.py                                       | Python             |        308 |        115 |         65 |        488 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\memory\__init__.py                                            | Python             |         11 |         16 |          3 |         30 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\memory\blob.py                                                | Python             |        198 |         96 |         29 |        323 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\memory\checkpoints.py                                         | Python             |        124 |         38 |         15 |        177 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\memory\models.py                                              | Python             |        547 |         39 |         32 |        618 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\memory\storage.py                                             | Python             |      2,066 |        243 |        179 |      2,488 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\observability\__init__.py                                     | Python             |         32 |          4 |          3 |         39 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\observability\logging.py                                      | Python             |         55 |         25 |         16 |         96 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\observability\metrics.py                                      | Python             |         66 |         25 |         19 |        110 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\observability\tracing.py                                      | Python             |         12 |         22 |         10 |         44 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\policy\__init__.py                                            | Python             |         52 |         29 |          3 |         84 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\policy\engine.py                                              | Python             |        238 |         86 |         51 |        375 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\policy\privileged_ops.py                                      | Python             |        241 |         64 |         30 |        335 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\policy\rules.py                                               | Python             |        237 |         31 |         27 |        295 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\__init__.py                                         | Python             |        112 |         25 |          4 |        141 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\capability.py                                       | Python             |         32 |          3 |         16 |         51 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\domain.py                                           | Python             |        347 |        125 |        115 |        587 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\enums.py                                            | Python             |        119 |         26 |         52 |        197 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\envelope.py                                         | Python             |        189 |         84 |         40 |        313 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\tool.py                                             | Python             |        133 |         35 |         32 |        200 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\worker_manifest.py                                  | Python             |         57 |          1 |         21 |         79 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\protocols\ws.py                                               | Python             |         75 |         57 |         39 |        171 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\util\__init__.py                                              | Python             |          0 |         16 |          1 |         17 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\__init__.py                                   | Python             |          2 |         10 |          3 |         15 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\adapter_factory.py                            | Python             |        220 |         47 |         51 |        318 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\compat_tests.py                               | Python             |        224 |         40 |         58 |        322 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\evaluator.py                                  | Python             |        377 |         37 |         69 |        483 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\ingestion.py                                  | Python             |        118 |         52 |         31 |        201 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\worker_registry\seeder.py                                     | Python             |        173 |         40 |         45 |        258 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\__init__.py                                          | Python             |         64 |          1 |          3 |         68 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\controller.py                                        | Python             |        145 |         49 |         30 |        224 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\events.py                                            | Python             |         26 |          1 |          4 |         31 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\flow_engine.py                                       | Python             |        430 |         80 |        105 |        615 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\states.py                                            | Python             |         20 |          1 |          4 |         25 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\transitions.py                                       | Python             |         81 |          2 |         12 |         95 |
+| c:\projects\AIAT\mas\packages\mas-core\mas_core\workflow\watchdog.py                                          | Python             |         45 |          9 |         12 |         66 |
+| c:\projects\AIAT\mas\packages\mas-core\scripts\test_cli_image_e2e.py                                          | Python             |         95 |         21 |         22 |        138 |
+| c:\projects\AIAT\mas\packages\mas-core\scripts\test_e2e_image_attachment.py                                   | Python             |        119 |         16 |         24 |        159 |
+| c:\projects\AIAT\mas\packages\mas-core\scripts\test_image_models.py                                           | Python             |        135 |         37 |         39 |        211 |
+| c:\projects\AIAT\mas\packages\mas-core\scripts\test_mistral_models.py                                         | Python             |        195 |         13 |         48 |        256 |
+| c:\projects\AIAT\mas\packages\mas-core\scripts\test_providers_live.py                                         | Python             |        103 |         16 |         17 |        136 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\conftest.py                                                      | Python             |         18 |          7 |          7 |         32 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_attachment_manager.py                                       | Python             |        356 |         26 |         71 |        453 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_copilot_cli.py                                              | Python             |        391 |         47 |        111 |        549 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_gateway_providers.py                                        | Python             |        677 |         56 |        136 |        869 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_llm_live.py                                                 | Python             |      1,097 |        206 |        199 |      1,502 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_mistral_scanner.py                                          | Python             |        112 |          1 |         28 |        141 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_observability.py                                            | Python             |        568 |         56 |        114 |        738 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_persistence.py                                              | Python             |        296 |         32 |         77 |        405 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_phase0_scaffold.py                                          | Python             |        119 |          2 |         27 |        148 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_phase4_5.py                                                 | Python             |        686 |         53 |        147 |        886 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_phase7_storage.py                                           | Python             |        807 |         68 |        176 |      1,051 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_phase8.py                                                   | Python             |        795 |         96 |        174 |      1,065 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_policy.py                                                   | Python             |        479 |         73 |        146 |        698 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_protocols.py                                                | Python             |        825 |         80 |        179 |      1,084 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_shutdown_resume.py                                          | Python             |        350 |         91 |        139 |        580 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_smoke.py                                                    | Python             |         20 |          7 |          7 |         34 |
+| c:\projects\AIAT\mas\packages\mas-core\tests\test_workflow_scaffold.py                                        | Python             |         74 |          0 |         15 |         89 |
+| c:\projects\AIAT\mas\packages\mas-core\workflow\README.md                                                     | Markdown           |          8 |          0 |          4 |         12 |
+| c:\projects\AIAT\mas\packages\mas-core\workflow\workflow-template.yaml                                        | YAML               |        186 |          0 |          4 |        190 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\mas_tools_sdk\__init__.py                                         | Python             |         11 |         10 |          3 |         24 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\mas_tools_sdk\base.py                                             | Python             |         31 |         48 |         11 |         90 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\mas_tools_sdk\client.py                                           | Python             |        120 |         33 |         21 |        174 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\mas_tools_sdk\groups.py                                           | Python             |         19 |          9 |          8 |         36 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\mas_tools_sdk\manifest.py                                         | Python             |        552 |         20 |         30 |        602 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\tests\conftest.py                                                 | Python             |          8 |          4 |          4 |         16 |
+| c:\projects\AIAT\mas\packages\mas-tools-sdk\tests\test_smoke.py                                               | Python             |          6 |          1 |          5 |         12 |
+| c:\projects\AIAT\mas\prompts\ceo.md                                                                           | Markdown           |         81 |          0 |         18 |         99 |
+| c:\projects\AIAT\mas\prompts\cfo.md                                                                           | Markdown           |         57 |          0 |         13 |         70 |
+| c:\projects\AIAT\mas\prompts\chrm.md                                                                          | Markdown           |         63 |          0 |         14 |         77 |
+| c:\projects\AIAT\mas\prompts\cio.md                                                                           | Markdown           |         59 |          0 |         14 |         73 |
+| c:\projects\AIAT\mas\prompts\coo.md                                                                           | Markdown           |         54 |          0 |         14 |         68 |
+| c:\projects\AIAT\mas\prompts\cso.md                                                                           | Markdown           |         81 |          0 |         17 |         98 |
+| c:\projects\AIAT\mas\prompts\cto.md                                                                           | Markdown           |         65 |          0 |         15 |         80 |
+| c:\projects\AIAT\mas\prompts\devops_pm.md                                                                     | Markdown           |         57 |          0 |         12 |         69 |
+| c:\projects\AIAT\mas\prompts\production_pm.md                                                                 | Markdown           |         60 |          0 |         12 |         72 |
+| c:\projects\AIAT\mas\prompts\qa_lead.md                                                                       | Markdown           |         60 |          0 |         13 |         73 |
+| c:\projects\AIAT\mas\prompts\system_pm.md                                                                     | Markdown           |         64 |          0 |         12 |         76 |
+| c:\projects\AIAT\mas\run_tests.py                                                                             | Python             |          3 |         12 |          4 |         19 |
+| c:\projects\AIAT\mas\teams\dept_devops.yaml                                                                   | YAML               |         52 |         23 |          5 |         80 |
+| c:\projects\AIAT\mas\teams\dept_production.yaml                                                               | YAML               |         59 |         10 |          6 |         75 |
+| c:\projects\AIAT\mas\teams\dept_qa.yaml                                                                       | YAML               |         34 |          5 |          4 |         43 |
+| c:\projects\AIAT\mas\teams\dept_system.yaml                                                                   | YAML               |         60 |         10 |          6 |         76 |
+| c:\projects\AIAT\mas\teams\exec_ceo.yaml                                                                      | YAML               |         20 |          4 |          4 |         28 |
+| c:\projects\AIAT\mas\teams\exec_coo.yaml                                                                      | YAML               |         19 |          4 |          4 |         27 |
+| c:\projects\AIAT\mas\teams\office_cfo.yaml                                                                    | YAML               |         29 |          4 |          4 |         37 |
+| c:\projects\AIAT\mas\teams\office_chrm.yaml                                                                   | YAML               |         29 |          4 |          4 |         37 |
+| c:\projects\AIAT\mas\teams\office_cio.yaml                                                                    | YAML               |         28 |          4 |          4 |         36 |
+| c:\projects\AIAT\mas\teams\office_cso.yaml                                                                    | YAML               |         27 |         12 |          4 |         43 |
+| c:\projects\AIAT\mas\teams\office_cto.yaml                                                                    | YAML               |         51 |          4 |          5 |         60 |
+| c:\projects\AIAT\mas\workers\ceo.yaml                                                                         | YAML               |         91 |          0 |          1 |         92 |
+| c:\projects\AIAT\mas\workers\cfo.yaml                                                                         | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\chrm.yaml                                                                        | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\cio.yaml                                                                         | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\coo.yaml                                                                         | YAML               |         85 |          0 |          1 |         86 |
+| c:\projects\AIAT\mas\workers\cost_estimator.yaml                                                              | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\cso.yaml                                                                         | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\cto.yaml                                                                         | YAML               |         97 |          0 |          1 |         98 |
+| c:\projects\AIAT\mas\workers\devops_eng_1.yaml                                                                | YAML               |         79 |          0 |          1 |         80 |
+| c:\projects\AIAT\mas\workers\devops_pm.yaml                                                                   | YAML               |         97 |          0 |          1 |         98 |
+| c:\projects\AIAT\mas\workers\financial_analyst_1.yaml                                                         | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\hr_analyst_1.yaml                                                                | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\kpi_analyst_1.yaml                                                               | YAML               |         79 |          0 |          1 |         80 |
+| c:\projects\AIAT\mas\workers\planner.yaml                                                                     | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\production_pm.yaml                                                               | YAML               |         79 |          0 |          1 |         80 |
+| c:\projects\AIAT\mas\workers\qa_lead.yaml                                                                     | YAML               |         85 |          0 |          1 |         86 |
+| c:\projects\AIAT\mas\workers\requirements_writer.yaml                                                         | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\security_analyst_1.yaml                                                          | YAML               |         55 |          0 |          1 |         56 |
+| c:\projects\AIAT\mas\workers\solution_designer.yaml                                                           | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\sprint_planner_1.yaml                                                            | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\sre_agent_1.yaml                                                                 | YAML               |         73 |          0 |          1 |         74 |
+| c:\projects\AIAT\mas\workers\system_architect.yaml                                                            | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\system_pm.yaml                                                                   | YAML               |         79 |          0 |          1 |         80 |
+| c:\projects\AIAT\mas\workers\tech_analyst_1.yaml                                                              | YAML               |         61 |          0 |          1 |         62 |
+| c:\projects\AIAT\mas\workers\tech_writer.yaml                                                                 | YAML               |         67 |          0 |          1 |         68 |
+| c:\projects\AIAT\mas\workers\tester_1.yaml                                                                    | YAML               |         73 |          0 |          1 |         74 |
+| c:\projects\AIAT\opencode.json                                                                                | JSON               |         19 |          0 |          0 |         19 |
+| c:\projects\AIAT\prompts\mas_opencode_live_tests.json                                                         | JSON               |      1,038 |          0 |          1 |      1,039 |
+| c:\projects\AIAT\run_tests.py                                                                                 | Python             |          3 |         12 |          4 |         19 |
+| c:\projects\AIAT\scripts\opencode_live_tests.py                                                               | Python             |        208 |          2 |         36 |        246 |
+| Total                                                                                                         |                    |     81,595 |      9,000 |     12,135 |    102,730 |
++---------------------------------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
