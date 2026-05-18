@@ -11,11 +11,14 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
+RUN npm config set strict-ssl false \
+ && npm install -g npm@10.9.4 --no-audit --no-fund
+
 # Copy only package manifests first (layer cache)
 COPY apps/mas-dashboard/package.json apps/mas-dashboard/package-lock.json* ./
 
 # Install production deps + devDeps needed for build (omit-dev is for runner stage)
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 
 # ── Stage 2: Build ────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder

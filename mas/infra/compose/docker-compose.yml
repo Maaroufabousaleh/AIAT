@@ -98,6 +98,8 @@ services:
     image: redis:7.2-alpine
     restart: unless-stopped
     command: redis-server /etc/redis/redis.conf
+    environment:
+      ROUTER_PASSWORD: "${ROUTER_PASSWORD}"
     volumes:
       - redis_data:/data
       - ./redis.conf:/etc/redis/redis.conf:ro
@@ -108,7 +110,7 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
-      test: ["CMD", "redis-cli", "-u", "redis://:router_user@redis:6379", "ping"]
+      test: ["CMD-SHELL", "redis-cli -u \"redis://router_user:$${ROUTER_PASSWORD}@redis:6379\" ping"]
       interval: 10s
       timeout: 3s
       start_period: 5s

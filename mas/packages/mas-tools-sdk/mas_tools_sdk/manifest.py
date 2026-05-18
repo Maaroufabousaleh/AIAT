@@ -118,6 +118,51 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="flow.list",
+        group=ToolGroup.WORKFLOW,
+        description="List available orchestration flows.",
+        allowed_roles=_EXEC,
+        cache_ttl=15,
+    ),
+    _entry(
+        name="flow.recommend",
+        group=ToolGroup.WORKFLOW,
+        description="Recommend the best active orchestration flow for a project.",
+        allowed_roles=_EXEC,
+        cache_ttl=15,
+    ),
+    _entry(
+        name="flow.assign",
+        group=ToolGroup.WORKFLOW,
+        description="Assign or switch a project flow.",
+        allowed_roles=_EXEC,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="flow.status",
+        group=ToolGroup.WORKFLOW,
+        description="Get the current flow instance for a project.",
+        allowed_roles=_EXEC,
+        cache_ttl=15,
+    ),
+    _entry(
+        name="flow.invoke",
+        group=ToolGroup.WORKFLOW,
+        description="Start, pause, resume, or cancel a project flow.",
+        allowed_roles=_EXEC,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="flow.advance",
+        group=ToolGroup.WORKFLOW,
+        description="Advance or fail an active flow node.",
+        allowed_roles=_EXEC,
+        cache_ttl=0,
+        idempotent=False,
+    ),
 )
 
 # --- Document ---

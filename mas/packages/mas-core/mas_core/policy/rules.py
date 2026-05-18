@@ -218,6 +218,12 @@ WORKER_TOOLS: tuple[str, ...] = (
     "file_write",
     "shared_memory_read",
     "shared_memory_write",
+    "browser_navigate",
+    "browser_click",
+    "browser_type",
+    "browser_screenshot",
+    "browser_evaluate",
+    "browser_close",
 )
 
 #: Tools explicitly blocked for workers regardless of any allowlist.

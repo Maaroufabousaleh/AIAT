@@ -32,6 +32,7 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI
 
 from mas_core.observability import configure_logging
+from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_TOTAL
 
 from .cache import ToolCache
 from .config import get_settings
@@ -69,12 +70,20 @@ async def lifespan(app: FastAPI):
 
     rate_limiter = RateLimiterPool()
 
-    from .tools.browser import close_browser_pool
+    try:
+        from .tools.browser import close_browser_pool
+    except ModuleNotFoundError:  # pragma: no cover - optional local dependency
+
+        async def close_browser_pool() -> None:
+            return None
+
     from .tools.infra import close_blob_client
     from .tools.memory import close_shared_memory_redis
 
     registry = ToolRegistry(settings, cache=cache, rate_limiter=rate_limiter)
     registry.register_all(get_all_tools())
+    TOOL_INVOCATIONS_TOTAL.labels(tool_name="_startup", status="success").inc(0)
+    TOOL_ERRORS_TOTAL.labels(tool_name="_startup", error_code="none").inc(0)
     logger.info("Registered %d tools", len(registry.tool_names))
 
     app.state.settings = settings

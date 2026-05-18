@@ -374,11 +374,14 @@ export default function WorkersPage() {
   }, [load]);
 
   const filtered = workers.filter((w) => {
+    const workerId = w.worker_id ?? "";
+    const workerName = w.name ?? "";
+    const teamId = w.team_id ?? "";
     const matchSearch =
       !search ||
-      w.worker_id.toLowerCase().includes(search.toLowerCase()) ||
-      w.name.toLowerCase().includes(search.toLowerCase()) ||
-      (w.team_id ?? "").toLowerCase().includes(search.toLowerCase());
+      workerId.toLowerCase().includes(search.toLowerCase()) ||
+      workerName.toLowerCase().includes(search.toLowerCase()) ||
+      teamId.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "ALL" || w.status === statusFilter;
     return matchSearch && matchStatus;
   });

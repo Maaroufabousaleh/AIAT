@@ -148,3 +148,95 @@ async def health(request: Request) -> dict[str, Any]:
         "cache_connected": cache_ok,
         "circuit_breakers": registry.get_breaker_states(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-worker tool grants
+# ---------------------------------------------------------------------------
+
+
+class WorkerGrantBody(BaseModel):
+    tool_name: str = Field(..., description="Tool name to grant to the worker.")
+
+
+@router.post("/tools/workers/{worker_id}/grants", status_code=201)
+async def grant_worker_tool(
+    worker_id: str,
+    request: Request,
+    body: WorkerGrantBody,
+    _auth: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """Grant *worker_id* explicit access to a specific tool.
+
+    Once at least one grant exists for a worker, they may ONLY call
+    tools in their explicit grant set (in addition to passing role policy).
+    """
+    from .registry import ToolRegistry
+
+    registry: ToolRegistry = request.app.state.registry
+    registry.grant_tool(worker_id, body.tool_name)
+    return {
+        "worker_id": worker_id,
+        "grants": registry.get_worker_grants(worker_id),
+    }
+
+
+@router.delete("/tools/workers/{worker_id}/grants/{tool_name}", status_code=200)
+async def revoke_worker_tool(
+    worker_id: str,
+    tool_name: str,
+    request: Request,
+    _auth: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """Revoke a specific tool grant from *worker_id*."""
+    from .registry import ToolRegistry
+
+    registry: ToolRegistry = request.app.state.registry
+    removed = registry.revoke_tool(worker_id, tool_name)
+    if not removed:
+        raise HTTPException(
+            status_code=404, detail=f"No grant for tool '{tool_name}' on worker '{worker_id}'."
+        )
+    return {
+        "worker_id": worker_id,
+        "revoked_tool": tool_name,
+        "grants": registry.get_worker_grants(worker_id),
+    }
+
+
+@router.get("/tools/workers/{worker_id}/grants")
+async def get_worker_grants(
+    worker_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return the explicit tool grant list for *worker_id*."""
+    from .registry import ToolRegistry
+
+    registry: ToolRegistry = request.app.state.registry
+    return {
+        "worker_id": worker_id,
+        "grants": registry.get_worker_grants(worker_id),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tools/audit")
+async def get_audit_log(
+    request: Request,
+    worker_id: str | None = None,
+    tool_name: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return recent tool-call audit records.
+
+    Each record contains: actor, project_id, tool_name, timestamp, status, error.
+    """
+    from .registry import ToolRegistry
+
+    registry: ToolRegistry = request.app.state.registry
+    records = registry.get_audit_log(worker_id=worker_id, tool_name=tool_name, limit=limit)
+    return {"records": records, "count": len(records)}

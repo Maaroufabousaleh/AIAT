@@ -9,12 +9,14 @@
 8. The platform should enhance the CEO into a secure executive copilot role that serves as the primary middleware and direct contact between the human operator and the MAS. The CEO should be responsible for reliably carrying instructions, context, alerts, escalations, and summaries between me and the rest of the system, and it should be able to act on my behalf when I explicitly authorize it to do so. It should have the broadest orchestration visibility and coordination capabilities in the platform, and it may internally rely on one or more powerful underlying agent candidates, but it must remain the single top-level executive role inside the MAS. To keep this design powerful without making it dangerously overprivileged, the CEO’s authority should be split into two clearly separated layers. The first layer is executive authority, which covers orchestration, project supervision, communication with all teams, workflow steering, alerting, status aggregation, and acting as my operational copilot inside the MAS. The second layer is privileged operations, which covers highly sensitive actions such as access to system control scripts, team shutdown and restart commands, container control, and other infrastructure-level operations. These privileged operations should not be treated as normal CEO permissions. They should be gated through stronger controls such as explicit policy checks, full audit logging, restricted execution paths, and optional step-up approval from me depending on the action. Because the CEO is the most sensitive role in the system, it must also be the most protected and monitored. It should be continuously supervised by dedicated security controls, operate under strict policy enforcement, and remain isolated by stronger safeguards than any other team or agent. The CEO should also have access to the UI through its own dedicated user identity, separate from mine, and I should be able to lock or restrict specific sections of the interface so that the CEO can access only the parts that I explicitly allow. This way, the CEO becomes a highly capable and autonomous copilot for the MAS, while its most dangerous powers remain controlled, auditable, and safely separated from its normal executive role.
 8.1 enhance the other C- classes 1by1
 
+-Use SeaweedFS as the direct MinIO replacement. And add Garage only as a secondary backup target, not the primary hot-path object store.So for AIAT/MAS: Primary:   SeaweedFS. Backup:    Garage or R2/B2. Metadata:  Postgres. Queues:    Redis Streams. Cache:     Redis. This gives you the closest MinIO replacement without giving up performance, while avoiding deep dependency on a single object-store implementation.
+
 9. Self developement and enhanced autonomy.
 10. Real-time websockets & security. 
 11. Enhance metrics collection and showing, and enhance Prometheus and Grafana + integrate all service webs to dashboard.
 12. Dark mode / light mode switch + UI enhancements.
 13. Mobile web + more security.
-14. Outside LAN communications (CEO...).
+14. Outside LAN secure communications (at least with CEO and dahsboard)
 15. Remaining tasks in project status...
 16. DB enhancements
 

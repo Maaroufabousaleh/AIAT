@@ -22,3 +22,8 @@ htmlcov/
 !.env.example
 Dockerfile
 *.dockerfile
+node_modules/
+apps/mas-dashboard/node_modules/
+apps/mas-dashboard/test-results/
+apps/mas-dashboard/.next/
+apps/mas-dashboard/playwright-report/

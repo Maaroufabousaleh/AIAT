@@ -1983,6 +1983,7 @@ class AgentStorage:
         definition_json: dict,
         created_by: str = "system",
         is_active: bool = False,
+        version: int = 1,
     ) -> dict[str, Any]:
         """Create a new flow definition."""
         now = datetime.now(tz=UTC)
@@ -1991,7 +1992,7 @@ class AgentStorage:
             "name": name,
             "description": description,
             "definition_json": definition_json,
-            "version": 1,
+            "version": version,
             "created_by": created_by,
             "is_active": is_active,
             "created_at": now,
@@ -2112,18 +2113,14 @@ class AgentStorage:
         return dict(row) if row else None
 
     async def get_flow_instance_by_project(self, project_id: UUID) -> dict[str, Any] | None:
-        """Fetch the active flow instance for a project (if any)."""
+        """Fetch the latest flow instance for a project, including terminal runs."""
         async with self.engine.connect() as conn:
             row = (
                 (
                     await conn.execute(
                         t.flow_instances.select()
                         .where(t.flow_instances.c.project_id == project_id)
-                        .where(
-                            t.flow_instances.c.status.in_(
-                                ["NOT_STARTED", "RUNNING", "WAITING_APPROVAL", "PAUSED"]
-                            )
-                        )
+                        .order_by(t.flow_instances.c.updated_at.desc())
                     )
                 )
                 .mappings()
@@ -2431,4 +2428,60 @@ class AgentStorage:
         )
         await self.clear_flow_node_executions(instance_id)
 
+        return await self.get_flow_instance(instance_id)
+
+    async def override_flow_instance(
+        self,
+        instance_id: UUID,
+        *,
+        target_node_id: str,
+        node_type: str,
+        node_label: str,
+        actor_id: str,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Force a running instance onto a specific node and record the override context."""
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+
+        now = datetime.now(tz=UTC)
+        context_json = dict(instance.get("context_json") or {})
+        context_json["last_override"] = {
+            "target_node_id": target_node_id,
+            "actor_id": actor_id,
+            "reason": reason,
+            "overridden_at": now.isoformat(),
+        }
+
+        active_node_ids = list(instance.get("active_node_ids") or [])
+        for node_id in active_node_ids:
+            executions = await self.list_flow_node_executions(
+                instance_id=instance_id,
+                node_id=node_id,
+                status="RUNNING",
+                limit=100,
+            )
+            for execution in executions:
+                await self.update_flow_node_execution(
+                    execution["id"],
+                    status="SKIPPED",
+                    error=f"Overridden by {actor_id}" if actor_id else "Overridden",
+                    completed_at=now,
+                )
+
+        await self.update_flow_instance(
+            instance_id,
+            status="RUNNING",
+            active_node_ids=[target_node_id],
+            context_json=context_json,
+            completed_at=None,
+        )
+        await self.create_flow_node_execution(
+            instance_id=instance_id,
+            node_id=target_node_id,
+            node_type=node_type,
+            node_label=node_label,
+            input_json=context_json,
+        )
         return await self.get_flow_instance(instance_id)

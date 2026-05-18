@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -26,9 +26,12 @@ import type { Flow, FlowInstance, FlowNodeExecution, FlowDefinition, FlowNodeTyp
 import { NODE_TYPE_LABELS, FLOW_NODE_COLORS, FLOW_STATUS_COLORS } from "@/lib/flow-types";
 
 interface StateHistoryEntry {
-  state: WorkflowState;
-  entered_at: string;
-  transitioned_by?: string;
+  from_state?: WorkflowState;
+  to_state: WorkflowState;
+  event?: string;
+  transitioned_at: string;
+  triggered_by?: string;
+  payload?: Record<string, unknown>;
 }
 
 interface Decision {
@@ -125,6 +128,8 @@ export default function ProjectDetailPage() {
   const [newContextUrl, setNewContextUrl] = useState("");
   const [newContextText, setNewContextText] = useState("");
   const [newContextTags, setNewContextTags] = useState("");
+  const [overrideNodeId, setOverrideNodeId] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,16 +162,19 @@ export default function ProjectDetailPage() {
           fetch(`/api/flows/${instance.flow_id}`),
           fetch(`/api/flows/instances/${instance.id}/executions`),
         ]);
+        let executions: FlowNodeExecution[] = [];
+        if (execsRes.ok) {
+          const execs = await execsRes.json();
+          executions = Array.isArray(execs) ? execs : [];
+          setNodeExecutions(executions);
+        } else {
+          setNodeExecutions([]);
+        }
         
         if (flowRes.ok) {
           const flow = await flowRes.json();
           setFlowDefinition(flow.definition_json);
-          
-          let executions: FlowNodeExecution[] = [];
-          if (execsRes.ok) {
-            const execs = await execsRes.json();
-            executions = Array.isArray(execs) ? execs : [];
-          }
+          setOverrideNodeId(instance.active_node_ids?.[0] || flow.definition_json?.nodes?.[0]?.id || "");
           
           const { nodes: flowNodes, edges: flowEdges } = convertToReactFlow(
             flow.definition_json?.nodes || [],
@@ -177,17 +185,13 @@ export default function ProjectDetailPage() {
           setNodes(flowNodes);
           setEdges(flowEdges);
         }
-        
-        if (execsRes.ok) {
-          const execs = await execsRes.json();
-          setNodeExecutions(Array.isArray(execs) ? execs : []);
-        }
       } else {
         setFlowInstance(null);
         setFlowDefinition(null);
         setNodeExecutions([]);
         setNodes([]);
         setEdges([]);
+        setOverrideNodeId("");
         
         const flowsRes = await fetch('/api/flows?is_active=true');
         if (flowsRes.ok) {
@@ -218,6 +222,33 @@ export default function ProjectDetailPage() {
       setContextLoading(false);
     }
   }, [id]);
+
+  const completedNodeIds = useMemo(
+    () => nodeExecutions.filter((execution) => execution.status === "COMPLETED").map((execution) => execution.node_id),
+    [nodeExecutions]
+  );
+
+  const nextPossibleTransitions = useMemo(() => {
+    if (!flowDefinition || !flowInstance) return [];
+    const completed = new Set(completedNodeIds);
+
+    return (flowInstance.active_node_ids || []).flatMap((nodeId) =>
+      (flowDefinition.edges || [])
+        .filter((edge) => edge.source === nodeId && !completed.has(edge.target))
+        .map((edge) => {
+          const targetNode = flowDefinition.nodes.find((node) => node.id === edge.target);
+          return {
+            edgeId: edge.id,
+            condition: edge.condition,
+            sourceId: nodeId,
+            targetId: edge.target,
+            targetLabel: targetNode?.label || edge.target,
+          };
+        })
+    );
+  }, [completedNodeIds, flowDefinition, flowInstance]);
+
+  const overrideableNodes = useMemo(() => flowDefinition?.nodes || [], [flowDefinition]);
 
   useEffect(() => { load(); }, [load]);
   
@@ -292,16 +323,25 @@ export default function ProjectDetailPage() {
     }
   }
 
-  async function handleNodeAction(nodeId: string, action: string, approved?: boolean) {
+  async function handleNodeAction(
+    nodeId: string,
+    action: string,
+    options?: { approved?: boolean; decision?: string; error?: string }
+  ) {
     if (!flowInstance) return;
     setActionLoading(`node-${nodeId}`);
     try {
-      await fetch(`/api/flows/instances/${flowInstance.id}/node-action`, {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/node-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_id: nodeId, action, approved }),
+        body: JSON.stringify({ node_id: nodeId, action, ...options }),
       });
-      await loadFlowData();
+      if (res.ok) {
+        await Promise.all([loadFlowData(), load()]);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setFlowError(data.error || `Failed to ${action} node`);
+      }
     } finally {
       setActionLoading(null);
     }
@@ -376,6 +416,33 @@ export default function ProjectDetailPage() {
       }
     } catch {
       setFlowError("Failed to assign flow");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleOverrideFlowNode() {
+    if (!flowInstance || !overrideNodeId) return;
+    setActionLoading("override-flow-node");
+    setFlowError(null);
+    try {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_node_id: overrideNodeId,
+          actor_id: "human",
+          actor_role: "human_operator",
+          reason: overrideReason || undefined,
+        }),
+      });
+      if (res.ok) {
+        await Promise.all([loadFlowData(), load()]);
+        setOverrideReason("");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setFlowError(data.error || "Failed to override flow node");
+      }
     } finally {
       setActionLoading(null);
     }
@@ -475,6 +542,7 @@ export default function ProjectDetailPage() {
       <div className="flex gap-1 border-b border-gray-800">
         <button
           onClick={() => setActiveTab("workflow")}
+          data-testid="project-tab-workflow"
           className={clsx(
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
             activeTab === "workflow"
@@ -486,6 +554,7 @@ export default function ProjectDetailPage() {
         </button>
         <button
           onClick={() => setActiveTab("flow")}
+          data-testid="project-tab-flow"
           className={clsx(
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "flow"
@@ -506,6 +575,7 @@ export default function ProjectDetailPage() {
         </button>
         <button
           onClick={() => setActiveTab("context")}
+          data-testid="project-tab-context"
           className={clsx(
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "context"
@@ -553,7 +623,7 @@ export default function ProjectDetailPage() {
               <h2 className="text-sm font-medium text-gray-300 mb-4">State History</h2>
               <div className="space-y-0">
                 {WORKFLOW_STATES.map((state, i) => {
-                  const entry = history.find((h) => h.state === state);
+                  const entry = history.find((h) => h.to_state === state);
                   const isCurrent = project.state === state;
                   const isPast = entry !== undefined;
                   return (
@@ -564,7 +634,7 @@ export default function ProjectDetailPage() {
                       </div>
                       <div className="pb-3">
                         <div className={clsx("text-xs font-medium", isCurrent ? "text-white" : isPast ? "text-gray-400" : "text-gray-700")}>{state.replace(/_/g, " ")}</div>
-                        {entry && <div className="text-xxs text-gray-600">{format(new Date(entry.entered_at), "MMM d HH:mm:ss")}{entry.transitioned_by && ` · ${entry.transitioned_by}`}</div>}
+                        {entry && <div className="text-xxs text-gray-600">{format(new Date(entry.transitioned_at), "MMM d HH:mm:ss")}{entry.triggered_by && ` · ${entry.triggered_by}`}</div>}
                       </div>
                     </div>
                   );
@@ -593,6 +663,32 @@ export default function ProjectDetailPage() {
                 </div>
               )}
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Project History</h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {history.length === 0 ? (
+                    <div className="text-xs text-gray-500">No history yet.</div>
+                  ) : history.map((entry, index) => (
+                    <div key={`${entry.transitioned_at}-${index}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <div className="text-gray-200">{(entry.event || "transition").replace(/_/g, " ")}</div>
+                        <div className="text-gray-500">{format(new Date(entry.transitioned_at), "MMM d HH:mm:ss")}</div>
+                      </div>
+                      <div className="text-xxs text-gray-500 mt-1">
+                        {(entry.from_state || entry.to_state).replace(/_/g, " ")} → {entry.to_state.replace(/_/g, " ")}
+                        {entry.triggered_by && ` · ${entry.triggered_by}`}
+                      </div>
+                      {entry.payload && (
+                        <div className="text-xxs text-gray-400 mt-1">
+                          {entry.payload.to_node_id
+                            ? `Override to ${String(entry.payload.to_node_id)}${entry.payload.reason ? `: ${String(entry.payload.reason)}` : ""}`
+                            : JSON.stringify(entry.payload)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <h2 className="text-sm font-medium text-gray-300 mb-3">Monitor</h2>
                 <div className="space-y-2">
                   <Link href="/ceo" className="flex items-center gap-2 text-xs text-blue-400">→ CEO Live Feed</Link>
@@ -607,6 +703,11 @@ export default function ProjectDetailPage() {
 
       {activeTab === "flow" && (
         <div className="space-y-4">
+          {flowError && (
+            <div className="rounded-xl border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
+              {flowError}
+            </div>
+          )}
           {!flowInstance ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
               <div className="text-center">
@@ -620,12 +721,13 @@ export default function ProjectDetailPage() {
                 <div className="space-y-2 mt-4">
                   {availableFlows.length > 0 ? (
                     availableFlows.map((flow) => (
-                      <button
-                        key={flow.id}
-                        onClick={() => handleAssignFlow(flow.id)}
-                        disabled={actionLoading === "assign-flow"}
-                        className="w-full text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
-                      >
+                        <button
+                          key={flow.id}
+                          onClick={() => handleAssignFlow(flow.id)}
+                          disabled={actionLoading === "assign-flow"}
+                          data-testid={`assign-flow-${flow.id}`}
+                          className="w-full text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
+                        >
                         <div className="text-gray-100 font-medium text-sm">{flow.name}</div>
                         <div className="text-xs text-gray-500 mt-0.5">v{flow.version} · {flow.description || "No description"}</div>
                       </button>
@@ -647,7 +749,7 @@ export default function ProjectDetailPage() {
                 </div>
                 <div className="flex gap-2">
                   {flowInstance.status === "NOT_STARTED" && (
-                    <button onClick={() => handleFlowAction("start")} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-600/20 text-green-400 border border-green-800 rounded-lg">
+                    <button onClick={() => handleFlowAction("start")} disabled={!!actionLoading} data-testid="flow-start-button" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-600/20 text-green-400 border border-green-800 rounded-lg">
                       <Play size={12} /> Start
                     </button>
                   )}
@@ -677,7 +779,7 @@ export default function ProjectDetailPage() {
                     </button>
                   )}
                   {(flowInstance.status === "FAILED" || flowInstance.status === "CANCELLED") && (
-                    <button onClick={handleRetry} disabled={!!actionLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-800 rounded-lg">
+                    <button onClick={handleRetry} disabled={!!actionLoading} data-testid="flow-retry-button" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-800 rounded-lg">
                       <RotateCcw size={12} /> Retry
                     </button>
                   )}
@@ -702,25 +804,106 @@ export default function ProjectDetailPage() {
                 </ReactFlow>
               </div>
 
-              {flowInstance.status === "RUNNING" && flowInstance.active_node_ids?.length > 0 && (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <h2 className="text-sm font-medium text-gray-300 mb-3">Current Node</h2>
+                  <div className="space-y-2">
+                    {(flowInstance.active_node_ids || []).length === 0 ? (
+                      <div className="text-xs text-gray-500">No active node yet.</div>
+                    ) : flowInstance.active_node_ids.map((nodeId) => {
+                      const node = flowDefinition?.nodes.find((item) => item.id === nodeId);
+                      return (
+                        <div key={nodeId} className="rounded-lg bg-gray-950 border border-gray-800 p-3">
+                          <div className="text-sm text-white">{node?.label || nodeId}</div>
+                          <div className="text-xxs text-gray-500 mt-1">{node?.type || "task"}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <h2 className="text-sm font-medium text-gray-300 mb-3">Past Transitions</h2>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {nodeExecutions.filter((exec) => exec.status !== "RUNNING").length === 0 ? (
+                      <div className="text-xs text-gray-500">No completed steps yet.</div>
+                    ) : nodeExecutions.filter((exec) => exec.status !== "RUNNING").map((exec, index) => (
+                      <div key={`${exec.id || exec.node_id}-${index}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3 text-xs">
+                        <div className="text-gray-200">{exec.node_label || exec.node_id}</div>
+                        <div className="text-gray-500 mt-1">{exec.status}{exec.completed_at ? ` · ${format(new Date(exec.completed_at), "HH:mm:ss")}` : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <h2 className="text-sm font-medium text-gray-300 mb-3">Next Possible Transitions</h2>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {nextPossibleTransitions.length === 0 ? (
+                      <div className="text-xs text-gray-500">No outgoing transitions available.</div>
+                    ) : nextPossibleTransitions.map((transition) => (
+                      <div key={transition.edgeId} className="rounded-lg bg-gray-950 border border-gray-800 p-3 text-xs">
+                        <div className="text-gray-200">{transition.targetLabel}</div>
+                        <div className="text-gray-500 mt-1">
+                          From {transition.sourceId}
+                          {transition.condition ? ` · ${transition.condition}` : ""}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {(flowInstance.escalated_to || flowInstance.escalation_reason) && (
+                <div className="bg-amber-950/40 border border-amber-800 rounded-xl p-4">
+                  <h2 className="text-sm font-medium text-amber-300 mb-2">Escalation</h2>
+                  <div className="text-xs text-amber-100">
+                    {flowInstance.escalated_to ? `Escalated to ${flowInstance.escalated_to}` : "Escalation recorded"}
+                  </div>
+                  {flowInstance.escalation_reason && (
+                    <div className="text-xxs text-amber-200/80 mt-1">{flowInstance.escalation_reason}</div>
+                  )}
+                </div>
+              )}
+
+              {(flowInstance.status === "RUNNING" || flowInstance.status === "WAITING_APPROVAL") && flowInstance.active_node_ids?.length > 0 && (
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                   <h2 className="text-sm font-medium text-gray-300 mb-3">Active Nodes</h2>
                   <div className="space-y-2">
                     {flowInstance.active_node_ids.map((nodeId) => {
+                      const activeNode = flowDefinition?.nodes.find((node) => node.id === nodeId);
                       const nodeExec = nodeExecutions.find(e => e.node_id === nodeId && e.status === "RUNNING");
                       return (
                         <div key={nodeId} className="flex items-center justify-between bg-gray-800 rounded-lg p-3">
                           <div>
-                            <div className="text-sm font-medium text-white">{nodeId}</div>
+                            <div className="text-sm font-medium text-white">{activeNode?.label || nodeId}</div>
+                            <div className="text-xxs text-gray-500 mt-0.5">{activeNode?.type || "task"}</div>
                             {nodeExec && <div className="text-xs text-gray-500 mt-0.5">Running...</div>}
                           </div>
                           <div className="flex gap-2">
-                            <button onClick={() => handleNodeAction(nodeId, "complete", true)} disabled={!!actionLoading} className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-800 rounded hover:bg-green-600/40">
-                              Complete
-                            </button>
-                            <button onClick={() => handleNodeAction(nodeId, "fail")} disabled={!!actionLoading} className="px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-800 rounded hover:bg-red-600/40">
-                              Fail
-                            </button>
+                            {activeNode?.type === "approval" ? (
+                              <>
+                                <button onClick={() => handleNodeAction(nodeId, "complete", { decision: "approved", approved: true })} disabled={!!actionLoading} data-testid="approval-approve-button" className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-800 rounded hover:bg-green-600/40">
+                                  Approve
+                                </button>
+                                <button onClick={() => handleNodeAction(nodeId, "complete", { decision: "edit_requested" })} disabled={!!actionLoading} data-testid="approval-edit-requested-button" className="px-2 py-1 text-xs bg-blue-600/20 text-blue-400 border border-blue-800 rounded hover:bg-blue-600/40">
+                                  Request Edit
+                                </button>
+                                <button onClick={() => handleNodeAction(nodeId, "complete", { decision: "rejected", approved: false })} disabled={!!actionLoading} data-testid="approval-reject-button" className="px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-800 rounded hover:bg-red-600/40">
+                                  Reject
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => handleNodeAction(nodeId, "complete")} disabled={!!actionLoading} data-testid="complete-node-button" className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-800 rounded hover:bg-green-600/40">
+                                  Complete
+                                </button>
+                                <button onClick={() => handleNodeAction(nodeId, "timeout", { error: "Timed out waiting for analysis" })} disabled={!!actionLoading} data-testid="timeout-node-button" className="px-2 py-1 text-xs bg-amber-600/20 text-amber-400 border border-amber-800 rounded hover:bg-amber-600/40">
+                                  Timeout
+                                </button>
+                                <button onClick={() => handleNodeAction(nodeId, "fail")} disabled={!!actionLoading} data-testid="fail-node-button" className="px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-800 rounded hover:bg-red-600/40">
+                                  Fail
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       );
@@ -728,6 +911,38 @@ export default function ProjectDetailPage() {
                   </div>
                 </div>
               )}
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Manual Override</h2>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <select
+                    value={overrideNodeId}
+                    onChange={(e) => setOverrideNodeId(e.target.value)}
+                    data-testid="override-node-select"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+                  >
+                    {overrideableNodes.map((node) => (
+                      <option key={node.id} value={node.id}>{node.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="Reason for override"
+                    data-testid="override-reason-input"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+                  />
+                  <button
+                    onClick={handleOverrideFlowNode}
+                    disabled={!overrideNodeId || actionLoading === "override-flow-node"}
+                    data-testid="override-node-button"
+                    className="px-3 py-2 text-xs font-medium bg-amber-600/20 text-amber-400 border border-amber-800 rounded-lg hover:bg-amber-600/40 disabled:opacity-50"
+                  >
+                    {actionLoading === "override-flow-node" ? "Overriding..." : "Override Node"}
+                  </button>
+                </div>
+                <p className="text-xxs text-gray-500 mt-2">Overrides are logged into project history for audit visibility.</p>
+              </div>
 
               {nodeExecutions.length > 0 && (
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">

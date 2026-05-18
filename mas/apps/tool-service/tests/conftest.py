@@ -62,6 +62,70 @@ def _mock_orchestrator_http(monkeypatch):
     except (ImportError, ModuleNotFoundError):
         pass
 
+    try:
+        import tool_service.tools.flow as flow_mod
+
+        monkeypatch.setattr(flow_mod, "orch_get", fake_orch_get)
+        monkeypatch.setattr(flow_mod, "orch_post", fake_orch_post)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
+        import tool_service.tools.web as web_mod
+
+        async def fake_web_search_execute(self, **kwargs):
+            return {
+                "results": [{"title": kwargs.get("query", "test"), "url": "https://example.com"}]
+            }
+
+        async def fake_web_fetch_execute(self, **kwargs):
+            return {"content": "ok", "url": kwargs.get("url", "https://example.com")}
+
+        monkeypatch.setattr(web_mod.WebSearchTool, "execute", fake_web_search_execute)
+        monkeypatch.setattr(web_mod.WebFetchTool, "execute", fake_web_fetch_execute)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
+        import tool_service.tools.file as file_mod
+
+        async def fake_file_read_execute(self, **kwargs):
+            return {"path": kwargs.get("path", "test.txt"), "content": "stub"}
+
+        async def fake_file_write_execute(self, **kwargs):
+            return {"path": kwargs.get("path", "test.txt"), "written": True}
+
+        monkeypatch.setattr(file_mod.FileReadTool, "execute", fake_file_read_execute)
+        monkeypatch.setattr(file_mod.FileWriteTool, "execute", fake_file_write_execute)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
+        import tool_service.tools.infra as infra_mod
+
+        async def fake_blob_download_execute(self, **kwargs):
+            return {
+                "bucket": kwargs.get("bucket", "test"),
+                "key": kwargs.get("key", "file.txt"),
+                "content": "stub",
+            }
+
+        async def fake_blob_upload_execute(self, **kwargs):
+            return {
+                "bucket": kwargs.get("bucket", "test"),
+                "key": kwargs.get("key", "file.txt"),
+                "uploaded": True,
+            }
+
+        async def fake_blob_list_execute(self, **kwargs):
+            return {"items": []}
+
+        monkeypatch.setattr(infra_mod.BlobDownloadTool, "execute", fake_blob_download_execute)
+        monkeypatch.setattr(infra_mod.BlobUploadTool, "execute", fake_blob_upload_execute)
+        monkeypatch.setattr(infra_mod.BlobListTool, "execute", fake_blob_list_execute)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
 
 @pytest.fixture
 async def client():
@@ -75,10 +139,13 @@ async def client():
 
     from tool_service.main import app
 
-    async with app.router.lifespan_context(app), httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://test",
-    ) as ac:
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as ac,
+    ):
         yield ac
 
 

@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "js-yaml";
 
-const TEAMS_DIR = path.join(process.cwd(), "..", "..", "mas", "teams");
+const TEAMS_DIR = path.resolve(process.cwd(), "..", "..", "teams");
 
 interface TeamConfig {
   team_id: string;
@@ -94,6 +94,7 @@ function loadTeamConfig(teamId: string): TeamConfig | null {
 }
 
 function buildHierarchy(): TeamHierarchyNode[] {
+  if (!fs.existsSync(TEAMS_DIR)) return [];
   const teams = fs.readdirSync(TEAMS_DIR).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
   
   const nodes: Record<string, TeamHierarchyNode> = {};
@@ -140,6 +141,9 @@ function buildHierarchy(): TeamHierarchyNode[] {
 
 export async function GET() {
   try {
+    if (!fs.existsSync(TEAMS_DIR)) {
+      return NextResponse.json({ teams: [], hierarchy: [] });
+    }
     const teams = fs.readdirSync(TEAMS_DIR).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
     
     const teamsData = teams.map(teamId => {

@@ -15,7 +15,7 @@ echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
 INIT_PASS="redis_init_temp_pass"
 i=0
 while [ $i -lt $MAX_RETRIES ]; do
-    if redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping > /dev/null 2>&1; then
+    if redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping > /dev/null 2>&1; then
         echo "Redis is ready!"
         break
     fi
@@ -37,23 +37,26 @@ echo "Configuring Redis ACL users..."
 
 # Configure router_user - use ACL categories (@stream) instead of individual commands
 # which provides better compatibility with Redis 7 ACL changes
-redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER router_user on ">$ROUTER_PASS" "~stream:*" "~dedupe:*" "~heartbeat:*" +@stream +@write +@read +@slow +ping
+redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" \
+    ACL SETUSER router_user on ">${ROUTER_PASS}" "~stream:*" "~dedupe:*" "~heartbeat:*" \
+    +@stream +@write +@read +@slow +ping
 echo "  - router_user configured"
 
 # Configure toolcache_user
-redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER toolcache_user on ">$TOOLCACHE_PASS" "~tool_cache:*" +@read +@write +@slow +ping
+redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" \
+    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" +@read +@write +@slow +ping
 echo "  - toolcache_user configured"
 
 # Disable default user
-redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER default off
+redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER default off
 echo "  - default user disabled"
 
 # Persist ACL to disk so users survive Redis restarts
-redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SAVE
+redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL SAVE
 echo "  - ACL persisted to disk (ACL SAVE)"
 
 echo ""
 echo "ACL configuration complete. Current users:"
-redis-cli -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL LIST | head -20
+redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL LIST | head -20
 
 exit 0

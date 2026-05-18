@@ -7,10 +7,10 @@ export async function POST(
 ) {
   const { id } = await params;
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
     const data = await orchestratorFetch(`/flows/instances/${id}/retry`, {
       method: "POST",
-      body: JSON.stringify(body),
+      ...(rawBody ? { body: rawBody } : {}),
     });
     return NextResponse.json(data);
   } catch (e) {

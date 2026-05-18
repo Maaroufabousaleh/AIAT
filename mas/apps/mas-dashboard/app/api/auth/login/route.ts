@@ -4,6 +4,9 @@ import { verifyPassword, signToken, COOKIE_NAME, MAX_AGE } from "@/lib/auth";
 export async function POST(req: Request) {
   try {
     const { username, password } = await req.json();
+    const requestUrl = new URL(req.url);
+    const forwardedProto = req.headers.get("x-forwarded-proto");
+    const secureCookie = forwardedProto === "https" || requestUrl.protocol === "https:";
 
     if (username !== process.env.DASHBOARD_USERNAME) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
@@ -21,7 +24,7 @@ export async function POST(req: Request) {
       sameSite: "strict",
       path: "/",
       maxAge: MAX_AGE,
-      secure: process.env.NODE_ENV === "production",
+      secure: secureCookie,
     });
     return res;
   } catch {

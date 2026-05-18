@@ -20,7 +20,7 @@ interface FlowState {
   
   fetchFlows: () => Promise<void>;
   fetchFlow: (id: string) => Promise<Flow | null>;
-  createFlow: (data: { name: string; description?: string; definition_json: FlowDefinition; is_active?: boolean }) => Promise<Flow | null>;
+  createFlow: (data: { name: string; description?: string; definition_json: FlowDefinition; is_active?: boolean; version_from_flow_id?: string }) => Promise<Flow | null>;
   updateFlow: (id: string, data: Partial<Flow>) => Promise<Flow | null>;
   deleteFlow: (id: string) => Promise<boolean>;
   

@@ -29,6 +29,19 @@ MAS_TOOL_CALLS_TOTAL = Counter(
     ["tool_name", "status"],
 )
 
+# Backward-compatible tool-service counters used by existing dashboards/tests.
+TOOL_INVOCATIONS_TOTAL = Counter(
+    "tool_invocations_total",
+    "Total tool invocations by name and status.",
+    ["tool_name", "status"],
+)
+
+TOOL_ERRORS_TOTAL = Counter(
+    "tool_errors_total",
+    "Total failed tool invocations by name and error code.",
+    ["tool_name", "error_code"],
+)
+
 # ── 3. LLM calls ──────────────────────────────────────────────────────────
 MAS_LLM_CALLS_TOTAL = Counter(
     "mas_llm_calls_total",

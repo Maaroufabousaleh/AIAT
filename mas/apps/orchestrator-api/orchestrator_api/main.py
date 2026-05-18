@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import prometheus_client
@@ -72,6 +73,13 @@ ROUTER_URL = os.getenv("ROUTER_URL", "http://message-router:8001")
 WATCHDOG_INTERVAL_S = int(os.getenv("WATCHDOG_INTERVAL_S", "60"))
 WATCHDOG_GRACE_S = int(os.getenv("WATCHDOG_GRACE_S", "300"))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8000")
+
+LEGACY_TIMEZONE_ALIASES = {
+    "US/Eastern": "America/New_York",
+    "US/Central": "America/Chicago",
+    "US/Mountain": "America/Denver",
+    "US/Pacific": "America/Los_Angeles",
+}
 
 
 STATE_TO_TEAM = {
@@ -216,6 +224,7 @@ class CreateFlowRequest(BaseModel):
     definition_json: dict[str, Any]
     created_by: str = "human"
     is_active: bool = False
+    version_from_flow_id: UUID | None = None
 
 
 class UpdateFlowRequest(BaseModel):
@@ -234,15 +243,23 @@ class CreateFlowInstanceRequest(BaseModel):
 
 class FlowNodeActionRequest(BaseModel):
     node_id: str
-    action: str = Field(..., description="advance | complete | fail")
+    action: str = Field(..., description="advance | complete | fail | timeout")
     output: dict[str, Any] | None = None
     error: str | None = None
     approved: bool | None = None
+    decision: str | None = None
 
 
 class FlowInstanceActionRequest(BaseModel):
     action: str = Field(..., description="start | pause | resume | cancel")
     node_id: str | None = None
+
+
+class FlowOverrideRequest(BaseModel):
+    target_node_id: str
+    actor_id: str = "human"
+    actor_role: str = "human_operator"
+    reason: str | None = None
 
 
 # ── Event publisher (sends SYSTEM_EVENT via message-router) ──────────────────
@@ -1684,13 +1701,14 @@ def _configure_schedule_cron(req: ScheduleRequest) -> None:
     # Map day names to APScheduler cron day-of-week format
     day_map = {"mon": "0", "tue": "1", "wed": "2", "thu": "3", "fri": "4", "sat": "5", "sun": "6"}
     dow = ",".join(day_map.get(d.lower(), d) for d in req.days)
+    timezone = _resolve_schedule_timezone(req.timezone)
 
-    scheduler = AsyncIOScheduler(timezone=req.timezone)
+    scheduler = AsyncIOScheduler(timezone=timezone)
 
     if req.auto_shutdown:
         scheduler.add_job(
             _cron_shutdown,
-            CronTrigger(hour=req.end_hour, minute=0, day_of_week=dow, timezone=req.timezone),
+            CronTrigger(hour=req.end_hour, minute=0, day_of_week=dow, timezone=timezone),
             id="auto_shutdown",
             replace_existing=True,
         )
@@ -1699,7 +1717,7 @@ def _configure_schedule_cron(req: ScheduleRequest) -> None:
     if req.auto_resume:
         scheduler.add_job(
             _cron_resume,
-            CronTrigger(hour=req.start_hour, minute=0, day_of_week=dow, timezone=req.timezone),
+            CronTrigger(hour=req.start_hour, minute=0, day_of_week=dow, timezone=timezone),
             id="auto_resume",
             replace_existing=True,
         )
@@ -1712,6 +1730,15 @@ def _configure_schedule_cron(req: ScheduleRequest) -> None:
         logger.debug("No event loop available; scheduler will start when loop is available")
     _scheduler = scheduler
     app.state.scheduler = scheduler
+
+
+def _resolve_schedule_timezone(name: str) -> ZoneInfo:
+    """Resolve IANA timezone names plus common legacy aliases."""
+    candidate = LEGACY_TIMEZONE_ALIASES.get(name, name)
+    try:
+        return ZoneInfo(candidate)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(422, f"Unknown timezone: {name}") from exc
 
 
 async def _cron_shutdown() -> None:
@@ -2142,12 +2169,29 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
         raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
 
     storage = _storage()
+
+    version = 1
+    definition_payload = dict(req.definition_json)
+    if req.version_from_flow_id is not None:
+        base_flow = await storage.get_flow(req.version_from_flow_id)
+        if base_flow is None:
+            raise HTTPException(404, f"Base flow {req.version_from_flow_id} not found")
+
+        version = int(base_flow.get("version") or 1) + 1
+        metadata = dict(definition_payload.get("metadata") or {})
+        base_metadata = dict(base_flow.get("definition_json", {}).get("metadata") or {})
+        metadata["version_group_id"] = base_metadata.get("version_group_id") or str(base_flow["id"])
+        metadata["source_flow_id"] = str(base_flow["id"])
+        metadata["source_flow_version"] = base_flow.get("version")
+        definition_payload["metadata"] = metadata
+
     flow = await storage.create_flow(
         name=req.name,
         description=req.description,
-        definition_json=req.definition_json,
+        definition_json=definition_payload,
         created_by=req.created_by,
         is_active=req.is_active,
+        version=version,
     )
     return _serialize(flow)
 
@@ -2188,6 +2232,20 @@ async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]
         task_id=req.task_id,
         department_id=req.department_id,
     )
+
+    if project is not None:
+        await storage.transition_project(
+            req.project_id,
+            new_state=project["state"],
+            event="flow_assigned",
+            triggered_by="ceo",
+            payload={
+                "flow_id": str(req.flow_id),
+                "flow_name": flow.get("name"),
+                "flow_version": flow.get("version"),
+                "instance_id": str(instance["id"]),
+            },
+        )
     return _serialize(instance)
 
 
@@ -2294,13 +2352,7 @@ async def get_project_flow_instance(project_id: UUID) -> dict[str, Any]:
 async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest) -> dict[str, Any]:
     """Perform an action on a flow instance (start, pause, resume, cancel)."""
     from datetime import UTC, datetime
-    from mas_core.workflow import (
-        FlowDefinition,
-        FlowInstanceStatus,
-        FlowNodeType,
-        parse_flow_definition,
-        serialize_flow_definition,
-    )
+    from mas_core.workflow import FlowNodeType, parse_flow_definition
 
     storage = _storage()
     instance = await storage.get_flow_instance(instance_id)
@@ -2314,6 +2366,25 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
     current_status = instance["status"]
     active_node_ids = list(instance.get("active_node_ids") or [])
     context = dict(instance.get("context_json") or {})
+
+    async def _activate_node(node_id: str) -> None:
+        active_node = definition.get_node(node_id)
+        if active_node is None:
+            return
+        await storage.create_flow_node_execution(
+            instance_id=instance_id,
+            node_id=active_node.id,
+            node_type=active_node.type.value,
+            node_label=active_node.label,
+            input_json=context,
+        )
+        if active_node.type == FlowNodeType.APPROVAL:
+            await storage.create_approval_gate(
+                project_id=instance["project_id"],
+                gate_type=active_node.config.get("approver_role")
+                or active_node.config.get("approver_user")
+                or active_node.label,
+            )
 
     if req.action == "start":
         if current_status != "NOT_STARTED":
@@ -2334,36 +2405,44 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
             started_at=now,
         )
 
-        await storage.create_flow_node_execution(
-            instance_id=instance_id,
-            node_id=start_nodes[0].id,
-            node_type=start_nodes[0].type.value,
-            node_label=start_nodes[0].label,
-            input_json=context,
-        )
+        await _activate_node(start_nodes[0].id)
 
-        return _serialize(await storage.get_flow_instance(instance_id))
+        started_instance = await storage.get_flow_instance(instance_id)
+        if started_instance is None:
+            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        return _serialize(started_instance)
 
     elif req.action == "pause":
         if current_status != "RUNNING":
             raise HTTPException(409, f"Instance is not RUNNING (current: {current_status})")
 
         await storage.update_flow_instance(instance_id, status="PAUSED")
-        return _serialize(await storage.get_flow_instance(instance_id))
+        paused_instance = await storage.get_flow_instance(instance_id)
+        if paused_instance is None:
+            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        return _serialize(paused_instance)
 
     elif req.action == "resume":
-        if current_status != "PAUSED":
-            raise HTTPException(409, f"Instance is not PAUSED (current: {current_status})")
+        if current_status not in ("PAUSED", "WAITING_APPROVAL"):
+            raise HTTPException(
+                409, f"Instance is not PAUSED or WAITING_APPROVAL (current: {current_status})"
+            )
 
         await storage.update_flow_instance(instance_id, status="RUNNING")
-        return _serialize(await storage.get_flow_instance(instance_id))
+        resumed_instance = await storage.get_flow_instance(instance_id)
+        if resumed_instance is None:
+            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        return _serialize(resumed_instance)
 
     elif req.action == "cancel":
         if current_status in ("COMPLETED", "FAILED", "CANCELLED"):
             raise HTTPException(409, f"Instance is already in terminal state: {current_status}")
 
         await storage.update_flow_instance(instance_id, status="CANCELLED")
-        return _serialize(await storage.get_flow_instance(instance_id))
+        cancelled_instance = await storage.get_flow_instance(instance_id)
+        if cancelled_instance is None:
+            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        return _serialize(cancelled_instance)
 
     else:
         raise HTTPException(400, f"Unknown action: {req.action}")
@@ -2373,13 +2452,7 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
 async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dict[str, Any]:
     """Perform an action on a node within a flow instance."""
     from datetime import UTC, datetime
-    from mas_core.workflow import (
-        FlowDefinition,
-        FlowInstanceStatus,
-        FlowNodeType,
-        get_next_nodes,
-        parse_flow_definition,
-    )
+    from mas_core.workflow import FlowNodeType, get_next_nodes, parse_flow_definition
 
     storage = _storage()
     instance = await storage.get_flow_instance(instance_id)
@@ -2401,12 +2474,62 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         raise HTTPException(404, f"Node {req.node_id} not found in flow")
 
     active_node_ids = list(instance.get("active_node_ids") or [])
+    current_context = dict(instance.get("context_json") or {})
     if req.node_id not in active_node_ids:
         raise HTTPException(409, f"Node {req.node_id} is not currently active")
 
     now = datetime.now(tz=UTC)
 
+    async def _get_refreshed_instance() -> dict[str, Any]:
+        refreshed_instance = await storage.get_flow_instance(instance_id)
+        if refreshed_instance is None:
+            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        return refreshed_instance
+
+    async def _activate_node(node_id: str, context_json: dict[str, Any]) -> None:
+        next_node = definition.get_node(node_id)
+        if next_node is None:
+            return
+        await storage.create_flow_node_execution(
+            instance_id=instance_id,
+            node_id=node_id,
+            node_type=next_node.type.value,
+            node_label=next_node.label,
+            input_json=context_json,
+        )
+        if next_node.type == FlowNodeType.APPROVAL:
+            await storage.create_approval_gate(
+                project_id=instance["project_id"],
+                gate_type=next_node.config.get("approver_role")
+                or next_node.config.get("approver_user")
+                or next_node.label,
+            )
+
     if req.action == "complete":
+        updated_context = dict(current_context)
+        if req.output:
+            updated_context.update(req.output)
+
+        if node.type == FlowNodeType.APPROVAL:
+            decision = req.decision
+            if decision is None and req.approved is not None:
+                decision = "approved" if req.approved else "rejected"
+
+            if not decision:
+                await storage.update_flow_instance(
+                    instance_id,
+                    status="WAITING_APPROVAL",
+                    active_node_ids=active_node_ids,
+                    context_json=updated_context,
+                )
+                return _serialize(await _get_refreshed_instance())
+
+            updated_context["approval"] = str(decision).lower()
+            updated_context["last_approval_decision"] = str(decision).lower()
+
+        if node.type != FlowNodeType.END:
+            updated_context["last_safe_node_id"] = req.node_id
+
         executions = await storage.list_flow_node_executions(
             instance_id=instance_id, node_id=req.node_id, limit=1
         )
@@ -2414,7 +2537,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             await storage.update_flow_node_execution(
                 executions[0]["id"],
                 status="COMPLETED",
-                output_json=req.output,
+                output_json=req.output or updated_context,
                 completed_at=now,
             )
 
@@ -2422,20 +2545,6 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         remaining_active = set(active_node_ids)
         remaining_active.discard(req.node_id)
         new_active = list(remaining_active)
-
-        if node.type == FlowNodeType.APPROVAL:
-            if req.approved is True:
-                pass
-            elif req.approved is False:
-                await storage.update_flow_instance(
-                    instance_id, status="FAILED", active_node_ids=new_active
-                )
-                return _serialize(await storage.get_flow_instance(instance_id))
-            else:
-                await storage.update_flow_instance(
-                    instance_id, status="WAITING_APPROVAL", active_node_ids=new_active
-                )
-                return _serialize(await storage.get_flow_instance(instance_id))
 
         # Build the full historically-completed set (needed for join nodes)
         all_executions = await storage.list_flow_node_executions(
@@ -2449,7 +2558,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         # Pass the just-completed node so get_next_nodes can walk outgoing edges,
         # and pass the full historical set so join nodes can check all branches.
         next_result = get_next_nodes(
-            definition, historically_completed, set(), context=instance.get("context_json")
+            definition, historically_completed, set(), context=updated_context
         )
         # Filter: only activate nodes that are genuinely new (not already done or active)
         already_active = set(active_node_ids) - {req.node_id}
@@ -2462,41 +2571,100 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             # Check if an end node was just completed
             end_nodes = definition.get_end_nodes()
             if any(n.id == req.node_id for n in end_nodes):
+                terminal_status = (
+                    "FAILED"
+                    if "fail" in node.label.lower() or "fail" in node.id.lower()
+                    else "COMPLETED"
+                )
                 await storage.update_flow_instance(
-                    instance_id, status="COMPLETED", active_node_ids=[], completed_at=now
+                    instance_id,
+                    status=terminal_status,
+                    active_node_ids=[],
+                    completed_at=now,
+                    context_json=updated_context,
                 )
             elif not already_active:
                 # No more nodes to run and no active work remaining — check if all end nodes done
                 all_ends_done = all(n.id in historically_completed for n in end_nodes)
                 if all_ends_done:
                     await storage.update_flow_instance(
-                        instance_id, status="COMPLETED", active_node_ids=[], completed_at=now
+                        instance_id,
+                        status="COMPLETED",
+                        active_node_ids=[],
+                        completed_at=now,
+                        context_json=updated_context,
                     )
                 else:
                     # Still waiting for parallel branches — stay RUNNING
                     await storage.update_flow_instance(
-                        instance_id, active_node_ids=list(already_active)
+                        instance_id,
+                        active_node_ids=list(already_active),
+                        context_json=updated_context,
                     )
             else:
                 # Other branches still active — just remove this node from active
                 await storage.update_flow_instance(
-                    instance_id, active_node_ids=list(already_active)
+                    instance_id,
+                    active_node_ids=list(already_active),
+                    context_json=updated_context,
                 )
         else:
-            for nid in new_nodes:
-                n = definition.get_node(nid)
-                if n:
+            terminal_nodes = [definition.get_node(nid) for nid in new_nodes]
+            if terminal_nodes and all(
+                n is not None and n.type == FlowNodeType.END for n in terminal_nodes
+            ):
+                terminal_status = (
+                    "FAILED"
+                    if any(
+                        n is not None and ("fail" in n.label.lower() or "fail" in n.id.lower())
+                        for n in terminal_nodes
+                    )
+                    else "COMPLETED"
+                )
+                for terminal_node in terminal_nodes:
+                    if terminal_node is None:
+                        continue
                     await storage.create_flow_node_execution(
                         instance_id=instance_id,
-                        node_id=nid,
-                        node_type=n.type.value,
-                        node_label=n.label,
-                        input_json=instance.get("context_json"),
+                        node_id=terminal_node.id,
+                        node_type=terminal_node.type.value,
+                        node_label=terminal_node.label,
+                        input_json=updated_context,
                     )
-            merged_active = list(already_active | set(new_nodes))
-            await storage.update_flow_instance(instance_id, active_node_ids=merged_active)
+                    latest_terminal_execution = await storage.list_flow_node_executions(
+                        instance_id=instance_id,
+                        node_id=terminal_node.id,
+                        limit=1,
+                    )
+                    if latest_terminal_execution:
+                        await storage.update_flow_node_execution(
+                            latest_terminal_execution[0]["id"],
+                            status="COMPLETED" if terminal_status == "COMPLETED" else "FAILED",
+                            output_json=updated_context,
+                            error="Reached failed terminal node"
+                            if terminal_status == "FAILED"
+                            else None,
+                            completed_at=now,
+                        )
+                await storage.update_flow_instance(
+                    instance_id,
+                    active_node_ids=[],
+                    context_json=updated_context,
+                    status=terminal_status,
+                    completed_at=now,
+                )
+            else:
+                for nid in new_nodes:
+                    await _activate_node(nid, updated_context)
+                merged_active = list(already_active | set(new_nodes))
+                await storage.update_flow_instance(
+                    instance_id,
+                    active_node_ids=merged_active,
+                    context_json=updated_context,
+                    status="RUNNING",
+                )
 
-        return _serialize(await storage.get_flow_instance(instance_id))
+        return _serialize(await _get_refreshed_instance())
 
     elif req.action == "fail":
         executions = await storage.list_flow_node_executions(
@@ -2511,7 +2679,54 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             )
 
         await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
-        return _serialize(await storage.get_flow_instance(instance_id))
+        return _serialize(await _get_refreshed_instance())
+
+    elif req.action == "timeout":
+        executions = await storage.list_flow_node_executions(
+            instance_id=instance_id, node_id=req.node_id, limit=1
+        )
+        if executions:
+            await storage.update_flow_node_execution(
+                executions[0]["id"],
+                status="FAILED",
+                error=req.error or "Timed out",
+                completed_at=now,
+            )
+
+        escalate_to = node.config.get("escalate_to_team") or node.config.get("escalate_to_agent")
+        timeout_context = dict(current_context)
+        timeout_context["last_error"] = req.error or "Timed out"
+        timeout_context["last_timed_out_node_id"] = req.node_id
+
+        await storage.update_flow_instance(
+            instance_id,
+            status="FAILED",
+            active_node_ids=[],
+            context_json=timeout_context,
+        )
+
+        if escalate_to:
+            await storage.escalate_flow_instance(
+                instance_id,
+                str(escalate_to),
+                req.error or f"Node {req.node_id} timed out",
+            )
+            project = await storage.get_project(instance["project_id"])
+            if project is not None:
+                await storage.transition_project(
+                    instance["project_id"],
+                    new_state=project["state"],
+                    event="flow_node_escalated",
+                    triggered_by="system",
+                    payload={
+                        "instance_id": str(instance_id),
+                        "node_id": req.node_id,
+                        "escalated_to": str(escalate_to),
+                        "reason": req.error or f"Node {req.node_id} timed out",
+                    },
+                )
+
+        return _serialize(await _get_refreshed_instance())
 
     else:
         raise HTTPException(400, f"Unknown action: {req.action}")
@@ -2533,6 +2748,59 @@ async def list_flow_node_executions(
     return [_serialize(e) for e in executions]
 
 
+@app.post("/flows/instances/{instance_id}/override")
+async def override_flow_instance(instance_id: UUID, req: FlowOverrideRequest) -> dict[str, Any]:
+    """Force an instance onto a specific node and append an audited project history entry."""
+    storage = _storage()
+
+    if req.actor_role not in {"human_operator", "ceo"}:
+        raise HTTPException(403, "Only a human operator may override the active flow node")
+
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    from mas_core.workflow import parse_flow_definition
+
+    definition = parse_flow_definition(flow["definition_json"])
+    target_node = definition.get_node(req.target_node_id)
+    if target_node is None:
+        raise HTTPException(400, f"Node {req.target_node_id} not found in flow")
+
+    updated = await storage.override_flow_instance(
+        instance_id,
+        target_node_id=req.target_node_id,
+        node_type=target_node.type.value,
+        node_label=target_node.label,
+        actor_id=req.actor_id,
+        reason=req.reason,
+    )
+    if updated is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    project = await storage.get_project(instance["project_id"])
+    if project is not None:
+        await storage.transition_project(
+            instance["project_id"],
+            new_state=project["state"],
+            event="flow_node_override",
+            triggered_by=req.actor_id,
+            payload={
+                "instance_id": str(instance_id),
+                "from_node_ids": list(instance.get("active_node_ids") or []),
+                "to_node_id": req.target_node_id,
+                "reason": req.reason,
+                "actor_role": req.actor_role,
+            },
+        )
+
+    return _serialize(updated)
+
+
 @app.post("/flows/instances/{instance_id}/switch")
 async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[str, Any]:
     """Switch a flow instance to a different flow definition."""
@@ -2552,12 +2820,34 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
         raise HTTPException(400, "Invalid flow_id format")
 
     preserve_context = req.get("preserve_context", True)
+    previous_flow_id = instance.get("flow_id")
+
+    new_flow = await storage.get_flow(new_flow_uuid)
+    if new_flow is None:
+        raise HTTPException(404, f"Flow {new_flow_uuid} not found")
 
     updated = await storage.switch_flow_instance(
         instance_id, new_flow_uuid, preserve_context=preserve_context
     )
     if updated is None:
         raise HTTPException(404, "Failed to switch flow instance")
+
+    project = await storage.get_project(instance["project_id"])
+    if project is not None:
+        await storage.transition_project(
+            instance["project_id"],
+            new_state=project["state"],
+            event="flow_switched",
+            triggered_by="human",
+            payload={
+                "instance_id": str(instance_id),
+                "from_flow_id": str(previous_flow_id),
+                "to_flow_id": str(new_flow_uuid),
+                "to_flow_name": new_flow.get("name"),
+                "to_flow_version": new_flow.get("version"),
+                "preserve_context": bool(preserve_context),
+            },
+        )
 
     return _serialize(updated)
 
@@ -2607,6 +2897,8 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
 @app.post("/flows/instances/{instance_id}/retry")
 async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     """Retry a failed or cancelled flow instance."""
+    from mas_core.workflow import parse_flow_definition
+
     storage = _storage()
 
     instance = await storage.get_flow_instance(instance_id)
@@ -2615,6 +2907,46 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
 
     if instance["status"] not in ("FAILED", "CANCELLED"):
         raise HTTPException(409, f"Instance is not in FAILED or CANCELLED state")
+
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    definition = parse_flow_definition(flow["definition_json"])
+    context_json = dict(instance.get("context_json") or {})
+    last_safe_node_id = context_json.get("last_safe_node_id")
+
+    if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
+        retry_count = int(instance.get("retry_count") or 0) + 1
+        restored_node = definition.get_node(last_safe_node_id)
+        await storage.clear_flow_node_executions(instance_id)
+        await storage.update_flow_instance(
+            instance_id,
+            status="RUNNING",
+            active_node_ids=[last_safe_node_id],
+            retry_count=retry_count,
+            started_at=None,
+            completed_at=None,
+        )
+        if restored_node is not None:
+            await storage.create_flow_node_execution(
+                instance_id=instance_id,
+                node_id=restored_node.id,
+                node_type=restored_node.type.value,
+                node_label=restored_node.label,
+                input_json=context_json,
+            )
+            if restored_node.type.value == "approval":
+                await storage.create_approval_gate(
+                    project_id=instance["project_id"],
+                    gate_type=restored_node.config.get("approver_role")
+                    or restored_node.config.get("approver_user")
+                    or restored_node.label,
+                )
+        restored_instance = await storage.get_flow_instance(instance_id)
+        if restored_instance is None:
+            raise HTTPException(404, "Failed to retry instance")
+        return _serialize(restored_instance)
 
     updated = await storage.retry_flow_instance(instance_id)
     if updated is None:

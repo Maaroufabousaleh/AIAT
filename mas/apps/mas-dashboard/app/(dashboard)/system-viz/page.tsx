@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useMemo, useState } from "react";
 import { clsx } from "clsx";
 import {
   Network,
@@ -85,10 +85,10 @@ export default function SystemVisualizationPage() {
     fetchData();
   }, [fetchData]);
 
-  const teams: TeamInfo[] = systemData?.teams || [];
-  const hierarchy = systemData?.hierarchy || [];
-  const states: WorkflowState[] = orchestrationData?.states || [];
-  const flows: OrchestrationFlow[] = orchestrationData?.flows || [];
+  const teams: TeamInfo[] = useMemo(() => systemData?.teams || [], [systemData]);
+  const hierarchy = useMemo(() => systemData?.hierarchy || [], [systemData]);
+  const states: WorkflowState[] = useMemo(() => orchestrationData?.states || [], [orchestrationData]);
+  const flows: OrchestrationFlow[] = useMemo(() => orchestrationData?.flows || [], [orchestrationData]);
 
   const findPath = useCallback((start: string, end: string): string[] => {
     const adjacency: Record<string, string[]> = {};

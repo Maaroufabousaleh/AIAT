@@ -74,15 +74,25 @@ class TestToolRegistry:
     async def test_orchestrator_can_call_any_tool(self, make_registry):
         """Orchestrator has unrestricted tool access."""
         registry = make_registry()
-        for tool_name in ["web_search", "project.create", "infra.provision", "sprint.create"]:
+        for tool_name in [
+            "web_search",
+            "project.create",
+            "infra.provision",
+            "sprint.create",
+            "flow.recommend",
+        ]:
             req = ToolRequest(
                 caller_id="ceo-orchestrator",
                 caller_role=AgentRole.ORCHESTRATOR,
                 tool_name=tool_name,
-                tool_kwargs={},
+                tool_kwargs={"project_name": "Build a dashboard"}
+                if tool_name == "flow.recommend"
+                else {},
             )
             resp = await registry.execute(req)
-            assert resp.success is True, f"Orchestrator should be able to call {tool_name}: {resp.error}"
+            assert resp.success is True, (
+                f"Orchestrator should be able to call {tool_name}: {resp.error}"
+            )
 
     @pytest.mark.anyio
     async def test_worker_blocked_from_infra_tools(self, make_registry):
@@ -142,8 +152,10 @@ class TestToolRegistry:
 
         registry = make_registry()
         registry.register(HttpTransportTool())
+
         async def fake_http(tool_name, kwargs):
             return {"tool": tool_name, "ok": True}
+
         monkeypatch.setattr(
             registry,
             "_execute_http_transport",
@@ -175,8 +187,10 @@ class TestToolRegistry:
 
         registry = make_registry()
         registry.register(ProcessTransportTool())
+
         async def fake_process(tool_name, kwargs):
             return {"tool": tool_name, "ok": True}
+
         monkeypatch.setattr(
             registry,
             "_execute_process_transport",
@@ -397,6 +411,11 @@ class TestManifest:
         assert "orchestrator" in role_values
         assert "worker" not in role_values
 
+    def test_flow_recommend_present_in_manifest(self):
+        from mas_tools_sdk.manifest import TOOL_MANIFEST
+
+        assert "flow.recommend" in TOOL_MANIFEST
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HTTP integration (via ASGI client)
@@ -499,6 +518,125 @@ class TestHTTPIntegration:
         data = resp.json()
         assert data["success"] is False
         assert data["error_code"] == "TOOL_NOT_FOUND"
+
+    @pytest.mark.anyio
+    async def test_flow_recommend_selects_software_build_flow(self, client, monkeypatch):
+        async def fake_orch_get(path, params=None):
+            if path == "/flows":
+                return [
+                    {
+                        "id": "flow-software",
+                        "name": "Software Build Flow",
+                        "version": 1,
+                        "description": "Build software dashboards",
+                    },
+                    {
+                        "id": "flow-research",
+                        "name": "Research Flow",
+                        "version": 1,
+                        "description": "Research and discovery",
+                    },
+                ]
+            return {"id": "project-1"}
+
+        import tool_service.tools.flow as flow_mod
+
+        monkeypatch.setattr(flow_mod, "orch_get", fake_orch_get)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "flow.recommend",
+            "kwargs": {
+                "project_name": "Build a dashboard",
+                "project_description": "software implementation",
+            },
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"]["selected_flow_name"] == "Software Build Flow"
+
+    @pytest.mark.anyio
+    async def test_flow_assign_can_create_and_start_project_flow(self, client, monkeypatch):
+        calls: list[tuple[str, dict | None]] = []
+
+        async def fake_orch_get(path, params=None):
+            if path == "/projects/project-1/flow-instance":
+                return {"status": 404}
+            return {}
+
+        async def fake_orch_post(path, body=None):
+            calls.append((path, body))
+            if path == "/flows/instances":
+                return {"id": "instance-1", "flow_id": "flow-software", "status": "NOT_STARTED"}
+            if path == "/flows/instances/instance-1/action":
+                return {
+                    "id": "instance-1",
+                    "flow_id": "flow-software",
+                    "status": "RUNNING",
+                    "active_node_ids": ["start"],
+                }
+            return {"id": "instance-1"}
+
+        import tool_service.tools.flow as flow_mod
+
+        monkeypatch.setattr(flow_mod, "orch_get", fake_orch_get)
+        monkeypatch.setattr(flow_mod, "orch_post", fake_orch_post)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "flow.assign",
+            "kwargs": {
+                "project_id": "project-1",
+                "flow_id": "flow-software",
+                "start_after_assign": True,
+            },
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"]["action"] == "created_and_started"
+        assert calls == [
+            ("/flows/instances", {"flow_id": "flow-software", "project_id": "project-1"}),
+            ("/flows/instances/instance-1/action", {"action": "start"}),
+        ]
+
+    @pytest.mark.anyio
+    async def test_flow_assign_can_switch_existing_flow(self, client, monkeypatch):
+        calls: list[tuple[str, dict | None]] = []
+
+        async def fake_orch_get(path, params=None):
+            if path == "/projects/project-1/flow-instance":
+                return {"id": "instance-1", "flow_id": "flow-software", "status": "RUNNING"}
+            return {}
+
+        async def fake_orch_post(path, body=None):
+            calls.append((path, body))
+            return {"id": "instance-1", "flow_id": "flow-research", "status": "NOT_STARTED"}
+
+        import tool_service.tools.flow as flow_mod
+
+        monkeypatch.setattr(flow_mod, "orch_get", fake_orch_get)
+        monkeypatch.setattr(flow_mod, "orch_post", fake_orch_post)
+
+        payload = {
+            "agent_id": "human-operator",
+            "sender_role": "orchestrator",
+            "tool_name": "flow.assign",
+            "kwargs": {"project_id": "project-1", "flow_id": "flow-research"},
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"]["action"] == "switched"
+        assert calls == [
+            ("/flows/instances/instance-1/switch", {"flow_id": "flow-research"}),
+        ]
 
     @pytest.mark.anyio
     async def test_tools_manifest_via_http(self, client):

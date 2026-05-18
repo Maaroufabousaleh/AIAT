@@ -11,14 +11,23 @@ from .capability import (
     CapabilitySearchTool,
 )
 from .file import FileReadTool, FileWriteTool
-from .browser import (
-    BrowserNavigateTool,
-    BrowserClickTool,
-    BrowserTypeTool,
-    BrowserScreenshotTool,
-    BrowserEvaluateTool,
-    BrowserCloseTool,
-)
+
+try:
+    from .browser import (
+        BrowserNavigateTool,
+        BrowserClickTool,
+        BrowserTypeTool,
+        BrowserScreenshotTool,
+        BrowserEvaluateTool,
+        BrowserCloseTool,
+    )
+except ModuleNotFoundError:  # pragma: no cover - optional local dependency
+    BrowserNavigateTool = None
+    BrowserClickTool = None
+    BrowserTypeTool = None
+    BrowserScreenshotTool = None
+    BrowserEvaluateTool = None
+    BrowserCloseTool = None
 from .infra import (
     BlobDownloadTool,
     BlobListTool,
@@ -49,7 +58,14 @@ from .project import (
     ReviewSubmitResponseTool,
     ReviewSubmitVetoTool,
 )
-from .flow import FlowAdvanceTool, FlowAssignTool, FlowInvokeTool, FlowListTool, FlowStatusTool
+from .flow import (
+    FlowAdvanceTool,
+    FlowAssignTool,
+    FlowInvokeTool,
+    FlowListTool,
+    FlowRecommendTool,
+    FlowStatusTool,
+)
 from .sprint_kpi import (
     EstimationAdjustTool,
     IssueCreateTool,
@@ -76,12 +92,18 @@ def get_all_tools() -> list[BaseTool]:
         FileReadTool(),
         FileWriteTool(),
         # BROWSER
-        BrowserNavigateTool(),
-        BrowserClickTool(),
-        BrowserTypeTool(),
-        BrowserScreenshotTool(),
-        BrowserEvaluateTool(),
-        BrowserCloseTool(),
+        *(
+            [
+                BrowserNavigateTool(),
+                BrowserClickTool(),
+                BrowserTypeTool(),
+                BrowserScreenshotTool(),
+                BrowserEvaluateTool(),
+                BrowserCloseTool(),
+            ]
+            if BrowserNavigateTool is not None
+            else []
+        ),
         # MEMORY
         SharedMemoryReadTool(),
         SharedMemoryWriteTool(),
@@ -105,6 +127,7 @@ def get_all_tools() -> list[BaseTool]:
         DepartmentTaskTool(),
         # FLOW
         FlowListTool(),
+        FlowRecommendTool(),
         FlowInvokeTool(),
         FlowStatusTool(),
         FlowAdvanceTool(),

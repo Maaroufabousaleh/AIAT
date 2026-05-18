@@ -582,6 +582,50 @@ class CSuiteAgent(AdminAgent):
             ),
             ToolDefinition(
                 function=ToolFunction(
+                    name="flow.recommend",
+                    description="Recommend the best active flow for a project based on title and description.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_name": {
+                                "type": "string",
+                                "description": "Project title or short request.",
+                            },
+                            "project_description": {
+                                "type": "string",
+                                "description": "Longer project context used for flow selection.",
+                            },
+                        },
+                        "required": ["project_name"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="flow.assign",
+                    description="Attach a flow to a project, or switch the project to a different flow. Optionally start it immediately.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "flow_id": {
+                                "type": "string",
+                                "description": "UUID of the flow definition to assign.",
+                            },
+                            "start_after_assign": {
+                                "type": "boolean",
+                                "description": "If true, start the assigned flow immediately from its first node.",
+                            },
+                        },
+                        "required": ["project_id", "flow_id"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
                     name="flow.invoke",
                     description="Start or resume a flow for a project. The flow must be attached to the project first via the UI.",
                     parameters={

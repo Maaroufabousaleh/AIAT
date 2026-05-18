@@ -10,12 +10,18 @@ import json
 import logging
 import subprocess
 import time
-from datetime import datetime
+from collections import deque
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from mas_core.observability.metrics import MAS_TOOL_CALLS_TOTAL, set_tool_circuit_state
+from mas_core.observability.metrics import (
+    MAS_TOOL_CALLS_TOTAL,
+    TOOL_ERRORS_TOTAL,
+    TOOL_INVOCATIONS_TOTAL,
+    set_tool_circuit_state,
+)
 from mas_core.policy.engine import CommunicationPolicy
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 from mas_tools_sdk.base import BaseTool
@@ -27,6 +33,9 @@ from .config import Settings
 from .rate_limiter import RateLimiterPool
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of audit records to keep in the ring buffer.
+_AUDIT_RING_SIZE = 1000
 
 
 class ToolRegistry:
@@ -48,6 +57,15 @@ class ToolRegistry:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
 
+        # Per-worker explicit tool-grant allowlist.
+        # If a worker_id has an entry here, they may ONLY call the tools in
+        # that set (in addition to passing role-based policy).
+        # If a worker_id is NOT in this dict, only role-based policy applies.
+        self._worker_grants: dict[str, set[str]] = {}
+
+        # In-memory ring buffer for tool-call audit records.
+        self._audit_log: deque[dict[str, Any]] = deque(maxlen=_AUDIT_RING_SIZE)
+
     def register(self, tool: BaseTool) -> None:
         """Register a single tool instance."""
         self._tools[tool.name] = tool
@@ -65,6 +83,86 @@ class ToolRegistry:
         """Batch-register tools."""
         for t in tools:
             self.register(t)
+
+    # ------------------------------------------------------------------
+    # Per-worker tool grants
+    # ------------------------------------------------------------------
+
+    def grant_tool(self, worker_id: str, tool_name: str) -> None:
+        """Grant *worker_id* explicit access to *tool_name*.
+
+        Once a worker has at least one explicit grant, they may ONLY call
+        tools in their grant set (subject to role-based policy as well).
+        """
+        self._worker_grants.setdefault(worker_id, set()).add(tool_name)
+
+    def revoke_tool(self, worker_id: str, tool_name: str) -> bool:
+        """Remove *tool_name* from *worker_id*'s grant set.
+
+        Returns True if the grant existed and was removed.
+        """
+        grants = self._worker_grants.get(worker_id)
+        if grants is None or tool_name not in grants:
+            return False
+        grants.discard(tool_name)
+        return True
+
+    def get_worker_grants(self, worker_id: str) -> list[str]:
+        """Return the explicit grant list for *worker_id* (empty = role-only)."""
+        return sorted(self._worker_grants.get(worker_id, set()))
+
+    def _check_worker_grant(self, worker_id: str, tool_name: str) -> bool:
+        """Return True if the worker passes the per-worker grant gate.
+
+        If the worker has no explicit grants, this gate is open.
+        If the worker has explicit grants, the tool must be in the set.
+        """
+        grants = self._worker_grants.get(worker_id)
+        if grants is None:
+            return True
+        return tool_name in grants
+
+    # ------------------------------------------------------------------
+    # Audit log
+    # ------------------------------------------------------------------
+
+    def _record_audit(
+        self,
+        *,
+        actor: str,
+        project_id: str | None,
+        tool_name: str,
+        status: str,
+        error: str | None = None,
+        duration_ms: float | None = None,
+    ) -> None:
+        """Append an audit record to the in-memory ring buffer."""
+        self._audit_log.append(
+            {
+                "actor": actor,
+                "project_id": project_id,
+                "tool_name": tool_name,
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "status": status,
+                "error": error,
+                "duration_ms": duration_ms,
+            }
+        )
+
+    def get_audit_log(
+        self,
+        *,
+        worker_id: str | None = None,
+        tool_name: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return recent audit records, optionally filtered."""
+        records: list[dict[str, Any]] = list(self._audit_log)
+        if worker_id:
+            records = [r for r in records if r["actor"] == worker_id]
+        if tool_name:
+            records = [r for r in records if r["tool_name"] == tool_name]
+        return records[-limit:]
 
     @property
     def tool_names(self) -> list[str]:
@@ -136,9 +234,39 @@ class ToolRegistry:
                     "reason": result,
                 },
             )
+            self._record_audit(
+                actor=request.caller_id,
+                project_id=request.project_id,
+                tool_name=tool_name,
+                status="forbidden",
+                error=f"Access denied: {result}",
+            )
             return self._error_response(
                 request,
                 error=f"Access denied: {result}",
+                error_code="FORBIDDEN",
+                circuit_state=self._breakers[resolved_tool_name].state,
+            )
+
+        # Per-worker grant gate (additional check on top of role policy)
+        if not self._check_worker_grant(request.caller_id, resolved_tool_name):
+            deny_msg = (
+                f"Worker '{request.caller_id}' does not have an explicit grant for '{tool_name}'."
+            )
+            logger.warning(
+                "tool_worker_grant_denied",
+                extra={"tool": resolved_tool_name, "caller_id": request.caller_id},
+            )
+            self._record_audit(
+                actor=request.caller_id,
+                project_id=request.project_id,
+                tool_name=tool_name,
+                status="forbidden",
+                error=deny_msg,
+            )
+            return self._error_response(
+                request,
+                error=deny_msg,
                 error_code="FORBIDDEN",
                 circuit_state=self._breakers[resolved_tool_name].state,
             )
@@ -151,6 +279,13 @@ class ToolRegistry:
                     "tool": resolved_tool_name,
                     "circuit_state": breaker.state.value,
                 },
+            )
+            self._record_audit(
+                actor=request.caller_id,
+                project_id=request.project_id,
+                tool_name=tool_name,
+                status="circuit_open",
+                error=f"Circuit breaker OPEN for '{tool_name}'.",
             )
             return self._error_response(
                 request,
@@ -169,6 +304,13 @@ class ToolRegistry:
                         "tool": resolved_tool_name,
                         "group": group.value,
                     },
+                )
+                self._record_audit(
+                    actor=request.caller_id,
+                    project_id=request.project_id,
+                    tool_name=tool_name,
+                    status="rate_limited",
+                    error=f"Rate limit exceeded for group '{group.value}'.",
                 )
                 return self._error_response(
                     request,
@@ -217,6 +359,8 @@ class ToolRegistry:
             await breaker.record_failure()
             duration = (time.monotonic() - t0) * 1000
             MAS_TOOL_CALLS_TOTAL.labels(tool_name=resolved_tool_name, status="error").inc()
+            TOOL_INVOCATIONS_TOTAL.labels(tool_name=resolved_tool_name, status="error").inc()
+            TOOL_ERRORS_TOTAL.labels(tool_name=resolved_tool_name, error_code="TOOL_ERROR").inc()
             set_tool_circuit_state(resolved_tool_name, breaker.state.value)
             logger.error(
                 "tool_execution_error",
@@ -232,6 +376,14 @@ class ToolRegistry:
                 },
                 exc_info=True,
             )
+            self._record_audit(
+                actor=request.caller_id,
+                project_id=request.project_id,
+                tool_name=tool_name,
+                status="error",
+                error=str(exc),
+                duration_ms=round(duration, 2),
+            )
             return self._error_response(
                 request,
                 error=str(exc),
@@ -246,6 +398,7 @@ class ToolRegistry:
         duration = (time.monotonic() - t0) * 1000
 
         MAS_TOOL_CALLS_TOTAL.labels(tool_name=resolved_tool_name, status="success").inc()
+        TOOL_INVOCATIONS_TOTAL.labels(tool_name=resolved_tool_name, status="success").inc()
         set_tool_circuit_state(resolved_tool_name, breaker.state.value)
 
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
@@ -265,6 +418,14 @@ class ToolRegistry:
                 "caller_role": request.caller_role.value if request.caller_role else None,
                 "caller_id": request.caller_id,
             },
+        )
+
+        self._record_audit(
+            actor=request.caller_id,
+            project_id=request.project_id,
+            tool_name=tool_name,
+            status="success",
+            duration_ms=round(duration, 2),
         )
 
         return ToolResponse(
