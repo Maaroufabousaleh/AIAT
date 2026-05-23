@@ -1,624 +1,448 @@
-# Paperclip and Your Three Plans: Unified Architecture for Company-Style Orchestration
+# AIAT as a Modular AI Company Operating System
 
 ## Executive summary
 
-Your three plans describe a “company simulation” orchestration system with deterministic workflow control, durable messaging, role-gated tools, and restart-proof execution. fileciteturn0file0 fileciteturn0file1 fileciteturn0file2  
-The entity["organization","paperclipai","github org for paperclip"] **Paperclip** repo provides a strong *control plane* (org chart, ticketing/tasks, budgets, approvals, audit logs, agent heartbeats, and agent adapters) but explicitly positions itself **not** as a workflow builder and does **not** aim for automatic orchestration self-healing in V1. citeturn1view0turn10view0
+Enabled connector scope for this research pass: **GitHub**. Repo-level inspection was limited to **`Maaroufabousaleh/AIAT`**, then expanded with uploaded project files and official documentation for external tools and runtimes.
 
-The most actionable synthesis is a **two-plane architecture**:
+The strongest conclusion is that **AIAT should remain the control plane** and should **stop trying to re-implement every worker capability from scratch**. Your repo is already much closer to an operating system than to a basic agent demo: the active workspace lives under `mas/`, the platform already contains an orchestrator API, message router, tool-service, team-runner, dashboard, credentials/privileged-ops boundaries, LLM gateway, worker manifests, worker import/evaluation lifecycle, and a Postgres-first state model. The uploaded technical audit also identifies **19 long-running services**, **2 init jobs**, **11 team YAMLs**, **26 worker manifests**, and **11 role prompts**, which means the right next step is not “replace AIAT,” but **stabilize and harden AIAT while hiring open-source workers through adapters**. fileciteturn56file0
 
-- **Control Plane (Paperclip-first):** Use Paperclip for company/org modeling, UI, tickets (issues), governance/approvals, budgets/cost visibility, secrets, and auditability. citeturn1view1turn10view0turn10view2turn10view5  
-- **Execution Plane (Your MAS):** Implement the deterministic workflow controller, durable router/queue semantics, tool gateway, sandboxing, checkpoint/resume, and worker execution. Represent workflow state and handoffs back into Paperclip as tickets + comments + attachments + approvals, so humans and “chiefs” control flows the way a real company does. fileciteturn0file0 fileciteturn0file1
+The best architectural move is therefore:
 
-This report covers Paperclip first (per your instruction), then summarizes Plan A/B/C, identifies overlaps/conflicts, and proposes two concrete implementation plans: “Vibe coding” (automated coding workers) and “Manual steps” (human-in-the-loop governance).
+- **Keep custom**: AIAT orchestrator, message protocol, router, team-runner shell, worker registry, department/company registry, permissions, credentials boundary, approval model, dashboard shell, project workspace, logs/evaluations, and the permanent CEO identity. fileciteturn56file0
+- **Adopt open source under AIAT supervision**: Docling for document ingestion; React Flow, Cytoscape.js, and Mermaid for visual UX; TruffleHog and Semgrep for worker/tool intake and CI; gVisor as the default sandbox runtime; optional Firecracker for the highest-risk workloads; GitHub’s REST API for code operations; Vault and ZITADEL as later-stage production hardening; and n8n only at the edge for external automations rather than as the core runtime. fileciteturn56file0 citeturn10view0turn6view1turn7view2turn8view0turn17view0turn17view1turn15view0turn15view1turn19view1turn11view5turn11view1turn16view3
+- **Use agent frameworks as departments or specialist workers, not as your sovereign control plane**. LangGraph is the strongest fit for durable, stateful, human-interruptible **departmental** execution; CrewAI fits crew-style departments; AutoGen and Letta belong behind stricter guardrails as specialist runtimes; OpenClaw should **not** be your permanent CEO under a conservative threat model; DeerFlow and OpenCode remain interesting but need deeper interface and code audits before they become default building blocks. fileciteturn56file0 citeturn1view0turn1view1turn1view2turn5view0turn21search3turn21academia4turn21academia8turn21academia10turn21academia11
 
-## Paperclip repository analysis
+In practical terms, your production architecture should become:
 
-Paperclip positions itself as “open-source orchestration for zero-human companies,” with a server + UI that orchestrates external agents (“bring your own agent”) under an org chart with budgets, governance, and goal alignment. citeturn2view0turn1view1turn1view0  
+**Human → Dashboard → AIAT CEO → chiefs → departments → workers → tools → external systems**, with **all stateful authority still flowing through AIAT’s router/protocol, Postgres-first state, permissions, object storage, LLM gateway, and observability**. That preserves your original “AI company” vision while using open source where it clearly saves time and lowers build risk. fileciteturn56file0 citeturn6view0turn15view0
 
-image_group{"layout":"carousel","aspect_ratio":"16:9","query":["paperclip.ing Paperclip dashboard screenshot","paperclipai paperclip UI org chart screenshot","paperclip ai company task board screenshot"],"num_per_query":1}
+## Key information needs
 
-### Architecture and modules
+To answer your request rigorously, five information needs matter most.
 
-Paperclip’s repo structure and docs describe these major modules:
+First, I needed to determine **what AIAT already implements and therefore should not be casually replaced**. The uploaded audit answered that directly by confirming the current scope of the service stack, registries, prompts, storage, dashboard, and privileged operations boundary. fileciteturn56file0
 
-| Module (Paperclip) | What it does | Evidence |
-|---|---|---|
-| `server/` | REST API + orchestration services | citeturn1view2turn10view0 |
-| `ui/` | Board/operator UI (React + Vite) | citeturn1view2turn6view1turn10view0 |
-| `packages/db/` | Drizzle schema, migrations, DB clients | citeturn1view2turn7view0turn10view0 |
-| `packages/shared/` | Shared types/validators (Zod) | citeturn1view2turn7view6 |
-| `packages/adapters/*` | Built-in adapters for local agent runtimes (e.g., “codex-local”, “claude-local”, “cursor-local”, “openclaw”) | citeturn12view0turn13view0turn6view0 |
-| `skills/` | Reusable “skills” to teach agents to use Paperclip | citeturn3view4turn11view2 |
-| `cli/` | Onboarding/config CLI | citeturn1view1turn4view1 |
-| `doc/` | SPEC + implementation spec + operational docs | citeturn2view1turn10view0turn4view0 |
+Second, I needed to identify **which open-source components reduce custom code without destroying the AI-company model**. That is why the evaluation below focuses on tools that are good at sub-runtimes, ingestion, visualization, sandboxing, secrets, and observability rather than tools that try to become the whole platform. fileciteturn56file0 citeturn1view0turn1view1turn1view2turn5view0turn6view1turn15view0
 
-### Core primitives Paperclip gives you
+Third, I needed to apply your attached **risk/triage rules**: prioritize Low and Low–Medium; explicitly guardrail Medium / dual-use; and exclude High / Avoid from direct integration. The uploaded audit and your attached triage direction strongly support that rule set, especially around defensive tools versus high-risk offensive or stealth tooling. fileciteturn56file0
 
-Paperclip’s docs and spec-implementation detail a set of primitives that map cleanly onto “company simulation” requirements:
+Fourth, I needed to work out **how external workers actually communicate** so that “hiring” new workers is easy. The official docs for LangGraph, CrewAI, AutoGen, Letta, MCP, Docling, GitHub REST, Vault, and Qdrant are enough to define a realistic adapter spec, but some candidates still have unclear runtime or wire interfaces in this pass and therefore remain marked `TODO_DEEPSEARCH_INTERFACE`. citeturn1view0turn1view1turn1view2turn5view0turn6view0turn10view0turn19view1turn11view5turn12view0
 
-- **Company / org chart model:** `companies`, `agents` with `reports_to` and “company-scoped invariants.” citeturn10view0turn1view2  
-- **Tickets as the universal coordination channel:** Inter-agent “communication” is modeled as tasks/issues and comments; agents’ “inbox” is tasks assigned + comments. citeturn3view1turn10view1  
-- **Atomic task checkout (single assignee):** Explicit checkout endpoint designed to avoid double-work (conflict → `409`). citeturn10view4turn1view0turn1view2  
-- **Heartbeats + adapters:** A heartbeat protocol plus an adapter contract (`invoke/status/cancel`) with default `process` and `http` adapter shapes. citeturn3view0turn10view5turn3view1  
-- **Governance / approvals:** Approval flows exist for “hire agent” and “CEO strategy approval,” with decisions logged and board override capabilities. citeturn3view3turn3view9turn10view5  
-- **Budgets + cost tracking:** Per-agent monthly budgets and hard-stop behavior (auto-pause), plus cost events and rollups. citeturn1view0turn3view2turn10view2turn3view8  
-- **Auditability by default:** Append-only activity log + ticket threads + run logs. citeturn1view0turn10view2turn1view1  
-- **Secrets and storage:** DB-backed secret metadata + versions; local encryption option; S3-compatible object storage is supported; embedded Postgres is a “zero config” default. citeturn4view0turn10view2turn10view0turn6view0
+Fifth, I needed to define **what should stay stable even when every company template, department, chief, worker, and tool changes**. That is the purpose of the “stable AIAT skeleton” below: a durable control-plane core plus swappable worker ecosystems. fileciteturn56file0
 
-### Strengths for your goals
+## AIAT repo audit
 
-Paperclip is unusually aligned with the “company control plane” part of your goal:
+The current repo is not a blank slate. It is a **real, partially production-shaped operating substrate** with missing hardening and integration work, not a concept-only prototype. The uploaded audit confirms that the active development workspace is the `mas/` directory, while stale root-level frontend artifacts should be ignored; that matters because deployment and development effort should stay focused on `mas/apps/*`, `mas/packages/*`, `mas/infra/*`, `mas/teams/*`, `mas/workers/*`, and `mas/prompts/*` rather than on legacy root clutter. fileciteturn56file0
 
-- It models **companies, org charts, tasks, budgets, approvals, and audit logs** explicitly, rather than being “just” an agent framework. citeturn1view0turn1view1turn10view0  
-- It provides a concrete, implementable adapter boundary (process/http + invoke/status/cancel + scheduled heartbeats). That is a strong integration axis for “GitHub repo workers” and external agent runtimes. citeturn10view5turn3view1  
-- It already carries local adapters for common coding agents/runtimes (e.g., “codex-local”, “claude-local”, “cursor-local”), which is directly relevant to your “workers from GitHub” direction. citeturn12view0turn6view0  
+The following audit is the high-confidence repo-grounded status picture for planning:
 
-### Weaknesses and mismatches vs your plans
-
-Your plans assume (and explicitly design for) **deterministic orchestration and restart-proof execution**, whereas Paperclip’s core spec emphasizes visibility and manual recovery rather than automatic self-healing.
-
-Key mismatches:
-
-- **Not a workflow builder:** Paperclip explicitly frames itself as not providing drag-and-drop pipelines/workflow-building. citeturn1view0turn1view1  
-- **Automatic self-healing is out of scope V1:** The spec-implementation lists “automatic self-healing orchestration” as out-of-scope. citeturn10view0  
-- **Crash recovery philosophy differs:** The spec states that, when an agent disappears mid-task, Paperclip surfaces stale work but does not auto-reassign; recovery is handled by humans or emergent processes. citeturn3view1  
-- **Access-control model conflict:** The spec describes “agent visibility” as full-org visibility (org structure defines delegation lines, not access control). Your plans define strict chain-of-command and role-based communication/tool gating. citeturn3view1turn10view3 fileciteturn0file0 fileciteturn0file1  
-
-Net: Paperclip is a strong control-plane base, but your deterministic workflow + durable execution fabric will likely need to be implemented *alongside* Paperclip (or by extending it).
-
-## Summaries of your three plans
-
-Your uploaded plans are internally consistent as a layered architecture: infrastructure durability (Plan A), company/organizational semantics (Plan B), and human/manual action checklist (Plan C). fileciteturn0file0 fileciteturn0file1 fileciteturn0file2  
-
-**Plan A (MAS Architecture Upgrade):** A Python monorepo rewrite into services (`orchestrator-api`, `message-router`, `tool-service`, `team-runner`) and shared packages, emphasizing shutdown-safety, Redis Streams durability, router-enforced policy, role-gated tools, Postgres tables for state and checkpoints, and MinIO for large payload blobs. fileciteturn0file0  
-
-**Plan B (Organizational Architecture):** A corporate hierarchy with ~20–40 agents across 11 teams (CEO/COO/C-suite + departments), a deterministic workflow controller owning state transitions, a 14-step project lifecycle (feasibility → PDR/CDR → infra gate → sprints → KPIs), CSO veto/circuit breakers, INFRA_READY gating, and structured message and review models. fileciteturn0file1  
-
-**Plan C (Manual Actions):** A phase-by-phase checklist of decisions the human must make, secrets/credentials to generate, external setup steps, and verification tests—explicitly separating what the AI coding agents can automate vs what requires human judgment and environment control. fileciteturn0file2  
-
-A concise comparison:
-
-| Area | Plan A | Plan B | Plan C |
+| AIAT area | Current status | What exists now | Recommendation |
 |---|---|---|---|
-| Main focus | Durable execution fabric (router/tools/storage/checkpointing) | Corporate hierarchy + deterministic workflow state machine | Human-in-loop operational checklist |
-| Key differentiator | Redis Streams + DLQ + checkpoint/resume + tool gateway | 14-step workflow, reviews, vetoes, KPI learning | “What humans must do” to make the system real |
-| Operational posture | “Restart-proof automation” | “Company rules encoded as workflow controller” | “Reality checks, secrets, infra, tests” |
+| Active workspace | Verified | `mas/` is canonical; root contains stale/generated artifacts | Keep `mas/` as the only authoritative workspace |
+| Control plane | Verified | Orchestrator API, message-router, tool-service, team-runner, dashboard | Keep custom; harden contracts and onboarding |
+| State model | Verified | Postgres-first structured state, workflows, approvals, credentials, audits | Keep custom and central |
+| Messaging | Partially verified | `MessageEnvelope` exists; router supports publish/subscribe and WS delivery | Freeze a versioned wire contract and add conformance tests |
+| Tool execution | Verified | Central tool-service with grants, rate limits, circuit breakers | Keep custom; expose MCP bridge and stronger manifests |
+| Worker registry | Verified | Manifest seeding, import/evaluation lifecycle, status monitoring | Keep custom; add hiring board UX and adapter certification |
+| Dashboards | Verified | Next.js dashboard exists under `mas/apps/mas-dashboard` | Expand, do not replace wholesale |
+| Credentials boundary | Verified | Credentials manager and privileged-ops separation exist | Keep custom boundary; optionally back with Vault later |
+| Flow runtime | Verified | Deterministic state transitions, runtime controller, archive/retry logic | Keep; delay Temporal unless multi-day recovery becomes critical |
+| E2E tests | Verified | Playwright-based dashboard testing exists | Expand with golden-path, security, and adapter tests |
 
-## Common components, gaps, and conflicts across Paperclip and plans
+This table synthesizes the uploaded technical audit and the repo inspection context. fileciteturn56file0
 
-### Common components
+Two repo-audit points matter more than the rest.
 
-The overlap is meaningful enough to justify integration over replacement:
+The first is that **AIAT already owns the right control-plane seams**: message routing, worker/team registration, credentials separation, workflow state, and operator UI. That means frameworks like LangGraph or AutoGen should plug into those seams rather than replacing them. The second is that **the current weak point is not conceptual architecture but contract hardening**: the uploaded audit explicitly treats `MessageEnvelope` as only partially verified and calls out multi-language serialization compatibility as still uncertain. That is exactly why the adapter SDK and protocol-freezing work should come before aggressive worker onboarding. fileciteturn56file0
 
-- **Org chart + delegation:** Paperclip has hierarchical reporting via `reports_to`. citeturn10view0turn3view1  
-  Plan B also defines an explicit corporate hierarchy and delegation. fileciteturn0file1  
-- **Tickets/tasks as traceable work units:** Paperclip uses issues + comments as the coordination fabric. citeturn3view1turn10view1  
-  Plan B similarly expresses work as structured steps, reviews, and document submissions (it just models them as message types and controller events). fileciteturn0file1  
-- **Human approval gates:** Paperclip has board approval flows and “board override”. citeturn3view3turn3view9turn10view5  
-  Plans include human-in-the-loop gates and escalation. fileciteturn0file1turn0file2  
-- **Budget enforcement:** Paperclip has budget hard stops and cost events. citeturn1view0turn10view2  
-  Plans include budgets/backpressure and cost controls embedded in message/task budgets. fileciteturn0file0  
+My audit verdict is therefore:
 
-### Gaps
+**AIAT is already the right skeleton. The missing work is contract stability, safe worker-hiring, dashboard-first onboarding, and selective replacement of commodity subsystems.** fileciteturn56file0
 
-| Gap | Paperclip (today) | Your plans |
+## Critical evaluation and stable AIAT skeleton
+
+Your ideas are directionally strong, but several need modification rather than literal implementation.
+
+| Proposed idea | Decision | Why |
 |---|---|---|
-| Deterministic workflow engine | Explicitly “not a workflow builder”; only generic state machines for agents/issues/approvals | Deterministic controller owns project transitions, fan-out/fan-in, veto/circuit breakers, and restart-safe transitions citeturn1view0turn10view3 fileciteturn0file1 |
-| Durable messaging beyond DB atomicity | Uses DB atomic checkout for conflict avoidance; “separate queue not required for V1” | Redis Streams consumer groups, ACK/NACK, reclaim, DLQ, idempotency safeguards citeturn10view0 fileciteturn0file0 |
-| Tool governance layer | No first-class “tool-service” boundary described; tools mostly agent-domain | Tool-service is central: role-gated tool groups, caching, circuit breakers fileciteturn0file0turn0file1 |
-| Artifact + document lifecycle | Tracks assets/attachments, but spec says work artifacts are agent-domain/out of scope | Explicit document lifecycle (PDR/CDR/RR) and blob/object references for large payloads citeturn3view1turn10view3 fileciteturn0file0turn0file1 |
-| Automated restart-safe continuation | Crash recovery is intentionally manual/visible; self-healing is out-of-scope V1 | Orchestrated shutdown/resume with agent checkpoints and workflow replay citeturn3view1turn10view0 fileciteturn0file0turn0file1 |
+| Model the app as a real company with CEO, chiefs, departments, workers, tools | **Keep** | This is AIAT’s differentiator, and the repo already supports the necessary control-plane primitives. fileciteturn56file0 |
+| Build every agent/worker from zero | **Reject** | It slows delivery without improving the control plane; open-source workers should be “employees” under AIAT. fileciteturn56file0 |
+| Make the CEO permanent in every AIAT company | **Keep, but modify runtime choice** | The CEO should be a stable custom AIAT identity with optional inner planning runtime, not a third-party framework that owns the platform. fileciteturn56file0 citeturn1view0 |
+| Replace your control plane with LangGraph / CrewAI / AutoGen / Letta | **Reject** | Those runtimes are useful, but they are better as departments or specialist workers than as sovereign governance. fileciteturn56file0 citeturn1view0turn1view1turn1view2turn5view0 |
+| Add external open-source workers/tools under AIAT | **Keep** | This is the best acceleration path if adapters, permissions, and sandboxing are enforced. fileciteturn56file0 |
+| Replace Redis Streams immediately with Temporal | **Modify / delay** | Redis suits low-latency streaming; Temporal suits long-running durable workflows. Use Redis now; add Temporal only if the need becomes real. fileciteturn56file0 citeturn8view1 |
+| Use one graph/UI library for everything | **Replace with mixed approach** | React Flow is best for interactive flow-building; Cytoscape is better for graph analysis and org/capability views; Mermaid is best for exportable diagrams. fileciteturn56file0 citeturn6view1turn7view2turn8view0 |
+| Treat cyber/privacy/browser tools as optional department tools | **Keep, with strict separation** | Defensive tools fit; stealth/offensive tools do not belong in the safe default platform. fileciteturn56file0 citeturn10view1turn17view0turn17view1 |
+| Replace current dashboard | **Reject** | Expand the existing Next.js dashboard instead of throwing away the working shell. fileciteturn56file0 |
+| Replace all current storage now | **Delay** | Keep Postgres-first and current hot-path object storage early; evolve object storage only after adapter and workflow stability. fileciteturn56file0 citeturn16view4 |
 
-### Conflicts you must resolve in the synthesis
+The **stable AIAT skeleton** should be defined as the part of the platform that never changes shape even when companies, departments, and workers do. In my judgment, the stable skeleton is:
 
-1. **“Tasks as the only communication channel” vs “messages + router”**  
-   Paperclip’s spec frames inter-agent communication as tasks and comments. citeturn3view1  
-   Your plans build a message bus with explicit routing constraints, consumer semantics, and message types. fileciteturn0file0turn0file1  
-   **Resolution:** keep **Paperclip issues** as the *human-auditable* contract and treat router messages as *internal execution mechanics*. The deterministic controller can map “workflow events ↔ issue updates” to preserve traceability.
+- the **Postgres-first system of record** for projects, workers, departments, permissions, approvals, evaluations, credentials metadata, and artifacts index;
+- the **router protocol** and delivery semantics;
+- the **worker registry**, **department registry**, **tool registry**, and company/org graph;
+- the **tool-service** as the enforcement boundary;
+- the **LLM gateway** and provider abstraction;
+- the **human approval** and privileged-ops boundary;
+- the **adapter SDK** and worker-hiring/evaluation lifecycle;
+- the **dashboard** and **project workspace** shell;
+- the **artifacts/logs/evaluation** chain. fileciteturn56file0
 
-2. **Full visibility vs chain-of-command enforcement**  
-   Paperclip’s spec leans toward full visibility, with reporting lines defining delegation rather than access control. citeturn3view1turn10view3  
-   Your plans enforce strict policy checks on who can talk to whom and which tools they can use. fileciteturn0file0turn0file1  
-   **Resolution:** implement access control in the **execution plane** (router/tool-service), while accepting that Paperclip UI can remain board-centric. If you need strict visibility boundaries in the UI, that becomes a Paperclip extension effort.
+Everything else should be considered swappable:
 
-3. **“Manual recovery” vs “automatic resume”**  
-   Paperclip treats auto-reassignment as intentionally avoided. citeturn3view1turn10view0  
-   Your plans explicitly design for restart-proof and auto-resume. fileciteturn0file0turn0file1  
-   **Resolution:** aim for “automatic resume when safe” (idempotent + checkpointed tasks) and “manual escalation when ambiguous” (DLQ entries, safety vetoes, review timeouts), and surface both in Paperclip via tickets and approvals.
+- company templates,
+- departments,
+- chiefs,
+- worker runtimes,
+- tool packs,
+- domain memory packs,
+- local models,
+- sector templates,
+- user-created private company configs. fileciteturn56file0
 
-## Refactored unified architecture
+For the **permanent CEO**, the best recommendation is:
 
-A unified architecture that satisfies your “simulate a company” goal should implement **roles + capabilities + controlled workflows**, while allowing you to drop in “new hires” (new workers/tools) later without rewriting orchestration.
+**Use a custom AIAT executive shell as the permanent CEO identity, backed by Postgres state, AIAT approvals, AIAT permissions, and AIAT project registries; optionally use LangGraph inside that shell for planning and long-running executive workflows.** LangGraph’s official docs make it attractive for persistence, durability, streaming, memory, subgraphs, and human-in-the-loop control, but those are exactly the reasons it fits as an internal planning runtime rather than as the top-level product architecture. fileciteturn56file0 citeturn1view0
 
-### Synthesis: control-plane + execution-plane
+The CEO runtime ranking for AIAT looks like this:
 
-**Control plane (Paperclip)**  
-- Source of truth for: companies, agents (org chart), issues/tasks, approvals, budgets, activity log, secrets, attachments. citeturn10view0turn10view2turn4view0turn10view4  
-- Adapter boundary for invoking workers: `process` + `http` with `invoke/status/cancel`. citeturn10view5  
+| Candidate | Fit for permanent CEO | Recommendation |
+|---|---|---|
+| Custom AIAT executive shell | Best fit | **Recommended** |
+| LangGraph | Best inner planner/runtime | **Use inside CEO shell** |
+| CrewAI | Good for chiefs/departments | Use below CEO |
+| AutoGen | Good for specialist multi-agent teams | Guardrailed, below CEO |
+| Letta | Good for memory-heavy research specialists | Guardrailed, below CEO |
+| DeerFlow | Interesting for research department | `TODO_DEEPSEARCH_INTERFACE` |
+| OpenClaw | Poor fit for permanent CEO under conservative threat model | Reject for core CEO; at most optional isolated assistant |
 
-**Execution plane (your MAS)**  
-- Source of truth for: workflow templates + deterministic transitions + project state history + checkpoint/resume + tool gateway policies. fileciteturn0file0turn0file1  
-- Durable task distribution: Redis Streams consumer groups (ACK/pending/reclaim). Redis Streams’ consumer-group design tracks pending messages (PEL) until explicitly acknowledged (XACK), and XAUTOCLAIM can transfer ownership after a minimum idle time (Redis 6.2+). citeturn8search0turn8search1turn8search24turn8search4  
+This is not just stylistic. AutoGen and Letta expose useful abstractions, but they widen the runtime surface. OpenClaw, meanwhile, is explicitly aimed at autonomous assistant workflows and recent research has highlighted substantial attack surfaces around plugins, skills, memory, and execution privilege, which makes it a poor default choice for the sovereign executive of a company OS. citeturn1view2turn5view0turn21search3turn21academia4turn21academia8turn21academia10turn21academia11
 
-**Credential and secret posture alignment**  
-- Paperclip already includes secret tables and a local-encrypted provider; you can reference secrets rather than embedding them in configs. citeturn4view0turn10view2  
-- Your execution plane should read secrets from Paperclip (via a constrained “secret reference” protocol) or from a separate vault, but never from plain-text worker manifests.
+The CEO should have two modes:
 
-### Unified “worker” abstraction
+- **Normal mode**: proposes plans, delegates to chiefs, routes through approvals, reads project state, and requests tools indirectly.
+- **Human-approved co-pilot mode**: can launch or modify sensitive flows only after explicit human approval and permanent audit logging. fileciteturn56file0
 
-Define one worker abstraction that works for both Paperclip and your MAS:
+## Open-source tool selection and risk filtering
 
-- **Worker = (identity + runtime adapter + capabilities + policy + sandbox + telemetry + checkpoint contract)**  
-- **Capability registry** becomes the company’s internal “skills inventory,” enabling leaders to resolve: “I need mechanical engineering review” → “which worker(s) can do it?” (Plan B’s “hire later” scenario). fileciteturn0file1 citeturn3view1turn10view0  
+Your attached triage rule is the right one to operationalize:
 
-### Security baseline for GitHub-sourced workers
+**Low / Low–Medium** candidates become default integration targets; **Medium / dual-use** candidates are sandboxed, allowlisted, and disabled by default; **High / Avoid** candidates are not directly integrated into the app and are only discussed at a high level if needed. The uploaded audit also reinforces a strict distinction between defensive tools and offensive or stealth tooling. fileciteturn56file0
 
-Because you explicitly want “agents/tools from GitHub as workers and tools,” treat workers as potentially untrusted code:
+That policy produces three buckets.
 
-- Container hardening primitives: default seccomp profile and capability dropping are part of a typical least-privilege baseline. citeturn9search2turn9search6  
-- For stronger isolation, run workers under a sandbox like gVisor (protects against certain kernel exploit classes by limiting direct host-kernel exposure) or microVM isolation via Firecracker. citeturn9search0turn9search1turn9search29  
-- At the orchestration layer, apply Kubernetes Pod Security Standards (“baseline” or “restricted”) if you move to Kubernetes. citeturn9search3turn9search15turn9search11  
+**Default onboard-now bucket**: Docling, TruffleHog, Semgrep, React Flow, Cytoscape.js, Mermaid, GitHub REST API, MCP bridge support, and gVisor. These are the cleanest accelerators because they improve ingestion, UI, security, external connectivity, and isolation without trying to become the AIAT control plane. fileciteturn56file0 citeturn10view0turn17view0turn17view1turn6view1turn7view2turn8view0turn19view1turn6view0turn15view0
 
-### Storage and durability posture
+**Guardrailed bucket**: browser-use, AutoGen, Letta, CrewAI, LangGraph, n8n, Firecracker, Vault, ZITADEL, Qdrant, Neo4j, and Temporal. Some are low operational risk, but they still need bounded scope because they expand the surface area or because they solve problems AIAT does not need on day one. browser-use is especially sensitive because its own docs foreground stealth browsers, CAPTCHA solving, and proxies. citeturn10view1turn1view2turn5view0turn1view1turn1view0turn16view3turn15view1turn11view5turn11view1turn12view0turn13view0turn8view1
 
-- Paperclip supports Postgres and can run an embedded Postgres mode locally; for production it can use hosted Postgres (including Supabase) and S3-compatible object storage. citeturn4view0turn10view0turn10view3  
-- Your plans explicitly call for Postgres + PgBouncer (transaction pooling) and recommend disabling prepared statements in the client (or asyncpg statement cache) to avoid prepared-statement errors behind PgBouncer transaction/statement pooling; asyncpg’s FAQ confirms PgBouncer transaction/statement pooling does not support prepared statements. citeturn4view0turn8search9  
-- If using MinIO for S3-compatible blobs, note its dual licensing under AGPLv3 + commercial license. citeturn8search3  
+**Rejected for direct integration**: weapons/military repos, offensive exploit tooling, stealth/anti-detect stacks, jailbreak/censorship-removal tooling, deepfake systems, and any repo whose value depends on high-risk abuse paths rather than on normal software or enterprise operations. Your own instructions and the uploaded material both support excluding them. fileciteturn56file0
 
-## Vibe coding implementation plan
+The most useful candidate matrix is below.
 
-This plan focuses on automated “coding workers” (repo-based workers, Codex/Claude/Copilot-like workflows) while retaining enterprise-style orchestration controls.
+| Candidate | Role in AIAT | Triage tier in this pass | Exact I/O | Adapter type | Confidence | Recommendation |
+|---|---|---|---|---|---|---|
+| Docling | document/PDF ingestion worker | Low / core in uploaded audit | Input: PDFs, DOCX, PPTX, XLSX, HTML, media; Output: `DoclingDocument`, Markdown, HTML, JSON, chunks, OCR-enriched structure, optional MCP server | process / mcp / oci | High | **Adopt early** citeturn10view0 |
+| TruffleHog | secrets scan in worker intake + CI | Low / core in uploaded audit | Input: repos, history, images, SDLC sources; Output: findings, verified credentials, remediation status, pre-commit/pre-receive prevention hooks | process / oci | High | **Adopt early** citeturn17view0 |
+| Semgrep | code/security policy evaluator | Low / core in uploaded audit | Input: codebases, rules, deps; Output: SAST/SCA/secrets findings, 630+ secrets detectors, commit guardrails | process / oci | High | **Adopt early** citeturn17view1 |
+| React Flow | flow builder canvas | Low | Input: nodes/edges/custom React nodes; Output: interactive editors and AI workflow editor UI patterns | UI library | High | **Adopt early** citeturn6view1 |
+| Cytoscape.js | org graph / capability graph / graph analytics UI | Low | Input: graph nodes/edges; Output: interactive graph visualization and algorithms like BFS/PageRank | UI library | High | **Adopt early** citeturn7view2 |
+| Mermaid | exportable architecture/playbook diagrams | Low | Input: text diagram specs; Output: diagrams, editor-rendered exports, integrations | UI/export | High | **Adopt early** citeturn8view0 |
+| GitHub REST API | official code-system interface | Low | Input: authenticated HTTP calls; Output: repo/issues/PR/actions/artifacts/secrets endpoints | http | High | **Adopt early** citeturn19view1 |
+| MCP | standard tool/data bridge | Low / core | Input: structured client/server tool and resource calls; Output: standardized tool/data/workflow interaction | mcp | High | **Adopt as first-class adapter mode** citeturn6view0 |
+| gVisor | default worker sandbox | Low / core in uploaded audit | Input: OCI bundles / `runsc`; Output: sandboxed containers with isolated syscall mediation | oci | High | **Default sandbox** citeturn15view0 |
+| Firecracker | highest-isolation worker sandbox | Low-risk optional in uploaded audit, but higher ops cost | Input: microVM config / KVM-backed workloads; Output: microVM-isolated workloads | oci / specialized runtime | High | **Optional for highest-risk jobs** citeturn15view1 |
+| LangGraph | departmental long-running runtime | Not explicitly risk-scored in attachment during this pass | Input: graph state/messages; Output: state transitions, persistence, event streaming, interrupts, memory, subgraphs | process / oci / http | High | **Recommended below AIAT control plane** citeturn1view0 |
+| CrewAI | crew-style department runtime | Not explicitly risk-scored in attachment during this pass | Input: agents/tasks/flows/triggers; Output: structured outputs, persisted/resumable flow state, HITL callbacks | process / oci / http | High | **Good for chiefs/departments** citeturn1view1 |
+| AutoGen | distributed specialist runtime | Treat as Medium / dual-use under conservative model | Input: tasks/messages or actor events; Output: agent runs, extensions, Docker execution, gRPC runtime, MCP workbench | process / oci / http | High | **Guardrailed specialist runtime** citeturn1view2 |
+| Letta | memory-heavy research worker | Treat as Medium / dual-use under conservative model | Input: agents/messages/tools/files/memory blocks; Output: streamed messages, runs, steps, memory state, tool approvals | http / oci | Medium-High | **Guardrailed specialist runtime** citeturn5view0 |
+| browser-use | autonomous browser worker | Medium / dual-use | Docs confirm AI browser automation with stealth browsers, CAPTCHA solving, residential proxies, and managed infra; exact AIAT-facing event model remains unclear | process / oci / http | Medium | **Optional only; `TODO_DEEPSEARCH_INTERFACE`; disabled by default** citeturn10view1 |
+| OpenCode | software-engineering worker | Low-risk core in uploaded audit, but interface not verified in this pass | Candidate coding worker; exact transport and run/result contract not verified from official docs in this pass | `TODO_DEEPSEARCH_INTERFACE` | Medium-Low | **Promising, but `TODO_CODE_AUDIT_REQUIRED`** fileciteturn56file0 |
+| DeerFlow | research department runtime | Policy-gated optional in uploaded audit | Candidate research runtime; exact API surface not verified in this pass | `TODO_DEEPSEARCH_INTERFACE` | Low | **Interesting, delayed** fileciteturn56file0 |
+| ZITADEL | IAM / SSO / multi-tenant operator auth | Low-risk optional in uploaded audit | Input: authn/authz requests; Output: MFA/SSO/OIDC/SAML/OAuth tokens, audit trail, multi-tenant identity management | http / oidc / saml | High | **Adopt later for production multi-tenancy** citeturn11view1 |
+| Vault | secrets engine | Low-risk optional in uploaded audit | Input: auth + secret requests; Output: centralized secret storage, on-demand creds, encryption/tokenization, audit logs | http | High | **Adopt later for production hardening** citeturn11view5 |
+| Qdrant | vector retrieval tier | Not explicitly triaged in attached file | Input: vectors/points/payloads; Output: similarity, filtering, hybrid queries, multitenancy, MCP server support | http / mcp | High | **Optional when Postgres-first retrieval is not enough** citeturn12view0 |
+| Neo4j | graph analytics store | Not explicitly triaged in attached file | Input: graph data/Cypher; Output: graph queries, visualization tooling, graph data science | bolt / http | Medium | **Optional analytical read-model, not source of truth** citeturn13view0 |
+| Temporal | long-running durable workflow engine | Low-risk delayed in uploaded audit | Input: workflows and activities; Output: durable, replayable, pausable stateful execution | process / service | High | **Delay until AIAT truly needs multi-day replay** fileciteturn56file0 citeturn8view1 |
+| VictoriaMetrics | telemetry backend | Low-risk core in uploaded audit | Input: metrics/logs/traces (including OTel ingestion noted in docs); Output: scalable monitoring and TSDB behavior | service | High | **Good if Prometheus cardinality becomes painful** fileciteturn56file0 citeturn13view3 |
+| Garage | object storage | Not explicitly triaged in attached file | Input: S3 object operations; Output: replicated redundant object chunks across zones | service / s3 | Medium-High | **Strong alternative for later distributed storage** citeturn16view4turn16view5 |
+| SeaweedFS | object/file store alternative | Mentioned in project materials, but not verified from official docs in this pass | Interface and deployment fit not verified here | `TODO_DEEPSEARCH_INTERFACE` | Low | **`TODO_CODE_AUDIT_REQUIRED`** |
 
-### Goals
+The biggest practical lesson from this matrix is that the best early speedups are not glamorous “super-agent” frameworks. They are **ingestion, UI, security, sandboxing, and adapter standards**. Those are the areas where mature open source saves you the most custom work while protecting the AIAT identity. fileciteturn56file0
 
-- Make GitHub repos and agent tools plug-in “workers” via `worker.yaml`.
-- Ensure deterministic workflows (CEO → PM → Engineering → QA → Docs → Release) are enforced by software rules, not by agent vibes.
-- Provide at-least-once delivery with effectively-once processing via idempotency + checkpoints.
-- Enforce security boundaries so bringing in GitHub code/tools does not compromise the host.
-- Integrate with Paperclip so you get UI, audit trails, approvals, and budgets “for free.”
+The following **replace vs keep custom** table turns that into concrete implementation guidance.
 
-### High-level architecture diagram
+| Current AIAT component | Current custom implementation | Open-source replacement or complement | What it improves | What must remain custom in AIAT | Integration difficulty | Risk level | Status |
+|---|---|---|---|---|---|---|---|
+| CEO/control plane | Custom AIAT orchestrator + executive logic | None as full replacement; optionally LangGraph inside | Adds durable executive planning without giving up governance | CEO identity, approvals, budgets, project authority, org model | Medium | Low | Keep custom |
+| Message router | Custom Redis Streams + WS | Temporal only for long workflows, not for streaming | Durable replay for rare long jobs | Real-time routing, streaming UX, AIAT protocol | High | Low | Keep custom; delayed Temporal |
+| Team-runner | Custom per-team runner | CrewAI / LangGraph / AutoGen as sub-runtimes | Faster specialist-team composition | Supervision, team membership, budgets, tool visibility | Medium | Medium | Keep shell, plug sub-runtimes |
+| Worker registry | Custom manifests + import/eval | None | N/A | Registry, hiring state machine, capability map | Low | Low | Keep custom |
+| Tool-service | Custom enforcement layer | MCP bridge support | Easier tool interoperability | Grants, rate limits, audit, circuit breakers | Medium | Low | Keep custom, add MCP |
+| Document ingestion | Homegrown/unfinished parsing path | Docling | Better structure extraction, OCR, Markdown/JSON, local/private parsing | AIAT project context, artifact indexing, permissions | Low | Low | Replace |
+| Coding worker | Complex custom code not fully tested | OpenCode candidate | Faster SE worker bootstrap | Hiring, policy, result contract, approvals, workspace governance | Medium | Low–Medium | `TODO_DEEPSEARCH_INTERFACE`; `TODO_CODE_AUDIT_REQUIRED` |
+| Browser worker | Likely brittle custom flows/scripts | browser-use | Adaptive browser interaction | Permissioning, safe domains, artifact/logging, approvals | Medium | Medium / dual-use | Optional only |
+| Dashboard canvas | Existing dashboard shell | React Flow + Cytoscape + Mermaid | Rich editing and graph UX | Operator workflow, auth boundary, app IA | Low | Low | Extend current dashboard |
+| Secrets | Current custom credentials manager | Vault | Dynamic secrets, rotation, encryption/tokenization, audit | Which worker gets what, approval policy, masking rules | High | Low | Later-stage hardening |
+| Operator auth | Current local auth / custom tables | ZITADEL | MFA, SSO, B2B multi-tenancy, auditability | AIAT permission graph and company-specific access semantics | High | Low | Later-stage hardening |
+| Telemetry | Current developer monitoring + dashboard logs | Prometheus + Grafana, maybe VictoriaMetrics | Mature metrics visualization; scalable TSDB later | AIAT-specific audit/event semantics | Medium | Low | Keep hooks, improve backend |
+| Object store | Current MinIO hot-path | Garage, later maybe SeaweedFS | Better distributed/redundant object patterns | Artifact semantics, lifecycle, retention, ACL mapping | Medium | Low | Keep current now |
+| Vector retrieval | Postgres-first knowledge model | Qdrant | Better ANN/hybrid retrieval at scale | AIAT project/context graph and policy | Medium | Low | Delay until needed |
+| Graph analytics | Org graph likely in app/data model | Neo4j | Advanced graph querying and analytics | AIAT company source-of-truth and edits | Medium | Low | Optional read-model only |
+| Sandboxing | Raw Docker path in parts of stack | gVisor by default; Firecracker for high-risk jobs | Stronger isolation, smaller escape surface | Worker lifecycle, permissions, adapter mediation | High | Low | Prioritize |
 
-Paperclip already defines `process/http` adapters and a heartbeat scheduler. citeturn10view5turn10view0  
-The diagram below uses Paperclip as the control plane and your services as the execution plane.
+This table synthesizes the uploaded audit plus official docs for the replacement candidates. fileciteturn56file0 citeturn1view0turn1view1turn1view2turn10view0turn10view1turn6view1turn7view2turn8view0turn11view5turn11view1turn14view0turn13view2turn13view3turn12view0turn13view0turn15view0turn15view1
+
+## Adapter architecture, fresh clone, and operating flows
+
+The right operating model is **not** “AIAT talks directly to every repo’s private runtime semantics.” It is:
+
+**AIAT publishes one canonical company protocol, and every worker is wrapped until it speaks that protocol.** That is how you preserve the AI-company identity while making hiring easy. This design is directly supported by AIAT’s existing control-plane direction and by MCP’s role as a standardized tool/data interface. fileciteturn56file0 citeturn6view0
+
+```mermaid
+flowchart TB
+    Human[Human operator]
+    Dashboard[AIAT dashboard]
+    CEO[Permanent AIAT CEO identity]
+    Orchestrator[AIAT orchestrator API]
+    Router[AIAT message-router]
+    DB[(Postgres-first state)]
+    ToolSvc[AIAT tool-service]
+    LLMGW[AIAT LLM gateway]
+    Registry[(worker + department + tool registries)]
+    Artifacts[(object storage)]
+    Obs[(logs + metrics + traces + evaluations)]
+    Chiefs[Chiefs]
+    Departments[Departments]
+    TeamRunner[team-runner]
+    Workers[Workers]
+    Tools[AIAT-authorized tools]
+    External[External systems]
+
+    Human --> Dashboard --> CEO
+    CEO --> Orchestrator
+    Orchestrator --> DB
+    Orchestrator --> Registry
+    Orchestrator --> Router
+    Orchestrator --> ToolSvc
+    Orchestrator --> LLMGW
+    Orchestrator --> Artifacts
+    Orchestrator --> Obs
+
+    CEO --> Chiefs --> Departments --> TeamRunner --> Workers
+    Workers --> Router
+    Router --> Workers
+    Workers --> ToolSvc --> Tools --> External
+    Workers --> LLMGW
+    Workers --> Artifacts
+    Workers --> Obs
+```
+
+This diagram reflects the core principle of the final design: humans, CEO, chiefs, departments, workers, and tools all exist, but **authority and observability are still centralized in AIAT**. fileciteturn56file0
+
+The **AIAT Worker Adapter SDK** should be versioned and explicit. I recommend `aiat-worker-sdk` **v1.0.0** with four transports: `process`, `http`, `mcp`, and `oci`.
+
+| SDK area | Stable v1 recommendation |
+|---|---|
+| Adapter types | `process`, `http`, `mcp`, `oci` |
+| Canonical inbound contract | `MessageEnvelope` target schema |
+| Canonical outbound contract | `MessageEnvelope` with standard `msg_type` and artifact refs |
+| Tool bridge | `ToolRequest` / `ToolResponse` through tool-service only |
+| Artifact rule | Large outputs stored in object store; messages carry refs, not blobs |
+| Checkpointing | Worker can declare `native`, `wrapper`, or `none`; replay safety required |
+| Health | `/health`, readiness, supported capabilities, last checkpoint status |
+| Observability | execution events, tool calls, token/cost usage, stdout/stderr summaries, sandbox violations |
+| Security | explicit isolation policy, network profile, filesystem scope, human-approval requirements |
+| Hiring metadata | source, version pin, maintenance signal, evaluator results, risk tier, allowed departments |
+
+Because the uploaded audit explicitly says the current `MessageEnvelope` is only partially verified and that cross-language compatibility needs more proof, the table below should be treated as the **target stable wire contract** rather than as a claim that every field is already frozen exactly this way in the repo today. fileciteturn56file0
+
+| Target `MessageEnvelope` field | Purpose |
+|---|---|
+| `envelope_id` | unique message identity |
+| `msg_type` | semantic type such as `TASK`, `RESULT`, `REVIEW`, `APPROVAL_REQUEST`, `APPROVAL_RESULT`, `HEALTH`, `ESCALATION` |
+| `sender` | worker/chief/CEO identity |
+| `sender_role` | organizational role |
+| `recipient` | team, worker, or system target |
+| `project_id` | project scope |
+| `flow_id` / `node_id` | optional workflow scope |
+| `correlation_id` | ties request/response chains |
+| `payload` | structured JSON payload |
+| `artifact_refs` | object-store refs for large outputs |
+| `ttl_seconds` | routing lifetime |
+| `retry_count` | delivery attempt count |
+| `approval_scope` | whether human/chief/system approval is required |
+| `budget_scope` | cost/runtime/tooling budget reference |
+| `created_at` | audit and replay timestamp |
+
+The **tool contract** should likewise be versioned and simple:
+
+| Contract | Key fields |
+|---|---|
+| `ToolRequest` | `request_id`, `tool_name`, `arguments`, `actor_id`, `project_id`, `timeout_s`, `artifact_mode`, `approval_scope` |
+| `ToolResponse` | `request_id`, `ok`, `result`, `artifact_refs`, `stdout`, `stderr`, `usage`, `policy_notes`, `error` |
+
+The **worker manifest** should be frozen around the registry needs AIAT already implies:
+
+| Worker manifest field | Why it must exist |
+|---|---|
+| `worker_id`, `display_name` | durable identity |
+| `source_type`, `source_link`, `version_pin` | provenance and update control |
+| `adapter_type`, `entrypoint`, `transport` | integration mechanics |
+| `runtime_profile`, `sandbox_profile` | execution safety |
+| `capabilities` | routing and discovery |
+| `allowed_tools` | least privilege |
+| `allowed_departments` | org scoping |
+| `checkpoint_mode` | replay/resume behavior |
+| `observability_mode` | logs/traces/metrics expectations |
+| `risk_tier`, `audit_status` | hiring policy |
+| `evaluation_scores` | performance and safety history |
+
+The **fresh-clone experience** should be materially better than a raw Compose bring-up. The uploaded audit confirms the current operator path already includes `.env` preparation, bcrypt password hashing, Alembic migration, Docker Compose startup, and explicit service health checks. That is a good base, but it should be followed by a **first-run seeding wizard** that creates a default company, seeds the permanent CEO, installs the default hiring board, loads sample manifests, and creates one sample project workspace. fileciteturn56file0
 
 ```mermaid
 flowchart LR
-  subgraph CP[Control Plane: Paperclip]
-    UI[Board UI]
-    API[Server /api]
-    DB[(Postgres: companies, agents, issues, approvals, costs)]
-    UI --> API --> DB
-  end
-
-  subgraph EP[Execution Plane: MAS]
-    WC[Workflow Controller\n(deterministic transitions)]
-    MR[Message Router\n(Redis Streams + WS)]
-    TS[Tool Service\n(role-gated tools)]
-    PS[(Postgres: workflow state, checkpoints, artifacts meta)]
-    OS[(Object Store: S3/MinIO)]
-    R[(Redis Streams)]
-    WC --> PS
-    WC -->|dispatch| MR
-    MR <--> R
-    TS --> PS
-    TS --> OS
-  end
-
-  subgraph W[Workers]
-    W1[Repo-based Worker\n(Codex/Claude/Copilot loop)]
-    W2[QA Worker]
-    W3[Docs Worker]
-    W1 <--> MR
-    W2 <--> MR
-    W3 <--> MR
-    W1 --> TS
-    W2 --> TS
-    W3 --> TS
-  end
-
-  API <--> WC
-  API -->|invoke via adapter| W1
+    Clone[Clone repo] --> Config[Copy .env and set secrets]
+    Config --> Migrate[Run Alembic migrations]
+    Migrate --> Boot[Boot containers]
+    Boot --> Health[Health checks pass]
+    Health --> Seed[Seed default company + CEO + hiring team]
+    Seed --> Dashboard[Open dashboard]
+    Dashboard --> Chat[Talk to CEO]
+    Dashboard --> Org[View org chart]
+    Dashboard --> Hire[Hire workers]
+    Dashboard --> Flow[Build flows]
+    Dashboard --> Project[Create sample project]
 ```
 
-### Adapter/worker spec and transport modes
+A good default dashboard shell should look like this:
 
-Paperclip’s adapter contract (`invoke/status/cancel`) and `process`/`http` config shapes are a direct fit for your “worker adapters.” citeturn10view5turn3view1  
-Your execution plane should support these transport modes:
-
-| Transport mode | Intended use | How it maps to Paperclip |
-|---|---|---|
-| **Process** | Run a local CLI agent (Codex/Claude/Cursor-style), or a repo tool inside a sandbox | Paperclip `process` adapter already has `command/args/cwd/env/timeout/grace`. citeturn10view5turn3view6 |
-| **HTTP webhook** | Remote worker (self-hosted service, serverless job runner) | Paperclip `http` adapter config supports URL/method/headers + payload template. citeturn10view5turn3view6 |
-| **Container job (OCI)** | Run GitHub-sourced workers safely with pinned images | Implement as `process` adapter calling a container runner, or as an HTTP adapter to a “worker-executor” service |
-| **MCP tool endpoint** | Treat tools as standardized RPC endpoints | Implement behind your tool-service; Paperclip sees it as an HTTP tool gateway (not native in Paperclip V1) |
-| **GitHub Actions / CI worker** | Offload heavy tests/builds | Invocation via HTTP adapter to a CI-trigger endpoint (out-of-band) |
-
-### Capability registry
-
-Paperclip stores a free-form `capabilities` field on agents, plus goal/task ancestry; your MAS should define a **structured registry** and then **sync a human-readable summary back into Paperclip** for discoverability. citeturn10view0turn1view0turn3view1
-
-Recommended minimal schema in MAS Postgres:
-- `capabilities(id, name, version, input_schema, output_schema, risk_level, cost_model)`
-- `workers(id, name, adapter_type, adapter_config, sandbox_profile, capability_ids[])`
-- `role_capability_map(role, capability_id, priority, constraints)`
-
-### Security and sandboxing
-
-Baseline (practical, “today”):
-- Run workers in containers with least privilege (default seccomp profile; drop capabilities). citeturn9search2turn9search6  
-- For Kubernetes, enforce Pod Security Standards (baseline/restricted) on worker namespaces. citeturn9search3turn9search11turn9search15  
-- Network egress defaults to **deny**, then allowlist domains/services per capability (e.g., allow GitHub + package registries for “build/test” workers).
-
-Harder isolation (when pulling random GitHub workers at scale):
-- gVisor for stronger container isolation properties against certain kernel exploit classes. citeturn9search0turn9search12  
-- Firecracker microVMs for higher isolation boundaries where needed. citeturn9search1turn9search29turn9search5  
-
-### Checkpointing and monitoring
-
-- Redis Streams consumer groups keep messages pending until acknowledged; you can reclaim messages when consumers stall, but you must build idempotency and checkpointing around that. citeturn8search0turn8search1turn8search24  
-- Paperclip has `heartbeat_runs` and an `activity_log`; your MAS should emit workflow events into Paperclip as issue comments + attachments for traceability. citeturn10view2turn10view1turn10view4  
-
-Checkpoint contract (recommended):
-- Every worker task execution writes:
-  - `inputs_ref` (artifact pointer)
-  - `current_step` (deterministic step key)
-  - `resume_token` (tool-specific)
-  - `repo_state` (branch/commit) for repo workers
-  - `last_successful_action` (idempotency key)
-
-### Component mapping to Paperclip modules
-
-Paperclip module list is shown first, as requested.
-
-| Component (Vibe coding) | Paperclip module(s) | Build/extend outside Paperclip | Notes |
-|---|---|---|---|
-| Board UI, approvals, budgets, audit | `ui/`, `server/`, `packages/db` | — | Approvals + activity log already exist. citeturn10view2turn1view0turn6view1 |
-| Worker invocation | `server/` adapters + packages/adapters | Extend | Use adapter contract; add “worker-executor” adapter or wrap via http/process. citeturn10view5turn12view0turn6view0 |
-| Deterministic workflow controller | — | Build | Either separate service calling Paperclip API, or a Paperclip server extension. citeturn10view4turn10view0 |
-| Durable routing + replay | — | Build | Redis Streams XACK/XAUTOCLAIM semantics for at-least-once delivery. citeturn8search0turn8search1turn8search4 |
-| Tool gateway + RBAC | — | Build | Your plan’s tool-service is the policy perimeter for tools. fileciteturn0file0turn0file1 |
-| Artifact store | `assets`, `issue_attachments` + storage provider | Extend | Paperclip tracks assets; MAS adds doc lifecycle + blob refs. citeturn10view3turn10view2turn10view0 |
-| Secrets | `company_secrets`, secret provider | Prefer reuse | Use Paperclip secret refs; avoid plain env values. citeturn4view0turn10view2 |
-
-### Prioritized milestones, effort, risks
-
-| Milestone | Scope | Effort | Key risks | Mitigation |
-|---|---|---:|---|---|
-| Vertical slice “one workflow step” | Paperclip company + one worker + MAS controller posts/updates one issue | S | Integration churn | Lock a minimal API contract: issue create/checkout/comment + status updates. citeturn10view4turn10view1 |
-| Worker manifest + registry | `worker.yaml` format, capability registry, Paperclip sync | M | Capability explosion | Start with ~20–40 core capabilities aligned to your departments; version them. |
-| Worker executor (process + http) | Generic runner that can execute repo workers; maps to Paperclip adapters | M | Unsafe code execution | Sandbox baseline: seccomp + dropped caps; egress allowlist. citeturn9search2turn9search6 |
-| Durable router on Redis Streams | Consumer groups, ACK/NACK, reclaim, DLQ | M | Duplicate processing | Enforce idempotency keys + checkpoint writes before ACK. Redis PEL semantics require explicit ACK. citeturn8search0turn8search24turn8search1 |
-| Tool service boundary | Role/tool permissions, caching, circuit breakers | M | Tool abuse / runaway costs | Gate tools by role; add rate limits + budget checks; enforce budget hard-stops using Paperclip budgets when possible. citeturn10view2turn3view2 |
-| Deterministic workflow templates | Encode your company flows as templates + transition tables | L | “Workflow drift” between Paperclip and MAS | Make MAS the source of truth; Paperclip reflects state via issues + approvals; log transitions. |
-| Strong isolation option | gVisor/Firecracker for untrusted worker pools | L | Ops complexity | Only apply to “untrusted” worker class; keep default workers on standard container sandbox. citeturn9search0turn9search29turn9search1 |
-
-### Example `worker.yaml` schema and sample workflow template
-
-The manifest must be stable enough to “hire” new roles later (e.g., mechanical engineer) without editing core orchestration.
-
-```yaml
-# worker.yaml (schema example)
-apiVersion: mas.company/v1
-kind: Worker
-metadata:
-  name: repo-coder
-  version: 0.1.0
-  description: "Repo-based coding worker (automated PR implementation)."
-  source:
-    repo: "github.com/your-org/your-worker-repo"
-    revision: "main"
-  tags: ["software", "engineering", "coding"]
-
-runtime:
-  transport: process   # process | http | oci | human
-  process:
-    command: "codex"   # or "claude", "cursor-agent", custom CLI
-    args:
-      - "--workspace"
-      - "{{workspace.path}}"
-      - "--task"
-      - "{{task.id}}"
-    timeoutSec: 3600
-    graceSec: 30
-
-capabilities:
-  - name: implement_feature
-    inputs:
-      schemaRef: "jsonschema://capabilities/implement_feature.input.json"
-    outputs:
-      schemaRef: "jsonschema://capabilities/implement_feature.output.json"
-    limits:
-      maxConcurrent: 1
-      maxCostUsd: 10.0
-      maxToolCalls: 200
-
-sandbox:
-  profile: "restricted"
-  filesystem:
-    readOnlyRoot: true
-    writableDirs: ["{{workspace.path}}", "/tmp"]
-  network:
-    mode: "egress-allowlist"
-    allow:
-      - "api.github.com:443"
-      - "pypi.org:443"
-  linux:
-    dropCapabilities: true
-    seccompProfile: "docker-default"
-
-checkpointing:
-  supported: true
-  strategy: "on-step"   # on-step | periodic | on-signal
-  store:
-    kind: "postgres"
-    table: "agent_checkpoints"
-  resume:
-    includes: ["repo.branch", "repo.commit", "task.cursor"]
-
-observability:
-  logs: { format: "json" }
-  metrics: { enabled: true }
-  traces: { enabled: true }
-
-paperclip:
-  agent:
-    adapterType: "process"
-    contextMode: "thin"
-    schedule:
-      enabled: true
-      intervalSec: 900
+```text
+┌ AIAT ─ Company Switcher ─ Project Search ─ Cost/Health ─ Theme ─ User ┐
+│ Sidebar                                                                │
+│  CEO Chat                                                              │
+│  Companies                                                             │
+│  Org Graph                                                             │
+│  Departments                                                           │
+│  Workers                                                               │
+│  Hiring Board                                                          │
+│  Projects                                                              │
+│  Flow Builder                                                          │
+│  Tools                                                                 │
+│  Models                                                                │
+│  Secrets                                                               │
+│  Approvals                                                             │
+│  Artifacts                                                             │
+│  Logs / Metrics / Traces                                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Main canvas                                                            │
+│  React Flow for editable workflows                                     │
+│  Cytoscape view for org/capability graph                               │
+│  Mermaid export for architecture/playbooks                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Right inspector                                                        │
+│  Selected chief / department / worker / tool / permission / run        │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-```yaml
-# workflow-template.yaml (sample)
-apiVersion: mas.company/v1
-kind: WorkflowTemplate
-metadata:
-  name: software-project-standard
-  version: 0.1.0
-spec:
-  description: "CEO -> PM -> Engineering -> QA -> Docs -> Release"
-  states:
-    - id: INITIATED
-      ownerRole: CEO
-      onEnter:
-        createPaperclipIssue:
-          title: "Project initiated"
-          assigneeRole: CEO
-      transitions:
-        - on: CEO_APPROVES
-          to: PLANNING
+This UI split follows the natural strengths of the selected libraries: React Flow for editable node-based workflows, Cytoscape.js for graph analysis and rich org/capability visualization, and Mermaid for lightweight text-based exports and documentation views. citeturn6view1turn7view2turn8view0
 
-    - id: PLANNING
-      ownerRole: PROJECT_MANAGER
-      tasks:
-        - capability: write_project_plan
-          assigneeRole: PROJECT_MANAGER
-        - capability: draft_requirements
-          assigneeRole: PROJECT_MANAGER
-      approvals:
-        - type: HUMAN_GATE
-          prompt: "Approve project plan?"
-      transitions:
-        - on: HUMAN_APPROVED
-          to: IMPLEMENTATION
+The **default hiring and evaluation team** should be a permanent board, not an ad hoc prompt. The uploaded audit already describes a worker lifecycle with stages such as Candidate, Auditing, Sandbox Evaluation, Active, Draining, and Deactivated. That should become a visible workflow in the dashboard. fileciteturn56file0
 
-    - id: IMPLEMENTATION
-      ownerRole: ENGINEERING_MANAGER
-      tasks:
-        - capability: implement_feature
-          assigneeRole: SOFTWARE_ENGINEER
-          retry:
-            maxAttempts: 3
-            dlqOnFail: true
-      transitions:
-        - on: ALL_FEATURES_DONE
-          to: QA
+My recommended permanent hiring board is:
 
-    - id: QA
-      ownerRole: QA_LEAD
-      tasks:
-        - capability: run_test_suite
-          assigneeRole: QA_ENGINEER
-      transitions:
-        - on: QA_PASSED
-          to: DOCS
-
-    - id: DOCS
-      ownerRole: DOCS_LEAD
-      tasks:
-        - capability: write_release_notes
-          assigneeRole: TECHNICAL_WRITER
-      transitions:
-        - on: DOCS_DONE
-          to: RELEASE
-
-    - id: RELEASE
-      ownerRole: CEO
-      approvals:
-        - type: HUMAN_GATE
-          prompt: "Approve release?"
-      transitions:
-        - on: HUMAN_APPROVED
-          to: COMPLETE
-
-    - id: COMPLETE
-      ownerRole: CEO
-      onEnter:
-        closePaperclipProject: true
-```
-
-## Manual steps implementation plan
-
-This plan is optimized for human governance, approvals, and operational realism, while keeping the same unified architecture.
-
-### Goals
-
-- Make processes “feel like a real company”: chiefs decide, departments execute, humans can intervene at key gates.
-- Provide auditable decision trails (who approved what, when, and why).
-- Enable onboarding/hiring of new roles (including non-software roles later) as largely configuration changes.
-- Maintain safety and compliance boundaries in tools and data access.
-
-### High-level architecture diagram
-
-Paperclip’s ticketing (“tasks + comments”) and approval primitives become the backbone of human-in-the-loop workflows. citeturn3view1turn10view2turn10view5
+- CEO
+- HR / hiring agent
+- relevant department chief
+- security evaluator
+- tool/interface auditor
+- budget evaluator
+- test/evaluation worker
+- department chief approver
 
 ```mermaid
-flowchart TD
-  H[Human Board] -->|creates/approves| UI[Paperclip UI]
-  UI --> API[Paperclip /api]
-  API --> DB[(Paperclip Postgres)]
-
-  API <-->|issues, approvals, status| WC[Workflow Controller]
-
-  WC -->|creates dept work| Q[Work Queue / Router]
-  Q --> W[Department Workers]
-
-  W -->|evidence, artifacts| Store[(Artifacts)]
-  W -->|status updates| WC
-  WC -->|comments + attachments| API
+flowchart LR
+    Candidate[Candidate worker manifest] --> Intake[Registry intake]
+    Intake --> Audit[Security + license + provenance audit]
+    Audit --> Interface[Interface audit]
+    Interface --> Sandbox[Sandbox evaluation]
+    Sandbox --> Budget[Budget/latency/cost scoring]
+    Budget --> Approval[CEO + chief + human approval gate]
+    Approval --> Active[Hire and activate]
+    Approval --> Reject[Reject or defer]
 ```
 
-### Role/capability mapping and onboarding
+The hiring board should run at least these checks before a worker becomes active:
 
-Paperclip supports agent creation and governance for hires; your manual plan should formalize hiring as:
+- provenance and version pinning;
+- secret scanning and code scanning;
+- interface mapping into `MessageEnvelope` and `ToolRequest/ToolResponse`;
+- sandbox profile assignment (`gVisor` by default, `Firecracker` where needed);
+- allowed departments and tools;
+- replay/checkpoint declaration;
+- health contract;
+- cost and latency scoring;
+- human approval if the worker is Medium / dual-use. fileciteturn56file0 citeturn17view0turn17view1turn15view0turn15view1
 
-- **Define role:** e.g., MECHANICAL_ENGINEER.
-- **Map to capabilities:** e.g., `design_component`, `review_tolerances`, `run_simulation`.
-- **Register worker:** add one `worker.yaml` and create the corresponding Paperclip agent record (or have a “hiring assistant” do it, subject to approval). Paperclip’s approval system explicitly supports hire approvals and logs decisions. citeturn10view2turn3view9turn10view5  
+Two end-to-end scenarios make the model concrete.
 
-### Approval gates and UI flows
+**Scenario one: the user asks the CEO to create a software engineering department and hire OpenCode as a software engineer.** The CEO creates or updates the department record, assigns a chief, opens a hiring ticket, and pushes the candidate manifest into the worker registry. The hiring board then runs provenance checks, TruffleHog and Semgrep scans, interface review, sandbox trial, and budget scoring. If OpenCode’s runtime and result contract map cleanly into the AIAT adapter SDK, the worker is placed in the software engineering department with restricted tools and workspace permissions. If the interface is still unclear, the ticket is paused with `TODO_DEEPSEARCH_INTERFACE`; if the codebase quality or trust posture still needs more review, it is marked `TODO_CODE_AUDIT_REQUIRED`. That flow preserves your “hire workers like a company” metaphor without trusting the worker before certification. fileciteturn56file0 citeturn17view0turn17view1turn15view0
 
-Paperclip’s V1 approval types include hire and CEO strategy approval. citeturn10view2turn3view9turn10view5  
-For broader enterprise “approval gates” (architecture review, security veto, release approval), you can implement one of two approaches:
+**Scenario two: the user asks the CEO to initialize a new app project.** The CEO creates a project in Postgres-first state, selects or proposes a project template, creates an editable flow, requests approval, then routes execution to the department chief and relevant workers through AIAT’s router. The coding worker uses only approved tools through the tool-service; artifacts land in the object store and are referenced back into the project workspace; logs, tool calls, costs, and evaluation signals flow into observability; and any privileged operation stays behind approval and audit boundaries. This is exactly the kind of execution that benefits from your company hierarchy while still keeping every critical state transition in AIAT. fileciteturn56file0
 
-- **Approach 1 (no schema changes):** model approvals as **human-assigned issues**. Paperclip already supports assigning tasks to humans and logging all conversation and actions in the ticket trail. citeturn3view1turn10view1turn1view0  
-- **Approach 2 (extend Paperclip):** add new approval types (e.g., `security_review`, `release_gate`) and enforce them in the workflow controller before progressing.
+## Roadmap, testing, and open questions
 
-Given your plans include CSO veto/circuit breakers and formal review sessions, Approach 2 is higher fidelity to your “company simulation,” but Approach 1 gets you running faster. fileciteturn0file1 citeturn10view0  
+The testing strategy should focus on **contracts first, workers second, polish third**. The uploaded audit is clear that AIAT already has enough moving parts that integration mistakes will cost more than missing features. The correct order is therefore: protocol tests, sandbox/evaluator tests, golden-path end-to-end, then operator UX refinement. fileciteturn56file0
 
-### Auditability
+The essential test stack is:
 
-Paperclip provides:
-- `activity_log` for mutations and governance actions. citeturn10view2turn1view0  
-- Ticket threads as an immutable record of instructions, tool calls, and decisions (as described in their public positioning). citeturn1view0turn1view1  
+| Test area | What to test | Tooling |
+|---|---|---|
+| Protocol contracts | `MessageEnvelope`, WS ACK/NACK/PING/PONG, `ToolRequest`, `ToolResponse`, worker manifest parsing | Python contract tests + JSON schema tests |
+| Golden path | fresh clone → dashboard → CEO chat → department creation → worker hire → project init → artifact/log visibility | Playwright + seeded fixture company |
+| Adapter conformance | process/http/mcp/oci adapters all round-trip the same canonical task/result shape | SDK conformance suite |
+| Security intake | secrets scans, code scans, unsafe tool requests, permission denials | TruffleHog + Semgrep + policy tests |
+| Sandbox controls | filesystem scope, blocked host access, egress rules, syscall restrictions | gVisor tests; optional Firecracker tests |
+| Observability | metrics labels, log completeness, trace correlation, cost accounting | Prometheus/Grafana or VictoriaMetrics-backed checks |
 
-Your MAS should add:
-- `workflow_state_history` per project (your plans already call for this). fileciteturn0file1  
-- DLQ records, checkpoint records, and tool-audit logs.
+The open-source security tools fit very cleanly here: TruffleHog for exposed secrets and verified live credentials, Semgrep for code and policy quality, and gVisor or Firecracker for runtime containment. Prometheus and Grafana remain good defaults, but the uploaded audit is correct that high-cardinality labels can become a real scaling risk; if that becomes painful, VictoriaMetrics is a strong backend alternative. fileciteturn56file0 citeturn17view0turn17view1turn15view0turn15view1turn14view0turn13view2turn13view3
 
-### Component mapping to Paperclip modules
+The phased roadmap below is the shortest safe path to a production-grade AIAT.
 
-Paperclip module list is shown first, as requested.
-
-| Component (Manual steps) | Paperclip module(s) | Build/extend outside Paperclip | Notes |
+| Phase | Duration | Milestones | Acceptance criteria |
 |---|---|---|---|
-| Human UI flows + approvals | `ui/`, `server/`, `approvals`, `activity_log` | Possibly extend | Paperclip already logs and enforces key governance gates. citeturn10view2turn1view0turn10view5 |
-| Role catalog | `agents.role`, `agents.title` | Extend | Use Paperclip fields initially; add structured role tables in MAS for richer mapping. citeturn10view0 |
-| Capability discovery | `agents.capabilities` (text) | Extend | Sync from MAS capability registry to keep UI helpful. citeturn10view0turn3view1 |
-| Controlled workflow transitions | — | Build | Deterministic workflow controller remains required to match your plans. fileciteturn0file1 |
-| Human-in-the-loop verification checklist | — | Build (process) | Plan C’s manual actions become your runbooks and operator playbooks. fileciteturn0file2 |
+| Alpha | 3–4 weeks | Freeze protocol v1, seed default company/CEO, golden-path startup, root-artifact cleanup, contract tests | Fresh clone lands in dashboard; CEO chat works; sample project can be created; protocol tests pass |
+| Beta | 4–5 weeks | Worker Adapter SDK v1, hiring board UI, manifest evaluator, gVisor default sandbox, TruffleHog/Semgrep CI | A candidate worker can be imported, audited, sandbox-tested, and hired through UI |
+| Gamma | 4–6 weeks | Dashboard expansion with React Flow, Cytoscape, Mermaid; project workspace; approvals/logs/artifacts/cost surfaces | User can create company, departments, flows, approvals, and inspect results visually |
+| Delta | 4–6 weeks | Low-risk worker/tool integrations: Docling, GitHub API, defensive security tools, optional n8n edge automations | Document ingestion, GitHub tasks, and evaluation scans run end-to-end through AIAT |
+| Epsilon | 6–8 weeks | Guardrailed advanced runtimes: LangGraph, CrewAI, selected AutoGen/Letta specialists; optional Vault/ZITADEL; evaluate Temporal, Garage, Firecracker | Advanced runtimes operate only through adapters and policy gates; no bypass of AIAT core |
 
-### Prioritized milestones, effort, risks
-
-| Milestone | Scope | Effort | Key risks | Mitigation |
-|---|---|---:|---|---|
-| Adopt Paperclip as control-plane UI | Run Paperclip locally; create one company + initial agents + goals | S | Misaligned assumptions | Anchor on Paperclip’s spec-implementation entities/APIs. citeturn10view4turn10view0 |
-| Encode one end-to-end manual workflow | CEO kickoff → PM plan → engineer → QA → docs → release, with human gates | M | Too many customizations early | Use “approval as issues” first; extend approvals later. citeturn3view1turn10view2 |
-| Hiring/onboarding playbook | Worker manifest intake + secret provisioning + approval | M | Secret sprawl | Use Paperclip secret refs and strict mode options; store no plaintext in manifests. citeturn4view0turn10view2 |
-| Audit layer consolidation | Ensure every key action emits: issue comment + activity log + workflow history | M | Gaps in traceability | Define “auditable events” contract; block state transitions if missing evidence. |
-| “Manual actions” runbook integration | Turn Plan C into operational runbooks and checklists | S | Human fatigue | Automate verifications; keep only irreducible manual steps. fileciteturn0file2 |
-
-### Example `worker.yaml` schema and manual workflow template
-
-```yaml
-# worker.yaml (manual/human worker variant)
-apiVersion: mas.company/v1
-kind: Worker
-metadata:
-  name: human-approver
-  version: 0.1.0
-  description: "Human board member who approves gates via Paperclip UI."
-  tags: ["human", "governance"]
-
-runtime:
-  transport: human
-  human:
-    paperclipUserGroup: "board"
-
-capabilities:
-  - name: approve_gate
-    inputs: { schemaRef: "jsonschema://capabilities/approve_gate.input.json" }
-    outputs: { schemaRef: "jsonschema://capabilities/approve_gate.output.json" }
-
-audit:
-  requiredEvidence:
-    - type: paperclip_issue_comment
-    - type: paperclip_activity_log
+```mermaid
+gantt
+    title AIAT implementation roadmap
+    dateFormat  YYYY-MM-DD
+    section Core
+    Alpha protocol and startup hardening      :a1, 2026-05-19, 28d
+    Beta adapter SDK and hiring board         :a2, after a1, 35d
+    section UX
+    Gamma dashboard, org graph, flow builder  :a3, after a2, 42d
+    section Integrations
+    Delta low-risk tool and worker adoption   :a4, after a3, 42d
+    section Advanced
+    Epsilon guarded advanced runtimes         :a5, after a4, 56d
 ```
 
-```yaml
-# workflow-template.yaml (manual-heavy sample)
-apiVersion: mas.company/v1
-kind: WorkflowTemplate
-metadata:
-  name: enterprise-project-with-human-gates
-  version: 0.1.0
-spec:
-  states:
-    - id: FEASIBILITY
-      ownerRole: CEO
-      tasks:
-        - capability: financial_feasibility
-          assigneeRole: CFO
-        - capability: security_feasibility
-          assigneeRole: CSO
-      approvals:
-        - type: HUMAN_GATE
-          assignee: HUMAN_BOARD
-          prompt: "Approve feasibility report?"
-      transitions:
-        - on: HUMAN_APPROVED
-          to: REQUIREMENTS
+The most important unresolved items are the ones that genuinely require deeper targeted research rather than guesswork.
 
-    - id: REQUIREMENTS
-      ownerRole: PROJECT_MANAGER
-      tasks:
-        - capability: draft_requirements
-          assigneeRole: PROJECT_MANAGER
-      approvals:
-        - type: HUMAN_GATE
-          assignee: HUMAN_BOARD
-          prompt: "Approve requirements?"
-      transitions:
-        - on: HUMAN_APPROVED
-          to: EXECUTION
+- **`TODO_DEEPSEARCH_INTERFACE`**: verify exact OpenCode task/result/event interface before making it the default software-engineering worker. The uploaded audit treats it as promising, but this pass did not verify a stable official API surface. fileciteturn56file0
+- **`TODO_DEEPSEARCH_INTERFACE`**: verify DeerFlow’s runtime/transport fit before using it as a first-class research department. fileciteturn56file0
+- **`TODO_DEEPSEARCH_INTERFACE`**: decide whether browser-use can expose a constrained, auditable run/result contract suitable for AIAT, because the visible docs emphasize capability rather than safely bounded event semantics. citeturn10view1
+- **`TODO_CODE_AUDIT_REQUIRED`**: audit the dashboard’s server-side proxy path to ensure no credentials manager response can leak plaintext secrets into operator JSON responses. The uploaded audit flags this as an open issue. fileciteturn56file0
+- **`TODO_CODE_AUDIT_REQUIRED`**: audit any Docker socket exposure or nested-container path in runner/worker containers; the uploaded audit explicitly warns about that escape surface. fileciteturn56file0
+- **`TODO_DEEPSEARCH_INTERFACE`**: finish cross-language serialization tests for the `MessageEnvelope` so Python, Node, and future runtimes all speak the same stable wire format. The uploaded audit explicitly treats that part as only partially verified. fileciteturn56file0
+- **`TODO_CODE_AUDIT_REQUIRED`**: if SeaweedFS remains a serious object-store candidate, run a deeper vendor/code/ops comparison against Garage before replacing current hot-path storage. In this pass, Garage had stronger directly retrievable official documentation. citeturn16view4turn16view5
 
-    - id: EXECUTION
-      ownerRole: ENGINEERING_MANAGER
-      tasks:
-        - capability: implement_feature
-          assigneeRole: SOFTWARE_ENGINEER
-        - capability: run_test_suite
-          assigneeRole: QA_ENGINEER
-      transitions:
-        - on: ALL_DONE
-          to: COMPLETE
+The final architectural recommendation is therefore clear:
 
-    - id: COMPLETE
-      ownerRole: CEO
-      onEnter:
-        createPaperclipIssue:
-          title: "Project closed (complete)"
-          assigneeRole: CEO
-```
+**Preserve AIAT as the company operating system. Keep the Postgres-first control plane, router, tool-service, registries, approvals, CEO shell, project workspace, and observability as your permanent core. Then accelerate delivery by hiring low-risk open-source workers and tools through a strict adapter SDK, a default hiring board, and sandboxed execution.**
 
-## Recommended next steps
-
-1. **Pick the system-of-record split explicitly:** Paperclip for org/tasks/approvals/budgets/audit; MAS for deterministic workflow + durable execution + tool governance. This aligns with Paperclip’s stated scope (control plane, not workflow builder). citeturn1view0turn10view0  
-2. **Build a single vertical slice before designing every department:** One workflow template, one repo-based worker, one tool call, one approval gate, end-to-end trace in Paperclip (issue + activity log). citeturn10view1turn10view2turn10view4  
-3. **Stand up the capability registry early:** It’s the mechanism that makes “hire a mechanical engineer later” a config change, not an architecture change. fileciteturn0file1  
-4. **Define your sandbox “tiers”:** baseline container hardening everywhere; gVisor/Firecracker only for untrusted GitHub workers. citeturn9search2turn9search0turn9search1  
-5. **Decide your artifact policy and licensing posture:** If you adopt MinIO for S3-compatible blobs, confirm AGPL/commercial implications for your intended distribution/hosting model. citeturn8search3
+That path preserves your full vision, reduces custom-code burden where it is actually expensive, and creates a safer foundation for everything you want AIAT to become. fileciteturn56file0
