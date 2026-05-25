@@ -1,4 +1,0 @@
-interface:
-  display_name: "MAS Flow Auditor"
-  short_description: "Audit MAS flow runtime and approval behavior"
-  default_prompt: "Use $mas-flow-auditor to audit an AIAT MAS flow runtime change."

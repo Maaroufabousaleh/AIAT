@@ -1,4 +1,0 @@
-interface:
-  display_name: "MAS API Contract Verifier"
-  short_description: "Verify MAS API and dashboard contracts"
-  default_prompt: "Use $mas-api-contract-verifier to check an AIAT MAS API or dashboard contract change."

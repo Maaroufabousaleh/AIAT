@@ -1,4 +1,0 @@
-interface:
-  display_name: "MAS Dashboard E2E Tester"
-  short_description: "Test AIAT MAS dashboard operator flows"
-  default_prompt: "Use $mas-dashboard-e2e-tester to validate a dashboard operator workflow."
