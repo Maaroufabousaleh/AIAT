@@ -24,6 +24,7 @@ build/
 coverage.xml
 htmlcov/
 .ruff_cache/
+*test-results*
 
 # mypy
 .mypy_cache/

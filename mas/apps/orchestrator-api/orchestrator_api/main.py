@@ -16,6 +16,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
@@ -260,6 +262,18 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
 ]
 
 
+GITHUB_REPO_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:)?(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+)
+
+
+def _parse_github_repo(repo_url: str) -> tuple[str, str]:
+    match = GITHUB_REPO_RE.match(repo_url.strip())
+    if not match:
+        raise HTTPException(422, "repo_url must be a GitHub repository URL such as https://github.com/org/repo")
+    return match.group("owner"), match.group("repo")
+
+
 def _delta_worker_refs(workers: list[dict[str, Any]], tokens: list[str]) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
     lowered_tokens = [token.lower() for token in tokens]
@@ -294,6 +308,21 @@ def _delta_worker_refs(workers: list[dict[str, Any]], tokens: list[str]) -> list
     return refs
 
 
+def _scanner_visibility() -> dict[str, Any]:
+    scanners = {}
+    for tool_name in ("trufflehog", "semgrep"):
+        binary = shutil.which(tool_name)
+        scanners[tool_name] = {
+            "available": binary is not None,
+            "status": "AVAILABLE" if binary else "SKIPPED_TOOL_UNAVAILABLE",
+            "path": binary,
+            "details": "Optional executable check is available"
+            if binary
+            else f"{tool_name} is not installed; evaluator records skipped-tool state",
+        }
+    return scanners
+
+
 async def _delta_integration_readiness(storage: AgentStorage) -> dict[str, Any]:
     try:
         workers = await storage.list_workers()
@@ -316,6 +345,7 @@ async def _delta_integration_readiness(storage: AgentStorage) -> dict[str, Any]:
                 "required_gates": candidate["required_gates"],
                 "blocked_reason": candidate["blocked_reason"],
                 "worker_refs": worker_refs,
+                "policy": _delta_policy_for(candidate["id"]),
             }
         )
 
@@ -338,7 +368,38 @@ async def _delta_integration_readiness(storage: AgentStorage) -> dict[str, Any]:
             "blocked": sum(1 for item in integrations if item.get("blocked_reason")),
         },
         "integrations": integrations,
+        "scanner_visibility": _scanner_visibility(),
     }
+
+
+def _delta_policy_for(integration_id: str) -> dict[str, Any]:
+    if integration_id == "docling_ingestion":
+        return {
+            "execution": "blocked_until_certified",
+            "credential_access": "none",
+            "artifact_contract": "large extraction output must be stored as artifact references",
+            "network": "egress-deny-all unless an approved source allowlist is attached",
+        }
+    if integration_id == "github_rest":
+        return {
+            "execution": "http_metadata_only_by_default",
+            "credential_access": "named credential resolved server-side with audit",
+            "rate_limit": {"window_seconds": 60, "max_requests": 30},
+            "write_actions": "approval_required",
+        }
+    if integration_id == "defensive_scanners":
+        return {
+            "execution": "optional_local_executables",
+            "missing_tool_status": "SKIPPED_TOOL_UNAVAILABLE",
+            "report_surface": "worker evaluation checks",
+        }
+    if integration_id == "n8n_edge_automation":
+        return {
+            "execution": "edge_webhook_only",
+            "credential_access": "named credential reference only",
+            "control_plane": "forbidden",
+        }
+    return {}
 
 
 async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
@@ -579,6 +640,28 @@ class WorkerEvaluateRequest(BaseModel):
 class ImportWorkersRequest(BaseModel):
     workers_dir: str = "workers"
     dry_run: bool = False
+
+
+class DoclingCertificationRequest(BaseModel):
+    project_id: UUID | None = None
+    source_name: str = "operator-upload"
+    mime_type: str = "text/plain"
+    content_text: str | None = None
+    artifact_path: str | None = None
+
+
+class GitHubMetadataRequest(BaseModel):
+    repo_url: str
+    credential_name: str | None = None
+    requester: str = "human_operator"
+    dry_run: bool = False
+
+
+class N8nEdgePolicyRequest(BaseModel):
+    webhook_url: str
+    credential_name: str | None = None
+    owner_department: str = "dept_infra"
+    allow_control_plane: bool = False
 
 
 class CreateFlowRequest(BaseModel):
@@ -2290,6 +2373,132 @@ async def get_delta_integration_readiness() -> dict[str, Any]:
     """Read-only Delta integration readiness catalog for governed adoption."""
     storage = _storage()
     return _serialize(await _delta_integration_readiness(storage))
+
+
+@app.post("/integrations/docling/certification-check")
+async def check_docling_certification(req: DoclingCertificationRequest) -> dict[str, Any]:
+    """Validate the Docling ingestion gate without running unmanaged ingestion."""
+    storage = _storage()
+    readiness = await _delta_integration_readiness(storage)
+    docling = next(item for item in readiness["integrations"] if item["id"] == "docling_ingestion")
+    certified_refs = [
+        ref
+        for ref in docling["worker_refs"]
+        if ref.get("status") == "ACTIVE" and ref.get("evaluation_status") == "approved"
+    ]
+    artifact_path = req.artifact_path or (
+        f"delta/docling/{req.source_name.replace('/', '_')}.json"
+        if req.content_text
+        else "delta/docling/pending-artifact-reference.json"
+    )
+    return {
+        "integration_id": "docling_ingestion",
+        "status": "certified" if certified_refs else "blocked",
+        "certified_worker_refs": certified_refs,
+        "missing_gates": [] if certified_refs else docling["required_gates"],
+        "artifact_contract": {
+            "mode": "artifact_reference",
+            "path": artifact_path,
+            "content_inline_allowed": False,
+            "mime_type": req.mime_type,
+        },
+        "sandbox": {"required_profile": "gvisor", "network_mode": "egress-deny-all"},
+        "blocked_reason": None
+        if certified_refs
+        else "No approved active Docling worker is registered; ingestion remains blocked.",
+    }
+
+
+@app.post("/integrations/github/repository-metadata")
+async def github_repository_metadata(req: GitHubMetadataRequest) -> dict[str, Any]:
+    """Fetch or dry-run GitHub repository metadata through AIAT policy gates."""
+    owner, repo = _parse_github_repo(req.repo_url)
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "AIAT-MAS-Delta",
+    }
+    credential_ref = None
+    credential_audit = "not_requested"
+    if req.credential_name:
+        credential_ref = f"<{req.credential_name}>"
+        token = await _credentials_manager().resolve(
+            req.credential_name,
+            requester=req.requester,
+            context="github.metadata.read",
+        )
+        if token is None:
+            raise HTTPException(403, "Named GitHub credential was denied or not found")
+        headers["Authorization"] = f"Bearer {token}"
+        credential_audit = "resolved_server_side"
+
+    policy = _delta_policy_for("github_rest")
+    if req.dry_run:
+        return {
+            "integration_id": "github_rest",
+            "repo": {"owner": owner, "name": repo, "url": f"https://github.com/{owner}/{repo}"},
+            "mode": "dry_run",
+            "credential_ref": credential_ref,
+            "credential_audit": credential_audit,
+            "rate_limit_policy": policy["rate_limit"],
+            "read_policy": "metadata_only",
+            "write_policy": policy["write_actions"],
+            "metadata": None,
+        }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers)
+    if response.status_code == 404:
+        raise HTTPException(404, "GitHub repository not found")
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, response.text[:500])
+    payload = response.json()
+    return {
+        "integration_id": "github_rest",
+        "repo": {
+            "owner": owner,
+            "name": repo,
+            "url": payload.get("html_url") or f"https://github.com/{owner}/{repo}",
+            "default_branch": payload.get("default_branch"),
+        },
+        "mode": "live",
+        "credential_ref": credential_ref,
+        "credential_audit": credential_audit,
+        "rate_limit_policy": policy["rate_limit"],
+        "read_policy": "metadata_only",
+        "write_policy": policy["write_actions"],
+        "metadata": {
+            "description": payload.get("description"),
+            "private": payload.get("private"),
+            "fork": payload.get("fork"),
+            "stars": payload.get("stargazers_count"),
+            "open_issues": payload.get("open_issues_count"),
+            "pushed_at": payload.get("pushed_at"),
+        },
+    }
+
+
+@app.post("/integrations/n8n/edge-policy")
+async def n8n_edge_policy(req: N8nEdgePolicyRequest) -> dict[str, Any]:
+    """Validate n8n as an edge-only integration, never workflow authority."""
+    parsed = httpx.URL(req.webhook_url)
+    allowed = parsed.scheme == "https" and not req.allow_control_plane
+    reasons = []
+    if parsed.scheme != "https":
+        reasons.append("webhook_url must use https")
+    if req.allow_control_plane:
+        reasons.append("n8n cannot own AIAT control-plane workflow authority")
+    return {
+        "integration_id": "n8n_edge_automation",
+        "status": "allowed_edge_adapter" if allowed else "rejected",
+        "webhook_host": parsed.host,
+        "owner_department": req.owner_department,
+        "credential_ref": f"<{req.credential_name}>" if req.credential_name else None,
+        "audit_required": True,
+        "allowlist_required": True,
+        "control_plane_allowed": False,
+        "reasons": reasons,
+    }
 
 
 @app.put("/system/schedule")

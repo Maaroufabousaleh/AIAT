@@ -43,6 +43,8 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByText("Delta Integration Readiness")).toBeVisible();
     await expect(page.getByText("Docling document ingestion")).toBeVisible();
     await expect(page.getByText("GitHub REST metadata and task API")).toBeVisible();
+    await expect(page.getByText("trufflehog", { exact: true })).toBeVisible();
+    await expect(page.getByText("server-side named credentials")).toBeVisible();
     await page.getByRole("button", { name: /register worker/i }).click();
     await page.getByPlaceholder("my_worker_1").fill(workerId);
     await page.getByPlaceholder("My Worker Agent").fill("E2E Worker");

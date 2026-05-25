@@ -61,6 +61,7 @@ interface DeltaReadiness {
   summary: { total: number; ready_or_wired: number; deferred: number; blocked: number };
   principles: string[];
   integrations: DeltaIntegration[];
+  scanner_visibility?: Record<string, { available: boolean; status: string; details: string }>;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; cls: string }> = {
@@ -665,43 +666,59 @@ export default function WorkersPage() {
           </div>
         )}
         {deltaReadiness && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-            {deltaReadiness.integrations.map((item) => (
-              <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-medium text-white">{item.name}</div>
-                    <div className="text-xs text-gray-500">{item.owner_department} / {item.target}</div>
-                  </div>
-                  <span className={clsx(
-                    "rounded border px-2 py-0.5 text-xs",
-                    item.status === "deferred"
-                      ? "border-gray-700 text-gray-400"
-                      : item.blocked_reason
-                        ? "border-yellow-700 text-yellow-300"
-                        : "border-green-700 text-green-300"
-                  )}>
-                    {item.status}
-                  </span>
-                </div>
-                <div className="mt-3 text-xs text-gray-400">
-                  {item.worker_refs.length > 0
-                    ? `${item.worker_refs.length} registry reference${item.worker_refs.length === 1 ? "" : "s"}`
-                    : "No registry reference yet"}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {item.required_gates.slice(0, 3).map((gate) => (
-                    <span key={gate} className="rounded border border-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
-                      {gate}
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+              {deltaReadiness.integrations.map((item) => (
+                <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium text-white">{item.name}</div>
+                      <div className="text-xs text-gray-500">{item.owner_department} / {item.target}</div>
+                    </div>
+                    <span className={clsx(
+                      "rounded border px-2 py-0.5 text-xs",
+                      item.status === "deferred"
+                        ? "border-gray-700 text-gray-400"
+                        : item.blocked_reason
+                          ? "border-yellow-700 text-yellow-300"
+                          : "border-green-700 text-green-300"
+                    )}>
+                      {item.status}
                     </span>
-                  ))}
+                  </div>
+                  <div className="mt-3 text-xs text-gray-400">
+                    {item.worker_refs.length > 0
+                      ? `${item.worker_refs.length} registry reference${item.worker_refs.length === 1 ? "" : "s"}`
+                      : "No registry reference yet"}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {item.required_gates.map((gate) => (
+                      <span key={gate} className="rounded border border-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                        {gate}
+                      </span>
+                    ))}
+                  </div>
+                  {item.blocked_reason && (
+                    <div className="mt-3 text-xs text-yellow-300/80">{item.blocked_reason}</div>
+                  )}
                 </div>
-                {item.blocked_reason && (
-                  <div className="mt-3 text-xs text-yellow-300/80">{item.blocked_reason}</div>
-                )}
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Object.entries(deltaReadiness.scanner_visibility ?? {}).map(([name, scanner]) => (
+                <div key={name} className="rounded border border-gray-800 bg-gray-950 px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-gray-300">{name}</span>
+                    <span className={scanner.available ? "text-green-400" : "text-yellow-300"}>{scanner.status}</span>
+                  </div>
+                  <div className="mt-1 text-gray-500">{scanner.details}</div>
+                </div>
+              ))}
+              <div className="rounded border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-gray-400 md:col-span-2">
+                GitHub metadata reads use server-side named credentials and rate limits; write actions and n8n control-plane ownership remain approval-blocked.
               </div>
-            ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
