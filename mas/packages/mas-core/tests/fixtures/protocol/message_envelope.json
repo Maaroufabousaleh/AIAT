@@ -1,0 +1,12 @@
+{
+  "protocol_version": "aiat.v1",
+  "msg_type": "TASK",
+  "sender_id": "ceo_agent",
+  "sender_role": "orchestrator",
+  "sender_team": "exec_ceo",
+  "recipient_id": "worker_alpha",
+  "project_id": "proj-alpha",
+  "payload": {
+    "task": "validate_contract"
+  }
+}

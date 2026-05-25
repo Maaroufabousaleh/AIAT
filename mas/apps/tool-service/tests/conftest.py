@@ -137,13 +137,20 @@ async def client():
     pytest.importorskip("fastapi")
     httpx = pytest.importorskip("httpx")
 
+    from tool_service.config import get_settings
     from tool_service.main import app
+
+    settings = get_settings()
+    headers = {}
+    if settings.tool_secret:
+        headers["Authorization"] = f"Bearer {settings.tool_secret}"
 
     async with (
         app.router.lifespan_context(app),
         httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
             base_url="http://test",
+            headers=headers,
         ) as ac,
     ):
         yield ac

@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from mas_core.observability.metrics import MESSAGES_DLQ_TOTAL
+
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -136,6 +138,7 @@ async def _handle_reclaimed_entry(
                 reason=reason,
             )
             await xadd_message("exec_ceo", notify_fields, redis)
+            MESSAGES_DLQ_TOTAL.labels(team=team_id).inc()
         except Exception:
             logger.exception("Failed to process DLQ for message_id=%s", envelope.message_id)
     else:

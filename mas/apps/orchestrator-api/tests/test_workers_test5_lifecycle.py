@@ -31,6 +31,7 @@ Audit       evaluation_status set to "approved" after approve verdict,
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -121,7 +122,11 @@ def _eval_report(
         },
         "overall_score": overall_score,
         "verdict": verdict,
-        "evaluator_version": "1.0.0",
+        "evaluator_version": "1.1.0",
+        "risk_tier": "low",
+        "blocked_reasons": [],
+        "recommended_status": "ACTIVE",
+        "requires_human_approval": False,
         "notes": None,
     }
 
@@ -545,6 +550,21 @@ def test_compute_verdict_conditional_when_score_between_50_70():
     assert _compute_verdict(results, 62.0) == "CONDITIONAL"
 
 
+def test_compute_verdict_approved_with_requested_subset_checks():
+    """_compute_verdict ignores critical checks that were not requested."""
+    from mas_core.worker_registry.evaluator import _compute_verdict
+
+    results = {
+        "provenance": {"score": 70.0, "passed": True},
+        "version_pin": {"score": 100.0, "passed": True},
+        "manifest_validation": {"score": 100.0, "passed": True},
+        "compatibility": {"score": 60.0, "passed": True},
+        "sandbox_profile": {"score": 100.0, "passed": True},
+        "budget_latency": {"score": 100.0, "passed": True},
+    }
+    assert _compute_verdict(results, 87.1) == "APPROVED"
+
+
 def test_compute_verdict_rejected_when_licensing_fails():
     """_compute_verdict returns REJECTED when licensing score < 50 (GPL etc)."""
     from mas_core.worker_registry.evaluator import _compute_verdict
@@ -762,12 +782,13 @@ async def test_compat_manifest_validation_fails_missing_name():
     assert "name" in result["details"].lower()
 
 
+@pytest.mark.parametrize("transport", ["process", "http", "mcp", "oci", "human"])
 @pytest.mark.anyio
-async def test_compat_transport_compatibility_passes_for_process():
-    """_test_transport_compatibility passes for 'process' transport."""
+async def test_compat_transport_compatibility_passes_for_supported_transports(transport):
+    """_test_transport_compatibility passes for every AIAT worker transport."""
     from mas_core.worker_registry.compat_tests import _test_transport_compatibility
 
-    worker = {"adapter_type": "process"}
+    worker = {"adapter_type": transport}
     result = await _test_transport_compatibility(worker, None, MagicMock())
     assert result["passed"] is True
 
@@ -897,6 +918,7 @@ async def test_github_worker_full_lifecycle(client):
     worker still ACTIVE with original sha.
     """
     worker_pending = _worker_row(status="INACTIVE", evaluation_status="pending")
+    worker_evaluated = _worker_row(status="INACTIVE", evaluation_status="approved")
     worker_approved = _worker_row(status="ACTIVE", evaluation_status="approved")
     worker_upgraded = _worker_row(
         status="ACTIVE",
@@ -910,7 +932,7 @@ async def test_github_worker_full_lifecycle(client):
     storage.get_worker = AsyncMock(
         side_effect=[
             worker_pending,  # for evaluate
-            worker_pending,  # for activate (get)
+            worker_evaluated,  # for activate (get)
             worker_approved,  # for activate (return)
             worker_approved,  # for upgrade (get)
             worker_upgraded,  # for upgrade (return)
@@ -1005,3 +1027,162 @@ async def test_github_worker_full_lifecycle(client):
     # Health degraded, upstream NOT updated
     storage.update_worker_health.assert_awaited_once_with(WORKER_ID, health_status="degraded")
     storage.update_worker_upstream.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_trufflehog_check_skips_when_binary_missing(tmp_path, monkeypatch):
+    """_check_trufflehog records SKIPPED_TOOL_UNAVAILABLE when the binary is absent."""
+    from mas_core.worker_registry import evaluator
+
+    monkeypatch.setattr(evaluator.shutil, "which", lambda _name: None)
+    result = await evaluator._check_trufflehog("https://github.com/example/repo", tmp_path)
+    assert result["passed"] is True
+    assert result["status"] == "SKIPPED_TOOL_UNAVAILABLE"
+
+
+@pytest.mark.anyio
+async def test_trufflehog_check_counts_json_line_findings(tmp_path, monkeypatch):
+    """_check_trufflehog treats emitted JSON lines as findings."""
+    import asyncio
+
+    from mas_core.worker_registry import evaluator
+
+    class FakeProcess:
+        returncode = 183
+
+        async def communicate(self):
+            return b'{"Verified": true, "DetectorName": "Github"}\n', b""
+
+    monkeypatch.setattr(evaluator.shutil, "which", lambda _name: "trufflehog")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=FakeProcess()))
+
+    result = await evaluator._check_trufflehog("https://github.com/example/repo", tmp_path)
+
+    assert result["passed"] is False
+    assert result["status"] == "FAILED"
+    assert result["findings_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_semgrep_check_skips_when_binary_missing(tmp_path, monkeypatch):
+    """_check_semgrep records SKIPPED_TOOL_UNAVAILABLE when the binary is absent."""
+    from mas_core.worker_registry import evaluator
+
+    monkeypatch.setattr(evaluator.shutil, "which", lambda _name: None)
+    result = await evaluator._check_semgrep("https://github.com/example/repo", tmp_path)
+    assert result["passed"] is True
+    assert result["status"] == "SKIPPED_TOOL_UNAVAILABLE"
+
+
+@pytest.mark.anyio
+async def test_semgrep_check_parses_json_findings(tmp_path, monkeypatch):
+    """_check_semgrep parses Semgrep JSON output and counts findings."""
+    import asyncio
+
+    from mas_core.worker_registry import evaluator
+
+    class FakeProcess:
+        returncode = 1
+
+        async def communicate(self):
+            payload = {"results": [{"check_id": "python.lang.security.audit"}]}
+            return json.dumps(payload).encode(), b""
+
+    monkeypatch.setattr(evaluator.shutil, "which", lambda _name: "semgrep")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=FakeProcess()))
+
+    result = await evaluator._check_semgrep("https://github.com/example/repo", tmp_path)
+
+    assert result["passed"] is False
+    assert result["status"] == "FAILED"
+    assert result["findings_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_sandbox_profile_check_rejects_invalid_profile(tmp_path):
+    """_check_sandbox_profile rejects profiles outside the declared set."""
+    from mas_core.worker_registry.evaluator import _check_sandbox_profile
+
+    result = await _check_sandbox_profile(
+        "https://github.com/example/repo",
+        tmp_path,
+        {"sandbox_profile": "none"},
+    )
+    assert result["passed"] is False
+    assert "Invalid sandbox profile" in result["details"]
+
+
+@pytest.mark.anyio
+async def test_medium_dual_use_worker_requires_hardened_sandbox(tmp_path):
+    """Medium/dual-use workers require gvisor or firecracker before activation."""
+    from mas_core.worker_registry.evaluator import _check_sandbox_profile
+
+    result = await _check_sandbox_profile(
+        "https://github.com/example/repo",
+        tmp_path,
+        {"sandbox_profile": "restricted", "adapter_config": {"dual_use": True}},
+    )
+    assert result["passed"] is False
+    assert "gvisor or firecracker" in result["details"]
+
+    hardened = await _check_sandbox_profile(
+        "https://github.com/example/repo",
+        tmp_path,
+        {"sandbox_profile": "gvisor", "adapter_config": {"risk_tier": "medium"}},
+    )
+    assert hardened["passed"] is True
+
+
+@pytest.mark.anyio
+async def test_activate_external_worker_blocked_until_approved(client):
+    """External workers cannot activate while evaluation is pending or conditional."""
+    pending_row = _worker_row(status="INACTIVE", evaluation_status="conditional")
+
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=pending_row)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    _patch(storage)
+
+    resp = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        json={"action": "ACTIVATE"},
+    )
+    assert resp.status_code == 409
+    storage.update_worker_status.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_activate_medium_dual_use_worker_requires_hardened_sandbox_and_approval(client):
+    """Medium/dual-use workers cannot activate on restricted sandbox or pending approval."""
+    restricted_row = _worker_row(
+        status="INACTIVE",
+        source_repo=None,
+        evaluation_status="approved",
+    )
+    restricted_row["adapter_config"] = {"entrypoint": "RiskyWorker", "dual_use": True}
+
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=restricted_row)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    _patch(storage)
+
+    resp = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        json={"action": "ACTIVATE"},
+    )
+    assert resp.status_code == 409
+    assert "gvisor or firecracker" in resp.json()["detail"]
+    storage.update_worker_status.assert_not_awaited()
+
+    pending_approval_row = dict(restricted_row)
+    pending_approval_row["sandbox_profile"] = "gvisor"
+    pending_approval_row["evaluation_status"] = "conditional"
+    storage.get_worker = AsyncMock(return_value=pending_approval_row)
+
+    resp = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        json={"action": "ACTIVATE"},
+    )
+    assert resp.status_code == 409
+    assert "human approval" in resp.json()["detail"]
+    storage.update_worker_status.assert_not_awaited()

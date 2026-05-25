@@ -36,8 +36,9 @@ interface StateHistoryEntry {
 
 interface Decision {
   id: string;
-  decision_type: string;
-  prompt: string;
+  decision_type?: string;
+  gate_type?: string;
+  prompt?: string;
   context?: unknown;
   created_at: string;
 }
@@ -67,6 +68,17 @@ interface Project {
   state: WorkflowState;
   created_at: string;
   updated_at: string;
+}
+
+interface WorkspaceSummary {
+  next_actions: Array<{ kind: string; label: string; severity: string }>;
+  pending_approvals: Decision[];
+  recent_activity: Array<{ event_type: string; occurred_at?: string; summary: string; actor?: string }>;
+  worker_activity: Array<{ task_id?: string; agent_id?: string; team_id?: string; status?: string; updated_at?: string }>;
+  artifacts: Array<{ id?: number; path: string; agent_id?: string; size_bytes?: number; created_at?: string }>;
+  logs: Array<{ id?: string; level?: string; message?: string; created_at?: string }>;
+  cost_usage: { available: boolean; reason?: string; total_cost_usd?: number; tool_calls?: number; llm_calls?: number };
+  flow_instance?: FlowInstance | null;
 }
 
 const flowNodeTypes: NodeTypes = {};
@@ -110,7 +122,9 @@ export default function ProjectDetailPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
   
-  const [activeTab, setActiveTab] = useState<"workflow" | "flow" | "context">("workflow");
+  const [activeTab, setActiveTab] = useState<"workspace" | "workflow" | "flow" | "context">("workspace");
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(null);
   const [nodeExecutions, setNodeExecutions] = useState<FlowNodeExecution[]>([]);
@@ -223,6 +237,22 @@ export default function ProjectDetailPage() {
     }
   }, [id]);
 
+  const loadWorkspace = useCallback(async () => {
+    setWorkspaceLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/workspace`);
+      if (res.ok) {
+        setWorkspace(await res.json());
+      } else {
+        setWorkspace(null);
+      }
+    } catch {
+      setWorkspace(null);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, [id]);
+
   const completedNodeIds = useMemo(
     () => nodeExecutions.filter((execution) => execution.status === "COMPLETED").map((execution) => execution.node_id),
     [nodeExecutions]
@@ -251,6 +281,12 @@ export default function ProjectDetailPage() {
   const overrideableNodes = useMemo(() => flowDefinition?.nodes || [], [flowDefinition]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (activeTab === "workspace") {
+      loadWorkspace();
+    }
+  }, [activeTab, loadWorkspace]);
   
   useEffect(() => {
     if (activeTab === "flow") {
@@ -270,15 +306,20 @@ export default function ProjectDetailPage() {
     return () => clearInterval(t);
   }, [project, load]);
 
-  async function handleDecision(decisionId: string, approved: boolean) {
-    setActionLoading(decisionId);
+  async function handleDecision(decisionId: string, decision: "APPROVED" | "REJECTED" | "EDITS") {
+    const loadingKey = `${decisionId}-${decision}`;
+    setActionLoading(loadingKey);
     try {
       await fetch(`/api/projects/${id}/decisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision_id: decisionId, approved }),
+        body: JSON.stringify({
+          decision,
+          decided_by: "operator",
+          comments: `Submitted from project workspace: ${decision.toLowerCase()}`,
+        }),
       });
-      await load();
+      await Promise.all([load(), loadWorkspace()]);
     } finally {
       setActionLoading(null);
     }
@@ -534,12 +575,27 @@ export default function ProjectDetailPage() {
             ID: {project.id} · Created {formatDistanceToNow(new Date(project.created_at), { addSuffix: true })}
           </p>
         </div>
-        <button onClick={activeTab === "flow" ? loadFlowData : load} className="p-2 text-gray-500 hover:text-gray-300">
-          <RefreshCw size={14} className={loading || flowLoading ? "animate-spin" : ""} />
+        <button
+          onClick={activeTab === "flow" ? loadFlowData : activeTab === "workspace" ? loadWorkspace : load}
+          className="p-2 text-gray-500 hover:text-gray-300"
+        >
+          <RefreshCw size={14} className={loading || flowLoading || workspaceLoading ? "animate-spin" : ""} />
         </button>
       </div>
 
       <div className="flex gap-1 border-b border-gray-800">
+        <button
+          onClick={() => setActiveTab("workspace")}
+          data-testid="project-tab-workspace"
+          className={clsx(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "workspace"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-gray-400 hover:text-gray-200"
+          )}
+        >
+          Workspace
+        </button>
         <button
           onClick={() => setActiveTab("workflow")}
           data-testid="project-tab-workflow"
@@ -592,6 +648,170 @@ export default function ProjectDetailPage() {
           )}
         </button>
       </div>
+
+      {activeTab === "workspace" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+            <div className="space-y-4">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Next Operator Action</h2>
+                <div className="space-y-2">
+                  {(workspace?.next_actions ?? [{ kind: "loading", label: workspaceLoading ? "Loading workspace..." : "Workspace summary unavailable", severity: "medium" }]).map((action, index) => (
+                    <div key={`${action.kind}-${index}`} className={clsx(
+                      "rounded-lg border px-3 py-2 text-sm",
+                      action.severity === "high" ? "border-amber-800 bg-amber-950/40 text-amber-200" :
+                      action.severity === "medium" ? "border-blue-800 bg-blue-950/30 text-blue-200" :
+                      "border-gray-800 bg-gray-950 text-gray-300"
+                    )}>
+                      {action.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Approvals</div>
+                  <div className="text-xl font-semibold text-white">{workspace?.pending_approvals?.length ?? 0}</div>
+                  <div className="text-xs text-gray-600 mt-1">pending</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Artifacts</div>
+                  <div className="text-xl font-semibold text-white">{workspace?.artifacts?.length ?? 0}</div>
+                  <div className="text-xs text-gray-600 mt-1">project-scoped</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Flow</div>
+                  <div className="text-sm font-semibold text-white">{workspace?.flow_instance?.status ?? flowInstance?.status ?? "not attached"}</div>
+                  <div className="text-xs text-gray-600 mt-1">active instance</div>
+                </div>
+              </div>
+
+              {(workspace?.pending_approvals ?? []).length > 0 && (
+                <div className="bg-amber-950/40 border border-amber-800 rounded-xl p-4">
+                  <h2 className="text-sm font-medium text-amber-300 mb-3">Workspace Approvals</h2>
+                  <div className="space-y-3">
+                    {workspace!.pending_approvals.map((approval, index) => (
+                      <div key={approval.id} className="rounded-lg bg-gray-950 border border-amber-900/60 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-medium text-gray-200">{approval.gate_type ?? approval.decision_type ?? "approval"}</div>
+                            <div className="text-xxs text-gray-500 mt-1">
+                              {approval.created_at ? format(new Date(approval.created_at), "MMM d HH:mm") : "created time unknown"}
+                              {index === 0 ? " · next decision" : " · queued"}
+                            </div>
+                          </div>
+                          {index === 0 && (
+                            <div className="flex flex-wrap gap-2 justify-end">
+                              <button
+                                onClick={() => handleDecision(approval.id, "APPROVED")}
+                                disabled={!!actionLoading}
+                                className="flex items-center gap-1 px-2 py-1 bg-green-600/20 text-green-400 border border-green-800 text-xs rounded disabled:opacity-50"
+                              >
+                                <CheckCircle size={11} />{actionLoading === `${approval.id}-APPROVED` ? "..." : "Approve"}
+                              </button>
+                              <button
+                                onClick={() => handleDecision(approval.id, "EDITS")}
+                                disabled={!!actionLoading}
+                                className="flex items-center gap-1 px-2 py-1 bg-blue-600/20 text-blue-400 border border-blue-800 text-xs rounded disabled:opacity-50"
+                              >
+                                <FileText size={11} />Edits
+                              </button>
+                              <button
+                                onClick={() => handleDecision(approval.id, "REJECTED")}
+                                disabled={!!actionLoading}
+                                className="flex items-center gap-1 px-2 py-1 bg-red-600/20 text-red-400 border border-red-800 text-xs rounded disabled:opacity-50"
+                              >
+                                <XCircle size={11} />Reject
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Audit Timeline</h2>
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {(workspace?.recent_activity ?? []).length === 0 ? (
+                    <div className="text-xs text-gray-500">No timeline events available.</div>
+                  ) : workspace!.recent_activity.map((event, index) => (
+                    <div key={`${event.event_type}-${index}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <div className="text-gray-200">{event.summary}</div>
+                        <div className="text-gray-500">{event.occurred_at ? format(new Date(event.occurred_at), "MMM d HH:mm") : "unknown"}</div>
+                      </div>
+                      <div className="text-xxs text-gray-500 mt-1">
+                        {event.event_type.replace(/_/g, " ")}{event.actor ? ` · ${event.actor}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Artifacts</h2>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {(workspace?.artifacts ?? []).length === 0 ? (
+                    <div className="text-xs text-gray-500">No artifacts registered for this project.</div>
+                  ) : workspace!.artifacts.map((artifact) => (
+                    <div key={`${artifact.id}-${artifact.path}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3 text-xs">
+                      <div className="text-gray-200 break-all">{artifact.path}</div>
+                      <div className="text-gray-500 mt-1">{artifact.agent_id || "unknown agent"}{artifact.size_bytes ? ` · ${artifact.size_bytes} bytes` : ""}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Worker Activity</h2>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {(workspace?.worker_activity ?? []).length === 0 ? (
+                    <div className="text-xs text-gray-500">No project-scoped worker activity yet.</div>
+                  ) : workspace!.worker_activity.map((task, index) => (
+                    <div key={`${task.task_id}-${index}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3 text-xs">
+                      <div className="text-gray-200">{task.agent_id || "agent"}</div>
+                      <div className="text-gray-500 mt-1">{task.team_id || "team"} · {task.status || "unknown"}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Project Logs</h2>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {(workspace?.logs ?? []).length === 0 ? (
+                    <div className="text-xs text-gray-500">Project-scoped log filtering is not available from the current container log source.</div>
+                  ) : workspace!.logs.map((log, index) => (
+                    <div key={`${log.id ?? log.created_at ?? "log"}-${index}`} className="rounded-lg bg-gray-950 border border-gray-800 p-3 text-xs">
+                      <div className="text-gray-200">{log.message ?? "log entry"}</div>
+                      <div className="text-gray-500 mt-1">{log.level ?? "info"}{log.created_at ? ` · ${format(new Date(log.created_at), "MMM d HH:mm")}` : ""}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h2 className="text-sm font-medium text-gray-300 mb-3">Cost And Usage</h2>
+                {workspace?.cost_usage?.available ? (
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div><div className="text-sm text-white">${workspace.cost_usage.total_cost_usd ?? 0}</div><div className="text-xxs text-gray-500">cost</div></div>
+                    <div><div className="text-sm text-white">{workspace.cost_usage.llm_calls ?? 0}</div><div className="text-xxs text-gray-500">LLM</div></div>
+                    <div><div className="text-sm text-white">{workspace.cost_usage.tool_calls ?? 0}</div><div className="text-xxs text-gray-500">tools</div></div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500">{workspace?.cost_usage?.reason ?? "Usage telemetry unavailable."}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === "workflow" && (
         <>
@@ -649,13 +869,13 @@ export default function ProjectDetailPage() {
                   <div className="space-y-3">
                     {decisions.map((d) => (
                       <div key={d.id} className="bg-gray-900 rounded-lg p-3 border border-gray-800">
-                        <div className="text-xs font-medium text-gray-200 mb-1">{d.decision_type}</div>
-                        <p className="text-xs text-gray-400 mb-2">{d.prompt}</p>
+                        <div className="text-xs font-medium text-gray-200 mb-1">{d.gate_type ?? d.decision_type ?? "approval"}</div>
+                        <p className="text-xs text-gray-400 mb-2">{d.prompt ?? "Operator decision required."}</p>
                         {Boolean(d.context) && <button onClick={() => setExpandedDecision(expandedDecision === d.id ? null : d.id)} className="text-xxs text-blue-400 mb-2">{expandedDecision === d.id ? "Hide context" : "Show context"}</button>}
                         {expandedDecision === d.id && <pre className="text-xxs text-gray-500 bg-gray-950 rounded p-2 overflow-x-auto mb-2">{JSON.stringify(d.context, null, 2)}</pre>}
                         <div className="flex gap-2">
-                          <button onClick={() => handleDecision(d.id, true)} disabled={actionLoading === d.id} className="flex items-center gap-1 px-2 py-1 bg-green-600/20 text-green-400 border border-green-800 text-xs rounded disabled:opacity-50"><CheckCircle size={11} />{actionLoading === d.id ? "..." : "Approve"}</button>
-                          <button onClick={() => handleDecision(d.id, false)} disabled={actionLoading === d.id} className="flex items-center gap-1 px-2 py-1 bg-red-600/20 text-red-400 border border-red-800 text-xs rounded disabled:opacity-50"><XCircle size={11} />Reject</button>
+                          <button onClick={() => handleDecision(d.id, "APPROVED")} disabled={!!actionLoading} className="flex items-center gap-1 px-2 py-1 bg-green-600/20 text-green-400 border border-green-800 text-xs rounded disabled:opacity-50"><CheckCircle size={11} />{actionLoading === `${d.id}-APPROVED` ? "..." : "Approve"}</button>
+                          <button onClick={() => handleDecision(d.id, "REJECTED")} disabled={!!actionLoading} className="flex items-center gap-1 px-2 py-1 bg-red-600/20 text-red-400 border border-red-800 text-xs rounded disabled:opacity-50"><XCircle size={11} />Reject</button>
                         </div>
                       </div>
                     ))}

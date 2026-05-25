@@ -13,6 +13,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -45,6 +46,9 @@ from mas_core.workflow import (
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
+
+VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
+HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,365 @@ STATE_TO_TEAM = {
 def get_responsible_team(state: str) -> str:
     """Return the team_id responsible for progressing a project in this state."""
     return STATE_TO_TEAM.get(state, "exec_ceo")
+
+
+def _worker_risk_labels(worker: dict[str, Any]) -> set[str]:
+    labels: set[str] = set()
+    for key in ("risk_tier", "risk_level", "classification"):
+        value = worker.get(key)
+        if isinstance(value, str):
+            labels.add(value.lower().replace("-", "_"))
+
+    for nested_key in ("adapter_config", "wrapper_config"):
+        nested = worker.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in ("risk_tier", "risk_level", "classification"):
+            value = nested.get(key)
+            if isinstance(value, str):
+                labels.add(value.lower().replace("-", "_"))
+        if nested.get("dual_use") is True:
+            labels.add("dual_use")
+
+    tags = worker.get("tags")
+    if isinstance(tags, list):
+        labels.update(str(tag).lower().replace("-", "_") for tag in tags)
+    return labels
+
+
+def _is_medium_or_dual_use_worker(worker: dict[str, Any]) -> bool:
+    labels = _worker_risk_labels(worker)
+    return bool(labels & {"medium", "medium_risk", "dual_use", "dualuse"})
+
+
+TERMINAL_PROJECT_STATES = {"COMPLETED", "ARCHIVED", "FAILED"}
+
+
+def _decode_json_config(raw: str | None, fallback: Any) -> Any:
+    if not raw:
+        return fallback
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+
+
+def _department_project_counts(projects: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for project in projects:
+        if project.get("state") in TERMINAL_PROJECT_STATES:
+            continue
+        team_id = get_responsible_team(str(project.get("state", "")))
+        counts[team_id] = counts.get(team_id, 0) + 1
+    return counts
+
+
+def _worker_eval_warning(worker: dict[str, Any]) -> str | None:
+    status = str(worker.get("evaluation_status") or "").lower()
+    if status in {"pending", "conditional", "rejected", "failed"}:
+        return status
+    if worker.get("source_repo") and status != "approved":
+        return "not_approved"
+    return None
+
+
+def _mermaid_for_org_graph(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> str:
+    lines = ["graph TD"]
+    for node in nodes:
+        label = str(node.get("label") or node.get("id") or "").replace('"', "'")
+        lines.append(f'  {node["id"]}["{label}"]')
+    for edge in edges:
+        label = str(edge.get("label") or "").replace('"', "'")
+        suffix = f"|{label}|" if label else ""
+        lines.append(f'  {edge["source"]} -->{suffix} {edge["target"]}')
+    return "\n".join(lines)
+
+
+def _graph_id(prefix: str, value: Any) -> str:
+    return f"{prefix}_{str(value).replace('-', '_').replace('.', '_').replace(':', '_')}"
+
+
+DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
+    {
+        "id": "docling_ingestion",
+        "name": "Docling document ingestion",
+        "bucket": "default",
+        "target": "worker",
+        "owner_department": "dept_production",
+        "status_when_present": "placeholder_ready",
+        "status_when_missing": "planned",
+        "match_tokens": ["docling"],
+        "required_gates": [
+            "worker manifest",
+            "adapter contract",
+            "gVisor sandbox profile",
+            "artifact-reference output",
+            "human approval before activation",
+        ],
+        "blocked_reason": "Docling remains disabled until the adapter contract and artifact output path are certified.",
+    },
+    {
+        "id": "github_rest",
+        "name": "GitHub REST metadata and task API",
+        "bucket": "default",
+        "target": "tool",
+        "owner_department": "dept_infra",
+        "status_when_present": "intake_visible",
+        "status_when_missing": "planned",
+        "match_tokens": ["github.com", "github"],
+        "required_gates": [
+            "named credential reference",
+            "read/write policy split",
+            "rate limit",
+            "audit log",
+            "approval for write actions",
+        ],
+        "blocked_reason": "GitHub write actions must stay behind credentials, approval, and audit gates.",
+    },
+    {
+        "id": "defensive_scanners",
+        "name": "TruffleHog and Semgrep defensive scans",
+        "bucket": "default",
+        "target": "evaluation",
+        "owner_department": "dept_security",
+        "status_when_present": "wired_optional",
+        "status_when_missing": "wired_optional",
+        "match_tokens": ["trufflehog", "semgrep"],
+        "required_gates": [
+            "optional executable discovery",
+            "parser tests",
+            "skipped-tool state",
+            "evaluation report visibility",
+        ],
+        "blocked_reason": None,
+    },
+    {
+        "id": "n8n_edge_automation",
+        "name": "n8n edge automation",
+        "bucket": "guardrailed",
+        "target": "edge_adapter",
+        "owner_department": "dept_infra",
+        "status_when_present": "guardrailed_candidate",
+        "status_when_missing": "deferred",
+        "match_tokens": ["n8n"],
+        "required_gates": [
+            "webhook allowlist",
+            "named credential reference",
+            "audit log",
+            "no control-plane ownership",
+        ],
+        "blocked_reason": "n8n is allowed only as edge automation and cannot replace AIAT workflow authority.",
+    },
+]
+
+
+def _delta_worker_refs(workers: list[dict[str, Any]], tokens: list[str]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    lowered_tokens = [token.lower() for token in tokens]
+    for worker in workers:
+        haystack = " ".join(
+            str(worker.get(key) or "")
+            for key in (
+                "id",
+                "name",
+                "display_name",
+                "source_repo",
+                "adapter_type",
+                "adapter_entrypoint",
+                "team_id",
+                "evaluation_status",
+                "status",
+            )
+        )
+        haystack += " " + " ".join(str(cap) for cap in worker.get("capability_ids") or [])
+        if not any(token in haystack.lower() for token in lowered_tokens):
+            continue
+        refs.append(
+            {
+                "id": str(worker.get("id") or worker.get("worker_id") or worker.get("name")),
+                "name": worker.get("name") or worker.get("display_name"),
+                "status": worker.get("status"),
+                "evaluation_status": worker.get("evaluation_status"),
+                "source_repo": worker.get("source_repo"),
+                "team_id": worker.get("team_id"),
+            }
+        )
+    return refs
+
+
+async def _delta_integration_readiness(storage: AgentStorage) -> dict[str, Any]:
+    try:
+        workers = await storage.list_workers()
+    except Exception:
+        logger.debug("delta_integrations.workers_unavailable", exc_info=True)
+        workers = []
+
+    integrations = []
+    for candidate in DELTA_INTEGRATION_CANDIDATES:
+        worker_refs = _delta_worker_refs(workers, candidate["match_tokens"])
+        status = candidate["status_when_present"] if worker_refs else candidate["status_when_missing"]
+        integrations.append(
+            {
+                "id": candidate["id"],
+                "name": candidate["name"],
+                "bucket": candidate["bucket"],
+                "target": candidate["target"],
+                "owner_department": candidate["owner_department"],
+                "status": status,
+                "required_gates": candidate["required_gates"],
+                "blocked_reason": candidate["blocked_reason"],
+                "worker_refs": worker_refs,
+            }
+        )
+
+    return {
+        "phase": "Delta",
+        "status": "started",
+        "principles": [
+            "AIAT remains the control plane",
+            "external integrations require registry, adapter, sandbox, approval, and observability gates",
+            "browser code receives readiness state only, never plaintext credentials",
+        ],
+        "summary": {
+            "total": len(integrations),
+            "ready_or_wired": sum(
+                1
+                for item in integrations
+                if item["status"] in {"placeholder_ready", "intake_visible", "wired_optional"}
+            ),
+            "deferred": sum(1 for item in integrations if item["status"] == "deferred"),
+            "blocked": sum(1 for item in integrations if item.get("blocked_reason")),
+        },
+        "integrations": integrations,
+    }
+
+
+async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
+    seeded = (await storage.get_config("default_company_seeded")) == "true"
+    ceo = _decode_json_config(
+        await storage.get_config("default_company_ceo"),
+        {"id": "ceo_agent", "name": "AIAT CEO", "role": "CEO"},
+    )
+    departments = _decode_json_config(await storage.get_config("default_company_departments"), [])
+    workers = await storage.list_workers()
+    projects = await storage.list_projects(limit=1000)
+    capabilities = await storage.list_capabilities()
+    project_counts = _department_project_counts(projects)
+
+    pending_approvals = []
+    try:
+        pending_approvals = await storage.list_approval_gates(status="PENDING", limit=500)
+    except Exception:
+        logger.debug("company_read_model.pending_approvals_unavailable", exc_info=True)
+
+    summaries = []
+    for department in departments:
+        dept_id = department.get("id")
+        dept_workers = [w for w in workers if w.get("team_id") == dept_id]
+        warnings = [warning for w in dept_workers if (warning := _worker_eval_warning(w))]
+        summaries.append(
+            {
+                **department,
+                "worker_count": len(dept_workers),
+                "active_workers": sum(1 for w in dept_workers if w.get("status") == "ACTIVE"),
+                "active_projects": project_counts.get(dept_id, 0),
+                "pending_approvals": sum(
+                    1
+                    for approval in pending_approvals
+                    if get_responsible_team(
+                        next(
+                            (
+                                str(p.get("state"))
+                                for p in projects
+                                if str(p.get("id")) == str(approval.get("project_id"))
+                            ),
+                            "",
+                        )
+                    )
+                    == dept_id
+                ),
+                "evaluation_warnings": len(warnings),
+            }
+        )
+
+    return {
+        "company": {
+            "id": "aiat",
+            "name": "AIAT",
+            "seeded": seeded,
+            "seeded_at": await storage.get_config("default_company_seeded_at"),
+        },
+        "ceo": ceo,
+        "departments": summaries,
+        "totals": {
+            "departments": len(summaries),
+            "workers": len(workers),
+            "active_workers": sum(1 for w in workers if w.get("status") == "ACTIVE"),
+            "projects": len(projects),
+            "active_projects": sum(
+                1 for p in projects if p.get("state") not in TERMINAL_PROJECT_STATES
+            ),
+            "pending_approvals": len(pending_approvals),
+            "capabilities": len(capabilities),
+            "evaluation_warnings": sum(1 for w in workers if _worker_eval_warning(w)),
+        },
+    }
+
+
+async def _org_graph_read_model(storage: AgentStorage) -> dict[str, Any]:
+    company = await _company_read_model(storage)
+    workers = await storage.list_workers()
+    capabilities = await storage.list_capabilities()
+    capability_by_id = {str(c["id"]): c for c in capabilities}
+
+    nodes = [
+        {"id": "company_aiat", "type": "company", "label": company["company"]["name"]},
+        {"id": "ceo_ceo_agent", "type": "ceo", "label": company["ceo"].get("name", "AIAT CEO")},
+    ]
+    edges = [{"id": "company-ceo", "source": "company_aiat", "target": "ceo_ceo_agent", "label": "led by"}]
+
+    for department in company["departments"]:
+        dept_node = _graph_id("department", department["id"])
+        nodes.append({"id": dept_node, "type": "department", "label": department.get("name") or department["id"]})
+        edges.append({"id": f"ceo-{dept_node}", "source": "ceo_ceo_agent", "target": dept_node, "label": "oversees"})
+
+    for worker in workers:
+        worker_node = _graph_id("worker", worker["id"])
+        nodes.append(
+            {
+                "id": worker_node,
+                "type": "worker",
+                "label": worker.get("name"),
+                "status": worker.get("status"),
+                "evaluation_status": worker.get("evaluation_status"),
+            }
+        )
+        if worker.get("team_id"):
+            edges.append(
+                {
+                    "id": f"department-{worker_node}",
+                    "source": _graph_id("department", worker["team_id"]),
+                    "target": worker_node,
+                    "label": "has worker",
+                }
+            )
+        for cap_id in worker.get("capability_ids") or []:
+            capability = capability_by_id.get(str(cap_id))
+            if not capability:
+                continue
+            cap_node = _graph_id("capability", capability["id"])
+            if not any(n["id"] == cap_node for n in nodes):
+                nodes.append({"id": cap_node, "type": "capability", "label": capability.get("name")})
+            edges.append(
+                {
+                    "id": f"{worker_node}-{cap_node}",
+                    "source": worker_node,
+                    "target": cap_node,
+                    "label": "provides",
+                }
+            )
+
+    return {"nodes": nodes, "edges": edges, "mermaid": _mermaid_for_org_graph(nodes, edges)}
 
 
 # ── Pydantic request/response models ─────────────────────────────────────────
@@ -173,7 +536,7 @@ class RegisterWorkerRequest(BaseModel):
     name: str
     adapter_type: str
     adapter_config: dict[str, Any] = Field(default_factory=dict)
-    sandbox_profile: str = "standard"
+    sandbox_profile: str = "restricted"
     capability_ids: list[UUID] = Field(default_factory=list)
     team_id: str | None = None
     source_repo: str | None = None
@@ -719,6 +1082,197 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return _serialize(project)
+
+
+async def _project_artifact_rows(storage: AgentStorage, project_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
+    artifacts = await storage.list_artifacts(limit=limit)
+    pid = str(project_id)
+    scoped = []
+    for artifact in artifacts:
+        metadata = artifact.get("metadata") or {}
+        path = str(artifact.get("path") or "")
+        if (
+            str(metadata.get("project_id") or "") == pid
+            or path.startswith(f"{pid}/")
+            or f"/{pid}/" in path
+        ):
+            scoped.append(artifact)
+    return scoped
+
+
+async def _project_audit_events(storage: AgentStorage, project_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+
+    for item in await storage.get_project_history(project_id, limit=limit):
+        events.append(
+            {
+                "event_type": "state_transition",
+                "occurred_at": item.get("transitioned_at"),
+                "actor": item.get("triggered_by"),
+                "summary": f"{item.get('from_state') or 'START'} -> {item.get('to_state')}",
+                "details": item,
+            }
+        )
+
+    try:
+        approvals = await storage.list_approval_gates(project_id=project_id, limit=limit)
+    except Exception:
+        approvals = []
+    for approval in approvals:
+        occurred_at = approval.get("decided_at") or approval.get("created_at")
+        events.append(
+            {
+                "event_type": "approval_gate",
+                "occurred_at": occurred_at,
+                "actor": approval.get("decided_by"),
+                "summary": f"{approval.get('gate_type')} {approval.get('status')}",
+                "details": approval,
+            }
+        )
+
+    try:
+        flow_instance = await storage.get_flow_instance_by_project(project_id)
+    except Exception:
+        flow_instance = None
+    if flow_instance:
+        events.append(
+            {
+                "event_type": "flow_status",
+                "occurred_at": flow_instance.get("updated_at") or flow_instance.get("created_at"),
+                "actor": flow_instance.get("escalated_to"),
+                "summary": f"Flow instance {flow_instance.get('status')}",
+                "details": flow_instance,
+            }
+        )
+        executions = await storage.list_flow_node_executions(instance_id=flow_instance["id"])
+        for execution in executions[:limit]:
+            events.append(
+                {
+                    "event_type": "flow_node",
+                    "occurred_at": execution.get("completed_at") or execution.get("started_at"),
+                    "actor": None,
+                    "summary": f"{execution.get('node_label') or execution.get('node_id')} {execution.get('status')}",
+                    "details": execution,
+                }
+            )
+
+    events.sort(key=lambda e: str(e.get("occurred_at") or ""), reverse=True)
+    return events[:limit]
+
+
+@app.get("/projects/{project_id}/artifacts")
+async def list_project_artifacts(
+    project_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    """Project-scoped artifact metadata for the operator workspace."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.get("/projects/{project_id}/audit-timeline")
+async def get_project_audit_timeline(
+    project_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    """Audit-friendly timeline for project transitions, approvals, and flow activity."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return [_serialize(e) for e in await _project_audit_events(storage, project_id, limit)]
+
+
+@app.get("/projects/{project_id}/workspace")
+async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
+    """Read-only project workspace summary for Gamma dashboard views."""
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    pending = await storage.list_approval_gates(project_id=project_id, status="PENDING", limit=100)
+    history = await storage.get_project_history(project_id, limit=20)
+    artifacts = await _project_artifact_rows(storage, project_id, limit=20)
+    audit = await _project_audit_events(storage, project_id, limit=20)
+    tasks = await storage.list_task_logs(limit=50)
+    workers = await storage.list_workers()
+
+    flow_instance = None
+    flow_executions: list[dict[str, Any]] = []
+    try:
+        flow_instance = await storage.get_flow_instance_by_project(project_id)
+        if flow_instance:
+            flow_executions = await storage.list_flow_node_executions(instance_id=flow_instance["id"])
+    except Exception:
+        logger.debug("project_workspace.flow_unavailable", exc_info=True)
+
+    project_task_rows = [
+        task
+        for task in tasks
+        if str((task.get("input") or {}).get("project_id") or "") == str(project_id)
+        or str((task.get("output") or {}).get("project_id") or "") == str(project_id)
+    ]
+    failed_nodes = [e for e in flow_executions if e.get("status") == "FAILED"]
+    retryable_errors = [
+        e
+        for e in failed_nodes
+        if int(e.get("retry_count") or 0) < int(e.get("max_retries") or 0)
+    ]
+    blocked_workers = [
+        w
+        for w in workers
+        if w.get("source_repo")
+        and w.get("status") != "ACTIVE"
+        and str(w.get("evaluation_status") or "").lower() != "approved"
+    ]
+
+    next_actions = []
+    if pending:
+        next_actions.append(
+            {
+                "kind": "approval",
+                "label": f"{len(pending)} pending approval(s)",
+                "severity": "high",
+            }
+        )
+    if retryable_errors:
+        next_actions.append(
+            {
+                "kind": "retry",
+                "label": f"{len(retryable_errors)} retryable flow error(s)",
+                "severity": "medium",
+            }
+        )
+    if blocked_workers:
+        next_actions.append(
+            {
+                "kind": "worker_activation",
+                "label": f"{len(blocked_workers)} blocked worker activation(s)",
+                "severity": "medium",
+            }
+        )
+    if not next_actions:
+        next_actions.append({"kind": "none", "label": "No operator action required", "severity": "low"})
+
+    return _serialize(
+        {
+            "project": project,
+            "flow_instance": flow_instance,
+            "pending_approvals": pending,
+            "recent_decisions": [a for a in audit if a["event_type"] == "approval_gate"][:5],
+            "recent_activity": audit[:10],
+            "worker_activity": project_task_rows[:10],
+            "artifacts": artifacts,
+            "logs": [],
+            "cost_usage": {
+                "available": False,
+                "reason": "Project-scoped LLM/tool telemetry is not available from current metrics.",
+            },
+            "next_actions": next_actions,
+        }
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1618,6 +2172,7 @@ async def system_status() -> dict[str, Any]:
     boot_at_str = await storage.get_config("boot_at")
     shutdown_at_str = await storage.get_config("shutdown_at")
     schedule_enabled = await storage.get_config("schedule_enabled") or "false"
+    default_company_seeded = await storage.get_config("default_company_seeded") or "false"
 
     # Count active projects via COUNT query
     async with storage.engine.connect() as conn:
@@ -1647,7 +2202,94 @@ async def system_status() -> dict[str, Any]:
         "total_projects": total_count,
         "uptime_seconds": round(uptime_seconds, 1),
         "schedule_enabled": schedule_enabled == "true",
+        "first_run": "seeded"
+        if default_company_seeded == "true"
+        else ("needs_migration_config" if state == "UNKNOWN" and total_count > 0 else "not_seeded"),
     }
+
+
+@app.post("/system/seed-default-company")
+async def seed_default_company() -> dict[str, Any]:
+    """Idempotently seed the default AIAT company bootstrap metadata."""
+    from pathlib import Path
+
+    from mas_core.worker_registry.seeder import seed_workers_from_directory
+
+    storage = _storage()
+    already_seeded = (await storage.get_config("default_company_seeded")) == "true"
+
+    ceo = {
+        "id": "ceo_agent",
+        "name": "AIAT CEO",
+        "role": "orchestrator",
+        "team": "exec_ceo",
+        "permanent": True,
+    }
+    departments = [
+        {"id": "exec_ceo", "name": "CEO Office"},
+        {"id": "exec_coo", "name": "Operations"},
+        {"id": "dept_production", "name": "Production"},
+        {"id": "dept_qa", "name": "Quality Assurance"},
+        {"id": "dept_security", "name": "Security"},
+        {"id": "dept_infra", "name": "Infrastructure"},
+    ]
+    sample_project_template = {
+        "name": "Sample AIAT Project",
+        "description": "Baseline project template for first-run validation.",
+        "requested_by": "human_operator",
+    }
+
+    worker_summary = {"total": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
+    workers_dir = Path(os.environ.get("WORKERS_DIR", "workers"))
+    if workers_dir.is_dir():
+        results = await seed_workers_from_directory(
+            storage=storage,
+            workers_dir=workers_dir,
+            dry_run=False,
+        )
+        worker_summary = {
+            "total": len(results),
+            "created": sum(1 for r in results if r.action == "created"),
+            "updated": sum(1 for r in results if r.action == "updated"),
+            "skipped": sum(1 for r in results if r.action == "skipped"),
+            "errors": sum(1 for r in results if r.action == "error"),
+        }
+
+    await storage.set_config("default_company_seeded", "true")
+    await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
+    await storage.set_config("default_company_ceo", json.dumps(ceo))
+    await storage.set_config("default_company_departments", json.dumps(departments))
+    await storage.set_config("default_project_template", json.dumps(sample_project_template))
+
+    return {
+        "status": "already_seeded" if already_seeded else "seeded",
+        "first_run": "seeded",
+        "ceo": ceo,
+        "departments": departments,
+        "sample_project_template": sample_project_template,
+        "workers_imported": worker_summary,
+    }
+
+
+@app.get("/system/company")
+async def get_company_overview() -> dict[str, Any]:
+    """Seeded company, department, worker, approval, and project summary."""
+    storage = _storage()
+    return _serialize(await _company_read_model(storage))
+
+
+@app.get("/system/org-graph")
+async def get_org_graph() -> dict[str, Any]:
+    """Read-only org/capability graph with a Mermaid export."""
+    storage = _storage()
+    return _serialize(await _org_graph_read_model(storage))
+
+
+@app.get("/integrations/delta-readiness")
+async def get_delta_integration_readiness() -> dict[str, Any]:
+    """Read-only Delta integration readiness catalog for governed adoption."""
+    storage = _storage()
+    return _serialize(await _delta_integration_readiness(storage))
 
 
 @app.put("/system/schedule")
@@ -1839,6 +2481,11 @@ async def list_capability_workers(
 async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     """Register a new worker (called by team-runner on startup)."""
     storage = _storage()
+    if req.sandbox_profile not in VALID_SANDBOX_PROFILES:
+        raise HTTPException(
+            422,
+            f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
+        )
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
@@ -1875,6 +2522,11 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
     if req.adapter_config is not None:
         update_kwargs["adapter_config"] = req.adapter_config
     if req.sandbox_profile is not None:
+        if req.sandbox_profile not in VALID_SANDBOX_PROFILES:
+            raise HTTPException(
+                422,
+                f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
+            )
         update_kwargs["sandbox_profile"] = req.sandbox_profile
     if req.capability_ids is not None:
         update_kwargs["capability_ids"] = req.capability_ids
@@ -1930,6 +2582,26 @@ async def transition_worker_status(
 
     if req.action in action_map:
         new_status = req.new_status or action_map[req.action]
+        if new_status == "ACTIVE" and existing.get("source_repo"):
+            evaluation_status = (existing.get("evaluation_status") or "").lower()
+            if evaluation_status != "approved":
+                raise HTTPException(
+                    409,
+                    "External worker activation is blocked until evaluation is approved",
+                )
+        if new_status == "ACTIVE" and _is_medium_or_dual_use_worker(existing):
+            profile = existing.get("sandbox_profile") or "restricted"
+            evaluation_status = (existing.get("evaluation_status") or "").lower()
+            if profile not in HARDENED_SANDBOX_PROFILES:
+                raise HTTPException(
+                    409,
+                    "Medium/dual-use worker activation requires gvisor or firecracker sandbox profile",
+                )
+            if evaluation_status != "approved":
+                raise HTTPException(
+                    409,
+                    "Medium/dual-use worker activation requires human approval",
+                )
         await storage.update_worker_status(worker_id, status=new_status)
     elif req.action == "RECLASSIFY":
         updates: dict[str, Any] = {}
@@ -2080,14 +2752,13 @@ async def evaluate_worker(
 
     from mas_core.worker_registry.evaluator import evaluate_repository
 
-    checks = req.checks or ["architecture", "maintenance", "licensing", "security", "compatibility"]
-
     try:
         report = await evaluate_repository(
             worker_id=worker_id,
             source_repo=source_repo,
             storage=storage,
-            checks=checks,
+            checks=req.checks,
+            worker=worker,
         )
     except Exception as exc:
         raise HTTPException(500, f"Evaluation failed: {exc}")

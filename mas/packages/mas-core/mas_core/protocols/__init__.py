@@ -10,7 +10,7 @@ Envelope    : BlobRef, TaskBudget, MessageEnvelope, MAX_PAYLOAD_BYTES
 Tool        : ToolRequest, ToolResponse, ToolManifestEntry, CircuitState
 Capability  : CapabilityDef, WorkerCapabilityRecord, CapabilitySearchRequest,
               CapabilitySearchResponse
-Worker      : WorkerManifest
+Worker      : WorkerManifest, WORKER_SDK_VERSION
 Domain      : ProjectDocument, ReviewComment, ReviewSummary, ReviewResponse,
               ReviewSession, FeasibilityReport, HumanDecision, Sprint, Issue,
               Milestone, ProjectSummary, KPISnapshot, AgentProfile
@@ -62,13 +62,18 @@ from .envelope import (
     MessageEnvelope,
     TaskBudget,
 )
+from .schema_export import (
+    PROTOCOL_SCHEMA_VERSION,
+    protocol_schema_bundle,
+    write_protocol_schema_bundle,
+)
 from .tool import (
     CircuitState,
     ToolManifestEntry,
     ToolRequest,
     ToolResponse,
 )
-from .worker_manifest import WorkerManifest
+from .worker_manifest import WORKER_SDK_VERSION, WorkerManifest
 from .ws import (
     AgentFrame,
     RouterFrame,
@@ -102,6 +107,9 @@ __all__ = [
     "BlobRef",
     "TaskBudget",
     "MessageEnvelope",
+    "PROTOCOL_SCHEMA_VERSION",
+    "protocol_schema_bundle",
+    "write_protocol_schema_bundle",
     # Tool
     "CircuitState",
     "ToolRequest",
@@ -112,6 +120,7 @@ __all__ = [
     "WorkerCapabilityRecord",
     "CapabilitySearchRequest",
     "CapabilitySearchResponse",
+    "WORKER_SDK_VERSION",
     "WorkerManifest",
     # Domain
     "ProjectDocument",

@@ -14,10 +14,13 @@ Covers:
 from __future__ import annotations
 
 import json
+import importlib.util
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from mas_core.protocols import (
     MAX_PAYLOAD_BYTES,
@@ -60,12 +63,14 @@ from mas_core.protocols import (
     ToolResponse,
     WorkerCapabilityRecord,
     WorkerManifest,
+    WORKER_SDK_VERSION,
     WSAckFrame,
     WSMessageFrame,
     WSNackFrame,
     WSPingFrame,
     WSPongFrame,
     parse_agent_frame,
+    protocol_schema_bundle,
 )
 
 # ---------------------------------------------------------------------------
@@ -1081,3 +1086,79 @@ class TestWorkerManifestModel:
                     "capabilities": [{"name": "web_search"}],
                 }
             )
+
+    def test_placeholder_manifests_are_valid_and_not_seeded_by_default(self):
+        placeholders = Path(__file__).resolve().parents[3] / "workers" / "placeholders"
+        manifests = sorted(placeholders.glob("*.yaml"))
+        assert {p.name for p in manifests} == {
+            "docling_ingestion_placeholder.yaml",
+            "mcp_worker_mode_placeholder.yaml",
+        }
+        for path in manifests:
+            manifest = WorkerManifest.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+            assert manifest.metadata.evaluation_status == "pending"
+            assert "placeholder" in manifest.metadata.tags
+            assert manifest.sandbox.profile == "gvisor"
+
+
+class TestProtocolContractVersioning:
+    def test_protocol_version_defaults(self):
+        assert WORKER_SDK_VERSION == "aiat-worker-sdk.v1"
+        assert _basic_envelope().protocol_version == "aiat.v1"
+        assert ToolRequest(
+            caller_id="ceo_agent",
+            caller_role=AgentRole.ORCHESTRATOR,
+            tool_name="project.transition",
+        ).protocol_version == "aiat.v1"
+        assert ToolResponse(tool_name="web.search", success=True).protocol_version == "aiat.v1"
+        assert WorkerManifest.model_validate(
+            {"metadata": {"id": "worker_1", "name": "Worker One"}}
+        ).protocol_version == "aiat.v1"
+
+    def test_schema_bundle_exports_public_contracts(self):
+        bundle = protocol_schema_bundle()
+        assert bundle["protocol_version"] == "aiat.v1"
+        for name in ("MessageEnvelope", "ToolRequest", "ToolResponse", "WorkerManifest"):
+            assert name in bundle["schemas"]
+            assert "protocol_version" in bundle["schemas"][name]["properties"]
+
+    def test_checked_in_schema_bundle_matches_runtime_models(self):
+        schema_path = (
+            Path(__file__).parents[1] / "schemas" / "protocol" / "aiat.v1.schema.json"
+        )
+        checked_in = json.loads(schema_path.read_text(encoding="utf-8"))
+        assert checked_in == protocol_schema_bundle()
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "model"),
+        [
+            ("message_envelope.json", MessageEnvelope),
+            ("tool_request.json", ToolRequest),
+            ("tool_response.json", ToolResponse),
+            ("worker_manifest.json", WorkerManifest),
+        ],
+    )
+    def test_checked_in_fixtures_round_trip(self, fixture_name, model):
+        fixture = (
+            Path(__file__).parent / "fixtures" / "protocol" / fixture_name
+        ).read_text(encoding="utf-8")
+        parsed = model.model_validate_json(fixture)
+        dumped = parsed.model_dump_json(by_alias=True)
+        reparsed = model.model_validate_json(dumped)
+        assert reparsed.protocol_version == "aiat.v1"
+
+    def test_python_fixture_samples_round_trip(self):
+        samples_path = Path(__file__).parent / "fixtures" / "protocol" / "python_samples.py"
+        spec = importlib.util.spec_from_file_location("python_samples", samples_path)
+        assert spec is not None and spec.loader is not None
+        python_samples = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(python_samples)
+
+        samples = [
+            (python_samples.MESSAGE_ENVELOPE_SAMPLE, MessageEnvelope),
+            (python_samples.TOOL_REQUEST_SAMPLE, ToolRequest),
+            (python_samples.TOOL_RESPONSE_SAMPLE, ToolResponse),
+            (python_samples.WORKER_MANIFEST_SAMPLE, WorkerManifest),
+        ]
+        for payload, model in samples:
+            assert model.model_validate(payload).protocol_version == "aiat.v1"

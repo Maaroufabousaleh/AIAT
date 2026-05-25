@@ -1,14 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { authenticate } from "./auth";
 
 async function login(page: Page): Promise<void> {
-  const username = process.env.E2E_DASHBOARD_USERNAME ?? "admin";
-  const password = process.env.E2E_DASHBOARD_PASSWORD ?? "admin";
-
-  await page.goto("/login");
-  await page.getByPlaceholder("admin").fill(username);
-  await page.locator('input[type="password"]').fill(password);
-  await page.getByRole("button", { name: /sign in/i }).click();
-  await page.waitForURL(/\/$/);
+  await authenticate(page);
 }
 
 test.describe("Operational UI smoke flows", () => {
@@ -45,7 +39,10 @@ test.describe("Operational UI smoke flows", () => {
     const workerId = `e2e_worker_${stamp}`;
 
     await page.goto("/workers");
-    await expect(page.getByRole("heading", { name: "Workers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Hiring Board" })).toBeVisible();
+    await expect(page.getByText("Delta Integration Readiness")).toBeVisible();
+    await expect(page.getByText("Docling document ingestion")).toBeVisible();
+    await expect(page.getByText("GitHub REST metadata and task API")).toBeVisible();
     await page.getByRole("button", { name: /register worker/i }).click();
     await page.getByPlaceholder("my_worker_1").fill(workerId);
     await page.getByPlaceholder("My Worker Agent").fill("E2E Worker");
@@ -62,9 +59,8 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByText(/WorkerAgent|adapter\.main:E2EWorker/).first()).toBeVisible();
     await expect(page.getByText("example/e2e-worker")).toBeVisible();
 
-    const power = row.getByRole("button");
-    await power.click();
-    await expect(row.getByText(/Active|Inactive/)).toBeVisible();
+    await row.getByTitle("Drain").click();
+    await expect(row.getByText("Draining")).toBeVisible();
   });
 
   test("central tools UI lists, filters, and expands managed tools", async ({ page }) => {
@@ -80,6 +76,8 @@ test.describe("Operational UI smoke flows", () => {
   test("system visualization exposes hierarchy, permissions, orchestration, and path tracing", async ({ page }) => {
     await page.goto("/system-viz");
     await expect(page.getByRole("heading", { name: "System Visualization" })).toBeVisible();
+    await expect(page.getByText("Mermaid Export")).toBeVisible();
+    await expect(page.getByLabel("Mermaid export")).toContainText("graph TD");
 
     await page.getByRole("button", { name: /permissions/i }).click();
     await expect(page.getByText(/communication/i).first()).toBeVisible();
@@ -95,6 +93,28 @@ test.describe("Operational UI smoke flows", () => {
     await selects.nth(1).selectOption({ index: 2 });
     await page.getByRole("button", { name: /find path/i }).click();
     await expect(page.getByRole("button", { name: /clear/i })).toBeVisible();
+  });
+
+  test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({ page }) => {
+    const name = `gamma-workspace-${Date.now()}`;
+
+    await page.goto("/projects");
+    await page.getByRole("button", { name: /new project/i }).click();
+    await page.getByPlaceholder("my-project").fill(name);
+    await page.getByPlaceholder("What should the agents build?").fill("Gamma workspace Playwright coverage");
+    await page.getByRole("button", { name: /^create$/i }).click();
+
+    const row = page.getByRole("row", { name: new RegExp(name) });
+    await expect(row).toBeVisible();
+    await row.getByRole("link", { name: /view/i }).click();
+
+    await expect(page.getByRole("button", { name: "Workspace" })).toBeVisible();
+    await expect(page.getByText("Next Operator Action")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Audit Timeline" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Artifacts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Worker Activity" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Project Logs" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Cost And Usage" })).toBeVisible();
   });
 
   test("system, logs, metrics, and DLQ pages load operational controls", async ({ page }) => {

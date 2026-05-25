@@ -521,6 +521,10 @@ evaluation_reports = sa.Table(
     sa.Column("overall_score", sa.Float(), nullable=True),
     sa.Column("verdict", sa.Text(), nullable=False, server_default="'PENDING'"),
     sa.Column("evaluator_version", sa.Text(), nullable=True),
+    sa.Column("risk_tier", sa.Text(), nullable=False, server_default="'unknown'"),
+    sa.Column("blocked_reasons", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("recommended_status", sa.Text(), nullable=False, server_default="'PENDING_EVALUATION'"),
+    sa.Column("requires_human_approval", sa.Boolean(), nullable=False, server_default="false"),
     sa.Column("notes", sa.Text(), nullable=True),
 )
 

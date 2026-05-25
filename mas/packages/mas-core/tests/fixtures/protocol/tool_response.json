@@ -1,0 +1,8 @@
+{
+  "protocol_version": "aiat.v1",
+  "tool_name": "project.transition",
+  "success": true,
+  "result": {
+    "state": "FEASIBILITY_CHECK"
+  }
+}

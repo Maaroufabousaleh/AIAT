@@ -1,0 +1,11 @@
+{
+  "protocol_version": "aiat.v1",
+  "agent_id": "ceo_agent",
+  "sender_role": "orchestrator",
+  "sender_team": "exec_ceo",
+  "project_id": "proj-alpha",
+  "tool_name": "project.transition",
+  "kwargs": {
+    "event": "project_created"
+  }
+}

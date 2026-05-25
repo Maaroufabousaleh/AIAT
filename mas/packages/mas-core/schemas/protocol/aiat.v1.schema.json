@@ -1,0 +1,1109 @@
+{
+  "protocol_version": "aiat.v1",
+  "schemas": {
+    "MessageEnvelope": {
+      "$defs": {
+        "AgentRole": {
+          "description": "Corporate hierarchy roles mapped to MAS communication policy roles.",
+          "enum": [
+            "orchestrator",
+            "executive",
+            "c_suite",
+            "admin",
+            "worker",
+            "sub_agent"
+          ],
+          "title": "AgentRole",
+          "type": "string"
+        },
+        "BlobRef": {
+          "description": "Reference to a large object stored outside Redis (MinIO / S3).\n\nWhen a payload would exceed ``MAX_PAYLOAD_BYTES``, agents upload the data to\nMinIO and include a ``BlobRef`` in ``MessageEnvelope.blob_ref`` instead of\ninlining the data in ``payload``.",
+          "properties": {
+            "bucket": {
+              "description": "MinIO bucket name (e.g. 'mas-agents')",
+              "title": "Bucket",
+              "type": "string"
+            },
+            "content_type": {
+              "default": "application/json",
+              "description": "MIME type of the stored object",
+              "title": "Content Type",
+              "type": "string"
+            },
+            "key": {
+              "description": "Object key within the bucket (e.g. '{project_id}/documents/pdr_v1.json')",
+              "title": "Key",
+              "type": "string"
+            },
+            "sha256": {
+              "description": "Hex-encoded SHA-256 digest of the stored object",
+              "title": "Sha256",
+              "type": "string"
+            },
+            "size_bytes": {
+              "description": "Size of the stored object in bytes",
+              "minimum": 0,
+              "title": "Size Bytes",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "bucket",
+            "key",
+            "sha256",
+            "size_bytes"
+          ],
+          "title": "BlobRef",
+          "type": "object"
+        },
+        "MessageType": {
+          "description": "All legal message types in the MAS unified MessageEnvelope.",
+          "enum": [
+            "TASK",
+            "RESULT",
+            "QUERY",
+            "RESPONSE",
+            "BROADCAST",
+            "ADMIN_TASK",
+            "ADMIN_REPLY",
+            "SHUTDOWN",
+            "DOCUMENT_SUBMIT",
+            "DOCUMENT_REVISION",
+            "REVIEW_REQUEST",
+            "REVIEW_RESPONSE",
+            "APPROVAL_REQUEST",
+            "APPROVAL_RESPONSE",
+            "SPRINT_PLAN",
+            "SPRINT_REPORT",
+            "ISSUE_ASSIGN",
+            "ISSUE_COMPLETE",
+            "ESCALATION",
+            "DIRECTIVE",
+            "INFRA_READY",
+            "HEARTBEAT",
+            "ACK",
+            "SHUTDOWN_ACK",
+            "SHUTDOWN_NACK",
+            "SYSTEM_EVENT"
+          ],
+          "title": "MessageType",
+          "type": "string"
+        },
+        "TaskBudget": {
+          "description": "Resource budget for a single task.\n\nEmbedded in ``MessageEnvelope.budget`` for ``TASK`` and ``ADMIN_TASK``\nmessages. The agent runtime enforces these caps during ``think()`` loops.\n``None`` means uncapped.",
+          "properties": {
+            "deadline": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Hard deadline (UTC). Agent must return partial result if hit.",
+              "title": "Deadline"
+            },
+            "max_cost_usd": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Maximum estimated LLM cost in USD",
+              "title": "Max Cost Usd"
+            },
+            "max_llm_calls": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Maximum number of LLM API calls allowed",
+              "title": "Max Llm Calls"
+            },
+            "max_subtasks": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Maximum sub-agents / subtasks that may be spawned",
+              "title": "Max Subtasks"
+            },
+            "max_tool_calls": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Maximum number of tool-service calls allowed",
+              "title": "Max Tool Calls"
+            }
+          },
+          "title": "TaskBudget",
+          "type": "object"
+        }
+      },
+      "description": "Unified message envelope for all MAS inter-agent communication.\n\nUsed by agents, the message router, Redis Streams storage, and the\norchestrator-api workflow controller. Every message in the system, regardless\nof direction (horizontal, vertical, human-loop), must use this schema.\n\nPayload size rule\n-----------------\n``payload`` must serialise to \u2264 ``MAX_PAYLOAD_BYTES`` (64 KB). If the actual\ndata is larger, upload to MinIO and reference it via ``blob_ref``. The\nvalidator below enforces this automatically.\n\nIdempotency\n-----------\n``message_id`` is the idempotency key. The router deduplicates publishes with\na 300 s Redis TTL; consumers maintain a 1 000-entry LRU set keyed on\n``message_id`` to guard against XAUTOCLAIM re-delivery races.",
+      "properties": {
+        "ack_required": {
+          "default": true,
+          "description": "If True, the consumer must XACK after processing. If False, fire-and-forget.",
+          "title": "Ack Required",
+          "type": "boolean"
+        },
+        "blob_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlobRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reference to large payload stored in MinIO. Use instead of inline payload."
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskBudget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resource caps for this task. Only valid on TASK and ADMIN_TASK messages."
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ID of the originating TASK/QUERY this message relates to.",
+          "title": "Correlation Id"
+        },
+        "message_id": {
+          "description": "Globally unique idempotency key (UUIDv4). Set once by the publisher.",
+          "format": "uuid",
+          "title": "Message Id",
+          "type": "string"
+        },
+        "msg_type": {
+          "$ref": "#/$defs/MessageType",
+          "description": "Message type \u2014 governs routing and handling."
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ID of the direct parent message (for request/reply threading).",
+          "title": "Parent Id"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "description": "Inline message body (task parameters, results, etc.). Must serialise to \u2264 64 KB. Use blob_ref for larger data.",
+          "title": "Payload",
+          "type": "object"
+        },
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Project this message belongs to. Mandatory for all messages after INIT.",
+          "title": "Project Id"
+        },
+        "protocol_version": {
+          "const": "aiat.v1",
+          "default": "aiat.v1",
+          "description": "Non-breaking protocol version for cross-runtime contract validation.",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "recipient_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target agent ID. Mutually exclusive with recipient_team for direct messages.",
+          "title": "Recipient Id"
+        },
+        "recipient_team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target team ID (e.g. 'dept_production'). Router delivers to team stream.",
+          "title": "Recipient Team"
+        },
+        "retry_count": {
+          "default": 0,
+          "description": "Number of delivery attempts so far. Incremented by XAUTOCLAIM reclaims.",
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        },
+        "sender_id": {
+          "description": "Agent ID of the sender (e.g. 'ceo_agent').",
+          "title": "Sender Id",
+          "type": "string"
+        },
+        "sender_role": {
+          "$ref": "#/$defs/AgentRole",
+          "description": "Sender's role in the corporate hierarchy."
+        },
+        "sender_team": {
+          "description": "Sender team ID (e.g. 'exec_ceo', 'dept_system').",
+          "title": "Sender Team",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "UTC timestamp when the message was created.",
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "default": 3600,
+          "description": "Time-to-live in seconds. Router discards / DLQs messages older than this.",
+          "minimum": 1,
+          "title": "Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "msg_type",
+        "sender_id",
+        "sender_role",
+        "sender_team"
+      ],
+      "title": "MessageEnvelope",
+      "type": "object"
+    },
+    "ToolRequest": {
+      "$defs": {
+        "AgentRole": {
+          "description": "Corporate hierarchy roles mapped to MAS communication policy roles.",
+          "enum": [
+            "orchestrator",
+            "executive",
+            "c_suite",
+            "admin",
+            "worker",
+            "sub_agent"
+          ],
+          "title": "AgentRole",
+          "type": "string"
+        }
+      },
+      "description": "Sent by an agent to POST /tools/{tool_name}/run on the tool-service.",
+      "properties": {
+        "agent_id": {
+          "description": "Agent ID making the request.",
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set to the originating MessageEnvelope.message_id to enable cache deduplication. Concurrent calls with the same (tool_name, tool_kwargs, idempotency_key) return the cached result from the first call.",
+          "title": "Idempotency Key"
+        },
+        "kwargs": {
+          "additionalProperties": true,
+          "description": "Keyword arguments forwarded verbatim to the tool implementation.",
+          "title": "Kwargs",
+          "type": "object"
+        },
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Project context for audit logging.",
+          "title": "Project Id"
+        },
+        "protocol_version": {
+          "const": "aiat.v1",
+          "default": "aiat.v1",
+          "description": "Non-breaking protocol version for cross-runtime contract validation.",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "sender_role": {
+          "$ref": "#/$defs/AgentRole",
+          "description": "Caller's role \u2014 enforced against tool manifest."
+        },
+        "sender_team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Caller's team for team-scoped permission checks.",
+          "title": "Sender Team"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trace span ID.",
+          "title": "Span Id"
+        },
+        "tool_name": {
+          "description": "Dot-namespaced tool identifier, e.g. 'web.search', 'project.transition', 'sprint.create'. Must match a registered tool in the tool manifest.",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Distributed trace ID for log correlation.",
+          "title": "Trace Id"
+        }
+      },
+      "required": [
+        "agent_id",
+        "sender_role",
+        "tool_name"
+      ],
+      "title": "ToolRequest",
+      "type": "object"
+    },
+    "ToolResponse": {
+      "$defs": {
+        "CircuitState": {
+          "enum": [
+            "CLOSED",
+            "OPEN",
+            "HALF_OPEN"
+          ],
+          "title": "CircuitState",
+          "type": "string"
+        }
+      },
+      "description": "Returned by the tool-service to the calling agent.",
+      "properties": {
+        "cached": {
+          "default": false,
+          "description": "True if this result was served from the Redis tool cache.",
+          "title": "Cached",
+          "type": "boolean"
+        },
+        "circuit_state": {
+          "$ref": "#/$defs/CircuitState",
+          "default": "CLOSED",
+          "description": "Circuit-breaker state of the tool at response time."
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Wall-clock execution time of the tool in milliseconds.",
+          "title": "Duration Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable error message when success=False.",
+          "title": "Error"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Machine-readable error code: 'FORBIDDEN', 'CIRCUIT_OPEN', 'RATE_LIMITED', 'TOOL_NOT_FOUND', 'TOOL_ERROR', 'VALIDATION_ERROR'.",
+          "title": "Error Code"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "protocol_version": {
+          "const": "aiat.v1",
+          "default": "aiat.v1",
+          "description": "Non-breaking protocol version for cross-runtime contract validation.",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "rate_limit_remaining": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Remaining calls in the current rate-limit window for this tool group.",
+          "title": "Rate Limit Remaining"
+        },
+        "rate_limit_reset_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UTC time when the rate-limit bucket resets.",
+          "title": "Rate Limit Reset At"
+        },
+        "responded_at": {
+          "description": "UTC timestamp when the tool-service generated this response.",
+          "format": "date-time",
+          "title": "Responded At",
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tool output on success. May be any JSON-serialisable value.",
+          "title": "Result"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "success": {
+          "description": "True if the tool executed successfully.",
+          "title": "Success",
+          "type": "boolean"
+        },
+        "tool_name": {
+          "description": "Tool that was (attempted to be) called.",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        }
+      },
+      "required": [
+        "tool_name",
+        "success"
+      ],
+      "title": "ToolResponse",
+      "type": "object"
+    },
+    "WorkerManifest": {
+      "$defs": {
+        "AgentRole": {
+          "description": "Corporate hierarchy roles mapped to MAS communication policy roles.",
+          "enum": [
+            "orchestrator",
+            "executive",
+            "c_suite",
+            "admin",
+            "worker",
+            "sub_agent"
+          ],
+          "title": "AgentRole",
+          "type": "string"
+        },
+        "CapabilityDef": {
+          "description": "Canonical capability definition used by worker manifests and registry APIs.",
+          "properties": {
+            "cost_model": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cost Model"
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "id": {
+              "format": "uuid",
+              "title": "Id",
+              "type": "string"
+            },
+            "input_schema": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Input Schema"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "output_schema": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Output Schema"
+            },
+            "required_role": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentRole"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "required_tools": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Tools",
+              "type": "array"
+            },
+            "risk_level": {
+              "default": "low",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ],
+              "title": "Risk Level",
+              "type": "string"
+            },
+            "version": {
+              "default": "1.0",
+              "title": "Version",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "CapabilityDef",
+          "type": "object"
+        },
+        "WorkerCheckpointing": {
+          "properties": {
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "every_n_calls": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Every N Calls",
+              "type": "integer"
+            },
+            "store": {
+              "additionalProperties": true,
+              "title": "Store",
+              "type": "object"
+            },
+            "strategy": {
+              "default": "on_every_llm_call",
+              "enum": [
+                "on-step",
+                "periodic",
+                "on-signal",
+                "on_every_llm_call"
+              ],
+              "title": "Strategy",
+              "type": "string"
+            }
+          },
+          "title": "WorkerCheckpointing",
+          "type": "object"
+        },
+        "WorkerIntegration": {
+          "properties": {
+            "adapter_entrypoint": {
+              "default": "WorkerAgent",
+              "title": "Adapter Entrypoint",
+              "type": "string"
+            },
+            "adapter_module": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Adapter Module"
+            },
+            "compatibility_tests": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Compatibility Tests",
+              "type": "array"
+            },
+            "isolation_mode": {
+              "default": "native",
+              "enum": [
+                "native",
+                "wrapper",
+                "fork"
+              ],
+              "title": "Isolation Mode",
+              "type": "string"
+            },
+            "wrapper_config": {
+              "additionalProperties": true,
+              "title": "Wrapper Config",
+              "type": "object"
+            }
+          },
+          "title": "WorkerIntegration",
+          "type": "object"
+        },
+        "WorkerLimits": {
+          "properties": {
+            "max_concurrent_tasks": {
+              "default": 10,
+              "minimum": 1,
+              "title": "Max Concurrent Tasks",
+              "type": "integer"
+            },
+            "max_instances": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Max Instances",
+              "type": "integer"
+            },
+            "max_payload_size_bytes": {
+              "default": 10485760,
+              "minimum": 1024,
+              "title": "Max Payload Size Bytes",
+              "type": "integer"
+            },
+            "rate_limit_per_minute": {
+              "default": 60,
+              "minimum": 1,
+              "title": "Rate Limit Per Minute",
+              "type": "integer"
+            }
+          },
+          "title": "WorkerLimits",
+          "type": "object"
+        },
+        "WorkerMetadata": {
+          "properties": {
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Description"
+            },
+            "evaluation_status": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "approved",
+                    "rejected",
+                    "deprecated"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Evaluation Status"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "source_repo": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Repo"
+            },
+            "source_revision": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Revision"
+            },
+            "tags": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Tags",
+              "type": "array"
+            },
+            "update_policy": {
+              "default": "manual",
+              "enum": [
+                "manual",
+                "auto-patch",
+                "auto-minor",
+                "auto-all"
+              ],
+              "title": "Update Policy",
+              "type": "string"
+            },
+            "version": {
+              "default": "1.0",
+              "title": "Version",
+              "type": "string"
+            },
+            "version_pin": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Version Pin"
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "title": "WorkerMetadata",
+          "type": "object"
+        },
+        "WorkerObservability": {
+          "properties": {
+            "logs_format": {
+              "default": "json",
+              "enum": [
+                "json",
+                "text"
+              ],
+              "title": "Logs Format",
+              "type": "string"
+            },
+            "metrics_enabled": {
+              "default": true,
+              "title": "Metrics Enabled",
+              "type": "boolean"
+            },
+            "traces_enabled": {
+              "default": true,
+              "title": "Traces Enabled",
+              "type": "boolean"
+            }
+          },
+          "title": "WorkerObservability",
+          "type": "object"
+        },
+        "WorkerRuntime": {
+          "properties": {
+            "adapter_config": {
+              "additionalProperties": true,
+              "title": "Adapter Config",
+              "type": "object"
+            },
+            "stop_grace_seconds": {
+              "default": 60,
+              "minimum": 1,
+              "title": "Stop Grace Seconds",
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "default": 300,
+              "minimum": 1,
+              "title": "Timeout Seconds",
+              "type": "integer"
+            },
+            "transport": {
+              "default": "process",
+              "enum": [
+                "process",
+                "http",
+                "oci",
+                "mcp",
+                "human"
+              ],
+              "title": "Transport",
+              "type": "string"
+            }
+          },
+          "title": "WorkerRuntime",
+          "type": "object"
+        },
+        "WorkerSandbox": {
+          "properties": {
+            "egress_allowlist": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Egress Allowlist",
+              "type": "array"
+            },
+            "filesystem": {
+              "additionalProperties": true,
+              "title": "Filesystem",
+              "type": "object"
+            },
+            "linux_security": {
+              "additionalProperties": true,
+              "title": "Linux Security",
+              "type": "object"
+            },
+            "network_mode": {
+              "default": "egress-allowlist",
+              "enum": [
+                "egress-allowlist",
+                "egress-deny-all",
+                "unrestricted"
+              ],
+              "title": "Network Mode",
+              "type": "string"
+            },
+            "profile": {
+              "default": "standard",
+              "enum": [
+                "standard",
+                "restricted",
+                "gvisor",
+                "firecracker"
+              ],
+              "title": "Profile",
+              "type": "string"
+            }
+          },
+          "title": "WorkerSandbox",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityDef"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "checkpointing": {
+          "$ref": "#/$defs/WorkerCheckpointing"
+        },
+        "integration": {
+          "$ref": "#/$defs/WorkerIntegration"
+        },
+        "limits": {
+          "$ref": "#/$defs/WorkerLimits"
+        },
+        "metadata": {
+          "$ref": "#/$defs/WorkerMetadata"
+        },
+        "observability": {
+          "$ref": "#/$defs/WorkerObservability"
+        },
+        "protocol_version": {
+          "const": "aiat.v1",
+          "default": "aiat.v1",
+          "description": "Non-breaking protocol version for cross-runtime contract validation.",
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/WorkerRuntime"
+        },
+        "sandbox": {
+          "$ref": "#/$defs/WorkerSandbox"
+        }
+      },
+      "required": [
+        "metadata"
+      ],
+      "title": "WorkerManifest",
+      "type": "object"
+    }
+  }
+}

@@ -22,6 +22,21 @@ MAS_MESSAGES_TOTAL = Counter(
     ["direction", "team", "msg_type"],
 )
 
+# Phase 3 custom counters — expected by dashboards and integration tests.
+# These are registered immediately so they appear in /metrics even when
+# no message has been published yet.
+MESSAGES_PUBLISHED_TOTAL = Counter(
+    "messages_published_total",
+    "Total messages successfully published to team streams.",
+    ["team"],
+)
+
+MESSAGES_DLQ_TOTAL = Counter(
+    "messages_dlq_total",
+    "Total messages moved to the dead-letter queue.",
+    ["team"],
+)
+
 # ── 2. Tool execution ─────────────────────────────────────────────────────
 MAS_TOOL_CALLS_TOTAL = Counter(
     "mas_tool_calls_total",

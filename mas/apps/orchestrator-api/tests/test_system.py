@@ -12,6 +12,7 @@ Tests for system lifecycle endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -95,6 +96,169 @@ async def test_system_status_running(client):
     assert "total_projects" in data
     assert "uptime_seconds" in data
     assert "schedule_enabled" in data
+    assert data["first_run"] == "not_seeded"
+
+
+@pytest.mark.anyio
+async def test_seed_default_company_is_idempotent(client, monkeypatch):
+    """POST /system/seed-default-company stores first-run bootstrap metadata."""
+    monkeypatch.setenv("WORKERS_DIR", "__missing_workers_for_seed_test__")
+    storage = _make_storage(system_state="RUNNING", projects=[])
+    storage.get_config = AsyncMock(return_value="true")
+    _patch_state(storage)
+
+    resp = await client.post("/system/seed-default-company")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "already_seeded"
+    assert data["first_run"] == "seeded"
+    assert data["ceo"]["id"] == "ceo_agent"
+    assert data["workers_imported"]["total"] == 0
+    assert storage.set_config.await_count >= 5
+
+
+@pytest.mark.anyio
+async def test_company_overview_returns_department_health(client):
+    """GET /system/company returns seeded company and department health summaries."""
+    storage = MagicMock()
+    departments = [
+        {"id": "exec_ceo", "name": "CEO Office"},
+        {"id": "dept_qa", "name": "Quality Assurance"},
+    ]
+    config = {
+        "default_company_seeded": "true",
+        "default_company_seeded_at": NOW_ISO,
+        "default_company_ceo": '{"id":"ceo_agent","name":"AIAT CEO"}',
+        "default_company_departments": json.dumps(departments),
+    }
+    storage.get_config = AsyncMock(side_effect=lambda key: config.get(key))
+    storage.list_workers = AsyncMock(
+        return_value=[
+            {
+                "id": "00000000-0000-4000-a000-0000000000e1",
+                "name": "qa_worker",
+                "team_id": "dept_qa",
+                "status": "ACTIVE",
+                "evaluation_status": "approved",
+                "capability_ids": [],
+            },
+            {
+                "id": "00000000-0000-4000-a000-0000000000e2",
+                "name": "candidate",
+                "team_id": "dept_qa",
+                "status": "INACTIVE",
+                "evaluation_status": "pending",
+                "source_repo": "https://github.com/example/candidate",
+                "capability_ids": [],
+            },
+        ]
+    )
+    storage.list_projects = AsyncMock(return_value=[_fake_project("PDR_REVIEW")])
+    storage.list_capabilities = AsyncMock(return_value=[{"id": "cap-1", "name": "test"}])
+    storage.list_approval_gates = AsyncMock(
+        return_value=[{"id": "gate-1", "project_id": "00000000-0000-4000-a000-000000000001"}]
+    )
+    _patch_state(storage)
+
+    resp = await client.get("/system/company")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["company"]["seeded"] is True
+    assert data["totals"]["workers"] == 2
+    qa = next(d for d in data["departments"] if d["id"] == "dept_qa")
+    assert qa["worker_count"] == 2
+    assert qa["evaluation_warnings"] == 1
+
+
+@pytest.mark.anyio
+async def test_project_workspace_groups_operator_state(client):
+    """GET /projects/{id}/workspace groups approvals, artifacts, activity, and next actions."""
+    from conftest import PROJECT_ID
+
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("HUMAN_APPROVAL"))
+    storage.list_approval_gates = AsyncMock(
+        return_value=[
+            {
+                "id": "00000000-0000-4000-a000-0000000000a1",
+                "project_id": PROJECT_ID,
+                "gate_type": "human_approval",
+                "status": "PENDING",
+                "created_at": NOW_ISO,
+            }
+        ]
+    )
+    storage.get_project_history = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "agent_id": "qa_worker",
+                "path": f"{PROJECT_ID}/reports/test.md",
+                "metadata": {"project_id": str(PROJECT_ID)},
+                "created_at": NOW_ISO,
+            }
+        ]
+    )
+    storage.list_task_logs = AsyncMock(return_value=[])
+    storage.list_workers = AsyncMock(return_value=[])
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    _patch_state(storage)
+
+    resp = await client.get(f"/projects/{PROJECT_ID}/workspace")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"]["state"] == "HUMAN_APPROVAL"
+    assert data["pending_approvals"][0]["status"] == "PENDING"
+    assert data["artifacts"][0]["path"].endswith("test.md")
+    assert data["next_actions"][0]["kind"] == "approval"
+
+
+@pytest.mark.anyio
+async def test_project_workspace_reads_flow_executions_by_keyword(client):
+    """Workspace read model calls flow execution storage with the keyword-only API."""
+    from conftest import PROJECT_ID
+
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.get_project_history = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.list_task_logs = AsyncMock(return_value=[])
+    storage.list_workers = AsyncMock(return_value=[])
+    flow_instance = {
+        "id": PROJECT_ID,
+        "flow_id": PROJECT_ID,
+        "flow_version": 1,
+        "project_id": PROJECT_ID,
+        "status": "FAILED",
+        "created_at": NOW_ISO,
+        "updated_at": NOW_ISO,
+    }
+    storage.get_flow_instance_by_project = AsyncMock(return_value=flow_instance)
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "instance_id": PROJECT_ID,
+                "node_id": "analysis",
+                "node_label": "Analysis",
+                "status": "FAILED",
+                "retry_count": 0,
+                "max_retries": 3,
+                "started_at": NOW_ISO,
+            }
+        ]
+    )
+    _patch_state(storage)
+
+    resp = await client.get(f"/projects/{PROJECT_ID}/workspace")
+
+    assert resp.status_code == 200
+    assert resp.json()["next_actions"][0]["kind"] == "retry"
+    storage.list_flow_node_executions.assert_any_await(instance_id=PROJECT_ID)
 
 
 @pytest.mark.anyio

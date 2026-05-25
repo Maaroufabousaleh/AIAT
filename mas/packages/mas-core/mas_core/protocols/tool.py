@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +40,11 @@ class ToolRequest(BaseModel):
     """Sent by an agent to POST /tools/{tool_name}/run on the tool-service."""
 
     model_config = ConfigDict(populate_by_name=True)
+
+    protocol_version: Literal["aiat.v1"] = Field(
+        default="aiat.v1",
+        description="Non-breaking protocol version for cross-runtime contract validation.",
+    )
 
     # Caller identity (used for role-based access gating)
     caller_id: str = Field(
@@ -99,6 +104,11 @@ class ToolRequest(BaseModel):
 
 class ToolResponse(BaseModel):
     """Returned by the tool-service to the calling agent."""
+
+    protocol_version: Literal["aiat.v1"] = Field(
+        default="aiat.v1",
+        description="Non-breaking protocol version for cross-runtime contract validation.",
+    )
 
     # Request echo — always set
     tool_name: str = Field(..., description="Tool that was (attempted to be) called.")

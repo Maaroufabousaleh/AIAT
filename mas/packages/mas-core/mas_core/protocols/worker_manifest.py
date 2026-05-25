@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from .capability import CapabilityDef
 
+WORKER_SDK_VERSION = "aiat-worker-sdk.v1"
+
 
 class WorkerMetadata(BaseModel):
     id: str
@@ -68,6 +70,10 @@ class WorkerObservability(BaseModel):
 
 
 class WorkerManifest(BaseModel):
+    protocol_version: Literal["aiat.v1"] = Field(
+        default="aiat.v1",
+        description="Non-breaking protocol version for cross-runtime contract validation.",
+    )
     metadata: WorkerMetadata
     runtime: WorkerRuntime = Field(default_factory=WorkerRuntime)
     capabilities: list[CapabilityDef] = Field(default_factory=list)

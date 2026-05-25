@@ -6,7 +6,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from mas_core.observability.metrics import MAS_MESSAGES_TOTAL
+from mas_core.observability.metrics import MAS_MESSAGES_TOTAL, MESSAGES_PUBLISHED_TOTAL
 from mas_core.observability.tracing import bind_trace_id
 from mas_core.policy.engine import CommunicationPolicy
 from mas_core.protocols.envelope import MessageEnvelope
@@ -141,6 +141,7 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
         team=target_team,
         msg_type=str(envelope.msg_type),
     ).inc()
+    MESSAGES_PUBLISHED_TOTAL.labels(team=target_team).inc()
 
     return PublishResponse(entry_id=entry_id)
 
@@ -211,6 +212,7 @@ async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
             team=team_id,
             msg_type=str(envelope.msg_type),
         ).inc()
+        MESSAGES_PUBLISHED_TOTAL.labels(team=team_id).inc()
 
     return BroadcastResponse(entry_ids=entry_ids)
 

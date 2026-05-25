@@ -1,0 +1,57 @@
+protocol_version: aiat.v1
+metadata:
+  id: docling_ingestion_placeholder
+  name: Docling Ingestion Placeholder
+  version: '0.1'
+  description: Placeholder manifest for a future guarded Docling document-ingestion worker.
+  source_repo: local
+  source_revision: placeholder
+  tags:
+  - placeholder
+  - dept_production
+  - docling
+  version_pin: null
+  update_policy: manual
+  evaluation_status: pending
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: DoclingIngestionWorker
+    disabled_placeholder: true
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+capabilities:
+- name: document.ingest.docling
+  version: '0.1'
+  description: Placeholder capability for future Docling-backed document ingestion.
+  risk_level: medium
+  required_tools: []
+sandbox:
+  profile: gvisor
+  filesystem: {}
+  network_mode: egress-deny-all
+  egress_allowlist: []
+  linux_security: {}
+integration:
+  adapter_entrypoint: DoclingIngestionWorker
+  adapter_module: null
+  wrapper_config:
+    placeholder_only: true
+  compatibility_tests: []
+  isolation_mode: wrapper
+limits:
+  max_concurrent_tasks: 1
+  max_instances: 1
+  rate_limit_per_minute: 10
+  max_payload_size_bytes: 10485760
+checkpointing:
+  enabled: true
+  strategy: on_every_llm_call
+  every_n_calls: 1
+  store:
+    kind: postgres
+    table: agent_checkpoints
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true

@@ -1,0 +1,29 @@
+{
+  "protocol_version": "aiat.v1",
+  "metadata": {
+    "id": "worker_alpha",
+    "name": "Worker Alpha",
+    "version": "1.0.0",
+    "source_repo": "https://github.com/example/worker-alpha",
+    "version_pin": "v1.0.0"
+  },
+  "runtime": {
+    "transport": "process",
+    "adapter_config": {
+      "command": "python -m worker_alpha"
+    }
+  },
+  "capabilities": [
+    {
+      "name": "validate_contract",
+      "risk_level": "low"
+    }
+  ],
+  "sandbox": {
+    "profile": "restricted",
+    "network_mode": "egress-allowlist",
+    "egress_allowlist": [
+      "api.github.com"
+    ]
+  }
+}

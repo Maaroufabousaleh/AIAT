@@ -71,6 +71,7 @@ async def client_with_browser():
     """ASGI httpx client with FakeBrowserTool injected into the app registry."""
     pytest.importorskip("fastapi")
     import httpx as _httpx
+    from tool_service.config import get_settings
     from tool_service.main import app
     from tool_service.tools.all_tools import get_all_tools as _get_all_tools
 
@@ -80,12 +81,18 @@ async def client_with_browser():
         tools.append(FakeBrowserTool())
         return tools
 
+    settings = get_settings()
+    headers = {}
+    if settings.tool_secret:
+        headers["Authorization"] = f"Bearer {settings.tool_secret}"
+
     with patch("tool_service.main.get_all_tools", _patched_get_all_tools):
         async with (
             app.router.lifespan_context(app),
             _httpx.AsyncClient(
                 transport=_httpx.ASGITransport(app=app, raise_app_exceptions=False),
                 base_url="http://test",
+                headers=headers,
             ) as ac,
         ):
             yield ac

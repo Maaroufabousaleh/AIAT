@@ -892,6 +892,24 @@ class AgentStorage:
                 )
             )
 
+    async def list_approval_gates(
+        self,
+        *,
+        project_id: UUID | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List approval gates for operator read models."""
+        q = t.approval_gates.select()
+        if project_id is not None:
+            q = q.where(t.approval_gates.c.project_id == project_id)
+        if status is not None:
+            q = q.where(t.approval_gates.c.status == status)
+        q = q.order_by(t.approval_gates.c.created_at.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Sprints
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1851,6 +1869,10 @@ class AgentStorage:
         overall_score: float | None = None,
         verdict: str = "PENDING",
         evaluator_version: str | None = None,
+        risk_tier: str = "unknown",
+        blocked_reasons: list[str] | None = None,
+        recommended_status: str = "PENDING_EVALUATION",
+        requires_human_approval: bool = False,
         notes: str | None = None,
         report_id: UUID | None = None,
     ) -> dict[str, Any]:
@@ -1865,6 +1887,10 @@ class AgentStorage:
             "overall_score": overall_score,
             "verdict": verdict,
             "evaluator_version": evaluator_version,
+            "risk_tier": risk_tier,
+            "blocked_reasons": blocked_reasons or [],
+            "recommended_status": recommended_status,
+            "requires_human_approval": requires_human_approval,
             "notes": notes,
         }
         async with self.engine.begin() as conn:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Users, CheckCircle, AlertTriangle, XCircle, Package, Plus, ChevronDown, ChevronRight, ExternalLink, Settings, Power } from "lucide-react";
+import { RefreshCw, Users, CheckCircle, AlertTriangle, XCircle, Package, Plus, ChevronDown, ChevronRight, ExternalLink, Settings, Power, ClipboardCheck, ShieldCheck } from "lucide-react";
 import { clsx } from "clsx";
 
 interface WorkerCapability {
@@ -31,16 +31,52 @@ interface Worker {
   updated_at?: string;
 }
 
+interface EvaluationReport {
+  id: string;
+  verdict: string;
+  overall_score?: number;
+  evaluated_at?: string;
+  risk_tier?: string;
+  checks?: Record<string, { passed?: boolean; score?: number; status?: string; details?: string }>;
+  blocked_reasons?: string[];
+  recommended_status?: string;
+  requires_human_approval?: boolean;
+}
+
+interface DeltaIntegration {
+  id: string;
+  name: string;
+  bucket: string;
+  target: string;
+  owner_department: string;
+  status: string;
+  required_gates: string[];
+  blocked_reason?: string | null;
+  worker_refs: Array<{ id: string; name?: string; status?: string; evaluation_status?: string; source_repo?: string; team_id?: string }>;
+}
+
+interface DeltaReadiness {
+  phase: string;
+  status: string;
+  summary: { total: number; ready_or_wired: number; deferred: number; blocked: number };
+  principles: string[];
+  integrations: DeltaIntegration[];
+}
+
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; cls: string }> = {
   ACTIVE: { label: "Active", icon: CheckCircle, cls: "text-green-400 bg-green-400/10 border-green-700" },
   INACTIVE: { label: "Inactive", icon: XCircle, cls: "text-gray-400 bg-gray-400/10 border-gray-700" },
+  DRAINING: { label: "Draining", icon: AlertTriangle, cls: "text-cyan-400 bg-cyan-400/10 border-cyan-700" },
   DEREGISTERED: { label: "Deregistered", icon: XCircle, cls: "text-red-400 bg-red-400/10 border-red-700" },
   PENDING: { label: "Pending", icon: AlertTriangle, cls: "text-yellow-400 bg-yellow-400/10 border-yellow-700" },
+  PENDING_EVALUATION: { label: "Pending Eval", icon: AlertTriangle, cls: "text-yellow-400 bg-yellow-400/10 border-yellow-700" },
+  REJECTED: { label: "Rejected", icon: XCircle, cls: "text-red-400 bg-red-400/10 border-red-700" },
   ERROR: { label: "Error", icon: AlertTriangle, cls: "text-red-400 bg-red-400/10 border-red-700" },
 };
 
 const EVAL_COLORS: Record<string, string> = {
   approved: "text-green-400",
+  conditional: "text-yellow-400",
   pending: "text-yellow-400",
   rejected: "text-red-400",
   unknown: "text-gray-400",
@@ -60,19 +96,90 @@ function StatusBadge({ status }: { status: string }) {
 function WorkerRow({ worker, onStatusChange }: { worker: Worker; onStatusChange: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evaluations, setEvaluations] = useState<EvaluationReport[]>([]);
+  const [actionError, setActionError] = useState("");
+
+  const latestEvaluation = evaluations[0];
+  const activationBlocked =
+    Boolean(worker.source_repo) && (worker.evaluation_status ?? "pending") !== "approved";
+
+  async function loadEvaluations() {
+    const res = await fetch(`/api/workers/${worker.id}/evaluations`);
+    if (res.ok) {
+      const data = await res.json();
+      setEvaluations(Array.isArray(data) ? data : []);
+    }
+  }
+
+  async function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && worker.source_repo) {
+      await loadEvaluations();
+    }
+  }
 
   async function toggleStatus() {
     const newStatus = worker.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    const action = worker.status === "ACTIVE" ? "DEACTIVATE" : "ACTIVATE";
     setTransitioning(true);
+    setActionError("");
     try {
-      await fetch(`/api/workers/${worker.id}/status`, {
+      const res = await fetch(`/api/workers/${worker.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ action, new_status: newStatus }),
       });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setActionError(payload.error ?? payload.detail ?? "Status transition failed");
+        return;
+      }
       onStatusChange();
     } finally {
       setTransitioning(false);
+    }
+  }
+
+  async function drainWorker() {
+    setTransitioning(true);
+    setActionError("");
+    try {
+      const res = await fetch(`/api/workers/${worker.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "DRAIN" }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setActionError(payload.error ?? payload.detail ?? "Drain failed");
+        return;
+      }
+      onStatusChange();
+    } finally {
+      setTransitioning(false);
+    }
+  }
+
+  async function evaluateWorker() {
+    setEvaluating(true);
+    setActionError("");
+    try {
+      const res = await fetch(`/api/workers/${worker.id}/evaluate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setActionError(payload.error ?? payload.detail ?? "Evaluation failed");
+        return;
+      }
+      await loadEvaluations();
+      onStatusChange();
+    } finally {
+      setEvaluating(false);
     }
   }
 
@@ -80,7 +187,7 @@ function WorkerRow({ worker, onStatusChange }: { worker: Worker; onStatusChange:
     <>
       <tr
         className="border-b border-gray-800 hover:bg-gray-800/30 cursor-pointer transition-colors"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => void toggleExpanded()}
       >
         <td className="px-4 py-3 text-gray-500 w-8">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -105,6 +212,17 @@ function WorkerRow({ worker, onStatusChange }: { worker: Worker; onStatusChange:
           {worker.version ?? "—"}
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1">
+          {worker.source_repo && (
+            <button
+              onClick={evaluateWorker}
+              disabled={evaluating}
+              title="Evaluate"
+              className="p-1.5 rounded text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-40"
+            >
+              <ClipboardCheck size={14} />
+            </button>
+          )}
           <button
             onClick={toggleStatus}
             disabled={transitioning}
@@ -118,6 +236,15 @@ function WorkerRow({ worker, onStatusChange }: { worker: Worker; onStatusChange:
           >
             <Power size={14} />
           </button>
+          <button
+            onClick={drainWorker}
+            disabled={transitioning || worker.status !== "ACTIVE"}
+            title="Drain"
+            className="p-1.5 rounded text-gray-500 hover:text-cyan-400 hover:bg-cyan-400/10 transition-colors disabled:opacity-30"
+          >
+            <RefreshCw size={14} />
+          </button>
+          </div>
         </td>
       </tr>
 
@@ -181,6 +308,56 @@ function WorkerRow({ worker, onStatusChange }: { worker: Worker; onStatusChange:
                 )}
               </div>
             </div>
+            {(activationBlocked || actionError || latestEvaluation) && (
+              <div className="mt-4 border-t border-gray-800 pt-4 text-sm">
+                {activationBlocked && (
+                  <div className="mb-3 rounded border border-yellow-700 bg-yellow-400/10 px-3 py-2 text-yellow-300">
+                    Blocked until approval: this external worker needs an approved evaluation before activation.
+                  </div>
+                )}
+                {actionError && (
+                  <div className="mb-3 rounded border border-red-700 bg-red-400/10 px-3 py-2 text-red-300">
+                    {actionError}
+                  </div>
+                )}
+                {latestEvaluation && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Latest Evaluation</h4>
+                    <div className="grid grid-cols-4 gap-3 mb-3">
+                      <div>
+                        <div className="text-gray-500 text-xs">Verdict</div>
+                        <div className="text-white font-mono">{latestEvaluation.verdict}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs">Risk</div>
+                        <div className="text-white font-mono">{latestEvaluation.risk_tier ?? "unknown"}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs">Score</div>
+                        <div className="text-white font-mono">{latestEvaluation.overall_score ?? "-"}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs">Recommended</div>
+                        <div className="text-white font-mono">{latestEvaluation.recommended_status ?? "-"}</div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {Object.entries(latestEvaluation.checks ?? {}).map(([name, check]) => (
+                        <div key={name} className="rounded border border-gray-800 bg-gray-950 px-3 py-2">
+                          <div className="flex justify-between gap-2">
+                            <span className="text-gray-300 font-mono text-xs">{name}</span>
+                            <span className={clsx("text-xs", check.passed ? "text-green-400" : "text-red-400")}>
+                              {check.status ?? (check.passed ? "PASSED" : "FAILED")}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">{check.details}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </td>
         </tr>
       )}
@@ -287,7 +464,7 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
                 value={form.transport_mode}
                 onChange={(e) => setForm({ ...form, transport_mode: e.target.value })}
               >
-                {["process", "http", "grpc", "redis"].map((m) => (
+                {["process", "http", "mcp", "oci", "human"].map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
@@ -302,7 +479,7 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
               placeholder="https://github.com/org/repo"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Optional. Upstream repo will be evaluated for fit, security, and compatibility before activation.
+              Optional. Upstream repo will be evaluated for provenance, scans, sandbox policy, and compatibility before activation.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -322,7 +499,7 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
                 value={form.sandbox_profile}
                 onChange={(e) => setForm({ ...form, sandbox_profile: e.target.value })}
               >
-                {["restricted", "standard", "elevated", "none"].map((p) => (
+                {["restricted", "standard", "gvisor", "firecracker"].map((p) => (
                   <option key={p} value={p}>{p}</option>
                 ))}
               </select>
@@ -348,8 +525,10 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
 
 export default function WorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [deltaReadiness, setDeltaReadiness] = useState<DeltaReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deltaError, setDeltaError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [showRegister, setShowRegister] = useState(false);
@@ -357,11 +536,21 @@ export default function WorkersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setDeltaError("");
     try {
-      const res = await fetch("/api/workers");
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setWorkers(Array.isArray(data) ? data : []);
+      const [workersRes, deltaRes] = await Promise.all([
+        fetch("/api/workers"),
+        fetch("/api/integrations/delta-readiness"),
+      ]);
+      if (!workersRes.ok) throw new Error(await workersRes.text());
+      const workersData = await workersRes.json();
+      setWorkers(Array.isArray(workersData) ? workersData : []);
+      if (deltaRes.ok) {
+        setDeltaReadiness(await deltaRes.json());
+      } else {
+        setDeltaReadiness(null);
+        setDeltaError(await deltaRes.text());
+      }
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -397,11 +586,10 @@ export default function WorkersPage() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <Users className="w-6 h-6 text-blue-400" />
-            Workers
+            Hiring Board
           </h1>
           <p className="text-gray-400 text-sm mt-1">
-            Configuration-driven integration units. Workers are YAML-defined contracts that describe
-            how capabilities are integrated into the MAS.
+            Evaluate worker candidates, inspect guarded checks, and control activation state.
           </p>
         </div>
         <div className="flex gap-2">
@@ -427,8 +615,8 @@ export default function WorkersPage() {
         <div className="text-sm text-blue-300 space-y-1">
           <p>
             <strong>Adapter model:</strong> Workers integrate via thin compatibility layers.
-            Upstream repositories are ingested and evaluated for fit, security, and architectural
-            compatibility before activation.
+            Upstream repositories are ingested and evaluated for provenance, security scans,
+            sandbox policy, budget posture, and compatibility before activation.
           </p>
           <p className="text-blue-400/70">
             Shared tools (browser, web access, search, storage) are provided centrally by the
@@ -438,10 +626,89 @@ export default function WorkersPage() {
         </div>
       </div>
 
+      {/* Delta readiness */}
+      <div className="border border-gray-800 bg-gray-900 rounded-xl p-4 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-green-400" />
+              Delta Integration Readiness
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Governed adoption path for Docling, GitHub API, defensive scanners, and optional n8n edge automation.
+            </p>
+          </div>
+          {deltaReadiness && (
+            <div className="grid grid-cols-4 gap-2 text-center text-xs">
+              <div>
+                <div className="text-white font-semibold">{deltaReadiness.summary.total}</div>
+                <div className="text-gray-500">total</div>
+              </div>
+              <div>
+                <div className="text-green-400 font-semibold">{deltaReadiness.summary.ready_or_wired}</div>
+                <div className="text-gray-500">ready</div>
+              </div>
+              <div>
+                <div className="text-yellow-400 font-semibold">{deltaReadiness.summary.blocked}</div>
+                <div className="text-gray-500">blocked</div>
+              </div>
+              <div>
+                <div className="text-gray-400 font-semibold">{deltaReadiness.summary.deferred}</div>
+                <div className="text-gray-500">deferred</div>
+              </div>
+            </div>
+          )}
+        </div>
+        {deltaError && (
+          <div className="rounded border border-yellow-700 bg-yellow-400/10 px-3 py-2 text-xs text-yellow-300">
+            Delta readiness unavailable: {deltaError}
+          </div>
+        )}
+        {deltaReadiness && (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+            {deltaReadiness.integrations.map((item) => (
+              <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-medium text-white">{item.name}</div>
+                    <div className="text-xs text-gray-500">{item.owner_department} / {item.target}</div>
+                  </div>
+                  <span className={clsx(
+                    "rounded border px-2 py-0.5 text-xs",
+                    item.status === "deferred"
+                      ? "border-gray-700 text-gray-400"
+                      : item.blocked_reason
+                        ? "border-yellow-700 text-yellow-300"
+                        : "border-green-700 text-green-300"
+                  )}>
+                    {item.status}
+                  </span>
+                </div>
+                <div className="mt-3 text-xs text-gray-400">
+                  {item.worker_refs.length > 0
+                    ? `${item.worker_refs.length} registry reference${item.worker_refs.length === 1 ? "" : "s"}`
+                    : "No registry reference yet"}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {item.required_gates.slice(0, 3).map((gate) => (
+                    <span key={gate} className="rounded border border-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                      {gate}
+                    </span>
+                  ))}
+                </div>
+                {item.blocked_reason && (
+                  <div className="mt-3 text-xs text-yellow-300/80">{item.blocked_reason}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "Total Workers", value: workers.length, cls: "text-white", border: "border-gray-800" },
+          { label: "Candidates", value: workers.length, cls: "text-white", border: "border-gray-800" },
           { label: "Active", value: activeCount, cls: "text-green-400", border: "border-green-900/40" },
           { label: "Inactive", value: inactiveCount, cls: "text-gray-400", border: "border-gray-800" },
           { label: "Error", value: errorCount, cls: "text-red-400", border: "border-red-900/40" },
@@ -470,7 +737,7 @@ export default function WorkersPage() {
           className="flex-1 px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
         <div className="flex gap-1 bg-gray-900 border border-gray-700 rounded-lg p-1">
-          {["ALL", "ACTIVE", "INACTIVE", "ERROR"].map((s) => (
+          {["ALL", "ACTIVE", "INACTIVE", "DRAINING", "PENDING_EVALUATION", "REJECTED", "ERROR"].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}

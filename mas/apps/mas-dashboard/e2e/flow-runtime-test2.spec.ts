@@ -20,6 +20,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import { authenticate } from "./auth";
 
 // ── Auth helper ──────────────────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   const stamp = Date.now();
 
   test.beforeEach(async ({ page }) => {
-    await login(page);
+    await authenticate(page, "/projects");
   });
 
   test("1. Create flow with all required nodes, reload, verify serialization survives", async ({ page }) => {

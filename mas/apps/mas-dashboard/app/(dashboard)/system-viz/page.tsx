@@ -8,9 +8,9 @@ import {
   GitBranch,
   ChevronRight,
   RefreshCw,
-  Info,
   ArrowRight,
   Search,
+  Copy,
 } from "lucide-react";
 
 import { useSystemVizStore } from "@/lib/system-viz-store";
@@ -24,6 +24,13 @@ const VIEW_MODES: { id: ViewMode; label: string; icon: React.ElementType }[] = [
   { id: "permissions", label: "Permissions", icon: Users },
   { id: "orchestration", label: "Orchestration", icon: GitBranch },
 ];
+
+type OrgGraphSummary = {
+  nodes?: Array<unknown>;
+  edges?: Array<unknown>;
+  capability_edges?: Array<unknown>;
+  mermaid?: string;
+};
 
 export default function SystemVisualizationPage() {
   const {
@@ -50,30 +57,35 @@ export default function SystemVisualizationPage() {
   const [traceMode, setTraceMode] = useState(false);
   const [traceStart, setTraceStart] = useState<string | null>(null);
   const [traceEnd, setTraceEnd] = useState<string | null>(null);
+  const [orgGraph, setOrgGraph] = useState<OrgGraphSummary | null>(null);
+  const [mermaidCopied, setMermaidCopied] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [sysRes, permRes, orchRes] = await Promise.all([
+      const [sysRes, permRes, orchRes, orgGraphRes] = await Promise.all([
         fetch("/api/system/hierarchy"),
         fetch("/api/system/permissions"),
         fetch("/api/system/orchestration"),
+        fetch("/api/system/org-graph"),
       ]);
 
-      if (!sysRes.ok || !permRes.ok || !orchRes.ok) {
+      if (!sysRes.ok || !permRes.ok || !orchRes.ok || !orgGraphRes.ok) {
         throw new Error("Failed to load system data");
       }
 
-      const [sysData, permData, orchData] = await Promise.all([
+      const [sysData, permData, orchData, orgGraphData] = await Promise.all([
         sysRes.json(),
         permRes.json(),
         orchRes.json(),
+        orgGraphRes.json(),
       ]);
 
       setSystemData(sysData);
       setPermissionData(permData);
       setOrchestrationData(orchData);
+      setOrgGraph(orgGraphData);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -137,6 +149,13 @@ export default function SystemVisualizationPage() {
     setTraceEnd(null);
     setHighlightedPath(null);
   }, [setHighlightedPath]);
+
+  const copyMermaid = useCallback(async () => {
+    if (!orgGraph?.mermaid) return;
+    await navigator.clipboard.writeText(orgGraph.mermaid);
+    setMermaidCopied(true);
+    window.setTimeout(() => setMermaidCopied(false), 1500);
+  }, [orgGraph]);
 
   if (loading) {
     return (
@@ -215,6 +234,32 @@ export default function SystemVisualizationPage() {
           </button>
         </div>
       </div>
+
+      {orgGraph?.mermaid && (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 border-b border-gray-800 bg-gray-900/80">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="text-sm font-medium text-white">Mermaid Export</div>
+              <div className="text-xs text-gray-500">
+                {(orgGraph.nodes ?? []).length} nodes / {(orgGraph.edges ?? []).length} edges / {(orgGraph.capability_edges ?? []).length} capability links
+              </div>
+            </div>
+            <pre
+              aria-label="Mermaid export"
+              className="max-h-20 overflow-auto rounded border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-gray-300"
+            >
+              {orgGraph.mermaid}
+            </pre>
+          </div>
+          <button
+            onClick={copyMermaid}
+            className="self-start inline-flex items-center gap-2 px-3 py-2 rounded border border-gray-700 bg-gray-800 text-sm text-gray-200 hover:border-gray-500"
+          >
+            <Copy size={14} />
+            {mermaidCopied ? "Copied" : "Copy Mermaid"}
+          </button>
+        </div>
+      )}
 
       {traceMode && viewMode === "orchestration" && (
         <div className="flex items-center gap-4 px-4 py-2 bg-amber-900/20 border-b border-amber-800">

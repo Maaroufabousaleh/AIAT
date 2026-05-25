@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -133,6 +133,11 @@ class MessageEnvelope(BaseModel):
     a 300 s Redis TTL; consumers maintain a 1 000-entry LRU set keyed on
     ``message_id`` to guard against XAUTOCLAIM re-delivery races.
     """
+
+    protocol_version: Literal["aiat.v1"] = Field(
+        default="aiat.v1",
+        description="Non-breaking protocol version for cross-runtime contract validation.",
+    )
 
     # --- Identity & correlation ---
     message_id: UUID = Field(

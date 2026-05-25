@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { authenticate } from "./auth";
 
 async function login(page: Page) {
   const username = process.env.E2E_DASHBOARD_USERNAME ?? "admin";
@@ -62,7 +63,7 @@ test("operator can build, version, assign, refresh, and override a flow from the
   const flowName = `Simple Product Build Flow ${stamp}`;
   const projectName = `flow-ui-project-${stamp}`;
 
-  await login(page);
+  await authenticate(page, "/projects");
   await page.goto("/flows/new");
 
   await page.getByTestId("flow-name-input").fill(flowName);
