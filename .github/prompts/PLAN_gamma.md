@@ -555,10 +555,12 @@ them:
   `JWT_SECRET`, so live tests no longer depend on the operator's real password.
 - Fixed npm build hang on Windows (buffering issue in background mode; builds
   successfully to completion when run with output redirected to file).
-- Verified the current slice with full WSL pytest (1297 passed, 66 skipped),
-  dashboard build (compiles 40 pages, ~197 kB max bundle), protocol fixture and
-  TypeScript checks, Docker Compose rebuild, and live Playwright coverage (all
-  16 E2E tests pass in sequence).
+- Verified the current slice on 2026-05-31 with full WSL pytest
+  (`UV_PROJECT_ENVIRONMENT=/tmp/aiat-mas-uv-venv uv run pytest -q`, exit 0,
+  1383 tests collected, no failures), dashboard build (47 app routes generated,
+  ~197 kB max first-load bundle), protocol fixture and TypeScript checks,
+  Compose validation/health, and live Playwright coverage (all 23 E2E tests
+  pass in sequence against the Compose dashboard).
 
 All acceptance criteria are verified:
 1. Company seed via `/api/system/seed-default-company` ✅
@@ -571,7 +573,8 @@ All acceptance criteria are verified:
 8. Two main stories (hiring + project init) via Playwright E2E coverage ✅
 9. Credential masking via `stripCredentialSecrets` in credentials routes ✅
 10. Docker socket exposure via `test_gamma_hardening.py` ✅
-11. Regression via all 16 Playwright tests + 1297 pytest tests passing ✅
+11. Regression via all 23 Playwright tests + full pytest exit 0 over 1383
+    collected tests ✅
 
 Known remaining limitations (by design, not bugs):
 - project-scoped logs and cost telemetry are explicit unavailable states

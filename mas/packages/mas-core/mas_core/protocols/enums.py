@@ -194,3 +194,18 @@ class SystemState(str, Enum):
     SHUTTING_DOWN = "SHUTTING_DOWN"
     STARTING = "STARTING"
     STOPPED = "STOPPED"
+
+
+class WorkerRuntimeTier(str, Enum):
+    """Runtime tier for a worker, indicating which execution engine powers it.
+
+    Epsilon adds LangGraph, CrewAI, AutoGen, and Letta as guardrailed
+    specialist runtimes behind AIAT's control plane.
+    """
+
+    BUILTIN = "builtin"       # Native Python agents (WorkerAgent, CSuiteAgent, etc.)
+    LANGGRAPH = "langgraph"   # LangGraph-backed departmental chief runtime
+    CREWAI = "crewai"         # CrewAI crew-style department runtime
+    AUTOGEN = "autogen"       # AutoGen guardrailed specialist runtime
+    LETTA = "letta"           # Letta memory-heavy research specialist
+    EXTERNAL = "external"     # Process/http/mcp/oci external worker

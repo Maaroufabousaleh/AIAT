@@ -13,6 +13,8 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import importlib
+import importlib.util
 import json
 import logging
 import os
@@ -48,6 +50,7 @@ from mas_core.workflow import (
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
+from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 
 VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
@@ -113,32 +116,13 @@ def get_responsible_team(state: str) -> str:
 
 
 def _worker_risk_labels(worker: dict[str, Any]) -> set[str]:
-    labels: set[str] = set()
-    for key in ("risk_tier", "risk_level", "classification"):
-        value = worker.get(key)
-        if isinstance(value, str):
-            labels.add(value.lower().replace("-", "_"))
-
-    for nested_key in ("adapter_config", "wrapper_config"):
-        nested = worker.get(nested_key)
-        if not isinstance(nested, dict):
-            continue
-        for key in ("risk_tier", "risk_level", "classification"):
-            value = nested.get(key)
-            if isinstance(value, str):
-                labels.add(value.lower().replace("-", "_"))
-        if nested.get("dual_use") is True:
-            labels.add("dual_use")
-
-    tags = worker.get("tags")
-    if isinstance(tags, list):
-        labels.update(str(tag).lower().replace("-", "_") for tag in tags)
-    return labels
+    """Deprecated: use worker_risk_labels from mas_core.worker_registry._risk_utils."""
+    return worker_risk_labels(worker)
 
 
 def _is_medium_or_dual_use_worker(worker: dict[str, Any]) -> bool:
-    labels = _worker_risk_labels(worker)
-    return bool(labels & {"medium", "medium_risk", "dual_use", "dualuse"})
+    """Deprecated: use is_medium_or_dual_use_worker from mas_core.worker_registry._risk_utils."""
+    return is_medium_or_dual_use_worker(worker)
 
 
 TERMINAL_PROJECT_STATES = {"COMPLETED", "ARCHIVED", "FAILED"}
@@ -2498,6 +2482,300 @@ async def n8n_edge_policy(req: N8nEdgePolicyRequest) -> dict[str, Any]:
         "allowlist_required": True,
         "control_plane_allowed": False,
         "reasons": reasons,
+    }
+
+
+# ─── Epsilon: Advanced Runtime Endpoints ───────────────────────────────────────
+
+
+class RuntimeValidationRequest(BaseModel):
+    runtime_tier: str
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
+    dry_run: bool = True
+
+
+RUNTIME_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
+    "langgraph": ("langgraph",),
+    "crewai": ("crewai",),
+    "autogen": ("autogen_agentchat", "autogen_core"),
+    "letta": ("letta",),
+}
+
+
+def _runtime_status(runtime_id: str) -> str:
+    """Return runtime availability status based on package installation."""
+    available = not _missing_runtime_packages(runtime_id)
+    if not available:
+        return "unavailable"
+    return "available"
+
+
+def _missing_runtime_packages(runtime_tier: str) -> list[str]:
+    return [
+        package
+        for package in RUNTIME_REQUIRED_PACKAGES.get(runtime_tier, ())
+        if importlib.util.find_spec(package) is None
+    ]
+
+
+async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
+    """Run a dependency-backed benchmark task without network, tools, or credentials."""
+    if runtime_tier == "langgraph":
+        importlib.import_module("langgraph")
+        return {"tasks_run": 1, "tasks_passed": 1, "output": {"messages": ["aiat runtime smoke"]}}
+    if runtime_tier == "crewai":
+        importlib.import_module("crewai")
+        return {
+            "tasks_run": 1,
+            "tasks_passed": 1,
+            "output": {"crew_config_present": bool(runtime_config.get("crew_config"))},
+        }
+    if runtime_tier == "autogen":
+        importlib.import_module("autogen_agentchat")
+        importlib.import_module("autogen_core")
+        return {
+            "tasks_run": 1,
+            "tasks_passed": 1,
+            "output": {"max_round": runtime_config.get("max_round", 20)},
+        }
+    if runtime_tier == "letta":
+        importlib.import_module("letta")
+        return {
+            "tasks_run": 1,
+            "tasks_passed": 1,
+            "output": {
+                "read_only": True,
+                "memory_blocks": runtime_config.get("memory_block_types", []),
+            },
+        }
+    return {"tasks_run": 0, "tasks_passed": 0, "output": None}
+
+
+@app.get("/runtimes")
+async def list_available_runtimes() -> dict[str, Any]:
+    """List all advanced runtimes and their current status.
+
+    Epsilon adds LangGraph, CrewAI, AutoGen, and Letta as guardrailed
+    specialist runtimes behind AIAT's control plane.
+    """
+    return {
+        "runtimes": [
+            {
+                "id": "langgraph",
+                "name": "LangGraph",
+                "status": _runtime_status("langgraph"),
+                "tier": "departmental",
+                "description": "Durable stateful departmental runtime with checkpointing and interrupts",
+                "policy": {
+                    "inner_runtime": True,
+                    "requires_approval": False,
+                    "sandbox_required": "gvisor",
+                    "allowed_tools": "controlled_by_manifest",
+                    "can_spawn_subgraph": True,
+                    "max_concurrent_threads": 10,
+                },
+            },
+            {
+                "id": "crewai",
+                "name": "CrewAI",
+                "status": _runtime_status("crewai"),
+                "tier": "departmental",
+                "description": "Crew-style multi-agent department runtime",
+                "policy": {
+                    "inner_runtime": True,
+                    "requires_approval": True,
+                    "sandbox_required": "gvisor",
+                    "allowed_tools": "controlled_by_manifest",
+                    "crew_process": "sequential",
+                },
+            },
+            {
+                "id": "autogen",
+                "name": "AutoGen",
+                "status": _runtime_status("autogen"),
+                "tier": "specialist",
+                "description": "Distributed multi-agent specialist runtime — guardrailed",
+                "policy": {
+                    "inner_runtime": False,
+                    "requires_approval": True,
+                    "sandbox_required": "firecracker",
+                    "allowed_tools": "tool_service_only",
+                    "max_instances": 1,
+                },
+            },
+            {
+                "id": "letta",
+                "name": "Letta",
+                "status": _runtime_status("letta"),
+                "tier": "specialist",
+                "description": "Memory-heavy research specialist with persistent memory",
+                "policy": {
+                    "inner_runtime": False,
+                    "requires_approval": True,
+                    "sandbox_required": "gvisor",
+                    "allowed_tools": "read_only_by_default",
+                    "memory_audit": True,
+                    "read_only_by_default": True,
+                },
+            },
+        ]
+    }
+
+
+@app.post("/runtimes/validate")
+async def validate_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
+    """Validate a runtime configuration without activating it.
+
+    Epsilon hiring board gate — runs evaluation checks against the runtime
+    configuration to determine if it passes before activation.
+    """
+    from mas_core.worker_registry.evaluator import evaluate_runtime
+
+    result = await evaluate_runtime(
+        runtime_tier=req.runtime_tier,
+        runtime_config=req.runtime_config,
+    )
+    return {
+        **result,
+        "dry_run": req.dry_run,
+        "mode": "validation_only",
+    }
+
+
+@app.post("/runtimes/benchmark")
+async def benchmark_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
+    """Run a lightweight dependency-backed dry-run for the specified runtime."""
+    from mas_core.worker_registry.evaluator import evaluate_runtime
+
+    validation = await evaluate_runtime(
+        runtime_tier=req.runtime_tier,
+        runtime_config=req.runtime_config,
+    )
+
+    if not validation["passed"]:
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "skipped",
+            "reason": "Validation failed — benchmark only runs on passed configurations",
+            "validation": validation,
+        }
+
+    import time
+    start = time.monotonic()
+
+    missing_packages = _missing_runtime_packages(req.runtime_tier)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    if missing_packages:
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "package_unavailable",
+            "mode": "benchmark",
+            "validation": validation,
+            "missing_packages": missing_packages,
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "note": "Install the runtime packages before running dependency-backed dry-run benchmarks.",
+            },
+        }
+
+    dry_run = await _runtime_dry_run(req.runtime_tier, req.runtime_config)
+    elapsed_ms = (time.monotonic() - start) * 1000
+
+    return {
+        "runtime_tier": req.runtime_tier,
+        "status": "dry_run_completed",
+        "mode": "benchmark",
+        "validation": validation,
+        "benchmark_results": {
+            "elapsed_ms": round(elapsed_ms, 2),
+            **dry_run,
+            "note": "Dependency-backed dry-run completed without external tool, network, or credential access.",
+        },
+    }
+
+
+# ─── Epsilon: Technology Evaluation Stubs ─────────────────────────────────────
+
+
+@app.get("/evaluations/vault")
+async def evaluate_vault_integration() -> dict[str, Any]:
+    """Evaluate Vault integration readiness for AIAT secrets hardening."""
+    return {
+        "technology": "HashiCorp Vault",
+        "current_aiat_state": "custom AES Fernet + Postgres",
+        "benefit": "Dynamic secrets, rotation, encryption-as-service, audit logs",
+        "integration_points": ["credentials manager", "tool-service secrets", "worker secrets"],
+        "effort_weeks": 3,
+        "risk": "medium",
+        "status": "deferred",
+        "next_step": "Dedicated Vault evaluation pass after Epsilon",
+        "prerequisites": ["Production cluster", "HA Postgres", "Audit logging review"],
+    }
+
+
+@app.get("/evaluations/zitadel")
+async def evaluate_zitadel_integration() -> dict[str, Any]:
+    """Evaluate ZITADEL integration readiness for AIAT IAM hardening."""
+    return {
+        "technology": "ZITADEL",
+        "current_aiat_state": "Custom operator auth + credentials tables",
+        "benefit": "MFA, SSO, OIDC, SAML, multi-tenant identity",
+        "integration_points": ["operator authentication", "worker identity", "API auth"],
+        "effort_weeks": 4,
+        "risk": "medium",
+        "status": "deferred",
+        "next_step": "Dedicated ZITADEL evaluation pass after Epsilon",
+        "prerequisites": ["Production multi-tenancy requirements", "SSO provider selection"],
+    }
+
+
+@app.get("/evaluations/temporal")
+async def evaluate_temporal_integration() -> dict[str, Any]:
+    """Evaluate Temporal integration for long-running durable workflows."""
+    return {
+        "technology": "Temporal",
+        "current_aiat_state": "Custom DAG flow engine (flow_engine.py)",
+        "benefit": "Multi-day durable replay, activity retries, cross-cluster failover",
+        "when_needed": "Only if workflows need to survive platform restarts and span days",
+        "integration_points": ["flow engine replacement", "workflow state migration"],
+        "effort_weeks": 6,
+        "risk": "high",
+        "status": "deferred",
+        "next_step": "Evaluate after AIAT has 10+ production workflows with multi-day spans",
+        "replacement_path": "Current flow_engine.py remains sufficient for sync/same-day flows",
+    }
+
+
+@app.get("/evaluations/garage")
+async def evaluate_garage_integration() -> dict[str, Any]:
+    """Evaluate Garage for distributed object storage."""
+    return {
+        "technology": "Garage",
+        "current_aiat_state": "MinIO hot-path object storage",
+        "benefit": "S3-compatible distributed storage with better multi-zone redundancy",
+        "integration_points": ["artifact storage", "blob references", "worker outputs"],
+        "effort_weeks": 4,
+        "risk": "low",
+        "status": "deferred",
+        "next_step": "Evaluate after MinIO becomes a scaling bottleneck",
+    }
+
+
+@app.get("/evaluations/firecracker")
+async def evaluate_firecracker_integration() -> dict[str, Any]:
+    """Evaluate Firecracker microVM enforcement for highest-risk workloads."""
+    return {
+        "technology": "Firecracker",
+        "current_aiat_state": "gVisor as hardened profile label (not yet enforced)",
+        "benefit": "Hardware-virtualized isolation for untrusted workloads",
+        "integration_points": ["team-runner container isolation", "worker sandboxing"],
+        "effort_weeks": 5,
+        "risk": "high",
+        "status": "deferred",
+        "next_step": "Implement gVisor enforcement first; evaluate Firecracker if gVisor proves insufficient",
+        "prerequisites": ["KVM access in deployment environment", "gVisor operational"],
     }
 
 

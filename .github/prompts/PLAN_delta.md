@@ -13,9 +13,11 @@ Delta keeps the Gamma control-plane boundary:
 approved adapters -> audited tools and artifacts**
 
 The first implementation slice is an operator-visible integration readiness
-catalog. It does not activate Docling, GitHub task execution, or n8n by default.
-It shows the required gates, current readiness state, worker references, and
-blocking reasons so later integration work has a single governed path.
+catalog plus governed integration policy endpoints. It does not activate
+Docling, GitHub write actions, or n8n as workflow authority by default. It shows
+the required gates, current readiness state, worker references, blocking
+reasons, scanner visibility, credential policy, rate limits, and artifact
+contracts so later integration work has a single governed path.
 
 ## Delta Scope
 
@@ -104,3 +106,33 @@ npm run test:protocol-fixtures
 
 For operator-facing claims, run the relevant Playwright spec against the Compose
 dashboard before reporting completion.
+
+## Current Progress
+
+- Added `/integrations/delta-readiness` with governed readiness state for
+  Docling, GitHub REST, TruffleHog/Semgrep, and n8n.
+- Added scanner visibility for TruffleHog and Semgrep, including
+  `SKIPPED_TOOL_UNAVAILABLE` when binaries are not installed.
+- Added `/integrations/docling/certification-check`; Docling remains blocked
+  until an approved active worker is registered, and the endpoint exposes the
+  required gVisor, egress, and artifact-reference contract.
+- Added `/integrations/github/repository-metadata`; GitHub metadata reads are
+  routed through server-side named credential resolution when configured,
+  include rate-limit/read/write policy, and never return plaintext tokens.
+- Added `/integrations/n8n/edge-policy`; n8n can be validated only as an
+  audited HTTPS edge webhook and is rejected if it asks for control-plane
+  ownership.
+- Added dashboard proxy routes for the Delta integration endpoints.
+- Expanded the Hiring Board Delta panel with scanner status and policy text.
+- Added backend tests for readiness, Docling certification blocking, GitHub
+  credential routing/masking, and n8n edge-policy rejection.
+- Verified on 2026-05-31 with
+  `UV_PROJECT_ENVIRONMENT=/tmp/aiat-mas-uv-venv uv run pytest apps/orchestrator-api/tests/test_delta_integrations.py -q`
+  as part of the passing plan-specific backend suite, plus dashboard
+  `npm run build`, `npm run test:protocol-fixtures`, Compose health, and the
+  live Hiring Board/operations Playwright coverage in the 23-test E2E suite.
+
+Known boundary:
+- Delta completes the governed adoption surface and policy gates. It does not
+  make Docling, GitHub write operations, or n8n execute by default; those remain
+  blocked unless the required worker/credential/approval gates are satisfied.

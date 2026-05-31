@@ -1,4 +1,0 @@
-interface:
-  display_name: "MAS Architecture Review"
-  short_description: "Review AIAT MAS architecture and boundaries"
-  default_prompt: "Use $mas-architecture-review to review an AIAT MAS design or code change."

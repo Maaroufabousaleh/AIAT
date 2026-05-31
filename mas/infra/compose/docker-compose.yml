@@ -3,12 +3,14 @@
 # All infra is $0 self-hosted OSS; only LLM API costs apply.
 #
 # Usage:
-#   docker compose up -d
-#   docker compose logs -f orchestrator-api
-#   docker compose down -v   # removes volumes (destructive!)
+#   ./mas.sh up
+#   ./mas.sh logs -f orchestrator-api
+#   ./mas.sh down -v   # removes volumes (destructive!)
 #
 # Environment:
-#   Copy .env.example → .env and fill in secrets before starting.
+#   All env vars are sourced from the project root .env (c:\projects\AIAT\.env).
+#   When running docker compose directly (not via mas.sh), set:
+#     export COMPOSE_ENV_FILE=/path/to/.env
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
@@ -287,7 +289,7 @@ services:
       message-router:
         condition: service_started
     environment:
-      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       ROUTER_URL: "http://message-router:8001"
       ROUTER_SECRET: "${ROUTER_SECRET}"
@@ -336,17 +338,18 @@ services:
         condition: service_healthy
       tool-service:
         condition: service_healthy
+    # Values are loaded by mas.sh from the repository root .env. Do not point
+    # env_file at .env here; Compose re-interpolates bcrypt "$" segments.
     environment:
-      DASHBOARD_USERNAME: "${DASHBOARD_USERNAME}"
-      DASHBOARD_PASSWORD_HASH: "${DASHBOARD_PASSWORD_HASH}"
-      JWT_SECRET: "${JWT_SECRET}"
-      MAS_API_KEY: "${MAS_API_KEY}"
-      ROUTER_SECRET: "${ROUTER_SECRET}"
       ORCHESTRATOR_URL: "http://orchestrator-api:8000"
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
       PROMETHEUS_URL: "http://prometheus:9090"
       NODE_ENV: "production"
+      DASHBOARD_USERNAME: "${DASHBOARD_USERNAME}"
+      DASHBOARD_PASSWORD_HASH: "${DASHBOARD_PASSWORD_HASH}"
+      JWT_SECRET: "${JWT_SECRET}"
+      MAS_API_KEY: "${MAS_API_KEY}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m

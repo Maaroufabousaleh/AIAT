@@ -10,6 +10,11 @@ from .capability import CapabilityDef
 
 WORKER_SDK_VERSION = "aiat-worker-sdk.v1"
 
+# Epsilon runtime tiers — used in WorkerManifest.runtime_tier
+RUNTIME_TIER_LITERAL = Literal[
+    "builtin", "langgraph", "crewai", "autogen", "letta", "external"
+]
+
 
 class WorkerMetadata(BaseModel):
     id: str
@@ -36,7 +41,12 @@ class WorkerIntegration(BaseModel):
     adapter_module: str | None = None
     wrapper_config: dict[str, Any] = Field(default_factory=dict)
     compatibility_tests: list[str] = Field(default_factory=list)
-    isolation_mode: Literal["native", "wrapper", "fork"] = "native"
+    # native/wrapper/fork: existing AIAT modes
+    # langgraph/crewai/autogen/letta: Epsilon advanced runtime modes
+    isolation_mode: Literal[
+        "native", "wrapper", "fork",
+        "langgraph", "crewai", "autogen", "letta",
+    ] = "native"
 
 
 class WorkerLimits(BaseModel):
@@ -82,3 +92,8 @@ class WorkerManifest(BaseModel):
     sandbox: WorkerSandbox = Field(default_factory=WorkerSandbox)
     checkpointing: WorkerCheckpointing = Field(default_factory=WorkerCheckpointing)
     observability: WorkerObservability = Field(default_factory=WorkerObservability)
+    # Epsilon fields — runtime tier and configuration for advanced runtimes
+    runtime_tier: RUNTIME_TIER_LITERAL = "builtin"
+    runtime_config: dict[str, Any] = Field(default_factory=dict)
+    inner_runtime: bool = False
+    allowed_inner_runtimes: list[RUNTIME_TIER_LITERAL] = Field(default_factory=list)

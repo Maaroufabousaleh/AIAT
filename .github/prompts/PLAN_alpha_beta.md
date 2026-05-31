@@ -48,6 +48,12 @@ Implement the safe first slice from `deep-research-report.md`: keep AIAT as the 
 - Regression: existing flow builder/runtime/operator smoke tests must still pass.
 - Manual acceptance: from a fresh local stack, the operator can open the dashboard, seed default AIAT, register a low-risk worker candidate, run evaluation, see results, and activate only when policy allows it.
 
+## Current Progress
+- Verified on 2026-05-31 that protocol v1 schemas and Python/TypeScript fixtures are checked by `npm run test:protocol-fixtures`.
+- Verified worker registry evaluation, skipped TruffleHog/Semgrep behavior, sandbox profile validation, medium/dual-use hardened sandbox enforcement, status transitions, and seed idempotency through the full backend pytest suite (`UV_PROJECT_ENVIRONMENT=/tmp/aiat-mas-uv-venv uv run pytest -q`, exit 0, 1383 tests collected, no failures).
+- Verified the Hiring Board golden path live against the Compose dashboard in the 23-test Playwright suite, including register, evaluate, blocked activation, approved activation, deactivate, and drain behavior.
+- Verified fresh-clone setup path corrections: root `.env.example` is populated, `mas.sh` reads the repository-root `.env`, Compose validation passes, migrations pass, and `mas.sh health` reports core services healthy.
+
 ## Assumptions
 - Scope is Alpha+Beta only.
 - New external tools use guarded adoption: optional at runtime, no control-plane replacement.

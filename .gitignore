@@ -43,6 +43,7 @@ infra/compose/.env
 *.swp
 *.swo
 *~
+.VSCodeCounter
 
 # OS
 .DS_Store

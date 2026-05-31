@@ -22,7 +22,7 @@ This directory contains systemd service files and control scripts for managing t
 2. Copy the .env file to the mas directory:
    ```bash
    sudo mkdir -p /opt/mas
-   sudo cp mas-infra/compose/.env /opt/mas/
+   sudo cp .env /opt/mas/
    ```
 
 3. Reload systemd daemon:

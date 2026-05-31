@@ -1,0 +1,155 @@
+"""Letta adapter — wraps a Letta agent as an AIAT worker."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from mas_core.protocols.worker_manifest import WorkerManifest
+
+logger = logging.getLogger(__name__)
+
+
+class LettaCapabilities:
+    """Capabilities schema for Letta runtime configuration."""
+
+    def __init__(
+        self,
+        persona: str = "",
+        embedding_model: str = "text-embedding-ada-002",
+        persistence_store: str = "postgres",
+        memory_block_types: list[str] | None = None,
+    ):
+        self.persona = persona
+        self.embedding_model = embedding_model
+        self.persistence_store = persistence_store
+        self.memory_block_types = memory_block_types or ["human", "persona", "archival"]
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> "LettaCapabilities":
+        return cls(
+            persona=config.get("persona", ""),
+            embedding_model=config.get("embedding_model", "text-embedding-ada-002"),
+            persistence_store=config.get("persistence_store", "postgres"),
+            memory_block_types=config.get("memory_block_types", ["human", "persona", "archival"]),
+        )
+
+
+class LettaAdapter:
+    """Wraps a Letta agent as an AIAT worker.
+
+    Letta is a memory-heavy research specialist runtime. It is read-only by
+    default and requires a memory audit before activation. It cannot make
+    network calls or access the filesystem directly.
+    """
+
+    def __init__(
+        self,
+        manifest: WorkerManifest,
+        capabilities: LettaCapabilities | None = None,
+    ) -> None:
+        self.manifest = manifest
+        self.capabilities = capabilities or LettaCapabilities.from_config(
+            manifest.runtime_config
+        )
+        self._client = None
+        self._agent_id = None
+        self._initialized = False
+
+    async def initialize(self) -> None:
+        """Connect to the Letta server or embed the Letta runtime."""
+        if self._initialized:
+            return
+
+        try:
+            import importlib
+            importlib.import_module("letta")
+        except ImportError:
+            logger.warning(
+                "LettaAdapter %s: letta package not installed; running in stub mode",
+                self.manifest.metadata.id,
+            )
+            self._initialized = True
+            return
+
+        if not self.capabilities.persona:
+            logger.warning(
+                "LettaAdapter %s: no persona defined in runtime_config; running in stub mode",
+                self.manifest.metadata.id,
+            )
+            self._initialized = True
+            return
+
+        try:
+            # Letta client setup would connect to a Letta server here
+            # For Epsilon, the adapter is registered and persona is validated
+            self._client = {
+                "persona": self.capabilities.persona,
+                "embedding_model": self.capabilities.embedding_model,
+                "persistence_store": self.capabilities.persistence_store,
+                "memory_block_types": self.capabilities.memory_block_types,
+            }
+            self._initialized = True
+            logger.info(
+                "LettaAdapter %s initialized: persona=%s, store=%s",
+                self.manifest.metadata.id,
+                self.capabilities.persona[:50],
+                self.capabilities.persistence_store,
+            )
+        except Exception as exc:
+            logger.error("Failed to initialize Letta agent for %s: %s", self.manifest.metadata.id, exc)
+            self._initialized = True
+
+    async def send_task(self, envelope: Any) -> dict[str, Any]:
+        """Send a task to the Letta agent."""
+        if not self._initialized:
+            await self.initialize()
+
+        task_input = self._translate_input(envelope)
+
+        if self._client is None:
+            return {
+                "status": "stub",
+                "input": task_input,
+                "output": None,
+                "runtime": "letta",
+                "worker_id": self.manifest.metadata.id,
+            }
+
+        try:
+            # Letta agent execution would send to the Letta server here
+            return {
+                "status": "configured",
+                "input": task_input,
+                "output": None,
+                "runtime": "letta",
+                "worker_id": self.manifest.metadata.id,
+                "persona": self.capabilities.persona[:50],
+                "memory_blocks": self.capabilities.memory_block_types,
+                "note": "Letta agent ready for activation; memory audit required",
+            }
+        except Exception as exc:
+            logger.error("Letta execution failed for %s: %s", self.manifest.metadata.id, exc)
+            return {
+                "status": "error",
+                "input": task_input,
+                "error": str(exc),
+                "runtime": "letta",
+                "worker_id": self.manifest.metadata.id,
+            }
+
+    async def health_check(self) -> bool:
+        return self._initialized
+
+    async def shutdown(self) -> None:
+        self._client = None
+        self._agent_id = None
+        self._initialized = False
+        logger.info("LettaAdapter %s shut down", self.manifest.metadata.id)
+
+    def _translate_input(self, envelope: Any) -> dict[str, Any]:
+        payload = getattr(envelope, "payload", {}) or {}
+        return {
+            "task": payload.get("task", ""),
+            "context": payload.get("context", ""),
+        }

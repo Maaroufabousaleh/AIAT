@@ -61,13 +61,7 @@ docs/                    Architecture notes
 
 ## First Run
 
-From this directory:
-
-```bash
-cp infra/compose/.env.example infra/compose/.env
-```
-
-Edit `infra/compose/.env` and set real values for at least:
+From the repository root, copy `.env.example` to `.env` and set real values for at least:
 
 - `POSTGRES_PASSWORD`
 - `MINIO_ROOT_PASSWORD`
@@ -91,12 +85,12 @@ node -e "const b=require('bcryptjs'); console.log(b.hashSync('replace-me', 12))"
 cd ../..
 ```
 
-Paste the hash into `infra/compose/.env` as `DASHBOARD_PASSWORD_HASH`.
+Paste the hash into `.env` as `DASHBOARD_PASSWORD_HASH`.
 
 Start the base stack:
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml --env-file infra/compose/.env up -d --build
+infra/compose/mas.sh up --build
 ```
 
 Run migrations:
@@ -125,7 +119,7 @@ Prometheus, Grafana, pgAdmin, and RedisInsight ports:
 docker compose \
   -f infra/compose/docker-compose.yml \
   -f infra/compose/docker-compose.dev.yml \
-  --env-file infra/compose/.env \
+  --env-file ../.env \
   up -d --build
 ```
 

@@ -203,6 +203,8 @@ class TeamRuntime:
         self._in_flight_frame: WSMessageFrame | None = None
 
     async def start(self) -> None:
+        self._verify_gvisor_available()
+
         if self.settings.tool_service_url:
             self.tool_client = ToolServiceClient(
                 self.settings.tool_service_url,
@@ -494,6 +496,31 @@ class TeamRuntime:
 
         # Signal the stop event to terminate the subscription loop
         self._stop_event.set()
+
+    def _verify_gvisor_available(self) -> None:
+        """Verify gVisor runsc is available if any worker requires gvisor sandbox.
+
+        Epsilon: workers with sandbox.profile == "gvisor" need runsc in PATH.
+        Missing runsc is a hard error — the container cannot safely run the worker.
+        """
+        workers = self.team_config.workers
+        if not workers:
+            return
+        gvisor_workers = [
+            spec for spec in workers
+            if getattr(spec, "sandbox_profile", None) == "gvisor"
+            or getattr(spec, "sandbox", {}).get("profile") == "gvisor"
+        ]
+        if not gvisor_workers:
+            return
+        import shutil
+        if shutil.which("runsc") is None:
+            raise RuntimeError(
+                "gVisor required for workers %s but runsc not found in PATH. "
+                "Install gVisor or assign those workers a non-gvisor sandbox profile. "
+                "See: https://gvisor.dev/docs/install/"
+                % [w.agent_id for w in gvisor_workers]
+            )
 
     def _choose_agent(self, envelope: MessageEnvelope) -> AgentBase | None:
         if envelope.recipient_id and envelope.recipient_id in self.agents_by_id:

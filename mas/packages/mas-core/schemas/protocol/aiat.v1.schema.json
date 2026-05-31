@@ -806,7 +806,11 @@
               "enum": [
                 "native",
                 "wrapper",
-                "fork"
+                "fork",
+                "langgraph",
+                "crewai",
+                "autogen",
+                "letta"
               ],
               "title": "Isolation Mode",
               "type": "string"
@@ -1063,6 +1067,21 @@
         }
       },
       "properties": {
+        "allowed_inner_runtimes": {
+          "items": {
+            "enum": [
+              "builtin",
+              "langgraph",
+              "crewai",
+              "autogen",
+              "letta",
+              "external"
+            ],
+            "type": "string"
+          },
+          "title": "Allowed Inner Runtimes",
+          "type": "array"
+        },
         "capabilities": {
           "items": {
             "$ref": "#/$defs/CapabilityDef"
@@ -1072,6 +1091,11 @@
         },
         "checkpointing": {
           "$ref": "#/$defs/WorkerCheckpointing"
+        },
+        "inner_runtime": {
+          "default": false,
+          "title": "Inner Runtime",
+          "type": "boolean"
         },
         "integration": {
           "$ref": "#/$defs/WorkerIntegration"
@@ -1094,6 +1118,24 @@
         },
         "runtime": {
           "$ref": "#/$defs/WorkerRuntime"
+        },
+        "runtime_config": {
+          "additionalProperties": true,
+          "title": "Runtime Config",
+          "type": "object"
+        },
+        "runtime_tier": {
+          "default": "builtin",
+          "enum": [
+            "builtin",
+            "langgraph",
+            "crewai",
+            "autogen",
+            "letta",
+            "external"
+          ],
+          "title": "Runtime Tier",
+          "type": "string"
         },
         "sandbox": {
           "$ref": "#/$defs/WorkerSandbox"

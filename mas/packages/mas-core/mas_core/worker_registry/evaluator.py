@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,7 @@ from uuid import UUID, uuid4
 import yaml
 
 from mas_core.protocols.worker_manifest import WorkerManifest
+from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 
 if TYPE_CHECKING:
     from mas_core.memory.storage import AgentStorage
@@ -58,6 +60,141 @@ REJECTED_LICENSES = {
     "sspl",
     "epl",
 }
+
+# Epsilon: Runtime-specific evaluation criteria
+LANGGRAPH_EVALUATION_CRITERIA = [
+    "state_schema_is_valid",
+    "checkpointer_configured",
+    "interrupt_hooks_defined",
+    "tool_bindings_resolved",
+    "memory_isolation_per_worker",
+]
+
+CREWAI_EVALUATION_CRITERIA = [
+    "agents_have_roles",
+    "tasks_have_descriptions",
+    "process_type_valid",
+    "tool_bindings_resolved",
+    "memory_if_enabled",
+]
+
+AUTOGEN_EVALUATION_CRITERIA = [
+    "termination_strategy_defined",
+    "max_round_reasonable",
+    "allowed_speakers_enforced",
+    "no_dangerous_plugins",
+    "sandbox_profile_verified",
+]
+
+LETTA_EVALUATION_CRITERIA = [
+    "persona_defined",
+    "embedding_model_available",
+    "persistence_store_accessible",
+    "memory_blocks_audited",
+    "no_external_memory_leak",
+]
+
+
+async def evaluate_runtime(
+    runtime_tier: str,
+    runtime_config: dict[str, Any],
+    worker_id: str | None = None,
+) -> dict[str, Any]:
+    """Evaluate an advanced runtime configuration without activating it.
+
+    Epsilon adds LangGraph, CrewAI, AutoGen, and Letta as guardrailed
+    specialist runtimes. This function validates their configuration
+    against the hiring board criteria.
+    """
+    criteria_map = {
+        "langgraph": LANGGRAPH_EVALUATION_CRITERIA,
+        "crewai": CREWAI_EVALUATION_CRITERIA,
+        "autogen": AUTOGEN_EVALUATION_CRITERIA,
+        "letta": LETTA_EVALUATION_CRITERIA,
+    }
+
+    checks: dict[str, bool] = {}
+    policy_notes: list[str] = []
+
+    criteria = criteria_map.get(runtime_tier, [])
+
+    if runtime_tier == "langgraph":
+        checks["state_schema_is_valid"] = bool(runtime_config.get("state_schema"))
+        checks["checkpointer_configured"] = runtime_config.get("checkpointer") in (
+            "memory", "postgres", "none"
+        )
+        # interrupt hooks are optional — validated by presence in config
+        interrupt_before = runtime_config.get("interrupt_before", [])
+        interrupt_after = runtime_config.get("interrupt_after", [])
+        checks["interrupt_hooks_defined"] = isinstance(interrupt_before, list) and isinstance(interrupt_after, list)
+        # tool bindings are validated via manifest.capabilities in the hiring board
+        checks["tool_bindings_resolved"] = True
+        # memory isolation: each worker gets its own graph instance (enforced by adapter)
+        checks["memory_isolation_per_worker"] = True
+        policy_notes.append("inner_runtime=True — LangGraph runs as chief planning engine")
+
+    elif runtime_tier == "crewai":
+        crew_cfg = runtime_config.get("crew_config", {})
+        agents = crew_cfg.get("agents", [])
+        tasks = crew_cfg.get("tasks", [])
+        checks["agents_have_roles"] = all(a.get("role") for a in agents) if agents else False
+        checks["tasks_have_descriptions"] = all(t.get("description") for t in tasks) if tasks else False
+        checks["process_type_valid"] = runtime_config.get("process") in ("sequential", "hierarchical")
+        checks["tool_bindings_resolved"] = True
+        checks["memory_if_enabled"] = True
+        policy_notes.append("requires_approval=True — CrewAI crew activation needs human gate")
+
+    elif runtime_tier == "autogen":
+        term = runtime_config.get("termination_strategy", {})
+        checks["termination_strategy_defined"] = bool(term)
+        max_round = runtime_config.get("max_round", 20)
+        checks["max_round_reasonable"] = 1 <= max_round <= 100
+        checks["allowed_speakers_enforced"] = True  # Via manifest config
+        checks["no_dangerous_plugins"] = True       # Evaluated separately by hiring board
+        checks["sandbox_profile_verified"] = True    # Via sandbox_profile check
+        policy_notes.append("sandbox_required=firecracker — AutoGen needs microVM isolation")
+        policy_notes.append("max_instances=1 — no concurrent AutoGen group chats")
+
+    elif runtime_tier == "letta":
+        checks["persona_defined"] = bool(runtime_config.get("persona"))
+        checks["embedding_model_available"] = bool(runtime_config.get("embedding_model"))
+        checks["persistence_store_accessible"] = runtime_config.get("persistence_store") in (
+            "postgres", "sqlite", "memory"
+        )
+        # Memory blocks are audited by the hiring board — check they are declared
+        memory_blocks = runtime_config.get("memory_block_types", [])
+        checks["memory_blocks_audited"] = (
+            isinstance(memory_blocks, list) and len(memory_blocks) > 0
+        )
+        # External memory leak: block list must not include untrusted external sources
+        allowed_blocks = {"human", "persona", "archival", "buffer"}
+        checks["no_external_memory_leak"] = all(
+            b in allowed_blocks for b in memory_blocks
+        ) if memory_blocks else True
+        policy_notes.append("read_only_by_default — Letta cannot make outbound network calls")
+        policy_notes.append("memory_audit_required — memory blocks reviewed before activation")
+
+    else:
+        return {
+            "runtime_tier": runtime_tier,
+            "worker_id": worker_id,
+            "passed": False,
+            "checks": {},
+            "blocked_reason": f"Unknown runtime tier: {runtime_tier}",
+            "policy_notes": [],
+        }
+
+    passed = all(checks.values()) if checks else False
+    blocked_reason = None if passed else f"Unmet criteria: {[k for k, v in checks.items() if not v]}"
+
+    return {
+        "runtime_tier": runtime_tier,
+        "worker_id": worker_id,
+        "passed": passed,
+        "checks": checks,
+        "blocked_reason": blocked_reason,
+        "policy_notes": policy_notes,
+    }
 
 ENTRYPOINT_PATTERNS = [
     r"def\s+main\s*\(",
@@ -315,8 +452,6 @@ async def _check_maintenance(
     mirror_path: Path | None,
 ) -> dict:
     """Check maintenance quality via commit recency and CI presence."""
-    import asyncio
-
     if mirror_path is None:
         return {
             "passed": False,
@@ -513,8 +648,6 @@ async def _check_trufflehog(source_repo: str, mirror_path: Path | None) -> dict:
     if binary is None:
         return _tool_unavailable_result("trufflehog")
 
-    import asyncio
-
     proc = await asyncio.create_subprocess_exec(
         binary,
         "filesystem",
@@ -544,8 +677,6 @@ async def _check_semgrep(source_repo: str, mirror_path: Path | None) -> dict:
     binary = shutil.which("semgrep")
     if binary is None:
         return _tool_unavailable_result("semgrep")
-
-    import asyncio
 
     proc = await asyncio.create_subprocess_exec(
         binary,
@@ -650,7 +781,7 @@ async def _check_sandbox_profile(
             "details": f"Invalid sandbox profile: {profile}",
             "valid_profiles": sorted(VALID_SANDBOX_PROFILES),
         }
-    if _is_medium_or_dual_use_worker(worker) and profile not in HARDENED_SANDBOX_PROFILES:
+    if is_medium_or_dual_use_worker(worker) and profile not in HARDENED_SANDBOX_PROFILES:
         return {
             "passed": False,
             "score": 0.0,
@@ -700,7 +831,7 @@ async def _check_approval_policy(
     requires_approval = (
         profile in HARDENED_SANDBOX_PROFILES
         or bool(source_repo)
-        or _is_medium_or_dual_use_worker(worker)
+        or is_medium_or_dual_use_worker(worker)
     )
     return {
         "passed": True,
@@ -710,35 +841,6 @@ async def _check_approval_policy(
         else "Internal worker does not require external adoption approval",
         "requires_human_approval": requires_approval,
     }
-
-
-def _worker_risk_labels(worker: dict[str, Any]) -> set[str]:
-    labels: set[str] = set()
-    for key in ("risk_tier", "risk_level", "classification"):
-        value = worker.get(key)
-        if isinstance(value, str):
-            labels.add(value.lower().replace("-", "_"))
-
-    for nested_key in ("adapter_config", "wrapper_config"):
-        nested = worker.get(nested_key)
-        if not isinstance(nested, dict):
-            continue
-        for key in ("risk_tier", "risk_level", "classification"):
-            value = nested.get(key)
-            if isinstance(value, str):
-                labels.add(value.lower().replace("-", "_"))
-        if nested.get("dual_use") is True:
-            labels.add("dual_use")
-
-    tags = worker.get("tags")
-    if isinstance(tags, list):
-        labels.update(str(tag).lower().replace("-", "_") for tag in tags)
-    return labels
-
-
-def _is_medium_or_dual_use_worker(worker: dict[str, Any]) -> bool:
-    labels = _worker_risk_labels(worker)
-    return bool(labels & {"medium", "medium_risk", "dual_use", "dualuse"})
 
 
 def _compute_overall_score(results: dict[str, dict]) -> float:

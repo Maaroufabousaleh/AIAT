@@ -1,10 +1,10 @@
 # AIAT MAS Plan
 
-Last updated: 2026-05-18
+Last updated: 2026-05-31
 
-This is the single planning document for AIAT/MAS. It replaces the old split plan,
-manual-action, evaluation, dashboard, worker-triage, and phase TODO documents that
-previously lived in `.github/prompts/`.
+This document is retained only as historical context. The active implementation
+truth is now split across `PLAN_alpha_beta.md`, `PLAN_gamma.md`,
+`PLAN_delta.md`, and `PLAN_epsilon.md`.
 
 ## Current Baseline
 
@@ -79,12 +79,12 @@ Keep the system Postgres-first:
 
 ### P0 - Keep The Current System Runnable
 
-- Keep `.env` and `infra/compose/.env` aligned with
-  `mas/infra/compose/.env.example`.
+- Keep the repository-root `.env` aligned with `.env.example`. `mas.sh` loads
+  this root file as the single source of truth.
 - Verify dashboard login uses both `DASHBOARD_USERNAME` and
   `DASHBOARD_PASSWORD_HASH`; login fails if the hash is empty.
-- Use `cd mas` before compose and `uv` commands unless explicitly using an
-  absolute path.
+- Use `mas/infra/compose/mas.sh` from the repository root, or `cd mas` before
+  direct `uv` commands.
 - Run migrations after schema changes:
 
 ```bash
@@ -211,23 +211,31 @@ Run these before claiming the system is current:
 
 ```bash
 cd mas
-uv run pytest
+UV_PROJECT_ENVIRONMENT=/tmp/aiat-mas-uv-venv uv run pytest -q
 ```
 
 ```bash
 cd mas/apps/mas-dashboard
 npm run build
-npm run test:e2e
+npm run lint
+npm run test:protocol-fixtures
+npx playwright test --workers=1
 ```
 
 ```bash
-cd mas
-docker compose -f infra/compose/docker-compose.yml --env-file infra/compose/.env up -d --build
-curl http://localhost:8000/health
-curl http://localhost:8001/health
-curl http://localhost:8002/health
-curl http://localhost:4000/api/health
+mas/infra/compose/mas.sh validate
+mas/infra/compose/mas.sh up --build
+mas/infra/compose/mas.sh migrate
+mas/infra/compose/mas.sh health
 ```
+
+Current verification on 2026-05-31:
+
+- Full backend pytest: passed, exit 0, 1383 tests collected, no failures.
+- Dashboard production build: passed, 47 app routes generated.
+- Dashboard lint and protocol fixture/type checks: passed.
+- Live dashboard Playwright suite: 23/23 passed against the Compose stack.
+- Compose validation, migrations, and health checks: passed.
 
 Manual/live checks:
 
@@ -246,8 +254,8 @@ Manual/live checks:
 
 - Root-level duplicates and generated dashboard artifacts can confuse tooling.
   Treat `mas/` as the active workspace unless the repo is cleaned.
-- The old plan claims and current code status diverged; this file is now the
-  planning source of truth.
+- The old plan claims and current code status diverged; this file is no longer
+  the planning source of truth.
 - Some live validation remains environment-specific: Docker, WSL, browser
   runtime dependencies, external LLM providers, and secrets.
 - Production observability needs metric-cardinality cleanup, alert channels, and

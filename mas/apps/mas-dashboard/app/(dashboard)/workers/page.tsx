@@ -64,6 +64,30 @@ interface DeltaReadiness {
   scanner_visibility?: Record<string, { available: boolean; status: string; details: string }>;
 }
 
+interface EpsilonRuntime {
+  id: string;
+  name: string;
+  status: string;
+  tier: string;
+  description: string;
+  policy: {
+    sandbox_required?: string;
+    requires_approval?: boolean;
+    inner_runtime?: boolean;
+    read_only_by_default?: boolean;
+    max_concurrent_threads?: number;
+    max_instances?: number;
+    allowed_tools?: string;
+    crew_process?: string;
+    memory_audit?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+interface EpsilonReadiness {
+  runtimes: EpsilonRuntime[];
+}
+
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; cls: string }> = {
   ACTIVE: { label: "Active", icon: CheckCircle, cls: "text-green-400 bg-green-400/10 border-green-700" },
   INACTIVE: { label: "Inactive", icon: XCircle, cls: "text-gray-400 bg-gray-400/10 border-gray-700" },
@@ -527,6 +551,7 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
 export default function WorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [deltaReadiness, setDeltaReadiness] = useState<DeltaReadiness | null>(null);
+  const [epsilonReadiness, setEpsilonReadiness] = useState<EpsilonReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deltaError, setDeltaError] = useState("");
@@ -539,9 +564,10 @@ export default function WorkersPage() {
     setError("");
     setDeltaError("");
     try {
-      const [workersRes, deltaRes] = await Promise.all([
+      const [workersRes, deltaRes, epsRes] = await Promise.all([
         fetch("/api/workers"),
         fetch("/api/integrations/delta-readiness"),
+        fetch("/api/runtimes"),
       ]);
       if (!workersRes.ok) throw new Error(await workersRes.text());
       const workersData = await workersRes.json();
@@ -551,6 +577,9 @@ export default function WorkersPage() {
       } else {
         setDeltaReadiness(null);
         setDeltaError(await deltaRes.text());
+      }
+      if (epsRes.ok) {
+        setEpsilonReadiness(await epsRes.json());
       }
     } catch (e: unknown) {
       setError(String(e));
@@ -719,6 +748,74 @@ export default function WorkersPage() {
               </div>
             </div>
           </>
+        )}
+
+        {/* Epsilon: Advanced Runtime Status Panel */}
+        {epsilonReadiness && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Advanced Runtimes</h2>
+                <p className="text-xs text-gray-500">
+                  Epsilon — guardrailed LangGraph, CrewAI, AutoGen, and Letta runtimes
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {epsilonReadiness.runtimes.map((runtime) => (
+                <div
+                  key={runtime.id}
+                  data-runtime={runtime.id}
+                  className="rounded-lg border border-gray-800 bg-gray-950 p-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium text-white">{runtime.name}</div>
+                      <div className="text-xs text-gray-500 capitalize">{runtime.tier} tier</div>
+                    </div>
+                    <span className={clsx(
+                      "rounded border px-2 py-0.5 text-xs",
+                      runtime.status === "available"
+                        ? "border-green-700 text-green-300"
+                        : runtime.status === "active"
+                          ? "border-green-700 text-green-300"
+                          : "border-yellow-700 text-yellow-300"
+                    )}>
+                      {runtime.status}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-400 line-clamp-2">
+                    {runtime.description}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {runtime.policy.sandbox_required ? (
+                      <span className="rounded border border-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">
+                        sandbox: {runtime.policy.sandbox_required}
+                      </span>
+                    ) : null}
+                    {runtime.policy.requires_approval ? (
+                      <span className="rounded border border-yellow-800 px-1.5 py-0.5 text-[10px] text-yellow-400">
+                        approval required
+                      </span>
+                    ) : null}
+                    {runtime.policy.inner_runtime ? (
+                      <span className="rounded border border-blue-800 px-1.5 py-0.5 text-[10px] text-blue-400">
+                        inner runtime
+                      </span>
+                    ) : null}
+                    {runtime.policy.read_only_by_default ? (
+                      <span className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-400">
+                        read-only
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="rounded border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-gray-400">
+              Advanced runtimes operate only through adapters and policy gates. AutoGen requires firecracker sandbox; Letta is read-only by default.
+            </div>
+          </div>
         )}
       </div>
 

@@ -96,6 +96,52 @@ EXECUTIVE_ACTIONS: set[str] = {
     "status.aggregate",
 }
 
+# Epsilon: Runtime policy gates for advanced runtimes
+# Each entry defines what the runtime can and cannot do within AIAT
+RUNTIME_POLICY_GATES: dict[str, dict[str, Any]] = {
+    "langgraph": {
+        "can_spawn_subgraph": True,
+        "can_access_filesystem": False,
+        "can_make_network_calls": True,
+        "requires_tool_service": True,
+        "max_concurrent_threads": 10,
+        "inner_runtime": True,
+        "requires_approval": False,
+        "sandbox_required": "gvisor",
+    },
+    "crewai": {
+        "can_spawn_subgraph": True,
+        "can_access_filesystem": False,
+        "can_make_network_calls": True,
+        "requires_tool_service": True,
+        "crew_process": "sequential",
+        "inner_runtime": True,
+        "requires_approval": True,
+        "sandbox_required": "gvisor",
+    },
+    "autogen": {
+        "can_spawn_subgraph": False,
+        "can_access_filesystem": False,
+        "can_make_network_calls": True,
+        "requires_tool_service": True,
+        "max_instances": 1,
+        "inner_runtime": False,
+        "requires_approval": True,
+        "sandbox_required": "firecracker",
+    },
+    "letta": {
+        "can_spawn_subgraph": False,
+        "can_access_filesystem": False,
+        "can_make_network_calls": False,
+        "requires_tool_service": False,
+        "memory_audit_required": True,
+        "read_only_by_default": True,
+        "inner_runtime": False,
+        "requires_approval": True,
+        "sandbox_required": "gvisor",
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Approval gate

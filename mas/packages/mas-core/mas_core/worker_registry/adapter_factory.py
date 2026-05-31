@@ -55,7 +55,7 @@ def create_adapter(
 
     Returns
     -------
-    AgentBase
+    AgentBase or Epsilon runtime adapter
         Instantiated agent ready for use.
     """
     mode = manifest.integration.isolation_mode
@@ -67,6 +67,14 @@ def create_adapter(
         return _create_wrapper_adapter(manifest, config, mirror_path, **kwargs)
     elif mode == "fork":
         return _create_fork_adapter(manifest, config, mirror_path, **kwargs)
+    elif mode == "langgraph":
+        return _create_langgraph_adapter(manifest, config, **kwargs)
+    elif mode == "crewai":
+        return _create_crewai_adapter(manifest, config, **kwargs)
+    elif mode == "autogen":
+        return _create_autogen_adapter(manifest, config, **kwargs)
+    elif mode == "letta":
+        return _create_letta_adapter(manifest, config, **kwargs)
     else:
         raise ValueError(f"Unknown isolation mode: {mode}")
 
@@ -231,12 +239,18 @@ class ExternalWorkerAdapter(ABC):
         )
         self._router = kwargs.get("router")
 
-    @abstractmethod
     async def publish(self, envelope: Any) -> str:
-        """Publish a message envelope back to the MAS router."""
-        ...
+        """Publish a message envelope back to the MAS router.
+
+        Subclasses must implement this to route envelopes to the appropriate
+        transport (e.g., message-router service, direct WS, etc.).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement publish() to send envelopes"
+        )
 
     async def handle_message(self, envelope: Any) -> None:
+        """Handle an incoming message envelope, execute the external worker, and reply."""
         from mas_core.protocols.enums import MessageType
 
         task_desc = envelope.payload.get("task", "")
@@ -315,3 +329,59 @@ class ForkedWorkerAdapter(ExternalWorkerAdapter):
                 )
                 target.write_text(content, encoding="utf-8")
                 logger.info("Applied patch %s to %s", name, data["file"])
+
+
+def _create_langgraph_adapter(
+    manifest: WorkerManifest,
+    config: AgentConfig,
+    **kwargs: Any,
+) -> Any:
+    """Create a LangGraph-backed worker adapter (Epsilon)."""
+    from mas_core.worker_registry.langgraph_adapter import (
+        LangGraphAdapter,
+        LangGraphCapabilities,
+    )
+    capabilities = LangGraphCapabilities.from_config(manifest.runtime_config or {})
+    return LangGraphAdapter(manifest=manifest, capabilities=capabilities)
+
+
+def _create_crewai_adapter(
+    manifest: WorkerManifest,
+    config: AgentConfig,
+    **kwargs: Any,
+) -> Any:
+    """Create a CrewAI-backed worker adapter (Epsilon)."""
+    from mas_core.worker_registry.crewai_adapter import (
+        CrewAIAdapter,
+        CrewAICapabilities,
+    )
+    capabilities = CrewAICapabilities.from_config(manifest.runtime_config or {})
+    return CrewAIAdapter(manifest=manifest, capabilities=capabilities)
+
+
+def _create_autogen_adapter(
+    manifest: WorkerManifest,
+    config: AgentConfig,
+    **kwargs: Any,
+) -> Any:
+    """Create an AutoGen guardrailed specialist worker adapter (Epsilon)."""
+    from mas_core.worker_registry.autogen_adapter import (
+        AutoGenAdapter,
+        AutoGenCapabilities,
+    )
+    capabilities = AutoGenCapabilities.from_config(manifest.runtime_config or {})
+    return AutoGenAdapter(manifest=manifest, capabilities=capabilities)
+
+
+def _create_letta_adapter(
+    manifest: WorkerManifest,
+    config: AgentConfig,
+    **kwargs: Any,
+) -> Any:
+    """Create a Letta memory-heavy research specialist worker adapter (Epsilon)."""
+    from mas_core.worker_registry.letta_adapter import (
+        LettaAdapter,
+        LettaCapabilities,
+    )
+    capabilities = LettaCapabilities.from_config(manifest.runtime_config or {})
+    return LettaAdapter(manifest=manifest, capabilities=capabilities)

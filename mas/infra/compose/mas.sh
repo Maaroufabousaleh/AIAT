@@ -7,20 +7,44 @@
 set -e
 
 COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$COMPOSE_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$COMPOSE_DIR/../../.." && pwd)"
 cd "$COMPOSE_DIR"
 
 # ── Environment loading ────────────────────────────────────────────────────────
+load_env_file() {
+    local file="$1"
+    local line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+            value="${value:1:${#value}-2}"
+        elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+        # Compose interpolates dollar signs after shell env substitution; escape them
+        # so bcrypt hashes and other secrets reach containers unchanged.
+        value="${value//\$/\$\$}"
+        export "$key=$value"
+    done < "$file"
+}
+
 ENV_FILE="$PROJECT_ROOT/.env"
 if [ -f "$ENV_FILE" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+    load_env_file "$ENV_FILE"
+    # Tell docker-compose to use the root .env for variable substitution
+    export COMPOSE_ENV_FILE="$ENV_FILE"
 elif [ -f ".env" ]; then
-    set -a
-    source ".env"
-    set +a
+    ENV_FILE="$COMPOSE_DIR/.env"
+    load_env_file "$ENV_FILE"
+    export COMPOSE_ENV_FILE="$ENV_FILE"
 fi
 
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
@@ -38,8 +62,11 @@ error()   { echo -e "${RED}[ERR]${NC} $*" >&2; }
 validate_env() {
     local missing=0
     local required_vars=(
-        POSTGRES_PASSWORD REDIS_PASSWORD MAS_API_KEY
-        JWT_SECRET MINIO_ROOT_PASSWORD
+        POSTGRES_PASSWORD MINIO_ROOT_PASSWORD
+        ROUTER_PASSWORD TOOLCACHE_PASSWORD
+        ROUTER_SECRET TOOL_SECRET
+        LLM_GATEWAY_URL MAS_API_KEY
+        DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH JWT_SECRET
     )
     for var in "${required_vars[@]}"; do
         if [ -z "${!var}" ]; then
@@ -206,7 +233,9 @@ print('Worker registry seeded.')
         info "API health endpoint:"
         curl -sf "http://localhost:8000/health" 2>/dev/null && echo "" || warn "orchestrator-api not reachable at :8000"
         info "Message router health:"
-        curl -sf "http://localhost:8001/health" 2>/dev/null && echo "" || warn "message-router not reachable at :8001"
+        docker compose $COMPOSE_FILES exec -T message-router \
+            python -c "import httpx; print(httpx.get('http://localhost:8001/health').text)" 2>/dev/null \
+            || warn "message-router health check failed"
         info "Tool service health:"
         curl -sf "http://localhost:8002/health" 2>/dev/null && echo "" || warn "tool-service not reachable at :8002"
         ;;
