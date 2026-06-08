@@ -1151,6 +1151,16 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
     return _serialize(project)
 
 
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: UUID) -> dict[str, str]:
+    """Permanently delete a project and its project-owned records."""
+    storage = _storage()
+    deleted = await storage.delete_project(project_id)
+    if not deleted:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return {"status": "deleted"}
+
+
 async def _project_artifact_rows(storage: AgentStorage, project_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
     artifacts = await storage.list_artifacts(limit=limit)
     pid = str(project_id)
@@ -1946,6 +1956,9 @@ async def archive_project(project_id: UUID) -> dict[str, Any]:
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
+    project_state = project.get("state")
+    if getattr(project_state, "value", project_state) == "ARCHIVED":
+        return {"status": "archived", "next_state": "ARCHIVED"}
 
     try:
         current_state = ProjectState(project["state"])
@@ -4395,10 +4408,26 @@ ALLOWED_CONTAINERS: set[str] = {
     "mas-team-dept-devops",
 }
 
+CONTAINER_ALIASES: dict[str, str] = {
+    "redis": "mas-redis-1",
+    "postgres": "mas-postgres-1",
+    "pgbouncer": "mas-pgbouncer-1",
+    "minio": "mas-minio-1",
+    "redis-acl-init": "mas-redis-acl-init-1",
+    "orchestrator-api": "mas-orchestrator-api-1",
+    "message-router": "mas-message-router-1",
+    "tool-service": "mas-tool-service-1",
+    "dashboard": "mas-dashboard",
+    "mas-orchestrator-api": "mas-orchestrator-api-1",
+    "mas-message-router": "mas-message-router-1",
+    "mas-tool-service": "mas-tool-service-1",
+}
+
 
 async def _stream_container_logs(container: str, tail: int, follow: bool):
     """Async generator that yields SSE lines from docker logs."""
-    cmd = ["docker", "logs", container, f"--tail={tail}", "--timestamps"]
+    docker_container = CONTAINER_ALIASES.get(container, container)
+    cmd = ["docker", "logs", docker_container, f"--tail={tail}", "--timestamps"]
     if follow:
         cmd.append("--follow")
     try:

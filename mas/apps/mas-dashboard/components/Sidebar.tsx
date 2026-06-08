@@ -18,22 +18,49 @@ import {
   Network,
   Lock,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 
-const NAV_ITEMS = [
-  { href: "/",             label: "Overview",     icon: LayoutDashboard },
-  { href: "/projects",     label: "Projects",     icon: FolderKanban },
-  { href: "/flows",        label: "Flows",        icon: GitBranch },
-  { href: "/system-viz",   label: "System Viz",   icon: Network },
-  { href: "/streams",      label: "Streams",      icon: Radio },
-  { href: "/ceo",          label: "CEO Feed",     icon: Brain },
-  { href: "/workers",      label: "Workers",      icon: Users },
-  { href: "/credentials",  label: "Credentials",  icon: Lock },
-  { href: "/metrics",      label: "Metrics",      icon: BarChart3 },
-  { href: "/dlq",          label: "Dead Letters", icon: Inbox },
-  { href: "/logs",         label: "Logs",         icon: ScrollText },
-  { href: "/system",       label: "System",       icon: Settings },
-  { href: "/tools",        label: "Tools",        icon: Wrench },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+};
+
+const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: "Operate",
+    items: [
+      { href: "/",            label: "Overview",     icon: LayoutDashboard },
+      { href: "/projects",    label: "Projects",     icon: FolderKanban },
+      { href: "/workers",     label: "Workers",      icon: Users },
+      { href: "/credentials", label: "Credentials",  icon: Lock },
+    ],
+  },
+  {
+    title: "Orchestrate",
+    items: [
+      { href: "/flows",      label: "Flows",      icon: GitBranch },
+      { href: "/system-viz", label: "System Viz", icon: Network },
+      { href: "/streams",    label: "Streams",    icon: Radio },
+      { href: "/ceo",        label: "CEO Feed",   icon: Brain },
+    ],
+  },
+  {
+    title: "Observe",
+    items: [
+      { href: "/metrics", label: "Metrics",      icon: BarChart3 },
+      { href: "/dlq",     label: "Dead Letters", icon: Inbox },
+      { href: "/logs",    label: "Logs",         icon: ScrollText },
+    ],
+  },
+  {
+    title: "Admin",
+    items: [
+      { href: "/system", label: "System", icon: Settings },
+      { href: "/tools",  label: "Tools",  icon: Wrench },
+    ],
+  },
 ];
 
 export default function Sidebar() {
@@ -46,51 +73,82 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
+    <aside className="w-64 flex-shrink-0 border-r border-slate-800/90 bg-slate-950/80 flex flex-col shadow-2xl shadow-black/30">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-blue-600 rounded-md flex items-center justify-center">
-            <span className="text-white text-xs font-bold">M</span>
+      <div className="px-5 py-5 border-b border-slate-800/80">
+        <Link href="/" prefetch={false} className="flex items-center gap-3 group">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <span className="text-white text-sm font-bold">M</span>
           </div>
-          <div>
-            <div className="text-sm font-semibold text-white leading-none">MAS</div>
-            <div className="text-xxs text-gray-500 leading-none mt-0.5">Dashboard</div>
+          <div className="leading-tight">
+            <div className="text-base font-semibold text-white tracking-tight">
+              AIAT
+            </div>
+            <div className="text-xxs text-slate-400">MAS operator console</div>
+          </div>
+        </Link>
+        <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" />
+            Control plane online
+          </div>
+          <div className="mt-1 text-xxs text-slate-400">
+            Projects, workers, streams and tools stay governed here.
           </div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={clsx(
-                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
-                active
-                  ? "bg-blue-600/20 text-blue-400 font-medium"
-                  : "text-gray-400 hover:text-gray-100 hover:bg-gray-800"
-              )}
-            >
-              <Icon size={16} className="flex-shrink-0" />
-              {label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.title} className="mb-5 last:mb-0">
+            <div className="px-2 mb-2 text-xxs font-semibold text-slate-500 uppercase tracking-wider">
+              {group.title}
+            </div>
+            <div className="space-y-0.5">
+              {group.items.map(({ href, label, icon: Icon }) => {
+                const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    prefetch={false}
+                    className={clsx(
+                      "group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
+                      active
+                        ? "border-blue-500/40 bg-blue-500/15 text-blue-100 font-medium shadow-sm shadow-blue-500/10"
+                        : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-900/80 hover:border-slate-800"
+                    )}
+                  >
+                    <Icon
+                      size={15}
+                      className={clsx(
+                        "flex-shrink-0 transition-colors",
+                        active ? "text-blue-300" : "text-slate-500 group-hover:text-slate-300"
+                      )}
+                    />
+                    <span className="truncate">{label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
-      {/* Logout */}
-      <div className="px-3 py-4 border-t border-gray-800">
+      {/* Footer */}
+      <div className="px-3 py-3 border-t border-slate-800/80 space-y-2">
+        <div className="px-2 flex items-center gap-2 text-xxs text-slate-500">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span>Operator session</span>
+        </div>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm
-                     text-gray-400 hover:text-gray-100 hover:bg-gray-800
+          className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm
+                     text-slate-400 hover:text-slate-100 hover:bg-slate-900/80
                      transition-colors w-full"
         >
-          <LogOut size={16} />
+          <LogOut size={15} className="text-slate-500" />
           Sign out
         </button>
       </div>

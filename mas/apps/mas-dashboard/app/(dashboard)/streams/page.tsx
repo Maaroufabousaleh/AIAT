@@ -1,13 +1,18 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { clsx } from "clsx";
 import { TEAM_STREAMS, MSG_TYPE_COLORS, type TeamStreamId } from "@/lib/constants";
-import { format } from "date-fns";
-import { Pause, Play, Trash2 } from "lucide-react";
+import { formatInTz } from "@/lib/datetime";
+import { Copy, Pause, Play, Radio, Search, Trash2, X, Check } from "lucide-react";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { FilterChip } from "@/components/ui/FilterChips";
 
 interface MessageEnvelope {
   id?: string;
+  type?: string;
+  msg_type?: string;
   message_type: string;
   sender_id?: string;
   sender_role?: string;
@@ -15,7 +20,9 @@ interface MessageEnvelope {
   project_id?: string;
   payload?: unknown;
   timestamp?: string;
+  sent_at?: string;
   trace_id?: string;
+  envelope?: MessageEnvelope;
 }
 
 interface FeedEntry {
@@ -24,12 +31,47 @@ interface FeedEntry {
   ts: number;
 }
 
+interface RecentStreamEntry {
+  entry_id: string;
+  envelope: string;
+}
+
+function parseFirstTimestamp(...values: Array<string | undefined>): number {
+  for (const value of values) {
+    if (!value) continue;
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return Date.now();
+}
+
+function entryFromRaw(raw: string): FeedEntry {
+  let parsed: MessageEnvelope | null = null;
+  try { parsed = JSON.parse(raw); } catch { /* non-JSON */ }
+  const timestamp = parseFirstTimestamp(
+    parsed?.timestamp,
+    parsed?.sent_at,
+    parsed?.envelope?.timestamp
+  );
+  return { raw, parsed, ts: timestamp };
+}
+
+/** Strip a leading ISO timestamp prefix that some agents prepend to message_type. */
+function normalizeMessageType(rawType: string | undefined): string {
+  if (!rawType) return "—";
+  return rawType.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?\./, "");
+}
+
 export default function StreamsPage() {
   const [teamId, setTeamId] = useState<TeamStreamId>("exec_ceo");
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [groupByType, setGroupByType] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
@@ -39,6 +81,19 @@ export default function StreamsPage() {
   useEffect(() => {
     setEntries([]);
     setConnected(false);
+    setTypeFilter("all");
+    setQuery("");
+
+    let cancelled = false;
+    fetch(`/api/streams/${teamId}?history=1&limit=50`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { entries?: RecentStreamEntry[] } | null) => {
+        if (cancelled || !data?.entries) return;
+        setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
+      })
+      .catch(() => {
+        // Live SSE still gives connection truth even if history is unavailable.
+      });
 
     const es = new EventSource(`/api/streams/${teamId}`);
     esRef.current = es;
@@ -48,15 +103,16 @@ export default function StreamsPage() {
 
     es.onmessage = (e) => {
       if (pausedRef.current) return;
-      let parsed: MessageEnvelope | null = null;
-      try { parsed = JSON.parse(e.data); } catch { /* non-JSON */ }
       setEntries((prev) => {
-        const next = [...prev, { raw: e.data, parsed, ts: Date.now() }];
+        const next = [...prev, entryFromRaw(e.data)];
         return next.slice(-500); // cap at 500
       });
     };
 
-    return () => es.close();
+    return () => {
+      cancelled = true;
+      es.close();
+    };
   }, [teamId]);
 
   // Auto-scroll
@@ -66,118 +122,377 @@ export default function StreamsPage() {
     }
   }, [entries, paused]);
 
+  // Derive unique message types currently visible so we can populate filter chips.
+  const availableTypes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of entries) {
+      const t = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      if (t === "—") continue;
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({ type, count }));
+  }, [entries]);
+
+  // Apply search query and type filter.
+  const filteredEntries = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return entries.filter((entry) => {
+      const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      if (typeFilter !== "all" && type !== typeFilter) return false;
+      if (!q) return true;
+      // Match against the raw JSON, sender, project, trace, and type for power-search.
+      const haystack = [
+        entry.raw,
+        entry.parsed?.sender_id ?? "",
+        entry.parsed?.project_id ?? "",
+        entry.parsed?.trace_id ?? "",
+        type,
+      ].join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [entries, query, typeFilter]);
+
+  // Group filtered entries by message type (preserves chronological order within each group).
+  const groupedEntries = useMemo(() => {
+    if (!groupByType) return null;
+    const groups = new Map<string, Array<{ entry: FeedEntry; index: number }>>();
+    filteredEntries.forEach((entry, index) => {
+      const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      const bucket = groups.get(type) ?? [];
+      bucket.push({ entry, index });
+      groups.set(type, bucket);
+    });
+    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredEntries, groupByType]);
+
+  const activeTeam = TEAM_STREAMS.find((t) => t.id === teamId);
+
   function msgTypeColor(type: string) {
-    return MSG_TYPE_COLORS[type] ?? "bg-gray-700";
+    return MSG_TYPE_COLORS[type] ?? "bg-slate-600";
+  }
+
+  async function copyEntry(entry: FeedEntry, key: number) {
+    const text = entry.raw || (entry.parsed ? JSON.stringify(entry.parsed, null, 2) : "");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers / non-secure contexts.
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    } catch {
+      // Silent failure — clipboard rejection is non-critical here.
+    }
+  }
+
+  function renderEntryRow(entry: FeedEntry, index: number) {
+    const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+    const isOpen = expanded === index;
+    const justCopied = copiedKey === index;
+
+    return (
+      <React.Fragment key={`row-${index}`}>
+        <tr
+          className={clsx(
+            "border-b border-slate-800/70 transition-colors cursor-pointer",
+            "hover:bg-slate-800/40 focus-within:bg-slate-800/40",
+            isOpen && "bg-slate-800/30"
+          )}
+          onClick={() => setExpanded(isOpen ? null : index)}
+          aria-expanded={isOpen}
+        >
+          <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">
+            {formatInTz(entry.ts, "yyyy-MM-dd HH:mm:ss.SSS")}
+          </td>
+          <td className="px-3 py-1.5">
+            {type !== "—" ? (
+              <span
+                className={clsx(
+                  "inline-flex px-1.5 py-0.5 rounded text-xxs font-medium text-white",
+                  msgTypeColor(type)
+                )}
+              >
+                {type}
+              </span>
+            ) : (
+              <span className="text-slate-600">—</span>
+            )}
+          </td>
+          <td className="px-3 py-1.5 text-slate-400 truncate max-w-xs hidden md:table-cell">
+            {entry.parsed?.sender_id ?? "—"}
+          </td>
+          <td className="px-3 py-1.5 text-slate-400 truncate hidden lg:table-cell">
+            {entry.parsed?.project_id?.slice(0, 8) ?? "—"}
+          </td>
+          <td className="px-3 py-1.5 text-slate-400 truncate max-w-sm font-mono">
+            {Boolean(entry.parsed?.payload)
+              ? (() => {
+                  const { timestamp: _ts, ...rest } = entry.parsed!;
+                  return JSON.stringify(rest).slice(0, 80);
+                })()
+              : (() => {
+                  try {
+                    const p = JSON.parse(entry.raw);
+                    delete p.timestamp;
+                    return JSON.stringify(p).slice(0, 80);
+                  } catch {
+                    return entry.raw.slice(0, 80);
+                  }
+                })()}
+          </td>
+          <td className="px-2 py-1.5 text-right w-12">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                copyEntry(entry, index);
+              }}
+              aria-label={justCopied ? "Copied to clipboard" : "Copy message payload"}
+              title={justCopied ? "Copied!" : "Copy payload"}
+              className={clsx(
+                "inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
+                justCopied
+                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                  : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800"
+              )}
+            >
+              {justCopied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </td>
+        </tr>
+        {isOpen && (
+          <tr key={`row-${index}-expanded`} className="bg-slate-950/60">
+            <td colSpan={6} className="px-3 py-2">
+              <pre className="text-xxs text-slate-300 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                {JSON.stringify(entry.parsed ?? entry.raw, null, 2)}
+              </pre>
+            </td>
+          </tr>
+        )}
+      </React.Fragment>
+    );
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col p-5 sm:p-6 lg:p-8 gap-4">
       {/* Header */}
-      <div className="p-4 border-b border-gray-800 flex items-center gap-3 flex-wrap">
-        <div>
-          <h1 className="text-lg font-semibold text-white">Agent Stream Monitor</h1>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <div className={clsx("w-1.5 h-1.5 rounded-full", connected ? "bg-green-400" : "bg-gray-600")} />
-            <span className="text-xs text-gray-500">{connected ? "connected" : "connecting..."}</span>
-          </div>
-        </div>
+      <PageHeader
+        icon="radio"
+        title="Agent Stream Monitor"
+        description={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{activeTeam?.description ?? "Live agent message feed."}</span>
+            <span className="flex items-center gap-1.5">
+              <span
+                className={clsx(
+                  "w-1.5 h-1.5 rounded-full",
+                  connected ? "bg-emerald-400" : "bg-slate-600"
+                )}
+                aria-hidden
+              />
+              <span className="text-slate-500">
+                {connected ? "connected" : "connecting…"}
+              </span>
+            </span>
+          </span>
+        }
+        actions={
+          <>
+            <div className="relative">
+              <Search
+                size={13}
+                aria-hidden
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter messages…"
+                aria-label="Filter messages by text, sender, or project"
+                className="bg-slate-950/60 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400/40 w-56"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-200 rounded transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
 
-        <select
-          value={teamId}
-          onChange={(e) => setTeamId(e.target.value as TeamStreamId)}
-          className="ml-auto bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5
-                     text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <select
+              value={teamId}
+              onChange={(e) => setTeamId(e.target.value as TeamStreamId)}
+              aria-label="Select team stream"
+              className="bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            >
+              {TEAM_STREAMS.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.role} — {t.label}
+                </option>
+              ))}
+            </select>
+
+            <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
+              <input
+                type="checkbox"
+                checked={groupByType}
+                onChange={(e) => setGroupByType(e.target.checked)}
+                className="h-3 w-3 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-400/60"
+              />
+              Group by type
+            </label>
+
+            <button
+              onClick={() => setPaused((p) => !p)}
+              aria-pressed={paused}
+              aria-label={paused ? "Resume live feed" : "Pause live feed"}
+              className={clsx(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
+                paused
+                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25"
+                  : "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white"
+              )}
+            >
+              {paused ? <Play size={12} /> : <Pause size={12} />}
+              {paused ? "Resume" : "Pause"}
+            </button>
+
+            <button
+              onClick={() => setEntries([])}
+              aria-label="Clear message history"
+              title="Clear history"
+              className="p-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+            >
+              <Trash2 size={13} />
+            </button>
+          </>
+        }
+      />
+
+      {/* Type filter chips */}
+      {availableTypes.length > 0 && (
+        <div
+          className="flex flex-wrap gap-1.5 items-center"
+          role="toolbar"
+          aria-label="Filter messages by type"
         >
-          {TEAM_STREAMS.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.role} — {t.label}
-            </option>
+          <span className="text-xxs uppercase tracking-wider text-slate-500 font-semibold mr-1">
+            Type:
+          </span>
+          <FilterChip
+            active={typeFilter === "all"}
+            onClick={() => setTypeFilter("all")}
+            count={filteredEntries.length}
+            activeTone="blue"
+          >
+            All
+          </FilterChip>
+          {availableTypes.map(({ type, count }) => (
+            <FilterChip
+              key={type}
+              active={typeFilter === type}
+              onClick={() => setTypeFilter(type)}
+              count={count}
+            >
+              {type}
+            </FilterChip>
           ))}
-        </select>
-
-        <button
-          onClick={() => setPaused((p) => !p)}
-          className={clsx(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-            paused
-              ? "bg-amber-600/20 text-amber-400 border border-amber-700"
-              : "bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700"
-          )}
-        >
-          {paused ? <Play size={12} /> : <Pause size={12} />}
-          {paused ? "Resume" : "Pause"}
-        </button>
-
-        <button
-          onClick={() => setEntries([])}
-          className="p-1.5 rounded-lg border border-gray-700 text-gray-500 hover:text-gray-300"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* Feed */}
-      <div className="flex-1 overflow-y-auto font-mono">
+      <div
+        className="dashboard-surface flex-1 overflow-y-auto font-mono"
+        role="region"
+        aria-label="Live message feed"
+      >
         {entries.length === 0 ? (
-          <div className="p-8 text-center text-gray-600 text-sm">
-            Waiting for messages on <span className="text-gray-400">stream:{teamId}</span>...
+          <div className="p-6">
+            <EmptyState
+              icon="radio"
+              title={connected ? `No recent messages on stream:${teamId}` : "Connecting to stream…"}
+              description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
+            />
+          </div>
+        ) : filteredEntries.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon="inbox"
+              title="No messages match the current filters"
+              description="Try clearing the search query or selecting a different message type."
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setTypeFilter("all");
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  Clear filters
+                </button>
+              }
+            />
           </div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-gray-900 border-b border-gray-800">
+            <thead className="sticky top-0 bg-slate-950/80 backdrop-blur border-b border-slate-800">
               <tr>
-                <th className="text-left px-3 py-2 text-gray-600 font-medium w-24">Time</th>
-                <th className="text-left px-3 py-2 text-gray-600 font-medium w-32">Type</th>
-                <th className="text-left px-3 py-2 text-gray-600 font-medium w-36 hidden md:table-cell">Sender</th>
-                <th className="text-left px-3 py-2 text-gray-600 font-medium w-28 hidden lg:table-cell">Project</th>
-                <th className="text-left px-3 py-2 text-gray-600 font-medium">Payload</th>
+                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-44" scope="col">Time</th>
+                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-32" scope="col">Type</th>
+                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-36 hidden md:table-cell" scope="col">Sender</th>
+                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-28 hidden lg:table-cell" scope="col">Project</th>
+                <th className="text-left px-3 py-2 text-slate-500 font-semibold" scope="col">Payload</th>
+                <th className="px-2 py-2 w-12" scope="col"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              {entries.map((entry, i) => (
-                <React.Fragment key={i}>
-                  <tr
-                    className="border-b border-gray-900 hover:bg-gray-800/40 cursor-pointer"
-                    onClick={() => setExpanded(expanded === i ? null : i)}
-                  >
-                    <td className="px-3 py-1.5 text-gray-600">
-                      {format(entry.ts, "HH:mm:ss.SSS")}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      {entry.parsed?.message_type ? (
-                        <span className={clsx(
-                          "inline-flex px-1.5 py-0.5 rounded text-xxs font-medium text-white",
-                          msgTypeColor(entry.parsed.message_type)
-                        )}>
-                          {entry.parsed.message_type}
-                        </span>
-                      ) : (
-                        <span className="text-gray-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-500 truncate max-w-xs hidden md:table-cell">
-                      {entry.parsed?.sender_id ?? "—"}
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-500 truncate hidden lg:table-cell">
-                      {entry.parsed?.project_id?.slice(0, 8) ?? "—"}
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-500 truncate max-w-sm">
-                      {Boolean(entry.parsed?.payload)
-                        ? JSON.stringify(entry.parsed!.payload).slice(0, 80)
-                        : entry.raw.slice(0, 80)}
-                    </td>
-                  </tr>
-                  {expanded === i && (
-                    <tr key={`${i}-expanded`} className="bg-gray-950">
-                      <td colSpan={5} className="px-3 py-2">
-                        <pre className="text-xxs text-gray-400 overflow-x-auto whitespace-pre-wrap">
-                          {JSON.stringify(entry.parsed ?? entry.raw, null, 2)}
-                        </pre>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
+              {groupedEntries
+                ? groupedEntries.map(([type, group]) => (
+                    <React.Fragment key={`group-${type}`}>
+                      <tr className="bg-slate-900/60">
+                        <td
+                          colSpan={6}
+                          className="px-3 py-1.5 text-xxs uppercase tracking-wider text-slate-400 font-semibold border-y border-slate-800"
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              className={clsx(
+                                "inline-block w-2 h-2 rounded-sm",
+                                msgTypeColor(type)
+                              )}
+                              aria-hidden
+                            />
+                            {type}
+                            <span className="text-slate-600 font-normal normal-case">
+                              ({group.length} message{group.length === 1 ? "" : "s"})
+                            </span>
+                          </span>
+                        </td>
+                      </tr>
+                      {group.map(({ entry, index }) => renderEntryRow(entry, index))}
+                    </React.Fragment>
+                  ))
+                : filteredEntries.map((entry, index) => renderEntryRow(entry, index))}
             </tbody>
           </table>
         )}
@@ -185,8 +500,16 @@ export default function StreamsPage() {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-2 border-t border-gray-800 text-xxs text-gray-600">
-        {entries.length} messages{paused ? " — PAUSED" : ""}
+      <div className="dashboard-toolbar text-xxs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {filteredEntries.length === entries.length
+            ? `${entries.length} message${entries.length === 1 ? "" : "s"}`
+            : `${filteredEntries.length} of ${entries.length} messages`}
+          {paused ? " — PAUSED" : ""}
+        </span>
+        <span className="text-slate-600">
+          Capped at 500 messages · auto-scroll {paused ? "off" : "on"}
+        </span>
       </div>
     </div>
   );

@@ -27,6 +27,7 @@ admin:
     - blob.upload
     - blob.download
     - project.status
+    - time_now
 
 workers:
   - agent_id: system_architect
@@ -43,6 +44,7 @@ workers:
       - capability.search
       - web_search
       - blob.upload
+      - time_now
 
   - agent_id: solution_designer
     role: worker
@@ -58,6 +60,7 @@ workers:
       - capability.search
       - web_search
       - blob.upload
+      - time_now
 
   - agent_id: tech_writer
     role: worker
@@ -73,3 +76,4 @@ workers:
       - file_read
       - blob.upload
       - blob.download
+      - time_now

@@ -3,22 +3,76 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --aiat-bg: #070a0f;
+    --aiat-bg-soft: #0b1018;
+    --aiat-surface: #111720;
+    --aiat-surface-raised: #151d2b;
+    --aiat-border: #263244;
+    --aiat-muted: #8ea0b8;
+  }
+
   * {
     box-sizing: border-box;
   }
+
+  html {
+    background: var(--aiat-bg);
+    /* Respect user motion preferences while still enabling smooth scroll */
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
   body {
-    @apply bg-gray-950 text-gray-100 antialiased;
+    @apply text-slate-100 antialiased;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.14), transparent 34rem),
+      radial-gradient(circle at 88% 8%, rgba(45, 212, 191, 0.08), transparent 32rem),
+      linear-gradient(180deg, #070a0f 0%, #080b10 48%, #05070b 100%);
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  /* Global focus ring — uses the brand blue, offset to a slate surface so the
+     ring stays visible on both dark and elevated panels. */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply outline-none ring-2 ring-blue-400/70 ring-offset-2 ring-offset-slate-950;
+  }
+
+  /* Default scrollbar — themed for the slate design system. */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-track {
-    @apply bg-gray-900;
+    @apply bg-slate-950;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-700 rounded;
+    @apply rounded bg-slate-700/80;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-600;
+  }
+
+  /* Firefox scrollbar — matches the WebKit theme above. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(51 65 85 / 0.8) rgb(2 6 23);
   }
 }
 
@@ -26,5 +80,195 @@
   .text-xxs {
     font-size: 0.65rem;
     line-height: 1rem;
+  }
+
+  .dashboard-page {
+    @apply w-full max-w-none p-5 sm:p-6 lg:p-8 space-y-5;
+  }
+
+  .dashboard-surface {
+    @apply rounded-xl border border-slate-800/90 bg-slate-900/75 shadow-sm shadow-black/20;
+  }
+
+  .dashboard-surface-strong {
+    @apply rounded-xl border border-slate-700/80 bg-slate-900 shadow-xl shadow-black/25;
+  }
+
+  .dashboard-toolbar {
+    @apply rounded-xl border border-slate-800/90 bg-slate-950/45 px-3 py-2;
+  }
+
+  .dashboard-table {
+    @apply w-full text-sm;
+  }
+
+  .dashboard-table thead {
+    @apply bg-slate-950/40;
+  }
+
+  .dashboard-table th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500;
+  }
+
+  .dashboard-table td {
+    @apply px-4 py-3;
+  }
+
+  .dashboard-table tbody tr {
+    @apply border-t border-slate-800/70 transition-colors;
+  }
+
+  .dashboard-table tbody tr:hover {
+    @apply bg-slate-800/35;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Focus ring utility                                                     */
+  /* Use on custom interactive elements (cards, list rows) that aren't       */
+  /* natively focusable. Pairs with `tabIndex={0}` and `role="button"`.     */
+  /* ---------------------------------------------------------------------- */
+  .focus-ring {
+    @apply outline-none ring-offset-2 ring-offset-slate-950 transition-shadow;
+  }
+  .focus-ring:focus-visible {
+    @apply ring-2 ring-blue-400/70;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Log level color utilities                                              */
+  /* Foreground + background + border pair for each severity. Use `.log-*`  */
+  /* for text, `.log-bg-*` for chips/badges, `.log-border-*` for outlines.  */
+  /* ---------------------------------------------------------------------- */
+  .log-debug {
+    @apply text-slate-400;
+  }
+  .log-bg-debug {
+    @apply bg-slate-700/30 text-slate-300 border-slate-600/50;
+  }
+  .log-border-debug {
+    @apply border-slate-600/60;
+  }
+
+  .log-info {
+    @apply text-sky-300;
+  }
+  .log-bg-info {
+    @apply bg-sky-500/15 text-sky-200 border-sky-500/40;
+  }
+  .log-border-info {
+    @apply border-sky-500/60;
+  }
+
+  .log-success {
+    @apply text-emerald-300;
+  }
+  .log-bg-success {
+    @apply bg-emerald-500/15 text-emerald-200 border-emerald-500/40;
+  }
+  .log-border-success {
+    @apply border-emerald-500/60;
+  }
+
+  .log-warn {
+    @apply text-amber-300;
+  }
+  .log-bg-warn {
+    @apply bg-amber-500/15 text-amber-200 border-amber-500/40;
+  }
+  .log-border-warn {
+    @apply border-amber-500/60;
+  }
+
+  .log-error {
+    @apply text-rose-300;
+  }
+  .log-bg-error {
+    @apply bg-rose-500/15 text-rose-200 border-rose-500/40;
+  }
+  .log-border-error {
+    @apply border-rose-500/60;
+  }
+
+  .log-fatal {
+    @apply text-fuchsia-200;
+  }
+  .log-bg-fatal {
+    @apply bg-fuchsia-500/20 text-fuchsia-100 border-fuchsia-500/50;
+  }
+  .log-border-fatal {
+    @apply border-fuchsia-500/70;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Thin scrollbar — for compact sidebars and inline log panels.           */
+  /* Combine with `overflow-auto` (or `overflow-y-auto`) on the container.  */
+  /* ---------------------------------------------------------------------- */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(71 85 105 / 0.8) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded bg-slate-600/70;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-500;
+  }
+
+  /* Invisible scrollbar — keeps scroll behaviour but hides the bar.        */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Animation utilities                                                    */
+  /* Pair with `motion-safe:` (Tailwind) when respecting reduced motion.    */
+  /* ---------------------------------------------------------------------- */
+  @keyframes aiat-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .animate-fade-in {
+    animation: aiat-fade-in 200ms ease-out both;
+  }
+
+  @keyframes aiat-slide-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-slide-in {
+    animation: aiat-slide-in-up 240ms ease-out both;
+  }
+
+  @keyframes aiat-pulse-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
+    }
+  }
+  .animate-pulse-glow {
+    animation: aiat-pulse-glow 1.8s ease-in-out infinite;
   }
 }

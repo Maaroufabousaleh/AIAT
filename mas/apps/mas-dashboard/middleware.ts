@@ -7,6 +7,7 @@ const JWT_SECRET = new TextEncoder().encode(
 );
 
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
+const PUBLIC_FILE = /\.(?:png|jpg|jpeg|gif|webp|svg|ico|txt|xml|json|woff2?)$/i;
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -17,7 +18,7 @@ export async function middleware(req: NextRequest) {
   }
 
   // Allow Next.js internals
-  if (pathname.startsWith("/_next") || pathname === "/favicon.ico") {
+  if (pathname.startsWith("/_next") || pathname === "/favicon.ico" || PUBLIC_FILE.test(pathname)) {
     return NextResponse.next();
   }
 
@@ -44,5 +45,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|txt|xml|json|woff2?)).*)"],
 };

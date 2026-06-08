@@ -70,3 +70,14 @@ pytest_base/
 tmp_work/
 node_modules/
 .next/
+
+# Dashboard local/generated artifacts
+mas/apps/mas-dashboard/.env.local
+mas/apps/mas-dashboard/.env.*.local
+mas/apps/mas-dashboard/.tmp-*.png
+mas/apps/mas-dashboard/screenshots/
+mas/apps/mas-dashboard/test-results/
+mas/apps/mas-dashboard/playwright-report/
+mas/apps/mas-dashboard/blob-report/
+mas/apps/mas-dashboard/tsconfig.tsbuildinfo
+*.tsbuildinfo

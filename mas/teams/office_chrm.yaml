@@ -19,6 +19,7 @@ admin:
     - capability.list_workers
     - kpi.query_history
     - capability.search
+    - time_now
 
 workers:
   - agent_id: hr_analyst_1
@@ -34,3 +35,4 @@ workers:
     tools:
       - capability.list_workers
       - kpi.query_history
+      - time_now

@@ -26,6 +26,7 @@ admin:
   tools:
     - review.submit
     - review.submit_veto
+    - time_now
 
 workers:
   - agent_id: security_analyst_1
@@ -40,3 +41,4 @@ workers:
       max_cost_usd: 0.50
     tools:
       - review.submit
+      - time_now

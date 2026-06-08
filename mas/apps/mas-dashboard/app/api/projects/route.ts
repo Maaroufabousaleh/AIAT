@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const state = searchParams.get("state");
+  const limit = searchParams.get("limit") || "1000";
+  const offset = searchParams.get("offset") || "0";
+
   try {
-    const data = await orchestratorFetch("/projects");
+    const path = `/projects?${new URLSearchParams({
+      ...(state !== null && { state }),
+      limit,
+      offset,
+    })}`;
+    const data = await orchestratorFetch(path);
     return NextResponse.json(data);
   } catch (e) {
     if (e instanceof OrchestratorError) {

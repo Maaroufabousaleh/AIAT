@@ -29,9 +29,6 @@ load_env_file() {
         elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
             value="${value:1:${#value}-2}"
         fi
-        # Compose interpolates dollar signs after shell env substitution; escape them
-        # so bcrypt hashes and other secrets reach containers unchanged.
-        value="${value//\$/\$\$}"
         export "$key=$value"
     done < "$file"
 }

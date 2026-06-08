@@ -19,6 +19,7 @@ admin:
     - kpi.compute
     - kpi.query_history
     - web_search
+    - time_now
 
 workers:
   - agent_id: financial_analyst_1
@@ -34,3 +35,4 @@ workers:
     tools:
       - kpi.compute
       - web_search
+      - time_now

@@ -107,6 +107,7 @@ services:
       - ../../migrations:/app/migrations
     environment:
       LOG_LEVEL: DEBUG
+      WATCHFILES_FORCE_POLLING: "true"
 
   message-router:
     ports:
@@ -119,6 +120,7 @@ services:
       - ../../apps/message-router/message_router:/app/message_router
     environment:
       LOG_LEVEL: DEBUG
+      WATCHFILES_FORCE_POLLING: "true"
 
   tool-service:
     ports:
@@ -131,6 +133,7 @@ services:
       - ../../apps/tool-service/tool_service:/app/tool_service
     environment:
       LOG_LEVEL: DEBUG
+      WATCHFILES_FORCE_POLLING: "true"
 
 # ── Volumes (dev-only) ─────────────────────────────────────────────────────
 volumes:

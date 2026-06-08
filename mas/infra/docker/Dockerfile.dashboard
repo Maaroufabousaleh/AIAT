@@ -38,6 +38,12 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Install tzdata so the container's TZ is honored by Node's Date
+# (and any tool that consults /etc/localtime). Use the IANA zone
+# America/New_York so EDT/EST auto-switches with daylight saving.
+RUN apk add --no-cache tzdata
+ENV TZ=America/New_York
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
@@ -55,6 +61,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 
 # Copy the pre-rendered static files into the right location for standalone server
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+COPY --chown=nextjs:nodejs teams/ ./teams/
 
 USER nextjs
 

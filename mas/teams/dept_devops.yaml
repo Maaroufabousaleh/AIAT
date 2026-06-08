@@ -43,6 +43,7 @@ admin:
     - blob.upload
     - blob.download
     - project.status
+    - time_now
 
 workers:
   - agent_id: devops_eng_1
@@ -61,6 +62,7 @@ workers:
       - blob.upload
       - web_search
       - capability.search
+      - time_now
 
   - agent_id: sre_agent_1
     role: worker
@@ -77,3 +79,4 @@ workers:
       - secrets.manage
       - web_search
       - blob.upload
+      - time_now

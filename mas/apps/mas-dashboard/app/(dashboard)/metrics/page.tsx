@@ -1,13 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { clsx } from "clsx";
 import {
-  LineChart, Line, BarChart, Bar,
+  LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
+  type TooltipProps,
 } from "recharts";
-import { format } from "date-fns";
-import { RefreshCw } from "lucide-react";
+import { formatInTz, formatLocaleInTz } from "@/lib/datetime";
+import { RefreshCw, AlertCircle } from "lucide-react";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 const RANGES = [
   { label: "15m", minutes: 15, step: 30 },
@@ -52,7 +57,7 @@ function toTimeSeries(results: PrometheusResult[], labelKey = "model"): DataPoin
   for (const r of results) {
     const label = r.metric[labelKey] ?? r.metric.team ?? r.metric.tool_name ?? "value";
     for (const [ts, val] of r.values ?? []) {
-      if (!map.has(ts)) map.set(ts, { time: format(ts * 1000, "HH:mm") });
+      if (!map.has(ts)) map.set(ts, { time: formatInTz(ts * 1000, "HH:mm") });
       map.get(ts)![label] = parseFloat(val);
     }
   }
@@ -63,21 +68,63 @@ function seriesKeys(results: PrometheusResult[], labelKey = "model"): string[] {
   return Array.from(new Set(results.map((r) => r.metric[labelKey] ?? r.metric.team ?? r.metric.tool_name ?? "value")));
 }
 
+// Chart palette — slate-friendly with high contrast on dark surfaces.
 const COLORS = ["#60a5fa", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#fb7185", "#38bdf8", "#4ade80", "#fbbf24", "#e879f9"];
 
-function MetricCard({ title, children }: { title: string; children: React.ReactNode }) {
+/** Unique gradient id factory — keeps SVG <defs> ids deterministic per series. */
+function gradientId(idx: number, key: string): string {
+  return `metrics-grad-${idx}-${key.replace(/[^a-z0-9]/gi, "_")}`;
+}
+
+interface MetricCardProps {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}
+
+/** Small wrapper around `dashboard-surface` for chart tiles. */
+function MetricCard({ title, description, children }: MetricCardProps) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">{title}</h3>
+    <section
+      className="dashboard-surface p-4 transition-colors hover:border-slate-700"
+      aria-label={title}
+    >
+      <header className="flex items-baseline justify-between gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
+        {description && (
+          <p className="text-xxs uppercase tracking-wider text-slate-500">{description}</p>
+        )}
+      </header>
       {children}
-    </div>
+    </section>
   );
 }
 
-function EmptyChart() {
+/** Custom recharts tooltip — styled to match the dark surface. */
+function ChartTooltip({ active, payload, label, unit }: TooltipProps<number | string, string> & { unit?: string }) {
+  if (!active || !payload?.length) return null;
   return (
-    <div className="h-36 flex items-center justify-center text-gray-600 text-xs">
-      No data available
+    <div
+      role="tooltip"
+      className="rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 shadow-lg shadow-black/40 backdrop-blur-sm"
+    >
+      <div className="text-xxs font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <ul className="mt-1 space-y-0.5">
+        {payload.map((p) => (
+          <li key={String(p.dataKey)} className="flex items-center gap-2 text-xs">
+            <span
+              className="inline-block w-2 h-2 rounded-sm"
+              style={{ background: p.color }}
+              aria-hidden="true"
+            />
+            <span className="text-slate-300 truncate max-w-[10rem]">{p.name}</span>
+            <span className="ml-auto font-mono text-slate-100">
+              {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
+              {unit ? <span className="ml-1 text-slate-500">{unit}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -86,6 +133,7 @@ export default function MetricsPage() {
   const [mounted, setMounted] = useState(false);
   const [rangeIdx, setRangeIdx] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [llmData, setLlmData] = useState<DataPoint[]>([]);
   const [llmKeys, setLlmKeys] = useState<string[]>([]);
   const [toolData, setToolData] = useState<DataPoint[]>([]);
@@ -144,6 +192,7 @@ export default function MetricsPage() {
           state: parseFloat(r.value?.[1] ?? "0"),
         })).filter((d) => d.state > 0));
       }
+      setLastUpdated(Date.now());
     } finally {
       setLoading(false);
     }
@@ -156,136 +205,389 @@ export default function MetricsPage() {
     return () => clearInterval(t);
   }, [load]);
 
+  const totalDlqDepth = dlqData.reduce((sum, d) => sum + d.depth, 0);
+
+  // "No data" = at least one query returned an empty payload for the chosen range.
+  const noData =
+    mounted &&
+    llmData.length === 0 &&
+    toolData.length === 0 &&
+    msgData.length === 0 &&
+    dlqData.length === 0;
+
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Metrics</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Prometheus · refreshes every 30s</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-gray-700 overflow-hidden">
-            {RANGES.map((r, i) => (
-              <button
-                key={r.label}
-                onClick={() => setRangeIdx(i)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  i === rangeIdx
-                    ? "bg-blue-600 text-white"
-                    : "text-gray-400 hover:text-gray-100 hover:bg-gray-800"
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="p-2 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-100"
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
+    <div className="dashboard-page">
+      <PageHeader
+        icon="bar-chart"
+        title="Metrics"
+        description={
+          <>
+            Prometheus · refreshes every 30s
+            {lastUpdated && (
+              <span className="ml-2 text-slate-500">
+                · last updated{" "}
+                <time
+                  dateTime={new Date(lastUpdated).toISOString()}
+                  className="text-slate-400 font-mono"
+                >
+                  {formatLocaleInTz(lastUpdated, {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
+                </time>
+              </span>
+            )}
+          </>
+        }
+        actions={
+          <>
+            {/* Time-range segmented control */}
+            <div
+              role="group"
+              aria-label="Time range"
+              className="inline-flex rounded-lg border border-slate-800 overflow-hidden bg-slate-950/45"
+            >
+              {RANGES.map((r, i) => (
+                <button
+                  key={r.label}
+                  onClick={() => setRangeIdx(i)}
+                  aria-pressed={i === rangeIdx}
+                  className={clsx(
+                    "px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none",
+                    i === rangeIdx
+                      ? "bg-blue-500/20 text-blue-100 border-blue-400/40 shadow-inner shadow-blue-950/40"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 border-transparent",
+                    i > 0 && "border-l border-slate-800"
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={load}
+              disabled={loading}
+              aria-label="Refresh metrics"
+              title="Refresh"
+              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 hover:border-slate-500 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            </button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          label="Series loaded"
+          value={llmKeys.length + toolKeys.length + msgKeys.length}
+          hint={`${range.label} selected`}
+          icon="activity"
+          tone="info"
+        />
+        <KpiCard
+          label="DLQ depth"
+          value={totalDlqDepth}
+          hint={totalDlqDepth === 0 ? "all streams clear" : "needs replay review"}
+          icon="inbox"
+          tone={totalDlqDepth > 0 ? "negative" : "positive"}
+        />
+        <KpiCard
+          label="Budget alerts"
+          value={budgetData.length}
+          hint="agents over budget"
+          icon="wallet"
+          tone={budgetData.length > 0 ? "warning" : "positive"}
+        />
+        <KpiCard
+          label="Circuit breakers"
+          value={circuitData.length}
+          hint="open or half-open"
+          icon="zap"
+          tone={circuitData.length > 0 ? "negative" : "positive"}
+        />
       </div>
 
+      {noData ? (
+        <EmptyState
+          icon="alert"
+          tone="neutral"
+          title="No metrics available"
+          description={`The Prometheus query returned no data for the ${range.label} window. The metrics endpoint may be down, or the operator has not reported any series yet.`}
+          action={
+            <button
+              onClick={load}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              Reconnect
+            </button>
+          }
+        />
+      ) : (
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {!mounted ? (
-          <div className="col-span-2 h-48 flex items-center justify-center text-gray-600 text-sm">
+          <div className="col-span-2 h-48 flex items-center justify-center text-slate-500 text-sm">
             Loading charts...
           </div>
         ) : (<>
-        <MetricCard title="LLM Calls/min by Model">
+        <MetricCard title="LLM Calls/min by Model" description="calls · 5m rate">
           {llmData.length ? (
-            <ResponsiveContainer width="100%" height={160}>
-              <LineChart data={llmData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8 }} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={llmData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <defs>
+                  {llmKeys.map((k, i) => (
+                    <linearGradient
+                      key={k}
+                      id={gradientId(0, k)}
+                      x1="0" y1="0" x2="0" y2="1"
+                    >
+                      <stop offset="0%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0.45} />
+                      <stop offset="100%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  label={{ value: "time", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 10 }}
+                />
+                <YAxis
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  width={48}
+                  label={{ value: "calls/min", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 10 }}
+                />
+                <Tooltip content={<ChartTooltip unit="cpm" />} cursor={{ stroke: "#475569", strokeWidth: 1, strokeDasharray: "3 3" }} />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  height={24}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 10, color: "#cbd5e1" }}
+                />
                 {llmKeys.map((k, i) => (
-                  <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} />
+                  <Area
+                    key={k}
+                    type="monotone"
+                    dataKey={k}
+                    stroke={COLORS[i % COLORS.length]}
+                    fill={`url(#${gradientId(0, k)})`}
+                    strokeWidth={1.5}
+                    isAnimationActive
+                    animationDuration={600}
+                    animationEasing="ease-out"
+                  />
                 ))}
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
-          ) : <EmptyChart />}
+          ) : (
+            <div className="h-44 flex items-center justify-center text-slate-600 text-xs">
+              No model data in this window
+            </div>
+          )}
         </MetricCard>
 
-        <MetricCard title="Tool Calls/min (top 10)">
+        <MetricCard title="Tool Calls/min (top 10)" description="calls · 5m rate">
           {toolData.length ? (
-            <ResponsiveContainer width="100%" height={160}>
-              <LineChart data={toolData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8 }} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={toolData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <defs>
+                  {toolKeys.map((k, i) => (
+                    <linearGradient
+                      key={k}
+                      id={gradientId(1, k)}
+                      x1="0" y1="0" x2="0" y2="1"
+                    >
+                      <stop offset="0%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0.45} />
+                      <stop offset="100%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0} />
+                    </linearGradient>
+                  ))}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  label={{ value: "time", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 10 }}
+                />
+                <YAxis
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  width={48}
+                  label={{ value: "calls/min", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 10 }}
+                />
+                <Tooltip content={<ChartTooltip unit="cpm" />} cursor={{ stroke: "#475569", strokeWidth: 1, strokeDasharray: "3 3" }} />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  height={24}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 10, color: "#cbd5e1" }}
+                />
                 {toolKeys.map((k, i) => (
-                  <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} />
+                  <Area
+                    key={k}
+                    type="monotone"
+                    dataKey={k}
+                    stroke={COLORS[i % COLORS.length]}
+                    fill={`url(#${gradientId(1, k)})`}
+                    strokeWidth={1.5}
+                    isAnimationActive
+                    animationDuration={600}
+                    animationEasing="ease-out"
+                  />
                 ))}
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
-          ) : <EmptyChart />}
+          ) : (
+            <div className="h-44 flex items-center justify-center text-slate-600 text-xs">
+              No tool data in this window
+            </div>
+          )}
         </MetricCard>
 
-        <MetricCard title="Messages/min by Direction">
+        <MetricCard title="Messages/min by Direction" description="msgs · 5m rate">
           {msgData.length ? (
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={msgData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8 }} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={msgData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  label={{ value: "time", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 10 }}
+                />
+                <YAxis
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  width={48}
+                  label={{ value: "msgs/min", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 10 }}
+                />
+                <Tooltip content={<ChartTooltip unit="mpm" />} cursor={{ fill: "#1e293b" }} />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  height={24}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 10, color: "#cbd5e1" }}
+                />
                 {msgKeys.map((k, i) => (
-                  <Bar key={k} dataKey={k} fill={COLORS[i % COLORS.length]} />
+                  <Bar
+                    key={k}
+                    dataKey={k}
+                    fill={COLORS[i % COLORS.length]}
+                    radius={[3, 3, 0, 0]}
+                    isAnimationActive
+                    animationDuration={600}
+                    animationEasing="ease-out"
+                  />
                 ))}
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <EmptyChart />}
-        </MetricCard>
-
-        <MetricCard title="DLQ Depth by Stream">
-          {dlqData.length ? (
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={dlqData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="stream" tick={{ fill: "#6b7280", fontSize: 9 }} />
-                <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8 }} />
-                <Bar dataKey="depth" fill="#f87171" />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-36 flex items-center justify-center text-green-400 text-xs">
+            <div className="h-44 flex items-center justify-center text-slate-600 text-xs">
+              No message data in this window
+            </div>
+          )}
+        </MetricCard>
+
+        <MetricCard title="DLQ Depth by Stream" description="backlog">
+          {dlqData.length ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={dlqData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="dlq-bar-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f87171" stopOpacity={0.95} />
+                    <stop offset="100%" stopColor="#f87171" stopOpacity={0.45} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="stream"
+                  tick={{ fill: "#64748b", fontSize: 9 }}
+                  stroke="#334155"
+                  label={{ value: "stream", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 10 }}
+                />
+                <YAxis
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  width={48}
+                  label={{ value: "depth", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 10 }}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: "#1e293b" }} />
+                <Bar
+                  dataKey="depth"
+                  fill="url(#dlq-bar-grad)"
+                  radius={[3, 3, 0, 0]}
+                  isAnimationActive
+                  animationDuration={600}
+                  animationEasing="ease-out"
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-44 flex items-center justify-center text-emerald-400 text-xs">
               All DLQ depths are 0
             </div>
           )}
         </MetricCard>
 
         {budgetData.length > 0 && (
-          <MetricCard title="Budget Exhaustions">
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={budgetData} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="agent" tick={{ fill: "#6b7280", fontSize: 9 }} />
-                <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8 }} />
-                <Bar dataKey="exhaustions" fill="#f59e0b" />
+          <MetricCard title="Budget Exhaustions" description="agents over budget">
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={budgetData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="budget-bar-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.95} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.45} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="agent"
+                  tick={{ fill: "#64748b", fontSize: 9 }}
+                  stroke="#334155"
+                  label={{ value: "agent", position: "insideBottom", offset: -2, fill: "#64748b", fontSize: 10 }}
+                />
+                <YAxis
+                  tick={{ fill: "#64748b", fontSize: 10 }}
+                  stroke="#334155"
+                  width={48}
+                  label={{ value: "count", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 10 }}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: "#1e293b" }} />
+                <Bar
+                  dataKey="exhaustions"
+                  fill="url(#budget-bar-grad)"
+                  radius={[3, 3, 0, 0]}
+                  isAnimationActive
+                  animationDuration={600}
+                  animationEasing="ease-out"
+                />
               </BarChart>
             </ResponsiveContainer>
           </MetricCard>
         )}
 
         {circuitData.length > 0 && (
-          <MetricCard title="Open Circuit Breakers">
+          <MetricCard title="Open Circuit Breakers" description={`${circuitData.length} tools`}>
             <div className="space-y-1.5">
               {circuitData.map((d) => (
-                <div key={d.tool} className="flex items-center gap-2 text-xs">
-                  <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                  <span className="text-gray-300 flex-1 truncate">{d.tool}</span>
-                  <span className="text-red-400 font-mono">{d.state}</span>
+                <div
+                  key={d.tool}
+                  className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md bg-slate-950/40 border border-slate-800/70 transition-colors hover:border-rose-500/40 hover:bg-rose-950/15"
+                >
+                  <span className="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0" aria-hidden="true" />
+                  <span className="text-slate-300 flex-1 truncate">{d.tool}</span>
+                  <span className="text-rose-400 font-mono">{d.state}</span>
                 </div>
               ))}
             </div>
@@ -293,6 +595,7 @@ export default function MetricsPage() {
         )}
         </>)}
       </div>
+      )}
     </div>
   );
 }

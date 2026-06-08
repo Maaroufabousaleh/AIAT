@@ -2,6 +2,7 @@
 # ── Redis ACL init script ─────────────────────────────────────────────────
 # This script waits for Redis to be ready, then configures ACL users.
 # Run as an init container in Kubernetes, or as a one-shot service in Docker.
+set -eu
 
 # Redis connection settings
 REDIS_HOST="${REDIS_HOST:-redis}"
@@ -44,16 +45,20 @@ echo "  - router_user configured"
 
 # Configure toolcache_user
 redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" \
-    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" +@read +@write +@slow +ping
+    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" +@read +@write +@slow +ping +select
 echo "  - toolcache_user configured"
 
 # Disable default user
 redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER default off
 echo "  - default user disabled"
 
-# Persist ACL to disk so users survive Redis restarts
-redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL SAVE
-echo "  - ACL persisted to disk (ACL SAVE)"
+# Persist ACL to disk when Redis is configured with an ACL file. The compose
+# config defines users inline at startup, so ACL SAVE can be unavailable.
+if redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL SAVE > /dev/null 2>&1; then
+    echo "  - ACL persisted to disk (ACL SAVE)"
+else
+    echo "  - ACL SAVE skipped; Redis is not configured with an ACL file"
+fi
 
 echo ""
 echo "ACL configuration complete. Current users:"

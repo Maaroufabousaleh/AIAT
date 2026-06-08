@@ -30,7 +30,7 @@ from collections import OrderedDict
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.websockets import WebSocketState
 
 from mas_core.protocols.ws import (
@@ -57,13 +57,7 @@ logger = structlog.stdlib.get_logger(__name__)
 router = APIRouter()
 
 
-def _authenticate(ws: WebSocket) -> str | None:
-    """Extract and validate the agent_id from the Authorization header.
-
-    Returns the *agent_id* string on success, ``None`` on failure.
-    Expected header: ``Authorization: Bearer <agent_id>:<secret>``
-    """
-    auth_header: str | None = ws.headers.get("authorization")
+def _authenticate_token(auth_header: str | None) -> str | None:
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.removeprefix("Bearer ").strip()
@@ -73,6 +67,42 @@ def _authenticate(ws: WebSocket) -> str | None:
     if secret != settings.agent_token_secret:
         return None
     return agent_id if agent_id else None
+
+
+def _authenticate(ws: WebSocket) -> str | None:
+    """Extract and validate the agent_id from the Authorization header.
+
+    Returns the *agent_id* string on success, ``None`` on failure.
+    Expected header: ``Authorization: Bearer <agent_id>:<secret>``
+    """
+    return _authenticate_token(ws.headers.get("authorization"))
+
+
+@router.get("/streams/{team_id}/recent")
+async def recent_stream_entries(
+    request: Request,
+    team_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict[str, object]:
+    """Return retained Redis stream entries for operator dashboards."""
+    if _authenticate_token(request.headers.get("authorization")) is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    if team_id not in settings.known_teams:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown team_id: {team_id!r}")
+
+    redis = get_redis()
+    entries = await redis.xrevrange(stream_key(team_id), count=limit)
+    normalized = []
+    for entry_id, fields in reversed(entries):
+        normalized_fields = {
+            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+            for k, v in fields.items()
+        }
+        normalized.append({
+            "entry_id": entry_id.decode() if isinstance(entry_id, bytes) else entry_id,
+            "envelope": normalized_fields.get("envelope", ""),
+        })
+    return {"team_id": team_id, "entries": normalized}
 
 
 @router.websocket("/ws/subscribe/{team_id}")

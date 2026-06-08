@@ -7,8 +7,26 @@ type Params = { params: { team_id: string } };
 
 export async function GET(req: Request, { params }: Params) {
   const { team_id } = params;
-  const wsUrl = MESSAGE_ROUTER_URL.replace(/^http/, "ws") + `/ws/subscribe/${team_id}`;
+  const { searchParams } = new URL(req.url);
   const token = `dashboard:${ROUTER_SECRET}`;
+
+  if (searchParams.get("history") === "1") {
+    const limit = searchParams.get("limit") ?? "50";
+    const res = await fetch(
+      `${MESSAGE_ROUTER_URL}/streams/${encodeURIComponent(team_id)}/recent?limit=${encodeURIComponent(limit)}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      }
+    );
+    const body = await res.text();
+    return new Response(body, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("content-type") ?? "application/json" },
+    });
+  }
+
+  const wsUrl = MESSAGE_ROUTER_URL.replace(/^http/, "ws") + `/ws/subscribe/${team_id}`;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

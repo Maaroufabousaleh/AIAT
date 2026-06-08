@@ -215,7 +215,7 @@ services:
       redis-acl-init:
         condition: service_completed_successfully
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       REDIS_USERNAME: "router_user"
@@ -247,7 +247,7 @@ services:
       redis-acl-init:
         condition: service_completed_successfully
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       # Redis ACL: connect as toolcache_user (DB 1 for tool cache)
       REDIS_URL: "redis://toolcache_user:${TOOLCACHE_PASSWORD}@redis:6379/1"
@@ -308,6 +308,7 @@ services:
       WORKER_MIRROR_DIR: "/data/worker-mirrors"
     volumes:
       - worker_mirrors:/data/worker-mirrors
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -350,6 +351,7 @@ services:
       DASHBOARD_PASSWORD_HASH: "${DASHBOARD_PASSWORD_HASH}"
       JWT_SECRET: "${JWT_SECRET}"
       MAS_API_KEY: "${MAS_API_KEY}"
+      ROUTER_SECRET: "${ROUTER_SECRET}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m

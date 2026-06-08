@@ -3,7 +3,19 @@ import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "js-yaml";
 
-const TEAMS_DIR = path.resolve(process.cwd(), "..", "..", "teams");
+export const dynamic = "force-dynamic";
+
+function findTeamsDir(): string | null {
+  const candidates = [
+    process.env.TEAMS_DIR,
+    path.resolve(process.cwd(), "..", "..", "teams"),
+    path.resolve(process.cwd(), "teams"),
+    "/app/teams",
+    "/teams",
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+}
 
 interface TeamConfig {
   team_id: string;
@@ -87,15 +99,20 @@ const DISPLAY_NAMES: Record<string, string> = {
 };
 
 function loadTeamConfig(teamId: string): TeamConfig | null {
-  const filePath = path.join(TEAMS_DIR, `${teamId}.yaml`);
+  const teamsDir = findTeamsDir();
+  if (!teamsDir) return null;
+
+  const filePath = path.join(teamsDir, `${teamId}.yaml`);
   if (!fs.existsSync(filePath)) return null;
   const content = fs.readFileSync(filePath, "utf-8");
   return yaml.load(content) as TeamConfig;
 }
 
 function buildHierarchy(): TeamHierarchyNode[] {
-  if (!fs.existsSync(TEAMS_DIR)) return [];
-  const teams = fs.readdirSync(TEAMS_DIR).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
+  const teamsDir = findTeamsDir();
+  if (!teamsDir) return [];
+
+  const teams = fs.readdirSync(teamsDir).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
   
   const nodes: Record<string, TeamHierarchyNode> = {};
   
@@ -129,10 +146,12 @@ function buildHierarchy(): TeamHierarchyNode[] {
   const hierarchy: TeamHierarchyNode[] = [];
   
   if (nodes.exec_ceo) {
-    nodes.exec_ceo.children = [nodes.exec_coo];
-    nodes.exec_coo.children = Object.values(nodes).filter(n => 
-      n.teamId !== "exec_ceo" && n.teamId !== "exec_coo"
-    );
+    if (nodes.exec_coo) {
+      nodes.exec_ceo.children = [nodes.exec_coo];
+      nodes.exec_coo.children = Object.values(nodes).filter(n => 
+        n.teamId !== "exec_ceo" && n.teamId !== "exec_coo"
+      );
+    }
     hierarchy.push(nodes.exec_ceo);
   }
   
@@ -141,10 +160,11 @@ function buildHierarchy(): TeamHierarchyNode[] {
 
 export async function GET() {
   try {
-    if (!fs.existsSync(TEAMS_DIR)) {
+    const teamsDir = findTeamsDir();
+    if (!teamsDir) {
       return NextResponse.json({ teams: [], hierarchy: [] });
     }
-    const teams = fs.readdirSync(TEAMS_DIR).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
+    const teams = fs.readdirSync(teamsDir).filter(f => f.endsWith(".yaml")).map(f => f.replace(".yaml", ""));
     
     const teamsData = teams.map(teamId => {
       const config = loadTeamConfig(teamId);

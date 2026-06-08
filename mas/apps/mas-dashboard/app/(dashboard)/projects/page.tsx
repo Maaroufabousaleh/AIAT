@@ -1,11 +1,27 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, type WorkflowState } from "@/lib/constants";
 import { formatDistanceToNow } from "date-fns";
-import { Plus, RefreshCw } from "lucide-react";
+import {
+  Archive,
+  ArrowRight,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
+import { BulkActionBar, RowCheckbox, SelectAllCheckbox } from "@/components/ui/BulkActionBar";
+import { useBulkSelection } from "@/lib/use-bulk-selection";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { FilterChip } from "@/components/ui/FilterChips";
 
 interface Project {
   id: string;
@@ -22,24 +38,68 @@ interface Flow {
   version: number;
 }
 
+// Available sort columns for the projects table.
+type SortKey = "name" | "state" | "created_at" | "updated_at";
+type SortDir = "asc" | "desc";
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "updated_at", label: "Updated" },
+  { key: "created_at", label: "Created" },
+  { key: "state", label: "State" },
+];
+
+function projectActionError(detail: unknown, fallback: string) {
+  const raw = typeof (detail as { error?: unknown })?.error === "string"
+    ? (detail as { error: string }).error
+    : fallback;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.detail === "string" ? parsed.detail : raw;
+  } catch {
+    return raw;
+  }
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("");
+  const [filter, setFilter] = useState<string>("non-archived");
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [error, setError] = useState("");
+  const [bulkArchiving, setBulkArchiving] = useState(false);
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+  // Sort controls: which field to sort by and which direction.
+  // Defaults to "Recently updated" — the most common intent on a project list.
+  const [sortKey, setSortKey] = useState<SortKey>("updated_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Tracks which project row has its full description expanded inline.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      // Flip direction when re-clicking the active sort column.
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // Sensible default per column: text columns ascend, dates descend.
+      setSortDir(key === "name" || key === "state" ? "asc" : "desc");
+    }
+  };
 
   async function load() {
     setLoading(true);
     try {
       const [projRes, flowRes] = await Promise.all([
-        fetch("/api/projects"),
-        fetch("/api/flows?is_active=true"),
+        fetch("/api/projects?limit=1000"),
+        fetch("/api/flows?is_active=true&limit=1000"),
       ]);
       if (projRes.ok) {
         const projData = await projRes.json();
@@ -98,113 +158,301 @@ export default function ProjectsPage() {
     }
   }
 
-  const filtered = filter
-    ? projects.filter((p) => p.state === filter)
-    : projects;
+  const filtered = filter === "non-archived"
+    ? projects.filter((p) => p.state !== "ARCHIVED")
+    : filter
+      ? projects.filter((p) => p.state === filter)
+      : projects;
+
+  // Apply sort. We always return a new array (don't mutate `filtered` in place)
+  // so memoization on `filteredIds` stays correct.
+  const sorted = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (sortKey === "name" || sortKey === "state") {
+        return dir * String(av).localeCompare(String(bv));
+      }
+      // Date columns: compare as timestamps.
+      return dir * (new Date(av as string).getTime() - new Date(bv as string).getTime());
+    });
+  }, [filtered, sortKey, sortDir]);
+
+  const activeCount = useMemo(
+    () => projects.filter((p) => !["COMPLETED", "ARCHIVED", "FAILED"].includes(p.state)).length,
+    [projects]
+  );
+  const nonArchivedCount = useMemo(
+    () => projects.filter((p) => p.state !== "ARCHIVED").length,
+    [projects]
+  );
+
+  const filteredIds = useMemo(() => sorted.map((p) => p.id), [sorted]);
+  const selection = useBulkSelection(filteredIds);
+  // Drop selections whose projects are no longer in the filtered view.
+  useEffect(() => {
+    selection.prune();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredIds.join(",")]);
+
+  async function handleBulkArchive() {
+    if (selection.selectedCount === 0) return;
+    const ids = Array.from(selection.selected);
+    setBulkArchiving(true);
+    setBulkError("");
+    let failed = 0;
+    try {
+      // Archive in parallel — the archive endpoint is independent per project.
+      const results = await Promise.allSettled(
+        ids.map((id) => fetch(`/api/projects/${id}/archive`, { method: "POST" }))
+      );
+      for (const r of results) {
+        if (r.status === "rejected" || !r.value.ok) failed++;
+      }
+      if (failed > 0) {
+        setBulkError(
+          `Archived ${ids.length - failed} of ${ids.length} project${ids.length === 1 ? "" : "s"} (${failed} failed).`
+        );
+      }
+      await load();
+      selection.clear();
+    } finally {
+      setBulkArchiving(false);
+    }
+  }
+
+  async function archiveProject(project: Project) {
+    setBulkArchiving(true);
+    setBulkError("");
+    try {
+      const res = await fetch(`/api/projects/${project.id}/archive`, { method: "POST" });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        const message = projectActionError(detail, res.statusText);
+        setBulkError(`Failed to archive "${project.name}": ${message}`);
+        return;
+      }
+      await load();
+    } finally {
+      setBulkArchiving(false);
+    }
+  }
+
+  async function deleteProject(project: Project) {
+    setBulkDeleteLoading(true);
+    setBulkError("");
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        const message = projectActionError(detail, res.statusText);
+        setBulkError(`Failed to delete "${project.name}": ${message}`);
+        return;
+      }
+      await load();
+      selection.prune();
+    } finally {
+      setBulkDeleteLoading(false);
+    }
+  }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="dashboard-page">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Projects</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{projects.length} total</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={load}
-            disabled={loading}
-            className="p-2 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-100
-                       hover:border-gray-500 transition-colors"
-          >
-            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-          </button>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
-                       text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <Plus size={14} />
-            New Project
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon="folder-kanban"
+        title="Projects"
+        description={`${projects.length} total · ${activeCount} active`}
+        actions={
+          <>
+            <button
+              onClick={load}
+              disabled={loading}
+              title="Refresh"
+              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
+            >
+              <Plus size={14} />
+              New Project
+            </button>
+          </>
+        }
+      />
 
-      {/* Filter */}
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          onClick={() => setFilter("")}
-          className={clsx(
-            "px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-            filter === "" ? "bg-gray-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-          )}
-        >
-          All
-        </button>
-        {WORKFLOW_STATES.filter((s) => projects.some((p) => p.state === s)).map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={clsx(
-              "px-2.5 py-1 rounded-full text-xs font-medium transition-colors text-white",
-              filter === s ? STATE_COLORS[s] : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-            )}
+      {/* Filter + sort toolbar */}
+      {projects.length > 0 && (
+        <div className="dashboard-toolbar flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter projects by state">
+            <FilterChip
+              active={filter === "non-archived"}
+              onClick={() => setFilter("non-archived")}
+              count={nonArchivedCount}
+            >
+              Non archived
+            </FilterChip>
+            <FilterChip
+              active={filter === ""}
+              onClick={() => setFilter("")}
+              count={projects.length}
+            >
+              All
+            </FilterChip>
+            {WORKFLOW_STATES.filter((s) => projects.some((p) => p.state === s)).map((s) => (
+              <FilterChip
+                key={s}
+                active={filter === s}
+                onClick={() => setFilter(s)}
+                count={projects.filter((p) => p.state === s).length}
+              >
+                {s.replace(/_/g, " ")}
+              </FilterChip>
+            ))}
+          </div>
+
+          {/* Sort controls — click a header-style chip to sort by that field. */}
+          <div
+            className="ml-auto flex items-center gap-1.5"
+            role="group"
+            aria-label="Sort projects"
           >
-            {s.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
+            <span className="hidden sm:inline-flex items-center gap-1 text-xxs font-semibold uppercase tracking-wider text-slate-500 mr-1">
+              <ArrowUpDown size={11} aria-hidden="true" />
+              Sort
+            </span>
+            {SORT_OPTIONS.map((opt) => {
+              const active = sortKey === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => toggleSort(opt.key)}
+                  aria-label={`Sort by ${opt.label} ${active ? (sortDir === "asc" ? "(ascending)" : "(descending)") : ""}`}
+                  aria-pressed={active}
+                  className={clsx(
+                    "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    active
+                      ? "bg-blue-500/20 text-blue-100 border-blue-400/45"
+                      : "bg-slate-950/55 text-slate-400 border-slate-700 hover:bg-slate-900 hover:text-slate-200"
+                  )}
+                >
+                  {opt.label}
+                  {active && (
+                    <span aria-hidden="true" className="text-blue-300">
+                      {sortDir === "asc" ? "↑" : "↓"}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Bulk action bar */}
+      {selection.selectedCount > 0 && (
+        <BulkActionBar
+          selectedCount={selection.selectedCount}
+          totalCount={sorted.length}
+          loading={bulkArchiving || bulkDeleteLoading}
+          action="archive"
+          actionLabel={`Archive ${selection.selectedCount} selected`}
+          onAction={handleBulkArchive}
+          onClear={selection.clear}
+        />
+      )}
+
+      {bulkError && (
+        <ErrorBanner tone="warning">{bulkError}</ErrorBanner>
+      )}
 
       {/* Table */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="dashboard-surface overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-gray-500 text-sm">Loading...</div>
+          <div className="p-8 text-center text-slate-500 text-sm">Loading…</div>
         ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-gray-500 text-sm">No projects found</div>
+          projects.length === 0 ? (
+            <div className="p-6">
+              <EmptyState
+                icon="folder-kanban"
+                title="No projects yet"
+                description="Create your first project to get the agent teams working."
+                action={
+                  <button
+                    onClick={() => setShowCreate(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    <Plus size={14} />
+                    New Project
+                  </button>
+                }
+              />
+            </div>
+          ) : (
+            <div className="p-6">
+              <EmptyState
+                icon="folder-kanban"
+                title="No projects in this state"
+                description="Try a different filter or clear it to see everything."
+                action={
+                  <button
+                    onClick={() => setFilter("non-archived")}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Show non archived
+                  </button>
+                }
+              />
+            </div>
+          )
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800">
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">State</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Created</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Updated</th>
-                <th className="px-4 py-3"></th>
+              <tr className="border-b border-slate-800">
+                <th className="px-4 py-3 w-10">
+                  <SelectAllCheckbox
+                    checked={selection.isAllSelected}
+                    indeterminate={selection.isIndeterminate}
+                    onChange={selection.toggleAll}
+                    ariaLabel="Select all projects"
+                  />
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">State</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Created</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden md:table-cell">Updated</th>
+                <th className="px-4 py-3">
+                  <span className="sr-only">Quick actions</span>
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
-              {filtered.map((p) => (
-                <tr key={p.id} className="hover:bg-gray-800/50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-100">{p.name}</div>
-                    {p.description && (
-                      <div className="text-xs text-gray-500 mt-0.5 truncate max-w-xs">{p.description}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={clsx(
-                      "inline-flex px-2 py-0.5 rounded-full text-xs font-medium text-white",
-                      STATE_COLORS[p.state] ?? "bg-gray-600"
-                    )}>
-                      {p.state?.replace(/_/g, " ")}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs hidden sm:table-cell">
-                    {formatDistanceToNow(new Date(p.created_at), { addSuffix: true })}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">
-                    {formatDistanceToNow(new Date(p.updated_at), { addSuffix: true })}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/projects/${p.id}`}
-                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                    >
-                      View →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+            <tbody className="divide-y divide-slate-800/70">
+              {sorted.map((p) => {
+                const isSelected = selection.selected.has(p.id);
+                const isExpanded = expandedId === p.id;
+                const hasDescription = Boolean(p.description);
+                return (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    isSelected={isSelected}
+                    isExpanded={isExpanded}
+                    hasDescription={hasDescription}
+                    onToggleSelect={() => selection.toggle(p.id)}
+                    onToggleExpand={() =>
+                      setExpandedId((curr) => (curr === p.id ? null : p.id))
+                    }
+                    onArchive={() => archiveProject(p)}
+                    onDelete={() => deleteProject(p)}
+                    actionsDisabled={bulkArchiving || bulkDeleteLoading}
+                  />
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -212,40 +460,49 @@ export default function ProjectsPage() {
 
       {/* Create modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-md">
-            <h2 className="text-lg font-semibold text-white mb-4">New Project</h2>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="dashboard-surface-strong p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">New Project</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Create a project and optionally attach a flow.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="p-1 text-slate-500 hover:text-slate-200 rounded"
+              >
+                <X size={16} />
+              </button>
+            </div>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1.5">Name</label>
+                <label className="block text-sm text-slate-300 mb-1.5">Name</label>
                 <input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   required
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
-                             text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="my-project"
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1.5">Description</label>
+                <label className="block text-sm text-slate-300 mb-1.5">Description</label>
                 <textarea
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   rows={3}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
-                             text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   placeholder="What should the agents build?"
                 />
               </div>
               {flows.length > 0 && (
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">Attach Flow (optional)</label>
+                  <label className="block text-sm text-slate-300 mb-1.5">Attach Flow (optional)</label>
                   <select
                     value={selectedFlowId}
                     onChange={(e) => setSelectedFlowId(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2
-                               text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">None — use default workflow</option>
                     {flows.map((flow) => (
@@ -254,28 +511,26 @@ export default function ProjectsPage() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-slate-500 mt-1">
                     The selected flow will replace the default 18-state workflow for this project.
                   </p>
                 </div>
               )}
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && <ErrorBanner tone="error">{error}</ErrorBanner>}
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowCreate(false)}
-                  className="flex-1 px-3 py-2 border border-gray-700 rounded-lg text-sm text-gray-400
-                             hover:text-gray-100 hover:border-gray-500 transition-colors"
+                  className="flex-1 px-3 py-2 border border-slate-700 rounded-lg text-sm text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-800 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={creating}
-                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900
-                             text-white text-sm rounded-lg transition-colors"
+                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                 >
-                  {creating ? "Creating..." : "Create"}
+                  {creating ? "Creating…" : "Create"}
                 </button>
               </div>
             </form>
@@ -283,5 +538,186 @@ export default function ProjectsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+interface ProjectRowProps {
+  project: Project;
+  isSelected: boolean;
+  isExpanded: boolean;
+  hasDescription: boolean;
+  onToggleSelect: () => void;
+  onToggleExpand: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  actionsDisabled: boolean;
+}
+
+/**
+ * Single row in the projects table. Owns the hover-revealed quick actions and
+ * the optional inline description expansion. Extracted from the main page to
+ * keep the table body readable.
+ */
+function ProjectRow({
+  project: p,
+  isSelected,
+  isExpanded,
+  hasDescription,
+  onToggleSelect,
+  onToggleExpand,
+  onArchive,
+  onDelete,
+  actionsDisabled,
+}: ProjectRowProps) {
+  // Quick-action buttons stay hidden by default to keep the row calm, but they
+  // become visible on hover/focus and stay visible while the row is selected
+  // or expanded so the user never loses access to them.
+  const quickActionsHidden = !isSelected && !isExpanded;
+
+  return (
+    <>
+      <tr
+        className={clsx(
+          "group transition-colors",
+          "hover:bg-slate-800/40",
+          "focus-within:bg-slate-800/30",
+          isSelected && "bg-blue-950/30 hover:bg-blue-950/40"
+        )}
+      >
+        <td className="px-4 py-3">
+          <RowCheckbox
+            checked={isSelected}
+            onChange={onToggleSelect}
+            ariaLabel={`Select ${p.name}`}
+          />
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex items-start gap-1.5">
+            {hasDescription ? (
+              <button
+                type="button"
+                onClick={onToggleExpand}
+                aria-label={
+                  isExpanded
+                    ? `Collapse description for ${p.name}`
+                    : `Expand description for ${p.name}`
+                }
+                aria-expanded={isExpanded}
+                title={isExpanded ? "Hide description" : "Show description"}
+                className="mt-0.5 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 focus-visible:bg-slate-800/70 transition-colors"
+              >
+                {isExpanded ? (
+                  <ChevronDown size={12} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={12} aria-hidden="true" />
+                )}
+              </button>
+            ) : (
+              <span className="w-4 inline-block" aria-hidden="true" />
+            )}
+            <div className="min-w-0 flex-1">
+              <Link
+                href={`/projects/${p.id}`}
+                prefetch={false}
+                className="font-medium text-slate-100 group-hover:text-white transition-colors"
+              >
+                {p.name}
+              </Link>
+              {hasDescription && !isExpanded && (
+                <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">
+                  {p.description}
+                </div>
+              )}
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3">
+          <span
+            className={clsx(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium text-white",
+              STATE_COLORS[p.state] ?? "bg-slate-600"
+            )}
+          >
+            <span className="w-1 h-1 rounded-full bg-white/60" />
+            {p.state?.replace(/_/g, " ")}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-slate-500 text-xs hidden sm:table-cell">
+          {formatDistanceToNow(new Date(p.created_at), { addSuffix: true })}
+        </td>
+        <td className="px-4 py-3 text-slate-500 text-xs hidden md:table-cell">
+          {formatDistanceToNow(new Date(p.updated_at), { addSuffix: true })}
+        </td>
+        <td className="px-4 py-3 text-right">
+          <div
+            className={clsx(
+              "flex items-center justify-end gap-1 transition-opacity",
+              // Reveal on hover (group) or keyboard focus-within; keep visible
+              // when the row is selected or expanded.
+              quickActionsHidden &&
+                "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"
+            )}
+          >
+            <Link
+              href={`/projects/${p.id}`}
+              prefetch={false}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-white rounded transition-colors"
+              aria-label={`Open ${p.name}`}
+            >
+              Open
+              <ArrowRight size={12} aria-hidden="true" />
+            </Link>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm(`Archive project "${p.name}"? This removes it from active work.`)) return;
+                onArchive();
+              }}
+              disabled={actionsDisabled}
+              title="Archive project"
+              aria-label={`Archive project ${p.name}`}
+              className="p-1 text-slate-500 hover:text-amber-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Archive size={12} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm(`Permanently delete project "${p.name}"? This cannot be undone.`)) return;
+                onDelete();
+              }}
+              disabled={actionsDisabled}
+              title="Delete project"
+              aria-label={`Delete project ${p.name}`}
+              className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={12} aria-hidden="true" />
+            </button>
+          </div>
+        </td>
+      </tr>
+      {/* Expanded description row — full text, no truncation. Only rendered
+          when this project is the expanded one AND has a description. */}
+      {isExpanded && hasDescription && (
+        <tr
+          className={clsx(
+            "bg-slate-950/40",
+            isSelected && "bg-blue-950/25"
+          )}
+        >
+          <td />
+          <td colSpan={5} className="px-4 py-3">
+            <div className="rounded-md border border-slate-800/80 bg-slate-900/60 p-3">
+              <div className="text-xxs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+                Description
+              </div>
+              <p className="text-sm text-slate-300 whitespace-pre-wrap break-words">
+                {p.description}
+              </p>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

@@ -3,6 +3,7 @@ Tests for Projects CRUD endpoints:
   POST /projects
   GET  /projects
   GET  /projects/{id}
+  DELETE /projects/{id}
   POST /projects/{id}/retry
   POST /projects/{id}/archive
   GET  /projects/{id}/allowed-transitions
@@ -24,6 +25,7 @@ def _make_storage(project=None, projects=None):
     storage = MagicMock()
     storage.create_project = AsyncMock(return_value=_fake_project("INIT"))
     storage.get_project = AsyncMock(return_value=project)
+    storage.delete_project = AsyncMock(return_value=project is not None)
     storage.list_projects = AsyncMock(return_value=projects if projects is not None else [])
     storage.get_project_history = AsyncMock(return_value=[])
     return storage
@@ -347,4 +349,43 @@ async def test_archive_not_found_returns_404(client):
     """POST /projects/{id}/archive returns 404 when project does not exist."""
     _patch_state(_make_storage(project=None))
     resp = await client.post(f"/projects/{PROJECT_ID}/archive")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_archive_archived_project_is_idempotent(client):
+    """POST /projects/{id}/archive succeeds when project is already archived."""
+    storage = _make_storage(project=_fake_project("ARCHIVED"))
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    resp = await client.post(f"/projects/{PROJECT_ID}/archive")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "archived", "next_state": "ARCHIVED"}
+    ctrl.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_delete_project_happy_path(client):
+    """DELETE /projects/{id} permanently deletes a project."""
+    storage = _make_storage(project=_fake_project("ARCHIVED"))
+    _patch_state(storage)
+
+    resp = await client.delete(f"/projects/{PROJECT_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    storage.delete_project.assert_awaited_once_with(PROJECT_ID)
+
+
+@pytest.mark.anyio
+async def test_delete_project_not_found_returns_404(client):
+    """DELETE /projects/{id} returns 404 when project does not exist."""
+    storage = _make_storage(project=None)
+    storage.delete_project = AsyncMock(return_value=False)
+    _patch_state(storage)
+
+    resp = await client.delete(f"/projects/{PROJECT_ID}")
+
     assert resp.status_code == 404

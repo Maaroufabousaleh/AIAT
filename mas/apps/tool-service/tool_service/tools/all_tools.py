@@ -79,6 +79,7 @@ from .sprint_kpi import (
     SprintCreateTool,
     VelocityReportTool,
 )
+from .time import TimeNowTool
 from .web import WebFetchTool, WebSearchTool
 
 
@@ -149,6 +150,8 @@ def get_all_tools() -> list[BaseTool]:
         CapabilityListWorkersTool(),
         CapabilityRegisterTool(),
         CapabilityDeregisterTool(),
+        # TIME
+        TimeNowTool(),
         # INFRA
         InfraProvisionTool(),
         CICDConfigureTool(),

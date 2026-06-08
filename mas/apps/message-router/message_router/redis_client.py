@@ -19,7 +19,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
-from redis.exceptions import ResponseError
+from redis.exceptions import ResponseError, TimeoutError as RedisTimeoutError
 
 from .config import settings
 
@@ -46,6 +46,7 @@ async def connect_redis() -> Redis:
         password=settings.redis_password,
         decode_responses=True,
         encoding="utf-8",
+        socket_timeout=max(10, settings.read_block_ms / 1000 + 5),
     )
     await client.ping()
     _redis_client = client
@@ -308,13 +309,16 @@ async def xreadgroup_new(
     key = stream_key(team_id)
     grp = group_name(team_id)
     block = block_ms if block_ms is not None else settings.read_block_ms
-    result: Any = await r.xreadgroup(
-        grp,
-        consumer_id,
-        {key: ">"},
-        count=settings.read_count,
-        block=block,
-    )
+    try:
+        result: Any = await r.xreadgroup(
+            grp,
+            consumer_id,
+            {key: ">"},
+            count=settings.read_count,
+            block=block,
+        )
+    except RedisTimeoutError:
+        return []
     entries: list[tuple[str, dict[str, str]]] = []
     if result:
         for _stream, messages in result:

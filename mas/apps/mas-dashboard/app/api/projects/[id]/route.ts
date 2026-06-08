@@ -12,3 +12,13 @@ export async function GET(_: Request, { params }: Params) {
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
+
+export async function DELETE(_: Request, { params }: Params) {
+  try {
+    const data = await orchestratorFetch(`/projects/${params.id}`, { method: "DELETE" });
+    return NextResponse.json(data);
+  } catch (e) {
+    if (e instanceof OrchestratorError) return NextResponse.json({ error: e.message }, { status: e.status });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+}

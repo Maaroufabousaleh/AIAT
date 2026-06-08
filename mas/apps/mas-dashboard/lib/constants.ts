@@ -1,15 +1,15 @@
 export const TEAM_STREAMS = [
-  { id: "exec_ceo",        label: "CEO",        role: "C-Suite" },
-  { id: "exec_coo",        label: "COO",        role: "C-Suite" },
-  { id: "office_cfo",      label: "CFO",        role: "C-Office" },
-  { id: "office_cio",      label: "CIO",        role: "C-Office" },
-  { id: "office_chrm",     label: "CHRM",       role: "C-Office" },
-  { id: "office_cso",      label: "CSO",        role: "C-Office" },
-  { id: "office_cto",      label: "CTO",        role: "C-Office" },
-  { id: "dept_production", label: "Production", role: "Department" },
-  { id: "dept_system",     label: "System",     role: "Department" },
-  { id: "dept_qa",         label: "QA",         role: "Department" },
-  { id: "dept_devops",     label: "DevOps",     role: "Department" },
+  { id: "exec_ceo",        label: "CEO",        role: "C-Suite",    description: "Top-level executive stream — strategic directives and org-wide decisions broadcast from the CEO." },
+  { id: "exec_coo",        label: "COO",        role: "C-Suite",    description: "Operations executive stream — scheduling, capacity, and cross-team coordination directives." },
+  { id: "office_cfo",      label: "CFO",        role: "C-Office",   description: "Financial stream — budget approvals, spend reports, and cost optimisation messages." },
+  { id: "office_cio",      label: "CIO",        role: "C-Office",   description: "Information / data stream — data governance, analytics, and reporting traffic." },
+  { id: "office_chrm",     label: "CHRM",       role: "C-Office",   description: "Human resources stream — workforce planning, role assignments, and HR escalations." },
+  { id: "office_cso",      label: "CSO",        role: "C-Office",   description: "Security stream — security incidents, access reviews, and compliance directives." },
+  { id: "office_cto",      label: "CTO",        role: "C-Office",   description: "Technology stream — architecture decisions, tech-radar updates, and engineering standards." },
+  { id: "dept_production", label: "Production", role: "Department", description: "Production department stream — build, release, and runtime operations traffic." },
+  { id: "dept_system",     label: "System",     role: "Department", description: "System department stream — infrastructure, networking, and platform-level events." },
+  { id: "dept_qa",         label: "QA",         role: "Department", description: "Quality assurance stream — test results, coverage reports, and defect escalations." },
+  { id: "dept_devops",     label: "DevOps",     role: "Department", description: "DevOps stream — CI/CD pipeline events, deploy approvals, and incident reports." },
 ] as const;
 
 export type TeamStreamId = (typeof TEAM_STREAMS)[number]["id"];

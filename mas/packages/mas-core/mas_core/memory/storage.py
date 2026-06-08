@@ -134,6 +134,35 @@ class AgentStorage:
             )
         return dict(row) if row else None
 
+    async def delete_project(self, project_id: UUID) -> bool:
+        """Delete a project and project-owned records.
+
+        Most project-owned tables have ``ON DELETE CASCADE`` constraints. A few
+        older tables keep project IDs without foreign keys, so clear them here
+        before deleting the project row.
+        """
+        async with self.engine.begin() as conn:
+            flow_instance_ids = sa.select(t.flow_instances.c.id).where(
+                t.flow_instances.c.project_id == project_id
+            )
+            await conn.execute(
+                t.flow_node_executions.delete().where(
+                    t.flow_node_executions.c.instance_id.in_(flow_instance_ids)
+                )
+            )
+            for table in (
+                t.review_comments,
+                t.dead_letters,
+                t.project_context_chunks,
+                t.project_context_tags,
+                t.project_context_relations,
+                t.agent_checkpoints,
+            ):
+                await conn.execute(table.delete().where(table.c.project_id == project_id))
+
+            result = await conn.execute(t.projects.delete().where(t.projects.c.id == project_id))
+            return bool(result.rowcount)
+
     async def list_projects(
         self,
         *,

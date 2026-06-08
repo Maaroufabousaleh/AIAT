@@ -23,5 +23,6 @@ admin:
     - human.await_decision
     - review.aggregate
     - approval.override_cso
+    - time_now
 
 workers: []    # CEO operates alone; no worker agents in this team

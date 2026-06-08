@@ -353,7 +353,35 @@ class TeamRuntime:
             path = repo_root / path
         if not path.is_file():
             return None
-        return path.read_text(encoding="utf-8")
+        return self._prepend_time_block(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _prepend_time_block(prompt_body: str) -> str:
+        """Stamp a 'current time' header on every loaded prompt so all
+        agents in a team share a common time reference.
+
+        Mirrors ``mas/apps/mas-dashboard/lib/datetime.ts`` (and the
+        ``TZ=America/New_York`` env in the runtime Dockerfiles). The
+        zone auto-switches between EDT (summer) and EST (winter) with
+        daylight saving — currently EDT in June. Agents can refresh
+        mid-conversation by calling the ``time.now`` tool.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        now = datetime.now(tz)
+        offset = now.strftime("%z")  # e.g. "-0400"
+        offset_str = f"UTC{offset[:3]}:{offset[3:]}"
+        header = (
+            f"## Current Time (America/New_York)\n"
+            f"**{now.strftime('%Y-%m-%d %H:%M:%S %Z')}** "
+            f"({offset_str})\n\n"
+            f"_Session-start timestamp. All agents in this team share "
+            f"this time reference; coordinate using EDT/EST. Call the "
+            f"`time.now` tool if you need a fresh reading mid-task._\n\n"
+        )
+        return header + prompt_body
 
     def _derive_specialization(self, spec: AgentSpec) -> str:
         mapping = {
