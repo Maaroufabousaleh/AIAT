@@ -650,6 +650,61 @@ class TestDLQSystemEvent:
 # ---------------------------------------------------------------------------
 
 
+class TestRecentStreamRoute:
+    @staticmethod
+    def _auth_headers() -> dict[str, str]:
+        from message_router.config import settings
+
+        return {"Authorization": f"Bearer dashboard:{settings.agent_token_secret}"}
+
+    @pytest.mark.asyncio
+    async def test_recent_entries_without_cursor_returns_oldest_first(self):
+        from starlette.requests import Request
+
+        from message_router import redis_client
+        from message_router.routes_ws import recent_stream_entries
+
+        redis = MagicMock()
+        redis.xrevrange = AsyncMock(
+            return_value=[
+                (b"2-0", {b"envelope": b'{"id":2}'}),
+                (b"1-0", {b"envelope": b'{"id":1}'}),
+            ]
+        )
+        redis_client._redis_client = redis  # type: ignore[attr-defined]
+        auth = self._auth_headers()["Authorization"].encode()
+        request = Request({"type": "http", "headers": [(b"authorization", auth)]})
+
+        response = await recent_stream_entries(request, "exec_ceo", limit=2, after=None)
+
+        assert [entry["entry_id"] for entry in response["entries"]] == ["1-0", "2-0"]
+
+    @pytest.mark.asyncio
+    async def test_recent_entries_after_cursor_uses_exclusive_xrange(self):
+        from starlette.requests import Request
+
+        from message_router import redis_client
+        from message_router.routes_ws import recent_stream_entries
+
+        redis = MagicMock()
+        redis.xrange = AsyncMock(
+            return_value=[
+                (b"101-0", {b"envelope": b'{"id":101}'}),
+                (b"102-0", {b"envelope": b'{"id":102}'}),
+            ]
+        )
+        redis_client._redis_client = redis  # type: ignore[attr-defined]
+        auth = self._auth_headers()["Authorization"].encode()
+        request = Request({"type": "http", "headers": [(b"authorization", auth)]})
+
+        response = await recent_stream_entries(request, "exec_ceo", limit=500, after="100-0")
+
+        redis.xrange.assert_awaited_once_with(
+            "stream:exec_ceo", min="(100-0", max="+", count=500
+        )
+        assert [entry["entry_id"] for entry in response["entries"]] == ["101-0", "102-0"]
+
+
 class TestRedisACL:
     def test_acl_config_documentation(self):
         """Verify redis.conf documents the ACL users."""
@@ -689,3 +744,5 @@ class TestRedisACL:
         assert "toolcache_user" in content, "tool-service should use toolcache_user"
         assert "ROUTER_PASSWORD" in content, "ROUTER_PASSWORD env var should be defined"
         assert "TOOLCACHE_PASSWORD" in content, "TOOLCACHE_PASSWORD env var should be defined"
+        assert "path: ../../../.env" in content, "services should load the repository-root .env"
+        assert "path: ./.env" not in content, "clean installs must not require a compose-local .env"

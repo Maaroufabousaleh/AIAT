@@ -47,13 +47,14 @@ async function createProjectWithFlow(page: Page, flowName: string, projectName: 
   await page.getByRole("button", { name: /^create$/i }).click();
   await expect(page.getByText(projectName)).toBeVisible();
   const row = page.getByRole("row", { name: new RegExp(projectName) });
-  const href = await row.getByRole("link", { name: /view/i }).getAttribute("href");
-  if (!href) throw new Error("Created project row is missing its detail link");
+  const projectLink = row.getByRole("link", { name: /^Open / });
+  const href = await projectLink.getAttribute("href");
+  if (!href) throw new Error("Created project row is missing its open link");
   await expect.poll(async () => {
     const response = await page.request.get(`/api${href}/flow-instance`);
     return response.status();
   }).toBe(200);
-  await row.getByRole("link", { name: /view/i }).click();
+  await projectLink.click();
 }
 
 test("operator can build, version, assign, refresh, and override a flow from the UI", async ({
@@ -67,7 +68,7 @@ test("operator can build, version, assign, refresh, and override a flow from the
   await page.goto("/flows/new");
 
   await page.getByTestId("flow-name-input").fill(flowName);
-  await page.getByLabel("Active").check();
+  await page.getByLabel("Activate flow on save").check();
   for (const type of ["start", "task", "task", "approval", "task", "end"]) {
     await page.getByTestId(`add-node-${type}`).click();
   }
@@ -129,7 +130,7 @@ test("operator can build, version, assign, refresh, and override a flow from the
 
   await createProjectWithFlow(page, flowName, projectName);
 
-  await page.getByRole("button", { name: /^flow$/i }).click();
+  await page.getByTestId("project-tab-flow").click();
   await expect(page.getByText("NOT_STARTED").nth(1)).toBeVisible();
   await page.getByTestId("flow-start-button").click();
   await expect(page.getByText("Current Node")).toBeVisible();
@@ -142,8 +143,8 @@ test("operator can build, version, assign, refresh, and override a flow from the
   await expect(page.getByText("Implementation").first()).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: /^flow$/i }).click();
+  await page.getByTestId("project-tab-flow").click();
   await expect(page.getByText("Implementation").first()).toBeVisible();
-  await page.getByRole("button", { name: /^workflow$/i }).click();
+  await page.getByTestId("project-tab-workflow").click();
   await expect(page.getByText("Operator expedited implementation")).toBeVisible();
 });

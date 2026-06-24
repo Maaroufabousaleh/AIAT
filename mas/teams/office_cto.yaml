@@ -24,7 +24,6 @@ admin:
     - kpi.update_agent_profile
     - velocity.report
     - estimation.adjust
-    - time_now
 
 workers:
   - agent_id: sprint_planner_1
@@ -41,7 +40,6 @@ workers:
       - sprint.create
       - issue.create
       - issue.decompose
-      - time_now
 
   - agent_id: kpi_analyst_1
     role: worker
@@ -59,4 +57,3 @@ workers:
       - kpi.update_agent_profile
       - velocity.report
       - estimation.adjust
-      - time_now

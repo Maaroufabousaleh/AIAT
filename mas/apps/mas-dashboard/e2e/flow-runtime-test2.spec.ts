@@ -41,7 +41,7 @@ async function login(page: Page): Promise<void> {
 async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   await page.goto("/flows/new");
   await page.getByTestId("flow-name-input").fill(flowName);
-  await page.getByLabel("Active").check();
+  await page.getByLabel("Activate flow on save").check();
 
   // Add nodes in order
   for (const type of ["start", "task", "approval", "switch", "task", "task", "end", "end"]) {
@@ -141,7 +141,8 @@ async function createProjectWithFlow(page: Page, flowName: string, projectName: 
   await expect(page.getByText(projectName)).toBeVisible();
   const projectRow = page.getByRole("row", { name: new RegExp(projectName) });
   await expect(projectRow).toBeVisible();
-  const projectHref = await projectRow.getByRole("link", { name: /view/i }).getAttribute("href");
+  const projectLink = projectRow.getByRole("link", { name: /^Open / });
+  const projectHref = await projectLink.getAttribute("href");
   expect(projectHref).toMatch(/^\/projects\/[^/]+$/);
   await expect
     .poll(async () => {
@@ -149,7 +150,7 @@ async function createProjectWithFlow(page: Page, flowName: string, projectName: 
       return res.status();
     })
     .toBe(200);
-  await projectRow.getByRole("link", { name: /view/i }).click();
+  await projectLink.click();
   await expect(page).toHaveURL(new RegExp(`${projectHref}$`));
 }
 

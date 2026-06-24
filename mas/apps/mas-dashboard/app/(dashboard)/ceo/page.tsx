@@ -2,142 +2,26 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { clsx } from "clsx";
-import { Brain, Check, Copy, Pause, Play, Search, Trash2, X } from "lucide-react";
+import { Brain, Check, Copy, Pause, Play, Search, Send, Trash2, X } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { FilterChip } from "@/components/ui/FilterChips";
 import { formatInTz } from "@/lib/datetime";
-
-interface MessageEnvelope {
-  type?: string;
-  msg_type?: string;
-  message_type: string;
-  sender_id?: string;
-  project_id?: string;
-  payload?: Record<string, unknown>;
-  timestamp?: string;
-  sent_at?: string;
-  envelope?: MessageEnvelope;
-}
-
-interface FeedEntry {
-  parsed: MessageEnvelope | null;
-  raw: string;
-  ts: number;
-  cycleKey?: string;
-}
-
-interface RecentStreamEntry {
-  entry_id: string;
-  envelope: string;
-}
-
-/** Known message types surfaced in the filter chips. "ALL" is the synthetic
- *  "show everything" pseudo-type used by the chip group, not a real message
- *  type. */
-type KnownType =
-  | "ALL"
-  | "TOOL_CALL"
-  | "TOOL_RESULT"
-  | "DIRECTIVE"
-  | "REPORT"
-  | "VETO"
-  | "HEARTBEAT"
-  | "UNKNOWN";
-
-const KNOWN_TYPES: KnownType[] = [
-  "ALL",
-  "TOOL_CALL",
-  "TOOL_RESULT",
-  "DIRECTIVE",
-  "REPORT",
-  "VETO",
-  "HEARTBEAT",
-  "UNKNOWN",
-];
-
-function parseFirstTimestamp(...values: Array<string | undefined>): number {
-  for (const value of values) {
-    if (!value) continue;
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-  return Date.now();
-}
-
-// Group messages into "think cycles" by project_id. Each message type gets a
-// distinct slate-anchored palette for clear visual hierarchy at a glance.
-function getTypeClass(type: string) {
-  switch (type) {
-    case "TOOL_CALL":   return "border-orange-500/45 bg-orange-500/10 hover:border-orange-400/70";
-    case "TOOL_RESULT": return "border-amber-500/40 bg-amber-500/10 hover:border-amber-400/70";
-    case "DIRECTIVE":   return "border-blue-500/45 bg-blue-500/10 hover:border-blue-400/70";
-    case "REPORT":      return "border-emerald-500/45 bg-emerald-500/10 hover:border-emerald-400/70";
-    case "VETO":        return "border-rose-500/50 bg-rose-500/10 hover:border-rose-400/70";
-    case "HEARTBEAT":   return "border-slate-700 bg-slate-800/40 hover:border-slate-600";
-    default:            return "border-slate-700/80 bg-slate-900/40 hover:border-slate-600";
-  }
-}
-
-function getTypeAccent(type: string) {
-  switch (type) {
-    case "TOOL_CALL":   return "text-orange-300";
-    case "TOOL_RESULT": return "text-amber-300";
-    case "DIRECTIVE":   return "text-blue-300";
-    case "REPORT":      return "text-emerald-300";
-    case "VETO":        return "text-rose-300";
-    case "HEARTBEAT":   return "text-slate-400";
-    default:            return "text-slate-400";
-  }
-}
-
-function getTypeBadgeClass(type: string) {
-  switch (type) {
-    case "TOOL_CALL":   return "bg-orange-500/90 text-white";
-    case "TOOL_RESULT": return "bg-amber-500 text-slate-950";
-    case "DIRECTIVE":   return "bg-blue-500/90 text-white";
-    case "REPORT":      return "bg-emerald-500/90 text-white";
-    case "VETO":        return "bg-rose-500/90 text-white";
-    case "HEARTBEAT":   return "bg-slate-600 text-slate-100";
-    default:            return "bg-slate-700 text-slate-200";
-  }
-}
-
-function getChipToneForType(type: KnownType): "blue" | "emerald" | "amber" | "indigo" | "gray" {
-  switch (type) {
-    case "TOOL_CALL":   return "amber";
-    case "TOOL_RESULT": return "amber";
-    case "DIRECTIVE":   return "blue";
-    case "REPORT":      return "emerald";
-    case "VETO":        return "amber";
-    default:            return "gray";
-  }
-}
-
-function TypeBadge({ type }: { type: string }) {
-  return (
-    <span
-      className={clsx(
-        "inline-flex items-center px-1.5 py-0.5 rounded text-xxs font-bold tracking-wide",
-        getTypeBadgeClass(type)
-      )}
-    >
-      {type}
-    </span>
-  );
-}
-
-function entryFromRaw(raw: string): FeedEntry {
-  let parsed: MessageEnvelope | null = null;
-  try { parsed = JSON.parse(raw); } catch { /* ignore */ }
-  const timestamp = parseFirstTimestamp(
-    parsed?.timestamp,
-    parsed?.sent_at,
-    parsed?.envelope?.timestamp
-  );
-  return { raw, parsed, ts: timestamp };
-}
+import {
+  parseFirstTimestamp,
+  entryFromRaw,
+  getTypeClass,
+  getTypeAccent,
+  getTypeBadgeClass,
+  getChipToneForType,
+  KNOWN_TYPES,
+  type FeedEntry,
+  type MessageEnvelope,
+  type RecentStreamEntry,
+  type KnownType,
+  TypeBadge,
+} from "@/lib/ceo-feed";
 
 export default function CeoPage() {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
@@ -148,6 +32,12 @@ export default function CeoPage() {
   const [search, setSearch] = useState("");
   const [activeType, setActiveType] = useState<KnownType>("ALL");
   const [groupByCycle, setGroupByCycle] = useState(true);
+
+  // Message composer state
+  const [composerText, setComposerText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
@@ -185,6 +75,7 @@ export default function CeoPage() {
   // Derive the message type for an entry, falling back to "UNKNOWN" when the
   // envelope is missing or malformed.
   const getType = useCallback((entry: FeedEntry): KnownType => {
+    if (entry.outbound) return "OUTBOUND";
     const t = entry.parsed?.message_type ?? entry.parsed?.msg_type ?? "UNKNOWN";
     return (KNOWN_TYPES as string[]).includes(t) ? (t as KnownType) : "UNKNOWN";
   }, []);
@@ -197,8 +88,10 @@ export default function CeoPage() {
       TOOL_RESULT: 0,
       DIRECTIVE: 0,
       REPORT: 0,
+      RESPONSE: 0,
       VETO: 0,
       HEARTBEAT: 0,
+      OUTBOUND: 0,
       UNKNOWN: 0,
     };
     for (const entry of entries) counts[getType(entry)]++;
@@ -260,8 +153,7 @@ export default function CeoPage() {
     }));
   }, [filteredEntries, entries, groupByCycle]);
 
-  // Copy the raw envelope JSON to the clipboard. Falls back to a hidden
-  // textarea for browsers without async clipboard access.
+  // Copy the raw envelope JSON to the clipboard.
   const handleCopy = useCallback(async (raw: string, index: number) => {
     try {
       if (navigator?.clipboard?.writeText) {
@@ -284,6 +176,53 @@ export default function CeoPage() {
       // Silent: copy failures are not fatal; user can still expand + select.
     }
   }, []);
+
+  // Send a message to the CEO.
+  const handleSend = useCallback(async () => {
+    const text = composerText.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/ceo/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }));
+        setSendError(err.error ?? `HTTP ${res.status}`);
+      } else {
+        // Add the outbound message to the local feed so it appears immediately.
+        const now = Date.now();
+        const outboundEntry: FeedEntry = {
+          parsed: {
+            message_type: "OUTBOUND",
+            sender_id: "you",
+            payload: { instruction: text },
+            timestamp: new Date().toISOString(),
+          },
+          raw: JSON.stringify({ message_type: "OUTBOUND", sender_id: "you", payload: { instruction: text } }),
+          ts: now,
+          outbound: true,
+        };
+        setEntries((prev) => [...prev.slice(-299), outboundEntry]);
+        setComposerText("");
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setSending(false);
+    }
+  }, [composerText, sending]);
+
+  // Handle Enter+Shift for newlines, Enter alone to send.
+  const handleComposerKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }, [handleSend]);
 
   return (
     <div className="dashboard-page flex flex-col h-full">
@@ -361,9 +300,57 @@ export default function CeoPage() {
         }
       />
 
+      {/* Message composer — talk directly to the CEO */}
+      <div className="mx-4 mt-3 mb-1">
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Send size={13} className="text-violet-400 flex-shrink-0" aria-hidden="true" />
+            <span className="text-xs font-semibold text-violet-200">
+              Message the CEO
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <textarea
+              value={composerText}
+              onChange={(e) => setComposerText(e.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder="Send a directive, question, or request to the CEO… (Enter to send, Shift+Enter for newline)"
+              rows={2}
+              aria-label="Message to CEO"
+              className="flex-1 rounded-lg bg-slate-950/80 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none focus:border-violet-500/60 focus:outline-none transition-colors"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!composerText.trim() || sending}
+              aria-label="Send message to CEO"
+              className={clsx(
+                "flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
+                composerText.trim() && !sending
+                  ? "bg-violet-600 hover:bg-violet-500 text-white border-violet-500/60 hover:border-violet-400"
+                  : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed"
+              )}
+            >
+              {sending ? (
+                <span className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Send size={12} />
+              )}
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
+          {sendError && (
+            <div className="flex items-center gap-1.5 text-xxs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1">
+              <X size={11} />
+              {sendError}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* KPI summary row — quick at-a-glance counts per message type. */}
       {entries.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2">
           <KpiCard
             label="Buffered"
             value={entries.length}
@@ -397,7 +384,7 @@ export default function CeoPage() {
 
       {/* Search + filter chips */}
       {entries.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 px-4 mt-2">
           <div className="relative">
             <Search
               size={13}
@@ -488,12 +475,13 @@ export default function CeoPage() {
                   if (!entry) return null;
                   const type = getType(entry);
                   const isExpanded = expanded === originalIndex;
+                  const outbound = entry.outbound ?? false;
                   return (
                     <article
                       key={originalIndex}
                       className={clsx(
                         "group border rounded-lg p-3 transition-all cursor-pointer",
-                        getTypeClass(type)
+                        getTypeClass(type, outbound)
                       )}
                       onClick={() => setExpanded(isExpanded ? null : originalIndex)}
                       onKeyDown={(e) => {
@@ -505,10 +493,10 @@ export default function CeoPage() {
                       role="button"
                       tabIndex={0}
                       aria-expanded={isExpanded}
-                      aria-label={`${type} message from ${entry.parsed?.sender_id ?? "unknown sender"}`}
+                      aria-label={`${type} message from ${entry.parsed?.sender_id ?? (outbound ? "you" : "unknown sender")}`}
                     >
                       <div className="flex items-center gap-2 flex-wrap">
-                        <TypeBadge type={type} />
+                        <TypeBadge type={type} outbound={outbound} />
                         <span className="text-xxs text-slate-500 font-mono tabular-nums">
                           {formatInTz(entry.ts, "HH:mm:ss.SSS")}
                         </span>
@@ -518,8 +506,13 @@ export default function CeoPage() {
                           </span>
                         )}
                         {entry.parsed?.sender_id && (
-                          <span className={clsx("text-xs font-medium", getTypeAccent(type))}>
-                            {entry.parsed.sender_id}
+                          <span className={clsx("text-xs font-medium", getTypeAccent(type, outbound))}>
+                            {outbound ? "→ you" : entry.parsed.sender_id}
+                          </span>
+                        )}
+                        {outbound && (
+                          <span className="ml-auto text-xxs text-violet-400 font-medium">
+                            queued
                           </span>
                         )}
                         <button
@@ -572,7 +565,7 @@ export default function CeoPage() {
                           {JSON.stringify((entry.parsed.payload as { result?: Record<string, unknown> }).result ?? entry.parsed.payload).slice(0, 100)}
                         </div>
                       )}
-                      {(type === "DIRECTIVE" || type === "REPORT") && entry.parsed?.payload && (
+                      {(type === "DIRECTIVE" || type === "REPORT" || type === "OUTBOUND") && entry.parsed?.payload && (
                         <div className="mt-1.5 text-xs text-slate-400 truncate">
                           {JSON.stringify(entry.parsed.payload).slice(0, 120)}
                         </div>

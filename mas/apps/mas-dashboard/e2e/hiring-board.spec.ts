@@ -173,7 +173,7 @@ test("hiring board registers, evaluates, blocks, approves, deactivates, and drai
   await page.getByPlaceholder("WorkerAgent").fill("adapter.main:E2EWorker");
   await page.getByRole("button", { name: /^register worker$/i }).last().click();
 
-  await page.getByPlaceholder("Search workers...").fill(candidateId);
+  await page.getByRole("textbox", { name: "Search workers" }).fill(candidateId);
   const row = page.getByRole("row", { name: new RegExp(candidateId) });
   await expect(row).toBeVisible();
   await row.click();

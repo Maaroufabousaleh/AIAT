@@ -50,16 +50,14 @@ test.describe("Operational UI smoke flows", () => {
     await page.getByPlaceholder("My Worker Agent").fill("E2E Worker");
     await page.getByPlaceholder("What this worker does").fill("Registered by Playwright operational smoke test");
     await page.getByPlaceholder("dept_production").fill("dept_qa");
-    await page.getByPlaceholder("https://github.com/org/repo").fill("https://github.com/example/e2e-worker");
     await page.getByPlaceholder("WorkerAgent").fill("adapter.main:E2EWorker");
     await page.getByRole("button", { name: /^register worker$/i }).nth(1).click();
 
-    await page.getByPlaceholder("Search workers...").fill(workerId);
+    await page.getByRole("textbox", { name: "Search workers" }).fill(workerId);
     const row = page.getByRole("row", { name: new RegExp(workerId) });
     await expect(row).toBeVisible();
     await row.click();
     await expect(page.getByText(/WorkerAgent|adapter\.main:E2EWorker/).first()).toBeVisible();
-    await expect(page.getByText("example/e2e-worker")).toBeVisible();
 
     await row.getByTitle("Drain").click();
     await expect(row.getByText("Draining")).toBeVisible();
@@ -68,7 +66,7 @@ test.describe("Operational UI smoke flows", () => {
   test("central tools UI lists, filters, and expands managed tools", async ({ page }) => {
     await page.goto("/tools");
     await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
-    await page.getByPlaceholder("Search tools...").fill("browser");
+    await page.getByRole("textbox", { name: "Search tools" }).fill("browser");
     await expect(page.getByText(/browser/i).first()).toBeVisible();
     const firstToolRow = page.locator("tbody tr").first();
     await firstToolRow.click();
@@ -79,17 +77,17 @@ test.describe("Operational UI smoke flows", () => {
     await page.goto("/system-viz");
     await expect(page.getByRole("heading", { name: "System Visualization" })).toBeVisible();
     await expect(page.getByText("Mermaid Export")).toBeVisible();
-    await expect(page.getByLabel("Mermaid export")).toContainText("graph TD");
+    await expect(page.getByLabel("Mermaid export source")).toContainText("graph TD");
 
-    await page.getByRole("button", { name: /permissions/i }).click();
+    await page.getByRole("tab", { name: /permissions/i }).click();
     await expect(page.getByText(/communication/i).first()).toBeVisible();
 
-    await page.getByRole("button", { name: /orchestration/i }).click();
+    await page.getByRole("tab", { name: /orchestration/i }).click();
     await expect(page.getByText(/select a flow/i)).toBeVisible();
     await page.getByText(/Document Review Flow|Escalation Flow|Simple Product Build Flow/i).first().click();
     await expect(page.getByText("Flow Details")).toBeVisible();
 
-    await page.getByRole("button", { name: /trace path/i }).click();
+    await page.getByRole("button", { name: /toggle path trace mode/i }).click();
     const selects = page.locator("select");
     await selects.nth(0).selectOption({ index: 1 });
     await selects.nth(1).selectOption({ index: 2 });
@@ -108,14 +106,21 @@ test.describe("Operational UI smoke flows", () => {
 
     const row = page.getByRole("row", { name: new RegExp(name) });
     await expect(row).toBeVisible();
-    await row.getByRole("link", { name: /view/i }).click();
+    await Promise.all([
+      page.waitForURL(/\/projects\/[^/]+$/),
+      row.getByRole("link", { name, exact: true }).click(),
+    ]);
 
-    await expect(page.getByRole("button", { name: "Workspace" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Workspace", exact: true })).toBeVisible();
     await expect(page.getByText("Next Operator Action")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Audit Timeline" })).toBeVisible();
+
+    await page.getByRole("tab", { name: "Resources" }).click();
     await expect(page.getByRole("heading", { name: "Artifacts" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Worker Activity" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Project Logs" })).toBeVisible();
+
+    await page.getByRole("tab", { name: "Cost" }).click();
     await expect(page.getByRole("heading", { name: "Cost And Usage" })).toBeVisible();
   });
 
@@ -123,7 +128,7 @@ test.describe("Operational UI smoke flows", () => {
     await page.goto("/system");
     await expect(page.getByRole("heading", { name: "System Control" })).toBeVisible();
     await page.getByPlaceholder("e.g. 0 22 * * *").fill("not a cron");
-    await expect(page.getByRole("button", { name: /save schedule/i })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /save cron schedule/i })).toBeEnabled();
 
     await page.goto("/logs");
     await expect(page.getByRole("heading", { name: "Container Logs" })).toBeVisible();

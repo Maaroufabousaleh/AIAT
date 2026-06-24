@@ -48,9 +48,6 @@ router = APIRouter(prefix="/v1", tags=["llm-gateway-compat"])
 
 # Default gateway URL — can also point to an internal LLM service
 _LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://orchestrator-api:8000")
-_GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "mas-internal")
-
-
 # ---------------------------------------------------------------------------
 # Auth helper
 # ---------------------------------------------------------------------------
@@ -58,12 +55,13 @@ _GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "mas-internal")
 
 def _check_auth(authorization: str | None) -> None:
     """Validate Bearer token."""
-    if not _GATEWAY_API_KEY or _GATEWAY_API_KEY == "":
-        return  # Auth disabled
+    gateway_api_key = os.getenv("GATEWAY_API_KEY") or os.getenv("MAS_API_KEY", "")
+    if not gateway_api_key:
+        raise HTTPException(503, "Gateway authentication is not configured")
     if authorization is None:
         raise HTTPException(401, "Authorization header required")
     scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or token.strip() != _GATEWAY_API_KEY:
+    if scheme.lower() != "bearer" or token.strip() != gateway_api_key:
         raise HTTPException(401, "Invalid API key")
 
 
@@ -118,6 +116,8 @@ _AVAILABLE_MODELS = [
     "mistral-medium",
     "llama-3.3-70b-versatile",
     "cerebras/llama-3.3-70b",
+    "nvidia/meta/llama-3.1-70b-instruct",
+    "nvidia/nemotron-4-340b-instruct",
 ]
 
 

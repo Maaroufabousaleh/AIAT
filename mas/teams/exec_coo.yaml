@@ -22,6 +22,5 @@ admin:
     - review.start_session
     - department_task
     - project.status
-    - time_now
 
 workers: []    # COO operates alone in this revision; workers could be added later

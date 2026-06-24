@@ -23,7 +23,6 @@ admin:
     - blob.download
     - issue.create     # create defect issues back into sprint backlog
     - project.status
-    - time_now
 
 workers:
   - agent_id: tester_1
@@ -41,4 +40,3 @@ workers:
       - capability.search
       - web_search
       - blob.upload
-      - time_now

@@ -67,7 +67,10 @@ class AdminAgent(AgentBase):
         return (
             f"You are {self.agent_id}, a project-manager (admin) for team {self.team_id}. "
             "Decompose tasks into actionable sub-tasks, delegate to your workers, "
-            "and aggregate their results. Coordinate clearly and concisely."
+            "and aggregate their results. Operate with this loop: observe current state, "
+            "plan concrete subtasks, delegate with clear acceptance criteria, verify worker "
+            "outputs and blocked reasons, preserve important context in AIAT state when a "
+            "tool exists, then report concise next actions. Coordinate clearly and concisely."
         )
 
     # ------------------------------------------------------------------
@@ -89,7 +92,7 @@ class AdminAgent(AgentBase):
                 span_id=str(env.message_id) if env else None,
             )
             if resp.success:
-                return resp.result or resp.data
+                return resp.result if resp.result is not None else getattr(resp, "data", None)
             return {"error": resp.error, "error_code": resp.error_code}
         return await super().execute_tool(tool_name, tool_kwargs)
 

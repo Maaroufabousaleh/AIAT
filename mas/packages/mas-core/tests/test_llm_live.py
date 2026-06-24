@@ -23,6 +23,7 @@ API keys are read from env vars (or a root ``.env`` file via pydantic-settings):
 - ``OPENROUTER_API_KEY``  — OpenRouter
 - ``OPENAI_API_KEY``      — OpenAI (paid)
 - ``OPENCODE_API_KEY``    — Zen / opencode.ai (default "public")
+- ``MINIMAX_API_KEY``     — MiniMax (OpenAI-compatible; base URL is a placeholder)
 - Copilot CLI             — ``copilot`` binary on PATH + ``copilot auth login``
 
 Live test opt-in:
@@ -369,6 +370,36 @@ class TestGroqLive:
                 model="groq/qwen/qwen3-32b",
             )
         _assert_valid_response(resp, "groq/qwen/qwen3-32b")
+
+
+# ---------------------------------------------------------------------------
+# MiniMax (OpenAI-compatible; base URL is a placeholder)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _live_enabled(),
+    reason="Set MAS_RUN_LIVE_TESTS=1 to enable live provider tests",
+)
+@pytest.mark.skipif(
+    not _has_key("MINIMAX_API_KEY"),
+    reason="MINIMAX_API_KEY not set",
+)
+@pytest.mark.skip(reason="MiniMax endpoint is not production-validated or registered")
+class TestMiniMaxLive:
+    """Live tests against MiniMax models (OpenAI-compatible endpoint)."""
+
+    @pytest.mark.asyncio
+    async def test_minimax_2_7(self):
+        """minimax-2.7: flagship chat model via the OpenAI-compatible endpoint."""
+        client = _make_client()
+        async with client:
+            resp = await client.chat_completion(
+                messages=SIMPLE_PROMPT,
+                model="minimax-2.7",
+            )
+        _assert_valid_response(resp, "minimax-2.7")
 
 
 # ---------------------------------------------------------------------------
@@ -1441,6 +1472,8 @@ class TestRegistryCompleteness:
             "cloudflare",
             "openrouter",
             "zen",
+            "minimax",
+            "nvidia",
             "copilot",
         ):
             assert expected in providers, f"Provider '{expected}' not registered"
@@ -1479,6 +1512,20 @@ class TestRegistryCompleteness:
     def test_zen_models_count(self):
         models = MODEL_REGISTRY.list_models("zen")
         assert len(models) >= 4, f"Expected >= 4 Zen models, got {len(models)}"
+
+    def test_nvidia_models_count(self):
+        models = MODEL_REGISTRY.list_models("nvidia")
+        assert len(models) >= 4, f"Expected >= 4 NVIDIA NIM models, got {len(models)}"
+
+    def test_nvidia_provider_endpoint(self):
+        provider = MODEL_REGISTRY.get_provider("nvidia")
+        assert provider is not None, "nvidia provider not registered"
+        assert provider.base_url.rstrip("/").endswith("/v1"), (
+            f"NVIDIA base_url should end with /v1, got {provider.base_url!r}"
+        )
+        assert "NVIDIA_API_KEY" in provider.api_key_env_vars, (
+            "NVIDIA provider should probe NVIDIA_API_KEY"
+        )
 
     def test_all_free_models_zero_cost(self):
         """Every model with cost_per_1m_input == 0.0 should truly be free."""

@@ -36,13 +36,14 @@ load_env_file() {
 ENV_FILE="$PROJECT_ROOT/.env"
 if [ -f "$ENV_FILE" ]; then
     load_env_file "$ENV_FILE"
-    # Tell docker-compose to use the root .env for variable substitution
-    export COMPOSE_ENV_FILE="$ENV_FILE"
 elif [ -f ".env" ]; then
     ENV_FILE="$COMPOSE_DIR/.env"
     load_env_file "$ENV_FILE"
-    export COMPOSE_ENV_FILE="$ENV_FILE"
 fi
+
+# The wrapper loads .env itself so values containing "$" (bcrypt hashes, API
+# keys, etc.) are exported literally instead of parsed by Compose interpolation.
+export COMPOSE_DISABLE_ENV_FILE=1
 
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
 CMD="${1:-up}"
@@ -234,7 +235,9 @@ print('Worker registry seeded.')
             python -c "import httpx; print(httpx.get('http://localhost:8001/health').text)" 2>/dev/null \
             || warn "message-router health check failed"
         info "Tool service health:"
-        curl -sf "http://localhost:8002/health" 2>/dev/null && echo "" || warn "tool-service not reachable at :8002"
+        docker compose $COMPOSE_FILES exec -T tool-service \
+            python -c "import httpx; print(httpx.get('http://localhost:8002/health').text)" 2>/dev/null \
+            || warn "tool-service health check failed"
         ;;
 
     diag|diagnostics)

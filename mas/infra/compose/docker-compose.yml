@@ -9,8 +9,8 @@
 #
 # Environment:
 #   All env vars are sourced from the project root .env (c:\projects\AIAT\.env).
-#   When running docker compose directly (not via mas.sh), set:
-#     export COMPOSE_ENV_FILE=/path/to/.env
+#   Service env_file paths resolve from this Compose file, so every service
+#   reads the repository-root .env directly on a clean checkout.
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
@@ -29,6 +29,7 @@ x-team-env: &team-env
   MINIO_ACCESS_KEY: "mas_agent"
   MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+  MAS_API_KEY: "${MAS_API_KEY}"
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
   LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
@@ -56,6 +57,9 @@ x-team-defaults: &team-defaults
     - public
   mem_limit: 512m
   cpus: "0.5"
+  env_file:
+    - path: ../../../.env
+      format: raw
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
@@ -79,18 +83,19 @@ services:
   # ── 0. Redis ACL Init (one-time setup) ──────────────────────────────────────
   # Runs once to configure ACL users. Can be removed after first run.
   redis-acl-init:
-    image: redis:7.2-alpine
+    image: mas/redis-acl-init:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.redis-acl-init
     restart: "no"
     networks:
       - internal
+    env_file:
+      - path: ../../../.env
+        format: raw
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      ROUTER_PASSWORD: "${ROUTER_PASSWORD}"
-      TOOLCACHE_PASSWORD: "${TOOLCACHE_PASSWORD}"
-    entrypoint: ["/bin/sh", "/usr/local/bin/redis-acl-init.sh"]
-    volumes:
-      - ./redis-acl-init.sh:/usr/local/bin/redis-acl-init.sh:ro
     depends_on:
       redis:
         condition: service_started
@@ -100,8 +105,9 @@ services:
     image: redis:7.2-alpine
     restart: unless-stopped
     command: redis-server /etc/redis/redis.conf
-    environment:
-      ROUTER_PASSWORD: "${ROUTER_PASSWORD}"
+    env_file:
+      - path: ../../../.env
+        format: raw
     volumes:
       - redis_data:/data
       - ./redis.conf:/etc/redis/redis.conf:ro
@@ -122,6 +128,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     environment:
       POSTGRES_DB: mas
       POSTGRES_USER: mas_user
@@ -143,6 +152,9 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     environment:
       DATABASE_URL: "postgres://mas_user:${POSTGRES_PASSWORD}@postgres:5432/mas"
       POOL_MODE: transaction
@@ -165,6 +177,9 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minio_root
@@ -186,6 +201,9 @@ services:
   minio-init:
     image: minio/mc:latest
     restart: "no"
+    env_file:
+      - path: ../../../.env
+        format: raw
     depends_on:
       minio:
         condition: service_healthy
@@ -209,6 +227,9 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.message-router
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     networks:
       - internal
     depends_on:
@@ -238,6 +259,9 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.tool-service
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     networks:
       - internal
       - public
@@ -274,6 +298,9 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.orchestrator-api
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     networks:
       - public
       - internal
@@ -294,6 +321,7 @@ services:
       ROUTER_URL: "http://message-router:8001"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
+      MAS_API_KEY: "${MAS_API_KEY}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -308,7 +336,6 @@ services:
       WORKER_MIRROR_DIR: "/data/worker-mirrors"
     volumes:
       - worker_mirrors:/data/worker-mirrors
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -327,6 +354,9 @@ services:
       dockerfile: infra/docker/Dockerfile.dashboard
     container_name: mas-dashboard
     restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
     networks:
       - internal
       - public
@@ -339,19 +369,13 @@ services:
         condition: service_healthy
       tool-service:
         condition: service_healthy
-    # Values are loaded by mas.sh from the repository root .env. Do not point
-    # env_file at .env here; Compose re-interpolates bcrypt "$" segments.
     environment:
       ORCHESTRATOR_URL: "http://orchestrator-api:8000"
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
       PROMETHEUS_URL: "http://prometheus:9090"
       NODE_ENV: "production"
-      DASHBOARD_USERNAME: "${DASHBOARD_USERNAME}"
-      DASHBOARD_PASSWORD_HASH: "${DASHBOARD_PASSWORD_HASH}"
-      JWT_SECRET: "${JWT_SECRET}"
-      MAS_API_KEY: "${MAS_API_KEY}"
-      ROUTER_SECRET: "${ROUTER_SECRET}"
+      PORT: "3000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m
@@ -444,3 +468,4 @@ services:
     environment:
       <<: *team-env
       TEAM_CONFIG: /app/teams/dept_devops.yaml
+

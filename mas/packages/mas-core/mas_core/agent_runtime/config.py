@@ -101,6 +101,20 @@ class AgentConfig(BaseSettings):
         default=False,
         description="If True, think() uses streaming mode on the LLM gateway by default.",
     )
+    llm_use_fallback: bool = Field(
+        default=True,
+        description="If True, think() uses chat_completion_with_fallback for automatic model fallback on rate limits/errors.",
+    )
+    llm_fallback_task: str | None = Field(
+        default=None,
+        description="Optional task hint for fallback chain (e.g., 'reasoning', 'code-generation', 'tool-calling').",
+    )
+    llm_fallback_chain_length: int = Field(
+        default=4,
+        ge=1,
+        le=10,
+        description="Maximum number of models to try in fallback chain.",
+    )
 
     # --- LRU dedup ---
     lru_size: int = Field(

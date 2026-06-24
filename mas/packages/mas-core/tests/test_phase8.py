@@ -30,6 +30,8 @@ from mas_core.agent_runtime.worker import WorkerAgent
 from mas_core.llm_gateway.models import (
     ChatMessage,
     ChatResponse,
+    ToolCall,
+    ToolCallFunction,
     UsageStats,
 )
 from mas_core.protocols.enums import (
@@ -76,6 +78,7 @@ class _FakeLLMClient:
     def __init__(self, response_text: str = "done"):
         self._response_text = response_text
         self.started = False
+        self.calls: list[dict[str, Any]] = []
 
     async def start(self) -> None:
         self.started = True
@@ -84,12 +87,16 @@ class _FakeLLMClient:
         self.started = False
 
     async def chat_completion(self, messages, **kwargs) -> ChatResponse:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
         return ChatResponse(
             message=ChatMessage(role="assistant", content=self._response_text),
             usage=UsageStats(prompt_tokens=10, completion_tokens=5, estimated_cost_usd=0.001),
             model="test-model",
             finish_reason="stop",
         )
+
+    async def chat_completion_with_fallback(self, messages, **kwargs) -> ChatResponse:
+        return await self.chat_completion(messages, **kwargs)
 
 
 class _FakeToolClient:
@@ -102,6 +109,22 @@ class _FakeToolClient:
     async def execute(self, *, tool_name: str, caller_id: str, caller_role: Any, kwargs: dict, **kw):
         self.calls.append({"tool_name": tool_name, "kwargs": kwargs})
         return MagicMock(success=True, result=self._result, data=None)
+
+
+class _FakeToolCallLLMClient(_FakeLLMClient):
+    def __init__(self, tool_call: ToolCall):
+        super().__init__("")
+        self._tool_call = tool_call
+
+    async def chat_completion(self, messages, **kwargs) -> ChatResponse:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return ChatResponse(
+            message=ChatMessage(role="assistant", content=None, tool_calls=[self._tool_call]),
+            tool_calls=[self._tool_call],
+            usage=UsageStats(prompt_tokens=10, completion_tokens=5, estimated_cost_usd=0.001),
+            model="test-model",
+            finish_reason="tool_calls",
+        )
 
 
 def _patch_router(agent: AgentBase) -> AsyncMock:
@@ -891,6 +914,164 @@ class TestCSuiteAgent:
         reply = router.publish.call_args[0][0]
         assert reply.msg_type == MessageType.RESPONSE
         assert "Python" in reply.payload["response"]
+
+    @pytest.mark.asyncio
+    async def test_ceo_human_directive_publishes_chat_response(self):
+        """CEO direct human directives publish a RESPONSE visible on the CEO stream."""
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("I will handle this request.")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        router = _patch_router(agent)
+
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="human_operator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="operator-direct",
+            payload={
+                "action": "HUMAN_DIRECTIVE",
+                "instruction": "Can you summarize current priorities?",
+            },
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert router.publish.call_count == 1
+        reply = router.publish.call_args[0][0]
+        assert reply.msg_type == MessageType.RESPONSE
+        assert reply.sender_id == "ceo"
+        assert reply.recipient_team == "exec_ceo"
+        assert reply.parent_id == env.message_id
+        assert reply.payload["source"] == "human_directive"
+        assert "handle this request" in reply.payload["response"]
+        assert llm.calls[0]["kwargs"]["tools"] == []
+        assert "chat runtime will deliver" in llm.calls[0]["messages"][1]["content"]
+        assert "Use available tools" not in llm.calls[0]["messages"][1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_ceo_skips_api_owned_human_directive(self):
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("must not execute")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        router = _patch_router(agent)
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="human_operator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="operator-direct",
+            payload={
+                "action": "HUMAN_DIRECTIVE",
+                "instruction": "Create a project named Once",
+                "execution_owner": "orchestrator-api",
+            },
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert llm.calls == []
+        assert router.publish.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_ceo_start_feasibility_routes_through_assessment(self):
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=_FakeLLMClient())
+        agent._directive_think = AsyncMock()
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            recipient_team="exec_ceo",
+            project_id="project-feasibility",
+            payload={
+                "action": "START_FEASIBILITY",
+                "description": "Assess safety and technical viability before approval",
+            },
+        )
+
+        await agent._handle_directive(env)
+
+        agent._directive_think.assert_awaited_once_with(env, "START_FEASIBILITY")
+
+    @pytest.mark.asyncio
+    async def test_ceo_human_directive_publishes_terminal_tool_call_message(self):
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        tool_call = ToolCall(
+            id="call_notify",
+            function=ToolCallFunction(
+                name="human.notify",
+                arguments='{"message":"Direct answer from notify tool."}',
+            ),
+        )
+        llm = _FakeToolCallLLMClient(tool_call)
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        router = _patch_router(agent)
+
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="human_operator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="operator-direct",
+            payload={
+                "action": "HUMAN_DIRECTIVE",
+                "instruction": "What model are you?",
+            },
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert llm.calls[0]["kwargs"]["tools"] == []
+        assert router.publish.call_count == 1
+        reply = router.publish.call_args[0][0]
+        assert reply.payload["response"] == "Direct answer from notify tool."
+
+    @pytest.mark.asyncio
+    async def test_ceo_resume_directive_does_not_enter_llm_loop(self):
+        """CEO startup RESUME directives should not block live human chat."""
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("resume response")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        router = _patch_router(agent)
+
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            sender_id="orchestrator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="00000000-0000-4000-a000-000000000001",
+            payload={
+                "action": "RESUME",
+                "state": "FAILED",
+                "context": "System restart - resume from last committed state",
+            },
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert llm.calls == []
+        assert router.publish.call_count == 0
 
     @pytest.mark.asyncio
     async def test_cto_sprint_planning(self):

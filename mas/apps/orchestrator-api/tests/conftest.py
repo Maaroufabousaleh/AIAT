@@ -55,6 +55,8 @@ def _patch_env(monkeypatch):
     """Ensure orchestrator-api can start without real Postgres/Redis."""
     monkeypatch.setenv("PGBOUNCER_DSN", "postgresql+asyncpg://fake:fake@localhost:6432/fake")
     monkeypatch.setenv("ROUTER_URL", "http://localhost:9999")
+    monkeypatch.setenv("MAS_API_KEY", "test-mas-key")
+    monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
 
 
 @pytest.fixture

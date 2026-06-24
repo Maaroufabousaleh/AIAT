@@ -83,17 +83,26 @@ async def recent_stream_entries(
     request: Request,
     team_id: str,
     limit: int = Query(default=50, ge=1, le=500),
+    after: str | None = Query(default=None, pattern=r"^\d+-\d+$"),
 ) -> dict[str, object]:
-    """Return retained Redis stream entries for operator dashboards."""
+    """Return retained Redis stream entries, optionally after a stream cursor."""
     if _authenticate_token(request.headers.get("authorization")) is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     if team_id not in settings.known_teams:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown team_id: {team_id!r}")
 
     redis = get_redis()
-    entries = await redis.xrevrange(stream_key(team_id), count=limit)
+    if after:
+        entries = await redis.xrange(
+            stream_key(team_id),
+            min=f"({after}",
+            max="+",
+            count=limit,
+        )
+    else:
+        entries = list(reversed(await redis.xrevrange(stream_key(team_id), count=limit)))
     normalized = []
-    for entry_id, fields in reversed(entries):
+    for entry_id, fields in entries:
         normalized_fields = {
             (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
             for k, v in fields.items()

@@ -28,8 +28,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+import prometheus_client
 import redis.asyncio as aioredis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_TOTAL
@@ -110,9 +111,32 @@ app = FastAPI(
 
 app.include_router(router)
 
-try:
-    from prometheus_fastapi_instrumentator import Instrumentator
+_prom_app = prometheus_client.make_asgi_app()
 
-    Instrumentator().instrument(app).expose(app)
-except ImportError:
-    logger.debug("prometheus-fastapi-instrumentator not installed — metrics disabled")
+
+@app.get("/metrics", tags=["observability"])
+async def prometheus_metrics(request: Request) -> Response:
+    """Expose Prometheus metrics at /metrics."""
+    scope = dict(request.scope)
+    scope["path"] = "/"
+    body_parts: list[bytes] = []
+    status_code = 200
+    resp_headers: list[tuple[bytes, bytes]] = []
+
+    async def receive():  # noqa: ANN202
+        return {"type": "http.request", "body": b""}
+
+    async def send(msg: dict) -> None:  # noqa: ANN001
+        nonlocal status_code, resp_headers
+        if msg["type"] == "http.response.start":
+            status_code = msg["status"]
+            resp_headers = msg.get("headers", [])
+        elif msg["type"] == "http.response.body":
+            body_parts.append(msg.get("body", b""))
+
+    await _prom_app(scope, receive, send)
+    return Response(
+        content=b"".join(body_parts),
+        status_code=status_code,
+        headers={k.decode(): v.decode() for k, v in resp_headers},
+    )

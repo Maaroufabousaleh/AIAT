@@ -15,8 +15,11 @@ Extends ``AdminAgent`` with review/advisory capabilities:
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any
+import re
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from ..llm_gateway.models import ToolDefinition, ToolFunction
@@ -34,7 +37,9 @@ from ..protocols.enums import (
 )
 from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
-from .config import AgentConfig
+
+if TYPE_CHECKING:
+    from .config import AgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +165,14 @@ class CSuiteAgent(AdminAgent):
             f"(C-Suite executive) for team {self.team_id}.\n\n"
             f"## Your Domain\n{focus}\n\n"
             "## Operating Principles\n"
-            "1. Be decisive and structured in all responses.\n"
-            "2. Ground recommendations in data and evidence.\n"
-            "3. Escalate blockers immediately — do not let projects stall.\n"
-            "4. Use the available tools to take action, not just advise.\n"
-            "5. Keep context concise — other agents and the human operator read your output.\n"
+            "1. Observe: read current project, worker, approval, and runtime state before acting.\n"
+            "2. Plan: form a short explicit plan with owner, next action, risk, and success criteria.\n"
+            "3. Act: use available tools to change state; do not merely advise when a safe action exists.\n"
+            "4. Verify: check tool results, blocked reasons, evaluation status, and required approvals.\n"
+            "5. Remember: preserve durable facts in AIAT state and refer to prior context when available.\n"
+            "6. Report: keep output concise, structured, and useful to the next human or agent reader.\n"
+            "7. Escalate blockers immediately; do not let projects or hiring tickets stall silently.\n"
+            "8. Never bypass AIAT control-plane authority, credentials, approvals, budgets, or observability.\n"
         )
 
     # ------------------------------------------------------------------
@@ -180,12 +188,31 @@ class CSuiteAgent(AdminAgent):
             MessageType.INFRA_READY: self._handle_infra_ready,
             MessageType.SYSTEM_EVENT: self._handle_system_event,
             MessageType.DIRECTIVE: self._handle_directive,
+            MessageType.TASK: self._handle_task,
         }
         return csuite_handlers.get(msg_type) or super()._get_handler(msg_type)
 
     # ------------------------------------------------------------------
     # Directive dispatch — action-driven think() loop
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_expired_envelope(envelope: MessageEnvelope) -> bool:
+        ttl_seconds = envelope.ttl_seconds
+        if ttl_seconds is None or ttl_seconds <= 0:
+            return False
+
+        timestamp = envelope.timestamp
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+
+        expires_at = timestamp.astimezone(timezone.utc) + timedelta(seconds=ttl_seconds)
+        return datetime.now(timezone.utc) >= expires_at
 
     async def _handle_directive(self, envelope: MessageEnvelope) -> None:
         """Dispatch directive actions to the think() loop for CEO/COO.
@@ -194,6 +221,13 @@ class CSuiteAgent(AdminAgent):
         tools. Passive actions (RESUME for non-CEO roles) fall through to
         the parent AdminAgent broadcast.
         """
+        if CSuiteAgent._is_expired_envelope(envelope):
+            logger.info(
+                "csuite_directive_skip_expired",
+                extra=self._log_extra(message_id=envelope.message_id),
+            )
+            return
+
         action = envelope.payload.get("action", "")
         project_id = envelope.project_id or envelope.payload.get("project_id", "")
 
@@ -202,6 +236,13 @@ class CSuiteAgent(AdminAgent):
             action.lower(),
             extra=self._log_extra(action=action, specialization=self._specialization),
         )
+
+        if self._specialization == "CEO" and action.upper() == "RESUME":
+            logger.info(
+                "csuite_directive_resume_ack",
+                extra=self._log_extra(action=action, project_id=project_id),
+            )
+            return
 
         # Skip directives for terminal/archived projects to avoid wasted LLM calls
         if project_id and self._storage is not None:
@@ -255,10 +296,699 @@ class CSuiteAgent(AdminAgent):
             "WORKFORCE_REVIEW",
         }
         if action.upper() in actionable:
-            await self._directive_think(envelope, action)
+            try:
+                await self._directive_think(envelope, action)
+            except Exception as exc:
+                logger.warning(
+                    "csuite_directive_think_failed",
+                    extra=self._log_extra(
+                        action=action,
+                        project_id=project_id,
+                        error=str(exc),
+                    ),
+                )
         else:
             # Unknown actions — broadcast to team (default AdminAgent behaviour)
             await super()._handle_directive(envelope)
+
+    # ------------------------------------------------------------------
+    # Task handling — for CEO human directives
+    # ------------------------------------------------------------------
+
+    async def _handle_task(self, envelope: MessageEnvelope) -> None:
+        """Handle TASK messages (e.g., HUMAN_DIRECTIVE from operator).
+
+        For CEO specialization: process HUMAN_DIRECTIVE by running the think()
+        loop with appropriate tools to respond to the human operator.
+        For other C-Suite: delegate to parent AdminAgent behaviour.
+        """
+        if CSuiteAgent._is_expired_envelope(envelope):
+            logger.info(
+                "csuite_task_skip_expired",
+                extra=self._log_extra(message_id=envelope.message_id),
+            )
+            return
+
+        action = envelope.payload.get("action", "")
+
+        logger.info(
+            "csuite_task_%s",
+            action.lower(),
+            extra=self._log_extra(action=action, specialization=self._specialization),
+        )
+
+        # CEO handles HUMAN_DIRECTIVE directly via think() loop
+        if self._specialization == "CEO" and action.upper() == "HUMAN_DIRECTIVE":
+            if envelope.payload.get("execution_owner") == "orchestrator-api":
+                logger.info(
+                    "ceo_human_directive_skip_external_owner",
+                    extra=self._log_extra(
+                        message_id=envelope.message_id,
+                        execution_owner="orchestrator-api",
+                    ),
+                )
+                return
+            await self._handle_human_directive(envelope)
+            return
+
+        # Other C-Suite roles: fall through to AdminAgent (delegate to workers)
+        await super()._handle_admin_task(envelope)
+
+    async def _handle_human_directive(self, envelope: MessageEnvelope) -> None:
+        """Process a human operator directive via the think() loop.
+
+        The CEO responds to the human with a structured response using
+        available tools (human.notify, project.status, etc.).
+        """
+        instruction = envelope.payload.get("instruction", "")
+        project_id = envelope.project_id or envelope.payload.get("project_id", "operator-direct")
+
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"## Human Directive\n{instruction}\n\n"
+                    f"## Context\n"
+                    f"- Project ID: {project_id}\n"
+                    f"- This is a direct message from the human operator.\n"
+                    f"- Respond as the CEO Executive Copilot: be decisive, concise, and structured.\n"
+                    f"- If this is a general question, provide a clear answer.\n"
+                    f"- If this requires project action, explain the next step or ask for required details.\n"
+                    f"- The chat runtime will deliver your final assistant response to the operator."
+                ),
+            },
+        ]
+
+        tools: list[ToolDefinition] = []
+        response_text = await self._handle_human_directive_command(instruction)
+        if not response_text:
+            try:
+                response_text = await self._run_human_directive_turn(
+                    messages=messages,
+                    project_id=project_id,
+                    tools=tools,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ceo_human_directive_llm_failed",
+                    extra=self._log_extra(error=str(exc), specialization=self._specialization),
+                )
+                response_text = (
+                    "I received your directive, but the live LLM path is currently unavailable. "
+                    "The CEO runtime can route project creation, status checks, tool-backed actions, "
+                    "human notifications, and department coordination once the model path is healthy."
+                )
+
+        if response_text:
+            reply = MessageEnvelope(
+                msg_type=MessageType.RESPONSE,
+                sender_id=self.agent_id,
+                sender_role=self.role,
+                sender_team=self.team_id,
+                recipient_team=self.team_id,
+                project_id=project_id,
+                correlation_id=envelope.correlation_id,
+                parent_id=envelope.message_id,
+                payload={
+                    "response": response_text,
+                    "source": "human_directive",
+                },
+            )
+            await self.publish(reply)
+
+    async def _run_human_directive_turn(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        project_id: str,
+        tools: list[ToolDefinition],
+    ) -> str:
+        """Run one bounded LLM turn for operator chat."""
+        llm_started_here = await self._ensure_llm_started()
+        try:
+            if self.config.llm_use_fallback:
+                response = await self._llm.chat_completion_with_fallback(
+                    messages,
+                    task=self.config.llm_fallback_task,
+                    model=self.config.llm_model,
+                    tools=tools,
+                    tool_choice="auto",
+                    max_tokens=self.config.llm_max_tokens,
+                    temperature=self.config.llm_temperature,
+                    stream=self.config.llm_stream,
+                    needs_tools=bool(tools),
+                    chain_length=self.config.llm_fallback_chain_length,
+                )
+            else:
+                response = await self._llm.chat_completion(
+                    messages,
+                    model=self.config.llm_model,
+                    tools=tools,
+                    max_tokens=self.config.llm_max_tokens,
+                    temperature=self.config.llm_temperature,
+                    stream=self.config.llm_stream,
+                )
+        finally:
+            if llm_started_here:
+                await self._llm.stop()
+                self._llm_started = False
+
+        if response.text:
+            return await self._normalize_human_directive_response(
+                response.text,
+                project_id=project_id,
+                tools=tools,
+            )
+
+        if not response.tool_calls:
+            return ""
+
+        terminal_tools = {"human.notify", "human.await_decision"}
+        action_tools = {tool.function.name for tool in tools}
+        parts: list[str] = []
+        for tool_call in response.tool_calls:
+            tool_name = tool_call.function.name
+            args = self._parse_tool_arguments(tool_call.function.arguments)
+
+            if tool_name in terminal_tools:
+                message = args.get("message") or args.get("response") or args.get("summary")
+                if message:
+                    parts.append(str(message).strip())
+                continue
+
+            if tool_name not in action_tools:
+                continue
+
+            if project_id and project_id != "operator-direct" and "project_id" not in args:
+                args["project_id"] = project_id
+            result = await self.execute_tool(tool_name, args)
+            parts.append(f"{tool_name} result: {self._compact_tool_result(result)}")
+
+        return CSuiteAgent._clean_human_directive_text(
+            "\n".join(part for part in parts if part)
+        )
+
+    async def _handle_human_directive_command(self, instruction: str) -> str | None:
+        """Execute clear CEO chat commands without waiting on LLM tool choice."""
+        text = instruction.strip()
+        lowered = text.lower()
+        if not text:
+            return None
+
+        project_id = CSuiteAgent._extract_uuid(text)
+
+        if "project" in lowered and any(word in lowered for word in ("create", "new", "start")):
+            name = CSuiteAgent._extract_named_value(text) or "Untitled Project"
+            description = CSuiteAgent._extract_description(text) or text
+            result = await self.execute_tool(
+                "project.create",
+                {
+                    "title": name,
+                    "description": description,
+                    "human_requester": "human_operator",
+                },
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not create the project: {result.get('error')}"
+            return CSuiteAgent._summarize_project_create(result)
+
+        if project_id and "project" in lowered and any(
+            word in lowered for word in ("status", "state", "progress", "what is")
+        ):
+            result = await self.execute_tool("project.status", {"project_id": project_id})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not get project status for {project_id}: {result.get('error')}"
+            return CSuiteAgent._summarize_project_status(result)
+
+        if (
+            ("projects" in lowered or ("project" in lowered and not project_id))
+            and any(word in lowered for word in ("list", "show", "recent"))
+        ):
+            result = await self.execute_tool("project.list", {"limit": 10})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not list projects: {result.get('error')}"
+            return CSuiteAgent._summarize_project_list(result)
+
+        if any(token in lowered for token in ("workers", "hiring board", "candidate", "candidates")) and any(
+            word in lowered for word in ("list", "show", "status", "inspect")
+        ):
+            result = await self.execute_tool("capability.list_workers", {})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not list workers: {result.get('error')}"
+            return CSuiteAgent._summarize_worker_list(result)
+
+        if "capability" in lowered and any(word in lowered for word in ("search", "find", "who can")):
+            capability = CSuiteAgent._extract_capability_query(text)
+            if not capability:
+                return "I need a capability name to search for matching workers."
+            result = await self.execute_tool("capability.search", {"name": capability})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not search worker capabilities: {result.get('error')}"
+            return CSuiteAgent._summarize_capability_search(result)
+
+        if "flow" in lowered and any(phrase in lowered for phrase in ("list", "show", "available")):
+            result = await self.execute_tool("flow.list", {"is_active": True})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not list flows: {result.get('error')}"
+            return CSuiteAgent._summarize_flow_list(result)
+
+        if "flow" in lowered and "recommend" in lowered:
+            project_name = CSuiteAgent._extract_named_value(text) or text
+            result = await self.execute_tool(
+                "flow.recommend",
+                {"project_name": project_name, "project_description": text},
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not recommend a flow: {result.get('error')}"
+            return CSuiteAgent._summarize_flow_recommendation(result)
+
+        if project_id and "flow" in lowered and any(word in lowered for word in ("assign", "attach")):
+            flow_id = CSuiteAgent._extract_uuid(text, skip=project_id)
+            if not flow_id:
+                return "I need a flow UUID to assign a flow to that project."
+            result = await self.execute_tool(
+                "flow.assign",
+                {
+                    "project_id": project_id,
+                    "flow_id": flow_id,
+                    "start_after_assign": "start" in lowered,
+                },
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not assign the flow: {result.get('error')}"
+            return CSuiteAgent._summarize_flow_assignment(result)
+
+        if project_id and "flow" in lowered and any(
+            word in lowered for word in ("start", "resume", "pause", "cancel")
+        ):
+            action = next(
+                word for word in ("start", "resume", "pause", "cancel") if word in lowered
+            )
+            result = await self.execute_tool(
+                "flow.invoke",
+                {"project_id": project_id, "action": action},
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not {action} the flow: {result.get('error')}"
+            return f"Flow {action} request completed: {CSuiteAgent._compact_tool_result(result)}"
+
+        if project_id and "flow" in lowered and "status" in lowered:
+            result = await self.execute_tool("flow.status", {"project_id": project_id})
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not get flow status for {project_id}: {result.get('error')}"
+            return f"Flow status: {CSuiteAgent._compact_tool_result(result)}"
+
+        if project_id and any(word in lowered for word in ("pending", "await", "waiting")) and any(
+            word in lowered for word in ("decision", "decisions", "approval", "approvals")
+        ):
+            result = await self.execute_tool("human.await_decision", {"project_id": project_id})
+            if isinstance(result, dict) and result.get("error"):
+                return (
+                    f"I could not check pending human decisions for {project_id}: "
+                    f"{result.get('error')}"
+                )
+            return CSuiteAgent._summarize_pending_decisions(result)
+
+        if project_id and "transition" in lowered and "project" in lowered:
+            event = CSuiteAgent._extract_transition_event(lowered)
+            if not event:
+                return "I need an explicit workflow event to transition that project."
+            result = await self.execute_tool(
+                "project.transition",
+                {"project_id": project_id, "event": event, "actor_id": self.agent_id},
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not transition the project: {result.get('error')}"
+            return f"Project transition submitted: {CSuiteAgent._compact_tool_result(result)}"
+
+        if project_id and "review" in lowered and any(
+            word in lowered for word in ("aggregate", "advance", "complete")
+        ):
+            verdict = CSuiteAgent._extract_review_verdict(lowered)
+            if not verdict:
+                return "I need an aggregate review verdict such as APPROVED or REJECTED."
+            result = await self.execute_tool(
+                "review.aggregate",
+                {
+                    "project_id": project_id,
+                    "verdict": verdict,
+                    "actor_id": self.agent_id,
+                },
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not aggregate the review: {result.get('error')}"
+            return f"Review aggregate submitted: {CSuiteAgent._compact_tool_result(result)}"
+
+        if project_id and "override" in lowered and any(word in lowered for word in ("cso", "veto")):
+            action = "block" if "block" in lowered else "approve"
+            reason = CSuiteAgent._extract_reason(text) or "Operator override"
+            result = await self.execute_tool(
+                "approval.override_cso",
+                {
+                    "project_id": project_id,
+                    "action": action,
+                    "reason": reason,
+                    "actor_id": self.agent_id,
+                },
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not apply the CSO override: {result.get('error')}"
+            return f"CSO override submitted: {CSuiteAgent._compact_tool_result(result)}"
+
+        if project_id and "flow" in lowered and any(
+            word in lowered for word in ("advance", "complete", "fail")
+        ):
+            node_id = CSuiteAgent._extract_node_id(text)
+            if not node_id:
+                return "I need a flow node ID to advance that project flow."
+            action = "fail" if "fail" in lowered else "complete"
+            result = await self.execute_tool(
+                "flow.advance",
+                {"project_id": project_id, "node_id": node_id, "action": action},
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return f"I could not {action} the flow node: {result.get('error')}"
+            return f"Flow node {action} request completed: {CSuiteAgent._compact_tool_result(result)}"
+
+        return None
+
+    @staticmethod
+    def _extract_uuid(text: str, *, skip: str | None = None) -> str | None:
+        for match in re.finditer(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+            text,
+        ):
+            value = match.group(0)
+            if value != skip:
+                return value
+        return None
+
+    @staticmethod
+    def _extract_named_value(text: str) -> str | None:
+        quoted = re.search(r"(?:named|called|title(?:d)?|name)\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(
+            r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|\s+and\s+description|[.;]|$)",
+            text,
+            re.I,
+        )
+        if bare:
+            return bare.group(1).strip(" '\"")
+        return None
+
+    @staticmethod
+    def _extract_description(text: str) -> str | None:
+        quoted = re.search(r"(?:with\s+)?description\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(r"(?:with\s+)?description\s+(.+?)(?:[.;]|$)", text, re.I)
+        if bare:
+            return bare.group(1).strip(" '\"")
+        return None
+
+    @staticmethod
+    def _extract_transition_event(text: str) -> str | None:
+        quoted = re.search(r"event\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(r"event\s+([a-z0-9_]+)", text, re.I)
+        if bare:
+            return bare.group(1).strip().lower()
+        return None
+
+    @staticmethod
+    def _extract_review_verdict(text: str) -> str | None:
+        for raw, normalized in (
+            ("approved_with_comments", "APPROVED_WITH_COMMENTS"),
+            ("needs_revision", "NEEDS_REVISION"),
+            ("needs revision", "NEEDS_REVISION"),
+            ("approved", "APPROVED"),
+            ("rejected", "REJECTED"),
+        ):
+            if raw in text:
+                return normalized
+        return None
+
+    @staticmethod
+    def _extract_reason(text: str) -> str | None:
+        quoted = re.search(r"(?:reason|because)\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(r"(?:reason|because)\s+(.+?)(?:[.;]|$)", text, re.I)
+        if bare:
+            return bare.group(1).strip(" '\"")
+        return None
+
+    @staticmethod
+    def _extract_node_id(text: str) -> str | None:
+        quoted = re.search(r"(?:node(?:_id)?|step)\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(r"(?:node(?:_id)?|step)\s+([A-Za-z0-9_.:-]+)", text, re.I)
+        if bare:
+            return bare.group(1).strip()
+        return None
+
+    @staticmethod
+    def _extract_capability_query(text: str) -> str | None:
+        quoted = re.search(r"(?:capability|skill)\s+['\"]([^'\"]+)['\"]", text, re.I)
+        if quoted:
+            return quoted.group(1).strip()
+        bare = re.search(r"(?:capability|skill)\s+([A-Za-z0-9_.:-]+)", text, re.I)
+        if bare:
+            return bare.group(1).strip(" .,:;")
+        who_can = re.search(r"who can\s+([A-Za-z0-9_.:-]+)", text, re.I)
+        if who_can:
+            return who_can.group(1).strip(" .,:;")
+        return None
+
+    @staticmethod
+    def _summarize_project_create(result: Any) -> str:
+        if isinstance(result, dict):
+            name = result.get("name") or result.get("title") or "project"
+            project_id = result.get("id") or result.get("project_id")
+            state = result.get("state")
+            details = [f"Created project {name}"]
+            if project_id:
+                details.append(f"ID {project_id}")
+            if state:
+                details.append(f"state {state}")
+            return details[0] + (" (" + ", ".join(details[1:]) + ")." if len(details) > 1 else ".")
+        return f"Project creation completed: {result}"
+
+    @staticmethod
+    def _summarize_project_status(result: Any) -> str:
+        if isinstance(result, dict):
+            name = result.get("name") or result.get("id") or "project"
+            state = result.get("state") or "unknown"
+            updated = result.get("updated_at")
+            suffix = f", updated {updated}" if updated else ""
+            return f"Project {name} is in state {state}{suffix}."
+        return f"Project status: {result}"
+
+    @staticmethod
+    def _summarize_project_list(result: Any) -> str:
+        projects = result if isinstance(result, list) else []
+        if not projects:
+            return "No projects matched that request."
+        items = []
+        for project in projects[:5]:
+            if isinstance(project, dict):
+                label = project.get("name") or project.get("id") or "Unnamed project"
+                state = project.get("state")
+                items.append(f"{label}" + (f" [{state}]" if state else ""))
+        return "Projects: " + "; ".join(items) + "."
+
+    @staticmethod
+    def _summarize_worker_list(result: Any) -> str:
+        if isinstance(result, dict):
+            workers = result.get("workers") if isinstance(result.get("workers"), list) else []
+            count = result.get("count", len(workers))
+        elif isinstance(result, list):
+            workers = result
+            count = len(workers)
+        else:
+            return f"Workers: {result}"
+        if not workers:
+            return "No workers are currently registered."
+        items = []
+        for worker in workers[:6]:
+            if isinstance(worker, dict):
+                label = worker.get("name") or worker.get("worker_id") or worker.get("id")
+                status = worker.get("status") or worker.get("evaluation_status") or "registered"
+                capabilities = worker.get("capabilities") or worker.get("capability_ids") or []
+                cap_text = f", capabilities={len(capabilities)}" if isinstance(capabilities, list) else ""
+                items.append(f"{label} [{status}{cap_text}]")
+        return f"Workers ({count}): " + "; ".join(items) + "."
+
+    @staticmethod
+    def _summarize_capability_search(result: Any) -> str:
+        if not isinstance(result, dict):
+            return f"Capability search: {result}"
+        workers = result.get("workers") if isinstance(result.get("workers"), list) else []
+        query = (result.get("query") or {}).get("name") if isinstance(result.get("query"), dict) else None
+        if not workers:
+            return f"No workers matched capability {query or 'request'}."
+        names = [
+            str(worker.get("name") or worker.get("worker_id") or worker.get("id"))
+            for worker in workers[:6]
+            if isinstance(worker, dict)
+        ]
+        return f"Workers matching {query or 'capability'}: " + "; ".join(names) + "."
+
+    @staticmethod
+    def _summarize_flow_list(result: Any) -> str:
+        if isinstance(result, list):
+            if not result:
+                return "No active flows are currently available."
+            items = []
+            for flow in result[:5]:
+                if isinstance(flow, dict):
+                    items.append(
+                        f"{flow.get('name', 'Unnamed flow')} ({flow.get('id', 'no id')})"
+                    )
+            return "Available flows: " + "; ".join(items) + "."
+        return f"Available flows: {result}"
+
+    @staticmethod
+    def _summarize_flow_recommendation(result: Any) -> str:
+        if isinstance(result, dict):
+            name = result.get("selected_flow_name") or "selected flow"
+            flow_id = result.get("selected_flow_id")
+            reason = result.get("reason")
+            suffix = f" Reason: {reason}" if reason else ""
+            return f"I recommend {name}" + (f" ({flow_id})" if flow_id else "") + f".{suffix}"
+        return f"Flow recommendation: {result}"
+
+    @staticmethod
+    def _summarize_flow_assignment(result: Any) -> str:
+        if isinstance(result, dict):
+            action = result.get("action", "assigned")
+            instance = result.get("instance") if isinstance(result.get("instance"), dict) else result
+            instance_id = instance.get("id") if isinstance(instance, dict) else None
+            status = instance.get("status") if isinstance(instance, dict) else None
+            details = []
+            if instance_id:
+                details.append(f"instance {instance_id}")
+            if status:
+                details.append(f"status {status}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            return f"Flow {action}{suffix}."
+        return f"Flow assignment completed: {result}"
+
+    @staticmethod
+    def _compact_tool_result(result: Any) -> str:
+        if isinstance(result, dict):
+            compact = {
+                key: result.get(key)
+                for key in ("id", "name", "state", "status", "flow_id", "active_node_ids")
+                if result.get(key) is not None
+            }
+            return json.dumps(compact or result, default=str)[:500]
+        return str(result)[:500]
+
+    @staticmethod
+    def _summarize_pending_decisions(result: Any) -> str:
+        if not isinstance(result, dict):
+            return f"Pending decisions: {result}"
+        if not result.get("pending"):
+            return "No pending human decisions were found for that project."
+        decisions = result.get("decisions")
+        if isinstance(decisions, list) and decisions:
+            items = []
+            for decision in decisions[:3]:
+                if isinstance(decision, dict):
+                    title = decision.get("title") or decision.get("gate_type") or decision.get("id")
+                    items.append(str(title))
+            if items:
+                return "Pending decisions: " + "; ".join(items) + "."
+        gate_id = result.get("gate_id")
+        return f"Pending human decisions found for gate {gate_id}."
+
+    async def _normalize_human_directive_response(
+        self,
+        response_text: str,
+        *,
+        project_id: str,
+        tools: list[ToolDefinition],
+    ) -> str:
+        """Normalize fallback-model pseudo tool markup in direct CEO chat.
+
+        Some providers in the fallback chain do not return structured tool calls
+        even when tool definitions are supplied. They may instead emit tags like
+        ``<human.notify>{"message": "..."}</human.notify>``. Direct chat should
+        never expose those tags to operators. For real action tools, execute the
+        call and replace the tag with a concise result summary.
+        """
+        if not response_text:
+            return response_text
+
+        terminal_tools = {"human.notify", "human.await_decision"}
+        executable_tools = {tool.function.name for tool in tools} | terminal_tools
+        action_tools = {tool.function.name for tool in tools} - terminal_tools
+        pattern = re.compile(
+            r"<(?P<tool>[A-Za-z0-9_.-]+)>\s*(?P<body>\{.*?\})\s*</(?P=tool)>",
+            flags=re.DOTALL,
+        )
+        cursor = 0
+        parts: list[str] = []
+        changed = False
+
+        for match in pattern.finditer(response_text):
+            parts.append(response_text[cursor:match.start()])
+            cursor = match.end()
+
+            tool_name = match.group("tool")
+            raw_body = match.group("body").strip()
+            if tool_name not in executable_tools:
+                parts.append(match.group(0))
+                continue
+
+            changed = True
+            try:
+                parsed = json.loads(raw_body)
+            except json.JSONDecodeError:
+                parsed = {}
+            args = parsed if isinstance(parsed, dict) else {}
+
+            if tool_name == "human.notify":
+                message = args.get("message") or args.get("response") or args.get("summary")
+                parts.append(str(message).strip() if message else raw_body)
+                continue
+
+            if tool_name not in action_tools:
+                parts.append(raw_body)
+                continue
+
+            if project_id and project_id != "operator-direct" and "project_id" not in args:
+                args["project_id"] = project_id
+
+            result = await self.execute_tool(tool_name, args)
+            parts.append(
+                f"{tool_name} result: {json.dumps(result, default=str, ensure_ascii=False)}"
+            )
+
+        if not changed:
+            return CSuiteAgent._clean_human_directive_text(response_text)
+
+        parts.append(response_text[cursor:])
+        return CSuiteAgent._clean_human_directive_text(
+            "\n".join(part.strip() for part in parts if part.strip())
+        )
+
+    @staticmethod
+    def _clean_human_directive_text(text: str) -> str:
+        """Remove provider-only reasoning markup from operator-visible chat."""
+        cleaned = re.sub(
+            r"<thought>.*?</thought>",
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        cleaned = re.sub(r"</?thought>", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
 
     async def _directive_think(self, envelope: MessageEnvelope, action: str) -> None:
         """Run think() in response to a directive action.
@@ -471,6 +1201,25 @@ class CSuiteAgent(AdminAgent):
             ),
             ToolDefinition(
                 function=ToolFunction(
+                    name="project.list",
+                    description="List projects with optional filters such as state or limit.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "state": {
+                                "type": "string",
+                                "description": "Optional project state filter.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of projects to return.",
+                            },
+                        },
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
                     name="review.aggregate",
                     description=(
                         "Aggregate all reviews and advance project state from "
@@ -505,6 +1254,35 @@ class CSuiteAgent(AdminAgent):
                             },
                         },
                         "required": ["project_id", "verdict"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="approval.override_cso",
+                    description="Apply a CEO or CSO override on a project after a veto or executive decision.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            },
+                            "action": {
+                                "type": "string",
+                                "enum": ["approve", "block"],
+                                "description": "Whether to approve despite veto or block the project.",
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Reason for the override decision.",
+                            },
+                            "actor_id": {
+                                "type": "string",
+                                "description": "ID of the agent submitting the override.",
+                            },
+                        },
+                        "required": ["project_id", "action"],
                     },
                 )
             ),
@@ -562,6 +1340,76 @@ class CSuiteAgent(AdminAgent):
                             },
                         },
                         "required": ["project_id", "message"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="human.await_decision",
+                    description="Check for pending human approval or decision gates on a project.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "project_id": {
+                                "type": "string",
+                                "description": "UUID of the project.",
+                            }
+                        },
+                        "required": ["project_id"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="project.create",
+                    description="Create a new project with title, description, and initial scope.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "Project title.",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Detailed project description.",
+                            },
+                            "initial_scope": {
+                                "type": "string",
+                                "description": "Initial scope definition.",
+                            },
+                        },
+                        "required": ["title", "description"],
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="capability.list_workers",
+                    description="List registered workers, candidates, capabilities, teams, and evaluation state.",
+                    parameters={
+                        "type": "object",
+                        "properties": {},
+                    },
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="capability.search",
+                    description="Search for workers by required capability or skill.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Capability or skill name to search for.",
+                            },
+                            "role": {
+                                "type": "string",
+                                "description": "Optional role filter.",
+                            },
+                        },
+                        "required": ["name"],
                     },
                 )
             ),
@@ -706,6 +1554,13 @@ class CSuiteAgent(AdminAgent):
         For CEO specialization: notify human on major milestones.
         For other C-Suite: no-op (informational only).
         """
+        if CSuiteAgent._is_expired_envelope(envelope):
+            logger.info(
+                "csuite_system_event_skip_expired",
+                extra=self._log_extra(message_id=envelope.message_id),
+            )
+            return
+
         event = envelope.payload.get("event", "")
         to_state = envelope.payload.get("to_state", "")
         project_id = envelope.project_id or envelope.payload.get("project_id", "")
@@ -719,6 +1574,20 @@ class CSuiteAgent(AdminAgent):
                 specialization=self._specialization,
             ),
         )
+
+        if self._specialization == "CEO" and to_state in {
+            "FEASIBILITY_REPORT",
+            "HUMAN_APPROVAL",
+            "COMPLETED",
+            "FAILED",
+            "ARCHIVED",
+            "SECURITY_BLOCKED",
+        }:
+            logger.info(
+                "csuite_system_event_skip_workflow_notification",
+                extra=self._log_extra(event=event, project_id=project_id, to_state=to_state),
+            )
+            return
 
         # Skip LLM calls for projects already in a terminal state
         if project_id and self._storage is not None:
@@ -751,7 +1620,18 @@ class CSuiteAgent(AdminAgent):
             "FAILED",
             "SECURITY_BLOCKED",
         }:
-            await self._ceo_react_to_state(envelope, event, to_state, project_id)
+            try:
+                await self._ceo_react_to_state(envelope, event, to_state, project_id)
+            except Exception as exc:
+                logger.warning(
+                    "csuite_system_event_reaction_failed",
+                    extra=self._log_extra(
+                        event=event,
+                        project_id=project_id,
+                        to_state=to_state,
+                        error=str(exc),
+                    ),
+                )
 
     async def _ceo_react_to_state(
         self,

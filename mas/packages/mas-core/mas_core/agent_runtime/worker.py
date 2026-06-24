@@ -59,7 +59,10 @@ class WorkerAgent(AgentBase):
         return (
             f"You are {self.agent_id}, a {self.role.value} agent in team {self.team_id}. "
             "Complete your assigned tasks accurately and thoroughly. "
-            "Use available tools when needed. Be concise in your responses."
+            "Use available tools when needed. Work like a frontier-grade specialist: clarify "
+            "the objective, inspect relevant context, plan before acting, execute only allowed "
+            "tool calls, verify the result, surface uncertainties or blockers, and return a "
+            "concise artifact-oriented response."
         )
 
     # ------------------------------------------------------------------
@@ -81,7 +84,7 @@ class WorkerAgent(AgentBase):
                 span_id=str(env.message_id) if env else None,
             )
             if resp.success:
-                return resp.result or resp.data
+                return resp.result if resp.result is not None else getattr(resp, "data", None)
             return {"error": resp.error, "error_code": resp.error_code}
         return await super().execute_tool(tool_name, tool_kwargs)
 

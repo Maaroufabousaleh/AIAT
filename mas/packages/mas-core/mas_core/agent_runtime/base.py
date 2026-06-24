@@ -397,6 +397,7 @@ class AgentBase(ABC):
         max_tokens: int | None = None,
         temperature: float | None = None,
         stream: bool | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> list[dict[str, Any]]:
         """LLM think-loop with budget and checkpoint enforcement.
 
@@ -461,16 +462,32 @@ class AgentBase(ABC):
                         pass
                     break
 
-                response = await self._llm.chat_completion(
-                    messages,
-                    model=model or self.config.llm_model,
-                    tools=tools,
-                    max_tokens=max_tokens or self.config.llm_max_tokens,
-                    temperature=(
-                        self.config.llm_temperature if temperature is None else temperature
-                    ),
-                    stream=self.config.llm_stream if stream is None else stream,
-                )
+                if self.config.llm_use_fallback:
+                    response = await self._llm.chat_completion_with_fallback(
+                        messages,
+                        task=self.config.llm_fallback_task,
+                        model=model or self.config.llm_model,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        max_tokens=max_tokens or self.config.llm_max_tokens,
+                        temperature=(
+                            self.config.llm_temperature if temperature is None else temperature
+                        ),
+                        stream=self.config.llm_stream if stream is None else stream,
+                        needs_tools=bool(tools),
+                        chain_length=self.config.llm_fallback_chain_length,
+                    )
+                else:
+                    response = await self._llm.chat_completion(
+                        messages,
+                        model=model or self.config.llm_model,
+                        tools=tools,
+                        max_tokens=max_tokens or self.config.llm_max_tokens,
+                        temperature=(
+                            self.config.llm_temperature if temperature is None else temperature
+                        ),
+                        stream=self.config.llm_stream if stream is None else stream,
+                    )
 
                 # Phase 12: LLM call metric
                 try:

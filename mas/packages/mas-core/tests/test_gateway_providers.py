@@ -245,6 +245,8 @@ class TestGlobalRegistry:
         assert "minimax-m2.5-free" in MODEL_REGISTRY
         assert "gpt-5-nano" in MODEL_REGISTRY
         assert "gpt-4o" not in MODEL_REGISTRY
+        assert "minimax-2.7" not in MODEL_REGISTRY
+        assert MODEL_REGISTRY.get_provider("minimax") is None
 
     def test_gemma_27b_is_chat_completions(self):
         entry = MODEL_REGISTRY.get("gemma-3-27b-it")

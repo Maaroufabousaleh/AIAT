@@ -8,8 +8,11 @@ all persistence atomically via AgentStorage + WorkflowController.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
+from uuid import UUID, uuid4
 
+import httpx
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
@@ -17,6 +20,17 @@ from mas_tools_sdk.groups import ToolGroup
 from ._orch_client import orch_get, orch_post
 
 logger = logging.getLogger(__name__)
+MESSAGE_ROUTER_URL = os.getenv("MESSAGE_ROUTER_URL") or os.getenv(
+    "ROUTER_URL", "http://message-router:8001"
+)
+
+
+async def publish_message(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Publish a validated MAS envelope through the message-router."""
+    async with httpx.AsyncClient(timeout=15, base_url=MESSAGE_ROUTER_URL) as client:
+        resp = await client.post("/messages/publish", json=envelope)
+        resp.raise_for_status()
+        return resp.json()
 
 
 # ── Project ────────────────────────────────────────────────────────────────
@@ -31,8 +45,9 @@ class ProjectCreateTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        name = kwargs.get("name") or kwargs.get("title") or "Untitled Project"
         body = {
-            "name": kwargs.get("name", "Untitled Project"),
+            "name": name,
             "description": kwargs.get("description"),
             "human_requester": kwargs.get("human_requester"),
             "config": kwargs.get("config"),
@@ -49,7 +64,16 @@ class ProjectStatusTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
-        return await orch_get(f"/projects/{project_id}")
+        try:
+            UUID(str(project_id))
+        except (TypeError, ValueError):
+            return {"error": "invalid_project_id", "project_id": project_id}
+        try:
+            return await orch_get(f"/projects/{project_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return {"error": "project_not_found", "project_id": project_id}
+            raise
 
 
 class ProjectTransitionTool(BaseTool):
@@ -368,19 +392,36 @@ class HumanNotifyTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        # In v1, human notifications go through the orchestrator's
-        # pending-decisions mechanism. The human polls the API.
-        project_id = kwargs.get("project_id", "")
-        body = {
-            "team_id": "exec_ceo",
+        message = str(kwargs.get("message") or "").strip()
+        if not message:
+            return {"error": "message is required"}
+
+        project_id = str(kwargs.get("project_id") or "operator-direct")
+        envelope = {
+            "message_id": str(uuid4()),
+            "correlation_id": str(kwargs.get("correlation_id") or uuid4()),
+            "parent_id": kwargs.get("parent_id"),
+            "msg_type": "RESPONSE",
+            "sender_id": str(kwargs.get("sender_id") or "ceo"),
+            "sender_team": "exec_ceo",
+            "sender_role": AgentRole.ORCHESTRATOR.value,
+            "recipient_team": "exec_ceo",
+            "project_id": project_id,
             "payload": {
-                "action": "NOTIFY_HUMAN",
-                "project_id": project_id,
-                "message": kwargs.get("message", ""),
+                "response": message,
+                "source": "human.notify",
                 "notification_type": kwargs.get("notification_type", "INFO"),
             },
+            "ack_required": False,
         }
-        return await orch_post("/tasks", body)
+        result = await publish_message(envelope)
+        return {
+            "notified": True,
+            "entry_id": result.get("entry_id"),
+            "project_id": project_id,
+            "message": message,
+            "notification_type": envelope["payload"]["notification_type"],
+        }
 
 
 class HumanAwaitDecisionTool(BaseTool):
@@ -395,12 +436,21 @@ class HumanAwaitDecisionTool(BaseTool):
         project_id = kwargs.get("project_id", "")
         decisions = await orch_get(f"/projects/{project_id}/pending-decisions")
         if isinstance(decisions, list) and decisions:
+            first_decision = decisions[0]
             return {
                 "pending": True,
-                "gate_id": decisions[0].get("id"),
-                "gate_type": decisions[0].get("gate_type"),
+                "pending_count": len(decisions),
+                "gate_id": first_decision.get("id"),
+                "gate_type": first_decision.get("gate_type"),
+                "first_decision": first_decision,
+                "decisions": decisions,
             }
-        return {"pending": False, "message": "No pending decisions"}
+        return {
+            "pending": False,
+            "pending_count": 0,
+            "decisions": [],
+            "message": "No pending decisions",
+        }
 
 
 # ── Department task ────────────────────────────────────────────────────────

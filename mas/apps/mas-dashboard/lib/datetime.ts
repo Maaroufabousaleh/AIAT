@@ -133,3 +133,23 @@ export function formatInTzWithUtc(
     utc: formatInTimeZone(d, "UTC", pattern),
   };
 }
+
+/**
+ * Get a relative date label for chat separators (Today, Yesterday, or date).
+ */
+export function getChatDateLabel(value: Date | number | string): string {
+  const d = toDate(value);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+  if (msgDate.getTime() === today.getTime()) {
+    return "Today";
+  }
+  if (msgDate.getTime() === yesterday.getTime()) {
+    return "Yesterday";
+  }
+  // Format as M-D-YYYY (e.g., "9-6-2026")
+  return formatInTimeZone(d, DISPLAY_TZ, "M-d-yyyy");
+}

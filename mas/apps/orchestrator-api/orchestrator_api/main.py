@@ -13,6 +13,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import importlib
 import importlib.util
 import json
@@ -30,12 +31,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 import prometheus_client
 import sqlalchemy as sa
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from mas_core.memory.storage import AgentStorage
+from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import MAS_PROJECT_STATE
 from mas_core.observability.tracing import bind_trace_id, new_trace_id
@@ -60,6 +62,31 @@ logger = logging.getLogger(__name__)
 configure_logging("orchestrator-api", json=os.getenv("LOG_FORMAT") != "console")
 
 # ---------------------------------------------------------------------------
+# Auth helper for internal endpoints
+# ---------------------------------------------------------------------------
+
+
+def _check_auth(x_api_key: str | None = Header(None), authorization: str | None = Header(None)) -> None:
+    """Validate API key for protected endpoints.
+
+    Accepts either X-API-Key header (frontend proxy) or Authorization: Bearer.
+    """
+    _MAS_API_KEY = os.getenv("MAS_API_KEY", "")
+    _GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
+    configured_keys = tuple(key for key in (_MAS_API_KEY, _GATEWAY_API_KEY) if key)
+    if not configured_keys:
+        raise HTTPException(503, "API authentication is not configured")
+    token = x_api_key or authorization
+    if token is None:
+        raise HTTPException(401, "API key required")
+    # Strip Bearer prefix if present
+    if token.lower().startswith("bearer "):
+        token = token[7:]
+    supplied = token.strip()
+    if not any(hmac.compare_digest(supplied, key) for key in configured_keys):
+        raise HTTPException(401, "Invalid API key")
+
+
 # Custom Prometheus metrics for orchestrator-api
 # ---------------------------------------------------------------------------
 
@@ -249,6 +276,9 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
 GITHUB_REPO_RE = re.compile(
     r"^(?:https://github\.com/|git@github\.com:)?(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
 )
+GITHUB_REPO_IN_TEXT_RE = re.compile(
+    r"(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?)"
+)
 
 
 def _parse_github_repo(repo_url: str) -> tuple[str, str]:
@@ -256,6 +286,112 @@ def _parse_github_repo(repo_url: str) -> tuple[str, str]:
     if not match:
         raise HTTPException(422, "repo_url must be a GitHub repository URL such as https://github.com/org/repo")
     return match.group("owner"), match.group("repo")
+
+
+def _slugify_worker_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "hired_worker"
+
+
+def _department_for_hiring_text(text: str) -> str:
+    lowered = text.lower()
+    if any(token in lowered for token in ("qa", "quality", "test", "tester")):
+        return "dept_qa"
+    if any(token in lowered for token in ("security", "cso", "secure")):
+        return "office_cso"
+    if any(token in lowered for token in ("devops", "infra", "sre", "platform")):
+        return "dept_devops"
+    return "dept_production"
+
+
+def _transport_for_hiring_text(text: str) -> str:
+    lowered = text.lower()
+    for transport in ("mcp", "http", "oci", "human", "process"):
+        if re.search(rf"\b{transport}\b", lowered):
+            return transport
+    return "process"
+
+
+def _sandbox_for_hiring_text(text: str) -> str:
+    lowered = text.lower()
+    for profile in ("firecracker", "gvisor", "restricted", "standard"):
+        if re.search(rf"\b{profile}\b", lowered):
+            return profile
+    return "restricted"
+
+
+def _version_pin_for_hiring_text(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:version|tag|pin|ref|revision)\s+([A-Za-z0-9._/\-]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def _worker_name_from_hiring_text(text: str, repo_url: str) -> str:
+    _, repo_name = _parse_github_repo(repo_url)
+    without_url = GITHUB_REPO_IN_TEXT_RE.sub("", text)
+    match = re.search(
+        r"\bhire\s+(?:an?\s+)?(?:agent|worker|engineer|developer|specialist)?\s*(?:named|called)?\s*([A-Za-z][A-Za-z0-9 _.-]{1,48}?)(?:\s+(?:from|as|for|in|into|to|with)\b|$)",
+        without_url,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        candidate = match.group(1).strip(" ._-")
+        if candidate and candidate.lower() not in {"agent", "worker", "engineer", "developer"}:
+            return _slugify_worker_name(candidate)
+    return _slugify_worker_name(repo_name.removesuffix(".git"))
+
+
+def _extract_uuid_from_text(text: str, *, skip: str | None = None) -> str | None:
+    for match in re.finditer(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        text,
+    ):
+        value = match.group(0)
+        if value != skip:
+            return value
+    return None
+
+
+def _extract_named_text(text: str, default: str) -> str:
+    quoted = re.search(r"(?:named|called|title(?:d)?|name)\s+['\"]([^'\"]+)['\"]", text, re.I)
+    if quoted:
+        return quoted.group(1).strip()
+    bare = re.search(
+        r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|[.;]|$)",
+        text,
+        re.I,
+    )
+    if bare:
+        return bare.group(1).strip(" '\"")
+    return default
+
+
+def _extract_description_text(text: str) -> str:
+    quoted = re.search(r"(?:with\s+)?description\s+['\"]([^'\"]+)['\"]", text, re.I)
+    if quoted:
+        return quoted.group(1).strip()
+    bare = re.search(r"(?:with\s+)?description\s+(.+?)(?:[.;]|$)", text, re.I)
+    if bare:
+        return bare.group(1).strip(" '\"")
+    return text.strip()
+
+
+def _extract_project_status_query(text: str) -> str | None:
+    quoted = re.search(r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+['\"]([^'\"]+)['\"]", text, re.I)
+    if quoted:
+        return quoted.group(1).strip()
+    bare = re.search(
+        r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+(.+?)(?:[.;]|$)",
+        text,
+        re.I,
+    )
+    if bare:
+        query = bare.group(1).strip(" '\"")
+        return query or None
+    return None
 
 
 def _delta_worker_refs(workers: list[dict[str, Any]], tokens: list[str]) -> list[dict[str, Any]]:
@@ -871,13 +1007,21 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     # Initialize storage
     storage = AgentStorage(dsn=PGBOUNCER_DSN)
-    try:
-        await storage.connect()
-    except Exception:
-        logger.warning(
-            "Could not connect to Postgres at startup (may be running tests); storage will be None"
-        )
-        storage = None  # type: ignore[assignment]
+    for attempt in range(1, 11):
+        try:
+            await storage.connect()
+            break
+        except Exception:
+            if attempt == 10:
+                logger.warning(
+                    "Could not connect to Postgres at startup after retries "
+                    "(may be running tests); storage will be None",
+                    exc_info=True,
+                )
+                storage = None  # type: ignore[assignment]
+                break
+            logger.info("Postgres unavailable at startup; retrying", extra={"attempt": attempt})
+            await asyncio.sleep(2)
 
     # Initialize watchdog config
     watchdog_config = WatchdogConfig()
@@ -2986,6 +3130,7 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             422,
             f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
         )
+    is_external_candidate = bool(req.source_repo)
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
@@ -2993,9 +3138,12 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         sandbox_profile=req.sandbox_profile,
         capability_ids=req.capability_ids,
         team_id=req.team_id,
+        status="INACTIVE" if is_external_candidate else "ACTIVE",
         source_repo=req.source_repo,
         version_pin=req.version_pin,
         update_policy=req.update_policy or "manual",
+        evaluation_status="pending" if is_external_candidate else None,
+        adapter_entrypoint=str(req.adapter_config.get("entrypoint") or "WorkerAgent"),
     )
     return _serialize(worker)
 
@@ -4359,6 +4507,606 @@ async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
     await gate.ensure_tables()
     rows = await gate.audit_log(limit=limit)
     return [_serialize(r) for r in rows]
+
+
+
+class OperatorToCeoRequest(BaseModel):
+    message: str
+
+    @field_validator("message")
+    @classmethod
+    def message_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message must not be blank")
+        return value
+
+
+def _clean_ceo_chat_text(text: str) -> str:
+    """Remove provider/tool markup that should not be shown in operator chat."""
+    cleaned = re.sub(r"<thought>.*?(?:</thought>|$)", "", text, flags=re.IGNORECASE | re.DOTALL)
+
+    def _tool_message(match: re.Match[str]) -> str:
+        raw = match.group(1).strip()
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return raw
+        message = payload.get("message")
+        return str(message) if message else raw
+
+    cleaned = re.sub(
+        r"<human\.notify>(.*?)</human\.notify>",
+        _tool_message,
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(r"<[^>\n]+>", "", cleaned)
+    return cleaned.strip()
+
+
+async def _publish_ceo_chat_response(
+    *,
+    response_text: str,
+    correlation_id: str,
+    parent_id: str,
+) -> None:
+    envelope = {
+        "message_id": str(uuid4()),
+        "correlation_id": correlation_id,
+        "parent_id": parent_id,
+        "msg_type": MessageType.RESPONSE.value,
+        "sender_id": "ceo",
+        "sender_team": "exec_ceo",
+        "sender_role": AgentRole.ORCHESTRATOR.value,
+        "recipient_team": "exec_ceo",
+        "project_id": "operator-direct",
+        "payload": {
+            "response": response_text,
+            "source": "ceo_chat",
+        },
+        "created_at": datetime.now(tz=UTC).isoformat(),
+        "ack_required": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+            if not resp.is_success:
+                logger.warning(
+                    "CEO chat response publish failed: status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:300],
+                )
+    except Exception:
+        logger.exception("CEO chat response publish failed")
+
+
+async def _publish_ceo_response(
+    *,
+    instruction: str,
+    correlation_id: str,
+    parent_id: str,
+) -> None:
+    """Generate and publish a CEO chat response without waiting on stream backlog.
+
+    This is a legacy fallback that bypasses the CEO agent runtime and calls the
+    LLM directly with a generic "Executive Copilot" persona.  It is gated behind
+    ENABLE_CEO_FAKE_RESPONSE so operators can opt out once the agent runtime
+    reliably handles HUMAN_DIRECTIVE / CHAT envelopes.
+    """
+    if os.getenv("ENABLE_CEO_FAKE_RESPONSE", "0") not in {"1", "true", "yes"}:
+        return
+    response_text = ""
+    try:
+        async with LLMGatewayClient() as llm:
+            response_text = await llm.ask(
+                instruction,
+                system=(
+                    "You are the AIAT CEO Executive Copilot speaking directly to the human "
+                    "operator in the dashboard chat. Reply conversationally and helpfully. "
+                    "Be concise, direct, and practical. If the operator asks for an action, "
+                    "state what you can do next and any required clarification."
+                ),
+                task="general",
+                max_tokens=450,
+                temperature=0.4,
+            )
+    except Exception as exc:
+        logger.warning("CEO chat direct response failed: %s", exc)
+        response_text = (
+            "I received your message, but my live language-model response path is currently "
+            "limited. Your request is queued with the CEO runtime."
+        )
+    response_text = _clean_ceo_chat_text(response_text)
+    await _publish_ceo_chat_response(
+        response_text=response_text.strip() or "I received your message.",
+        correlation_id=correlation_id,
+        parent_id=parent_id,
+    )
+
+
+async def _handle_ceo_hiring_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if "hire" not in lowered or not any(
+        token in lowered for token in ("agent", "worker", "engineer", "developer", "specialist")
+    ):
+        return None
+
+    repo_match = GITHUB_REPO_IN_TEXT_RE.search(instruction)
+    if not repo_match:
+        return {
+            "type": "hiring_intake",
+            "status": "needs_source_repo",
+            "response": (
+                "I can open a hiring ticket, but I need a GitHub repository URL so the Hiring Board "
+                "can run provenance, scanner, compatibility, sandbox, budget, and approval checks."
+            ),
+        }
+
+    repo_url = repo_match.group(1)
+    _parse_github_repo(repo_url)
+    worker_name = _worker_name_from_hiring_text(instruction, repo_url)
+    team_id = _department_for_hiring_text(instruction)
+    adapter_type = _transport_for_hiring_text(instruction)
+    sandbox_profile = _sandbox_for_hiring_text(instruction)
+    version_pin = _version_pin_for_hiring_text(instruction)
+
+    storage = _storage()
+    worker = await storage.register_worker(
+        name=worker_name,
+        adapter_type=adapter_type,
+        adapter_config={
+            "entrypoint": "WorkerAgent",
+            "source": "ceo_chat",
+            "intake_instruction": instruction,
+        },
+        sandbox_profile=sandbox_profile,
+        capability_ids=[],
+        team_id=team_id,
+        status="INACTIVE",
+        source_repo=repo_url,
+        version_pin=version_pin,
+        update_policy="manual",
+        evaluation_status="pending",
+        adapter_entrypoint="WorkerAgent",
+    )
+    serialized = _serialize(worker)
+    response = (
+        f"I opened a Hiring Board ticket for `{worker_name}` from {repo_url}. "
+        f"It is assigned to `{team_id}` as an inactive candidate with `{sandbox_profile}` sandboxing "
+        "and pending evaluation. The hiring team is CEO, HR/hiring, department chief, security "
+        "evaluator, interface auditor, budget evaluator, test evaluator, and human approver. "
+        "Next: run the worker evaluation from the Hiring Board, review skipped scanner states if "
+        "tools are unavailable, then activate only after approval."
+    )
+    return {
+        "type": "worker_hiring",
+        "status": "candidate_registered",
+        "worker": serialized,
+        "response": response,
+        "trace": [
+            "parsed_hiring_intent",
+            "validated_github_source",
+            "registered_inactive_candidate",
+            "queued_hiring_board_evaluation_gates",
+        ],
+    }
+
+
+async def _find_worker_for_ceo_text(storage: AgentStorage, text: str) -> dict[str, Any] | None:
+    worker_uuid = _extract_uuid_from_text(text)
+    if worker_uuid:
+        return await storage.get_worker(UUID(worker_uuid))
+
+    lowered = text.lower()
+    workers = await storage.list_workers()
+    candidates = []
+    for worker in workers:
+        names = [
+            str(worker.get("name") or "").strip().lower(),
+            str(worker.get("display_name") or "").strip().lower(),
+        ]
+        if any(name and name in lowered for name in names):
+            candidates.append(worker)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _summarize_workers_for_ceo(workers: list[dict[str, Any]]) -> str:
+    if not workers:
+        return "No workers are currently registered."
+    rows = []
+    prioritized_workers = sorted(
+        workers,
+        key=lambda worker: (
+            str(worker.get("status") or "").upper() == "ACTIVE",
+            str(worker.get("evaluation_status") or "").lower() not in {"pending", "failed"},
+            str(worker.get("name") or ""),
+        ),
+    )
+    for worker in prioritized_workers[:8]:
+        rows.append(
+            f"- {worker.get('name')} ({worker.get('id')}): {worker.get('status')}, "
+            f"evaluation={worker.get('evaluation_status') or 'none'}, "
+            f"team={worker.get('team_id') or 'unassigned'}, sandbox={worker.get('sandbox_profile')}"
+        )
+    return "Hiring Board snapshot:\n" + "\n".join(rows)
+
+
+async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if "project" not in lowered:
+        return None
+
+    project_id = _extract_uuid_from_text(instruction)
+
+    if any(word in lowered for word in ("create", "new", "start", "initialize", "init")):
+        name = _extract_named_text(instruction, "CEO Chat Project")
+        description = _extract_description_text(instruction)
+        project = await create_project(
+            CreateProjectRequest(
+                name=name,
+                description=description,
+                human_requester="human_operator",
+            )
+        )
+        response = (
+            f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
+            f"Current state is `{project.get('state')}`. I also queued the CEO feasibility "
+            "directive so the operating workflow can move through departments, reviews, "
+            "approvals, artifacts, and audit state."
+        )
+        return {
+            "type": "project_create",
+            "status": "created",
+            "project": project,
+            "response": response,
+            "trace": [
+                "parsed_project_creation_intent",
+                "created_project_record",
+                "attempted_initial_workflow_transition",
+                "published_start_feasibility_directive",
+            ],
+        }
+
+    storage = _storage()
+    if project_id and any(word in lowered for word in ("status", "state", "progress", "workspace")):
+        project = await storage.get_project(UUID(project_id))
+        if project is None:
+            raise HTTPException(404, f"Project {project_id} not found")
+        workspace = None
+        if "workspace" in lowered:
+            try:
+                workspace = await get_project_workspace(UUID(project_id))
+            except Exception:
+                logger.exception("ceo_project_workspace_read_failed")
+        response = (
+            f"Project `{project.get('name') or project_id}` is in `{project.get('state')}`."
+        )
+        if workspace:
+            next_actions = workspace.get("next_actions") or []
+            response += " Next actions: " + "; ".join(
+                str(action.get("label")) for action in next_actions if isinstance(action, dict)
+            )
+        return {
+            "type": "project_status",
+            "status": "read",
+            "project": _serialize(project),
+            "workspace": workspace,
+            "response": response,
+            "trace": ["parsed_project_status_intent", "read_project_state"]
+            + (["read_project_workspace"] if workspace else []),
+        }
+
+    project_query = _extract_project_status_query(instruction)
+    if project_query and any(word in lowered for word in ("status", "state", "progress", "workspace")):
+        projects = await storage.list_projects(limit=50)
+        matching_projects = [
+            project
+            for project in projects
+            if project_query.lower() in str(project.get("name") or "").lower()
+        ]
+        if not matching_projects:
+            raise HTTPException(404, f"Project matching {project_query!r} not found")
+        project = matching_projects[0]
+        workspace = None
+        if "workspace" in lowered:
+            try:
+                workspace = await get_project_workspace(UUID(str(project["id"])))
+            except Exception:
+                logger.exception("ceo_project_workspace_read_failed")
+        response = f"Project `{project.get('name')}` is in `{project.get('state')}`."
+        if workspace:
+            next_actions = workspace.get("next_actions") or []
+            response += " Next actions: " + "; ".join(
+                str(action.get("label")) for action in next_actions if isinstance(action, dict)
+            )
+        return {
+            "type": "project_status",
+            "status": "read",
+            "project": _serialize(project),
+            "workspace": workspace,
+            "response": response,
+            "trace": ["parsed_project_status_intent", "matched_project_by_name", "read_project_state"]
+            + (["read_project_workspace"] if workspace else []),
+        }
+
+    if any(word in lowered for word in ("list", "show", "recent")):
+        projects = await storage.list_projects(limit=10)
+        response = "Recent projects: " + (
+            "; ".join(
+                f"{project.get('name')} ({project.get('id')}, {project.get('state')})"
+                for project in projects[:5]
+            )
+            if projects
+            else "none"
+        )
+        return {
+            "type": "project_list",
+            "status": "read",
+            "projects": [_serialize(project) for project in projects],
+            "response": response,
+            "trace": ["parsed_project_list_intent", "listed_recent_projects"],
+        }
+
+    return None
+
+
+async def _handle_ceo_company_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("company", "org", "organization", "department", "departments", "graph")):
+        return None
+
+    storage = _storage()
+    if "graph" in lowered or "org" in lowered:
+        graph = await _org_graph_read_model(storage)
+        response = (
+            f"Org graph has {len(graph.get('nodes') or [])} nodes and "
+            f"{len(graph.get('edges') or [])} edges. Mermaid export is available from the graph read model."
+        )
+        return {
+            "type": "org_graph",
+            "status": "read",
+            "graph": _serialize(graph),
+            "response": response,
+            "trace": ["parsed_org_graph_intent", "read_company_model", "generated_org_graph"],
+        }
+
+    company = await _company_read_model(storage)
+    totals = company.get("totals", {})
+    response = (
+        f"AIAT company is {'seeded' if company.get('company', {}).get('seeded') else 'not seeded'} "
+        f"with {totals.get('departments', 0)} departments, {totals.get('workers', 0)} workers, "
+        f"{totals.get('active_workers', 0)} active workers, and {totals.get('pending_approvals', 0)} pending approvals."
+    )
+    return {
+        "type": "company_overview",
+        "status": "read",
+        "company": _serialize(company),
+        "response": response,
+        "trace": ["parsed_company_intent", "read_company_overview"],
+    }
+
+
+async def _handle_ceo_worker_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")):
+        return None
+    if "hire" in lowered:
+        return None
+
+    storage = _storage()
+    if any(word in lowered for word in ("list", "show", "board", "status", "candidates")) and not _extract_uuid_from_text(instruction):
+        workers = await storage.list_workers()
+        return {
+            "type": "hiring_board",
+            "status": "read",
+            "workers": [_serialize(worker) for worker in workers],
+            "response": _summarize_workers_for_ceo(workers),
+            "trace": ["parsed_hiring_board_intent", "listed_worker_registry"],
+        }
+
+    worker = await _find_worker_for_ceo_text(storage, instruction)
+    if worker is None:
+        return {
+            "type": "worker_action",
+            "status": "needs_worker",
+            "response": "I need a worker UUID or unique worker name for that hiring-board action.",
+            "trace": ["parsed_worker_action_intent", "worker_not_identified"],
+        }
+
+    worker_id = UUID(str(worker["id"]))
+
+    if "evaluate" in lowered or "audit" in lowered or "scan" in lowered:
+        report = await evaluate_worker(worker_id, WorkerEvaluateRequest())
+        return {
+            "type": "worker_evaluate",
+            "status": "evaluated",
+            "worker": _serialize(await storage.get_worker(worker_id) or worker),
+            "evaluation": report,
+            "response": (
+                f"Evaluation completed for `{worker.get('name')}`: verdict "
+                f"`{report.get('verdict')}`, recommended status `{report.get('recommended_status')}`."
+            ),
+            "trace": ["parsed_worker_evaluation_intent", "ran_guarded_evaluator", "stored_evaluation_status"],
+        }
+
+    if any(word in lowered for word in ("approve", "approved")):
+        await storage.update_worker_config(worker_id, evaluation_status="approved")
+        updated = await storage.get_worker(worker_id)
+        return {
+            "type": "worker_approval",
+            "status": "approved",
+            "worker": _serialize(updated or worker),
+            "response": f"I marked `{worker.get('name')}` evaluation status as approved for activation gating.",
+            "trace": ["parsed_worker_approval_intent", "recorded_human_approval_status"],
+        }
+
+    action = None
+    if "deactivate" in lowered:
+        action = "DEACTIVATE"
+    elif "drain" in lowered:
+        action = "DRAIN"
+    elif "activate" in lowered:
+        action = "ACTIVATE"
+    if action:
+        updated = await transition_worker_status(worker_id, WorkerStatusTransition(action=action))
+        return {
+            "type": "worker_status_transition",
+            "status": "transitioned",
+            "worker": updated,
+            "response": f"Worker `{updated.get('name')}` is now `{updated.get('status')}`.",
+            "trace": ["parsed_worker_status_intent", f"submitted_{action.lower()}"],
+        }
+
+    return None
+
+
+async def _handle_ceo_readiness_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if any(token in lowered for token in ("runtime", "runtimes", "langgraph", "crewai", "autogen", "letta")):
+        runtime_catalog = await list_available_runtimes()
+        runtimes = runtime_catalog.get("runtimes", [])
+        return {
+            "type": "runtime_readiness",
+            "status": "read",
+            "runtimes": runtime_catalog,
+            "response": (
+                "Runtime readiness: "
+                + "; ".join(f"{runtime['id']}={runtime['status']}" for runtime in runtimes)
+            ),
+            "trace": ["parsed_runtime_readiness_intent", "read_runtime_policy"],
+        }
+    if any(token in lowered for token in ("integration", "docling", "github", "semgrep", "trufflehog", "n8n")):
+        integrations = await get_delta_integration_readiness()
+        return {
+            "type": "integration_readiness",
+            "status": "read",
+            "integrations": integrations,
+            "response": (
+                "Integration readiness: "
+                + "; ".join(
+                    f"{item['id']}={item['status']}" for item in integrations.get("integrations", [])
+                )
+            ),
+            "trace": ["parsed_integration_readiness_intent", "read_delta_readiness_catalog"],
+        }
+    return None
+
+
+def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
+    lowered = instruction.lower()
+    if "hire" in lowered and any(
+        token in lowered for token in ("agent", "worker", "engineer", "developer", "specialist")
+    ):
+        return True
+    if "project" in lowered:
+        if any(
+            word in lowered
+            for word in ("create", "new", "start", "initialize", "init", "list", "show", "recent")
+        ):
+            return True
+        if any(word in lowered for word in ("status", "state", "progress", "workspace")):
+            return (
+                _extract_uuid_from_text(instruction) is not None
+                or _extract_project_status_query(instruction) is not None
+            )
+    if any(token in lowered for token in ("company", "org", "organization", "department", "departments", "graph")):
+        return True
+    if "hire" not in lowered and any(
+        token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")
+    ):
+        return True
+    if any(
+        token in lowered
+        for token in (
+            "runtime",
+            "runtimes",
+            "langgraph",
+            "crewai",
+            "autogen",
+            "letta",
+            "integration",
+            "docling",
+            "github",
+            "semgrep",
+            "trufflehog",
+            "n8n",
+        )
+    ):
+        return True
+    return False
+
+
+async def _handle_ceo_operator_intent(instruction: str) -> dict[str, Any] | None:
+    for handler in (
+        _handle_ceo_hiring_intent,
+        _handle_ceo_project_intent,
+        _handle_ceo_readiness_intent,
+        _handle_ceo_company_intent,
+        _handle_ceo_worker_intent,
+    ):
+        action = await handler(instruction)
+        if action is not None:
+            return action
+    return None
+
+
+@app.post("/ceo/message")
+async def operator_send_to_ceo(
+    req: OperatorToCeoRequest,
+    background_tasks: BackgroundTasks,
+    x_api_key: str | None = Header(None),
+    authorization: str | None = Header(None),
+) -> dict[str, Any]:
+    """Operator sends a message directly to the CEO via the message-router."""
+    _check_auth(x_api_key, authorization)
+    tid = new_trace_id()
+    bind_trace_id(tid)
+    message_id = str(uuid4())
+    instruction = req.message.strip()
+    payload = {
+        "action": "HUMAN_DIRECTIVE",
+        "instruction": instruction,
+        "source": "ceo_chat",
+    }
+    if _ceo_operator_intent_is_api_owned(instruction):
+        payload["execution_owner"] = "orchestrator-api"
+    envelope = {
+        "message_id": message_id,
+        "correlation_id": message_id,
+        "msg_type": MessageType.TASK.value,
+        "sender_id": "human_operator",
+        "sender_team": "orchestrator",
+        "sender_role": AgentRole.ORCHESTRATOR.value,
+        "recipient_team": "exec_ceo",
+        "project_id": "operator-direct",
+        "payload": payload,
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+        if resp.status_code == 403:
+            raise HTTPException(403, f"Policy denied: {resp.text}")
+        if not resp.is_success:
+            raise HTTPException(502, f"Router error {resp.status_code}: {resp.text}")
+        result = resp.json()
+    action = await _handle_ceo_operator_intent(instruction)
+    if action is not None:
+        background_tasks.add_task(
+            _publish_ceo_chat_response,
+            response_text=action["response"],
+            correlation_id=message_id,
+            parent_id=message_id,
+        )
+        return {"ok": True, "entry_id": result.get("entry_id"), "action": action}
+    background_tasks.add_task(
+        _publish_ceo_response,
+        instruction=instruction,
+        correlation_id=message_id,
+        parent_id=message_id,
+    )
+    return {"ok": True, "entry_id": result.get("entry_id")}
 
 
 # ---------------------------------------------------------------------------

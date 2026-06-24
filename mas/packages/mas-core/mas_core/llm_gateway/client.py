@@ -384,6 +384,7 @@ class LLMGatewayClient:
         max_tokens: int | None = None,
         temperature: float = 0.7,
         stream: bool = False,
+        max_retries: int | None = None,
     ) -> ChatResponse:
         """Send a chat completion request with automatic retry on 429/5xx.
 
@@ -441,6 +442,7 @@ class LLMGatewayClient:
                 stream=stream,
                 _audit_evt=audit_evt,
                 _retry_counter_ref=retry_counter,
+                _max_retries=max_retries,
             )
 
             # ── Post-call audit + metrics recording ──────────────────
@@ -695,6 +697,7 @@ class LLMGatewayClient:
         stream: bool,
         _audit_evt: AuditEvent,
         _retry_counter_ref: list[int],
+        _max_retries: int | None = None,
     ) -> ChatResponse:
         """Internal dispatch — routes to the correct API style."""
 
@@ -824,7 +827,7 @@ class LLMGatewayClient:
 
         last_exc: Exception | None = None
         wait_s = self._config.retry_min_wait_s
-        max_retries = self._config.max_retries
+        max_retries = self._config.max_retries if _max_retries is None else _max_retries
 
         for attempt in range(max_retries + 1):
             try:
@@ -1205,6 +1208,14 @@ class LLMGatewayClient:
 
     @staticmethod
     def _log_retry(status_code: int, attempt: int, max_retries: int, wait_s: float) -> None:
+        if attempt >= max_retries:
+            logger.warning(
+                "LLM gateway %d (attempt %d/%d), no retry budget remains",
+                status_code,
+                attempt + 1,
+                max_retries + 1,
+            )
+            return
         logger.warning(
             "LLM gateway %d (attempt %d/%d), retrying in %.1fs",
             status_code,
@@ -2030,6 +2041,7 @@ class LLMGatewayClient:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     stream=stream,
+                    max_retries=0,
                 )
                 if tried:
                     logger.info(

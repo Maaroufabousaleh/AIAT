@@ -590,6 +590,11 @@ class TeamRuntime:
         }:
             return next(self._worker_cycle) if self._worker_cycle else self.admin_agent
 
+        if envelope.msg_type == MessageType.TASK:
+            payload = envelope.payload or {}
+            if isinstance(payload, dict) and payload.get("action") == "CHAT":
+                return self.admin_agent
+
         if envelope.msg_type in {MessageType.TASK, MessageType.QUERY}:
             return self.admin_agent
 

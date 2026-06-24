@@ -12,6 +12,9 @@ TestLLMGatewayClient    — chat_completion with mocked HTTP, retry on 429/5xx
 
 from __future__ import annotations
 
+import asyncio
+import json
+import sys
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,7 +35,7 @@ from mas_core.llm_gateway.models import (
 )
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.protocols.envelope import MessageEnvelope, TaskBudget
-from mas_core.protocols.ws import WSMessageFrame
+from mas_core.protocols.ws import WSMessageFrame, WSPingFrame
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,6 +69,11 @@ def _make_config(**overrides) -> AgentConfig:
     defaults.update(overrides)
     # Construct directly, bypassing env loading
     return AgentConfig.model_construct(**defaults)
+
+
+async def _wait_for(predicate, *, interval: float = 0.01) -> None:
+    while not predicate():
+        await asyncio.sleep(interval)
 
 
 def _make_frame(envelope: MessageEnvelope, entry_id: str = "1234-0") -> WSMessageFrame:
@@ -122,6 +130,9 @@ class _FakeLLMClient:
             message=ChatMessage(role="assistant", content="fallback"),
             usage=UsageStats(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
+
+    async def chat_completion_with_fallback(self, messages, **kwargs) -> ChatResponse:
+        return await self.chat_completion(messages, **kwargs)
 
 
 def _assistant_response(
@@ -607,6 +618,82 @@ class TestRouterClientWSCompatibility:
         kwargs = RouterClient._ws_connect_headers_kwargs(_FakeWS, "Bearer token")
         assert kwargs == {"extra_headers": {"Authorization": "Bearer token"}}
 
+    @pytest.mark.asyncio
+    async def test_ws_loop_answers_ping_while_handler_is_blocked(self, monkeypatch):
+        envelope = _make_envelope(recipient_team="exec_ceo")
+        message = WSMessageFrame(
+            entry_id="1-0",
+            stream="stream:exec_ceo",
+            envelope=envelope,
+            retry_count=0,
+        )
+        ping = WSPingFrame(ping_id="ping-1")
+        handler_started = asyncio.Event()
+        unblock_handler = asyncio.Event()
+
+        class _FakeSocket:
+            def __init__(self) -> None:
+                self.messages = [
+                    message.model_dump_json(),
+                    ping.model_dump_json(),
+                ]
+                self.sent: list[dict[str, object]] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.messages:
+                    return self.messages.pop(0)
+                raise StopAsyncIteration
+
+            async def send(self, raw: str) -> None:
+                self.sent.append(json.loads(raw))
+
+        fake_socket = _FakeSocket()
+
+        class _FakeWebsockets:
+            @staticmethod
+            def connect(uri, *, additional_headers=None):  # noqa: ANN001
+                return fake_socket
+
+        monkeypatch.setitem(sys.modules, "websockets", _FakeWebsockets)
+
+        async def handler(_frame: WSMessageFrame) -> None:
+            handler_started.set()
+            await unblock_handler.wait()
+
+        client = RouterClient(
+            router_url="http://fake:8000",
+            agent_id="ceo",
+            agent_secret="secret",
+        )
+        loop_task = asyncio.create_task(
+            client._ws_loop(
+                "ws://fake/ws/subscribe/exec_ceo",
+                "Bearer token",
+                handler,
+                None,
+            )
+        )
+
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+        await asyncio.wait_for(
+            _wait_for(lambda: any(item["type"] == "PONG" for item in fake_socket.sent)),
+            timeout=1,
+        )
+        assert [item["type"] for item in fake_socket.sent] == ["PONG"]
+
+        unblock_handler.set()
+        await asyncio.wait_for(loop_task, timeout=1)
+        assert [item["type"] for item in fake_socket.sent] == ["PONG", "ACK"]
+
 
 # ===========================================================================
 # TestLLMGatewayModels
@@ -826,6 +913,40 @@ class TestLLMGatewayClient:
                 resp = await client.chat_completion([{"role": "user", "content": "hi"}])
         assert resp.text == "Done."
         assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_fallback_skips_retries_on_rate_limited_candidate(self):
+        config = self._make_config(max_retries=2)
+        client = LLMGatewayClient(config)
+        client._model_selector = MagicMock()
+        client._model_selector.fallback_chain.return_value = ["second-model"]
+        import httpx
+
+        attempted_models: list[str] = []
+
+        async def mock_post(_self, url, **kwargs):
+            attempted_models.append(kwargs["json"]["model"])
+            if attempted_models[-1] == "first-model":
+                resp = MagicMock()
+                resp.status_code = 429
+                resp.text = "rate limited"
+                return resp
+            return self._ok_response()
+
+        with (
+            patch.object(httpx.AsyncClient, "post", new=mock_post),
+            patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock,
+        ):
+            async with client:
+                resp = await client.chat_completion_with_fallback(
+                    [{"role": "user", "content": "hi"}],
+                    model="first-model",
+                    chain_length=2,
+                )
+
+        assert resp.text == "Done."
+        assert attempted_models == ["first-model", "second-model"]
+        sleep_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_chat_completion_raises_after_max_retries(self):

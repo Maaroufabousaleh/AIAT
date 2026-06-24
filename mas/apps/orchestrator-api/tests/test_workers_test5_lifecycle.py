@@ -158,6 +158,10 @@ async def test_register_worker_with_source_repo_creates_pending_evaluation(clien
     assert body["version_pin"] == "v1.0.0"
     # evaluation_status reflects what was returned (pending at registration)
     assert body["evaluation_status"] == "pending"
+    storage.register_worker.assert_awaited_once()
+    _, kwargs = storage.register_worker.await_args
+    assert kwargs["status"] == "INACTIVE"
+    assert kwargs["evaluation_status"] == "pending"
 
 
 # ── 2. Trigger evaluation (mocked mirror) ─────────────────────────────────────

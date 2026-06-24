@@ -84,3 +84,26 @@ workers: []
     finally:
         if path.exists():
             path.unlink()
+
+
+def test_exec_ceo_declares_full_operator_workflow_tool_surface():
+    repo_mas_root = Path(__file__).resolve().parents[3]
+    cfg = load_team_config(repo_mas_root / "teams" / "exec_ceo.yaml")
+
+    expected = {
+        "project.create",
+        "project.status",
+        "project.transition",
+        "project.list",
+        "flow.list",
+        "flow.recommend",
+        "flow.assign",
+        "flow.invoke",
+        "flow.status",
+        "flow.advance",
+        "human.notify",
+        "human.await_decision",
+        "review.aggregate",
+        "approval.override_cso",
+    }
+    assert expected.issubset(set(cfg.admin.tools))

@@ -84,7 +84,7 @@ class SubAgent(AgentBase):
                 span_id=str(env.message_id) if env else None,
             )
             if resp.success:
-                return resp.result or resp.data
+                return resp.result if resp.result is not None else getattr(resp, "data", None)
             return {"error": resp.error, "error_code": resp.error_code}
         return await super().execute_tool(tool_name, tool_kwargs)
 

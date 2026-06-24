@@ -18,6 +18,7 @@ import {
   Network,
   Lock,
   Users,
+  Send,
   type LucideIcon,
 } from "lucide-react";
 
@@ -44,6 +45,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/system-viz", label: "System Viz", icon: Network },
       { href: "/streams",    label: "Streams",    icon: Radio },
       { href: "/ceo",        label: "CEO Feed",   icon: Brain },
+      { href: "/ceo/chat",  label: "CEO Chat",   icon: Send },
     ],
   },
   {

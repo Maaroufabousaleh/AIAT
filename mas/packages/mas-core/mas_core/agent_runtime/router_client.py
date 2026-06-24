@@ -14,9 +14,9 @@ WebSocket API
 -------------
 ``subscribe(team_id, handler)``
     Opens WS /ws/subscribe/{team_id} with Bearer auth, then runs a read loop:
-    for each WSMessageFrame received the handler coroutine is awaited. On success
-    RouterClient sends ACK; on exception it sends NACK and re-raises. Ping/Pong
-    keepalives are handled transparently.
+    for each WSMessageFrame received the handler coroutine is scheduled. On
+    success RouterClient sends ACK; on exception it sends NACK. Ping/Pong
+    keepalives are handled transparently while handlers are running.
 
     The caller is responsible for running this as a long-lived asyncio Task and
     cancelling it on shutdown.
@@ -240,36 +240,65 @@ class RouterClient:
         connect_kwargs = self._ws_connect_headers_kwargs(websockets, auth_header)
         async with websockets.connect(ws_url, **connect_kwargs) as ws:
             logger.info("WS connected: %s", ws_url)
-            async for raw_message in ws:
-                if stop_event and stop_event.is_set():
-                    break
-                try:
-                    data: dict[str, Any] = json.loads(raw_message)
-                except json.JSONDecodeError:
-                    logger.warning("Received non-JSON WS frame, ignoring.")
-                    continue
+            send_lock = asyncio.Lock()
+            handler_lock = asyncio.Lock()
+            pending: set[asyncio.Task[None]] = set()
 
-                frame_type = data.get("type")
+            async def send_frame(frame: Any) -> None:
+                async with send_lock:
+                    await ws.send(frame.model_dump_json())
 
-                if frame_type == "PING":
-                    ping = WSPingFrame(**data)
-                    pong = WSPongFrame(ping_id=ping.ping_id, agent_id=self._agent_id)
-                    await ws.send(pong.model_dump_json())
-                    continue
-
-                if frame_type == "MESSAGE":
-                    frame = WSMessageFrame(**data)
+            async def run_handler(frame: WSMessageFrame) -> None:
+                async with handler_lock:
                     try:
                         await handler(frame)
-                        ack = WSAckFrame(entry_id=frame.entry_id, message_id=frame.envelope.message_id)
-                        await ws.send(ack.model_dump_json())
                     except Exception as exc:
                         logger.error("Handler raised for entry %s: %s", frame.entry_id, exc)
                         nack = WSNackFrame(entry_id=frame.entry_id, reason=str(exc))
-                        await ws.send(nack.model_dump_json())
-                    continue
+                        try:
+                            await send_frame(nack)
+                        except Exception:
+                            logger.warning("Failed to send NACK for entry %s", frame.entry_id)
+                        return
 
-                logger.debug("Unknown WS frame type %r, ignoring.", frame_type)
+                    ack = WSAckFrame(entry_id=frame.entry_id, message_id=frame.envelope.message_id)
+                    try:
+                        await send_frame(ack)
+                    except Exception:
+                        logger.warning("Failed to send ACK for entry %s", frame.entry_id)
+
+            try:
+                async for raw_message in ws:
+                    if stop_event and stop_event.is_set():
+                        break
+                    try:
+                        data: dict[str, Any] = json.loads(raw_message)
+                    except json.JSONDecodeError:
+                        logger.warning("Received non-JSON WS frame, ignoring.")
+                        continue
+
+                    frame_type = data.get("type")
+
+                    if frame_type == "PING":
+                        ping = WSPingFrame(**data)
+                        pong = WSPongFrame(ping_id=ping.ping_id, agent_id=self._agent_id)
+                        await send_frame(pong)
+                        continue
+
+                    if frame_type == "MESSAGE":
+                        frame = WSMessageFrame(**data)
+                        task = asyncio.create_task(
+                            run_handler(frame),
+                            name=f"router-handler:{frame.entry_id}",
+                        )
+                        pending.add(task)
+                        task.add_done_callback(pending.discard)
+                        continue
+
+                    logger.debug("Unknown WS frame type %r, ignoring.", frame_type)
+            finally:
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
     @staticmethod
     def _ws_connect_headers_kwargs(websockets_module: Any, auth_header: str) -> dict[str, Any]:

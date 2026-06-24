@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import anyio
+import httpx
 import pytest
 
 from mas_core.protocols.enums import AgentRole
@@ -504,6 +505,217 @@ class TestHTTPIntegration:
         data = resp.json()
         assert data["success"] is False
         assert data["error_code"] == "FORBIDDEN"
+
+    @pytest.mark.anyio
+    async def test_project_create_accepts_ceo_title_parameter(self, client, monkeypatch):
+        calls: list[dict | None] = []
+
+        async def fake_orch_post(path, body=None):
+            calls.append(body)
+            return {"id": "project-1", **(body or {})}
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "orch_post", fake_orch_post)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "project.create",
+            "kwargs": {
+                "title": "CEO-created regression project",
+                "description": "Created through the CEO tool schema.",
+            },
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"]["name"] == "CEO-created regression project"
+        assert calls[0]["name"] == "CEO-created regression project"
+
+    @pytest.mark.anyio
+    async def test_project_status_invalid_id_returns_tool_error_without_orchestrator_call(
+        self, client, monkeypatch
+    ):
+        calls: list[str] = []
+
+        async def fake_orch_get(path, params=None):
+            calls.append(path)
+            return {"id": "should-not-be-called"}
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "project.status",
+            "kwargs": {"project_id": "operator-direct"},
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"] == {
+            "error": "invalid_project_id",
+            "project_id": "operator-direct",
+        }
+        assert calls == []
+
+    @pytest.mark.anyio
+    async def test_project_status_missing_project_returns_tool_error_without_opening_breaker(
+        self, client, monkeypatch
+    ):
+        missing_id = "90e1b71f-7ff3-4ff6-8072-72ea6c600988"
+
+        async def fake_orch_get(path, params=None):
+            request = httpx.Request("GET", f"http://orchestrator-api:8000{path}")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "project.status",
+            "kwargs": {"project_id": missing_id},
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"] == {
+            "error": "project_not_found",
+            "project_id": missing_id,
+        }
+
+    @pytest.mark.anyio
+    async def test_human_notify_publishes_ceo_response_envelope(self, client, monkeypatch):
+        published: list[dict] = []
+
+        async def fake_publish_message(envelope):
+            published.append(envelope)
+            return {"entry_id": "stream-entry-1"}
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "publish_message", fake_publish_message)
+
+        payload = {
+            "agent_id": "ceo-agent",
+            "sender_role": "orchestrator",
+            "tool_name": "human.notify",
+            "kwargs": {
+                "project_id": "operator-direct",
+                "message": "The feasibility report is ready.",
+                "notification_type": "INFO",
+            },
+        }
+        resp = await client.post("/tools/execute", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"] == {
+            "notified": True,
+            "entry_id": "stream-entry-1",
+            "project_id": "operator-direct",
+            "message": "The feasibility report is ready.",
+            "notification_type": "INFO",
+        }
+        assert len(published) == 1
+        envelope = published[0]
+        assert envelope["msg_type"] == "RESPONSE"
+        assert envelope["sender_id"] == "ceo"
+        assert envelope["sender_role"] == "orchestrator"
+        assert envelope["sender_team"] == "exec_ceo"
+        assert envelope["recipient_team"] == "exec_ceo"
+        assert envelope["project_id"] == "operator-direct"
+        assert envelope["payload"] == {
+            "response": "The feasibility report is ready.",
+            "source": "human.notify",
+            "notification_type": "INFO",
+        }
+
+    @pytest.mark.anyio
+    async def test_human_await_decision_returns_full_pending_decision_payload(
+        self, client, monkeypatch
+    ):
+        async def fake_orch_get(path, params=None):
+            assert path == "/projects/project-1/pending-decisions"
+            return [
+                {
+                    "id": "gate-1",
+                    "gate_type": "human",
+                    "title": "Approve launch?",
+                    "description": "Operator approval required before rollout.",
+                    "options": ["approved", "edit_requested", "rejected"],
+                },
+                {
+                    "id": "gate-2",
+                    "gate_type": "security",
+                    "title": "Approve privileged action?",
+                },
+            ]
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+
+        resp = await client.post(
+            "/tools/execute",
+            json={
+                "agent_id": "ceo-agent",
+                "sender_role": "orchestrator",
+                "tool_name": "human.await_decision",
+                "kwargs": {"project_id": "project-1"},
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        result = data["result"]
+        assert result["pending"] is True
+        assert result["pending_count"] == 2
+        assert result["gate_id"] == "gate-1"
+        assert result["gate_type"] == "human"
+        assert result["first_decision"]["title"] == "Approve launch?"
+        assert result["decisions"][1]["title"] == "Approve privileged action?"
+
+    @pytest.mark.anyio
+    async def test_human_await_decision_returns_stable_empty_shape(self, client, monkeypatch):
+        async def fake_orch_get(path, params=None):
+            assert path == "/projects/project-1/pending-decisions"
+            return []
+
+        import tool_service.tools.project as project_mod
+
+        monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+
+        resp = await client.post(
+            "/tools/execute",
+            json={
+                "agent_id": "ceo-agent",
+                "sender_role": "orchestrator",
+                "tool_name": "human.await_decision",
+                "kwargs": {"project_id": "project-1"},
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["result"] == {
+            "pending": False,
+            "pending_count": 0,
+            "decisions": [],
+            "message": "No pending decisions",
+        }
 
     @pytest.mark.anyio
     async def test_execute_unknown_tool_via_http(self, client):
