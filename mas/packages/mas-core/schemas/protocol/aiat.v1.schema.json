@@ -286,7 +286,7 @@
             }
           ],
           "default": null,
-          "description": "Target team ID (e.g. 'dept_production'). Router delivers to team stream.",
+          "description": "Target team ID (e.g. 'office_chrm'). Router delivers to team stream.",
           "title": "Recipient Team"
         },
         "retry_count": {
@@ -306,7 +306,7 @@
           "description": "Sender's role in the corporate hierarchy."
         },
         "sender_team": {
-          "description": "Sender team ID (e.g. 'exec_ceo', 'dept_system').",
+          "description": "Sender team ID (e.g. 'exec_ceo', 'office_cto').",
           "title": "Sender Team",
           "type": "string"
         },

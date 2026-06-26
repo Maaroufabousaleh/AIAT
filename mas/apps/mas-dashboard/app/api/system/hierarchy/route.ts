@@ -78,10 +78,6 @@ const TIER_MAP: Record<string, "orchestrator" | "executive" | "c_suite" | "admin
   office_chrm: "c_suite",
   office_cso: "c_suite",
   office_cto: "c_suite",
-  dept_production: "admin",
-  dept_system: "admin",
-  dept_qa: "admin",
-  dept_devops: "admin",
 };
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -92,10 +88,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   office_chrm: "CHRM Office",
   office_cso: "CSO Office",
   office_cto: "CTO Office",
-  dept_production: "Production Dept",
-  dept_system: "System Dept",
-  dept_qa: "QA Dept",
-  dept_devops: "DevOps Dept",
 };
 
 function loadTeamConfig(teamId: string): TeamConfig | null {

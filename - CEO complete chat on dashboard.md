@@ -1,2 +1,0 @@
-- CEO complete chat on dashboard
-- visualise ALL messages flows at the same time (same view) between agents on dashboard

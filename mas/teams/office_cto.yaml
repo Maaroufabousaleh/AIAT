@@ -1,7 +1,7 @@
 # ── office_cto — CTO office ───────────────────────────────────────────────────
 # MAS role: c_suite
-# Sprint planning, issue decomposition, velocity tracking, KPI analysis,
-# DevOps coordination (INFRA_READY gate enforcement).
+# Technical execution governance and worker evaluation.
+# Hiring board role: test and sandbox evaluation reviewer.
 
 team_id: office_cto
 
@@ -26,34 +26,18 @@ admin:
     - estimation.adjust
 
 workers:
-  - agent_id: sprint_planner_1
+  - agent_id: tester_1
     role: worker
     class: WorkerAgent
-    display_name: "Sprint Planner"
-    min_instances: 1
-    max_instances: 1
-    budget_defaults:
-      max_llm_calls: 25
-      max_tool_calls: 30
-      max_cost_usd: 0.75
-    tools:
-      - sprint.create
-      - issue.create
-      - issue.decompose
-
-  - agent_id: kpi_analyst_1
-    role: worker
-    class: WorkerAgent
-    display_name: "KPI Analyst"
-    min_instances: 1
+    display_name: "Tester"
+    min_instances: 0
     max_instances: 1
     budget_defaults:
       max_llm_calls: 20
-      max_tool_calls: 25
+      max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - kpi.compute
-      - kpi.query_history
-      - kpi.update_agent_profile
-      - velocity.report
-      - estimation.adjust
+      - file_read
+      - capability.search
+      - web_search
+      - blob.upload

@@ -7,7 +7,7 @@ metadata:
   source_revision: working-tree
   tags:
   - worker
-  - dept_qa
+  - office_cto
   version_pin: null
   update_policy: manual
   evaluation_status: approved

@@ -710,7 +710,7 @@ export default function NewFlowPage() {
               <>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Team ID</label>
-                  <input value={(nodeConfig.team_id as string) || ""} onChange={(e) => updateNodeConfig({ ...nodeConfig, team_id: e.target.value })} placeholder="dept_devops" data-testid="task-team-id-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                  <input value={(nodeConfig.team_id as string) || ""} onChange={(e) => updateNodeConfig({ ...nodeConfig, team_id: e.target.value })} placeholder="office_cto" data-testid="task-team-id-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
                 </div>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Action</label>

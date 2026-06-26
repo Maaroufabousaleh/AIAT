@@ -1,6 +1,6 @@
 name: corporate-project-lifecycle
 version: "1.0"
-description: "14-step corporate project lifecycle (PDR -> CDR -> RR -> Sprints -> KPI)"
+description: "Minimal executive lifecycle (C-Suite review -> technical readiness -> KPI)"
 
 states:
   - id: INIT
@@ -24,7 +24,7 @@ states:
     timeout_seconds: 7200
     on_enter:
       - action: publish_task
-        target_team: dept_production
+        target_team: exec_coo
   - id: PDR_REVIEW
     responsible: coo
     timeout_seconds: 3600
@@ -41,7 +41,7 @@ states:
     timeout_seconds: 7200
     on_enter:
       - action: publish_task
-        target_team: dept_system
+        target_team: office_cto
   - id: CDR_REVIEW
     responsible: ceo
     on_enter:
@@ -68,9 +68,9 @@ states:
     timeout_seconds: 1800
     on_enter:
       - action: publish_task
-        target_team: dept_devops
+        target_team: office_cto
         msg_type: SPRINT_PLAN
-        filter: issue_type=INFRA
+        filter: issue_type=TECHNICAL_READINESS
   - id: IN_PROGRESS
     responsible: cto
     on_enter:

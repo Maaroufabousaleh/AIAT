@@ -34,13 +34,13 @@ from .rules import (
     C_SUITE_MSG_TYPES,
     CTO_EXTRA_TOOLS,
     CTO_TEAM,
-    DEVOPS_PM_EXTRA_TOOLS,
     DEVOPS_TEAM,
     EXECUTIVE_MSG_TYPES,
     EXECUTIVE_TEAM,
     EXECUTIVE_TOOLS,
     SUB_AGENT_MSG_TYPES,
     SUB_AGENT_TOOLS,
+    SUPPLEMENTAL_ADMIN_TOOLS,
     TEAM_TIERS,
     WORKER_BLOCKED_TOOLS,
     WORKER_MSG_TYPES,
@@ -69,7 +69,7 @@ class CommunicationPolicy:
     c_suite             → CEO, COO, peer C-Suite (review types only cross-team),
                           own-team workers; CTO may also address dept PMs via
                           SPRINT_PLAN / DIRECTIVE
-    admin        (PM)   → COO, CTO + own-team workers; DevOps PM may address CTO
+    admin        (PM)   → COO, CTO + own-team workers
                           with INFRA_READY; with ESCALATION may also reach CEO
     worker              → own team only; with ESCALATION may reach COO directly
     sub_agent           → own team only (parent-team constraint)
@@ -96,7 +96,7 @@ class CommunicationPolicy:
         recipient_id:   Optional specific agent_id of the intended recipient.
                         Unused for routing decisions currently (reserved for
                         future fine-grained ACL); pass None when not known.
-        recipient_team: Team ID of the destination stream (e.g. "dept_devops").
+        recipient_team: Team ID of the destination stream.
                         If None the message is treated as intra-team/broadcast.
         msg_type:       MessageType of the proposed message.
         """
@@ -182,7 +182,7 @@ class CommunicationPolicy:
         ----------
         sender_role:  Role of the requesting agent.
         tool_name:    Fully-qualified tool name (e.g. "project.transition").
-        sender_team:  Optional team ID — enables CTO / DevOps PM extra tools.
+        sender_team:  Optional team ID — enables CTO extra tools.
         """
         if sender_role == AgentRole.ORCHESTRATOR:
             return True  # CEO has full tool access
@@ -208,7 +208,7 @@ class CommunicationPolicy:
         if sender_role == AgentRole.ADMIN:
             allowed = ADMIN_BASE_TOOLS
             if sender_team == DEVOPS_TEAM:
-                allowed = ADMIN_BASE_TOOLS + DEVOPS_PM_EXTRA_TOOLS
+                allowed = ADMIN_BASE_TOOLS + SUPPLEMENTAL_ADMIN_TOOLS
             if _matches_any(tool_name, allowed):
                 return True
             return (

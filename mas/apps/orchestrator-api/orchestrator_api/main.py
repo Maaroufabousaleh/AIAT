@@ -130,7 +130,7 @@ STATE_TO_TEAM = {
     "HUMAN_APPROVAL": "exec_ceo",
     "RR_CREATION": "office_cto",
     "SPRINT_PLANNING": "exec_coo",
-    "INFRA_PROVISIONING": "dept_devops",
+    "INFRA_PROVISIONING": "office_cto",
     "IN_PROGRESS": "exec_coo",
     "RETROSPECTIVE": "exec_coo",
     "KPI_PERSISTENCE": "office_cfo",
@@ -199,78 +199,7 @@ def _graph_id(prefix: str, value: Any) -> str:
     return f"{prefix}_{str(value).replace('-', '_').replace('.', '_').replace(':', '_')}"
 
 
-DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
-    {
-        "id": "docling_ingestion",
-        "name": "Docling document ingestion",
-        "bucket": "default",
-        "target": "worker",
-        "owner_department": "dept_production",
-        "status_when_present": "placeholder_ready",
-        "status_when_missing": "planned",
-        "match_tokens": ["docling"],
-        "required_gates": [
-            "worker manifest",
-            "adapter contract",
-            "gVisor sandbox profile",
-            "artifact-reference output",
-            "human approval before activation",
-        ],
-        "blocked_reason": "Docling remains disabled until the adapter contract and artifact output path are certified.",
-    },
-    {
-        "id": "github_rest",
-        "name": "GitHub REST metadata and task API",
-        "bucket": "default",
-        "target": "tool",
-        "owner_department": "dept_infra",
-        "status_when_present": "intake_visible",
-        "status_when_missing": "planned",
-        "match_tokens": ["github.com", "github"],
-        "required_gates": [
-            "named credential reference",
-            "read/write policy split",
-            "rate limit",
-            "audit log",
-            "approval for write actions",
-        ],
-        "blocked_reason": "GitHub write actions must stay behind credentials, approval, and audit gates.",
-    },
-    {
-        "id": "defensive_scanners",
-        "name": "TruffleHog and Semgrep defensive scans",
-        "bucket": "default",
-        "target": "evaluation",
-        "owner_department": "dept_security",
-        "status_when_present": "wired_optional",
-        "status_when_missing": "wired_optional",
-        "match_tokens": ["trufflehog", "semgrep"],
-        "required_gates": [
-            "optional executable discovery",
-            "parser tests",
-            "skipped-tool state",
-            "evaluation report visibility",
-        ],
-        "blocked_reason": None,
-    },
-    {
-        "id": "n8n_edge_automation",
-        "name": "n8n edge automation",
-        "bucket": "guardrailed",
-        "target": "edge_adapter",
-        "owner_department": "dept_infra",
-        "status_when_present": "guardrailed_candidate",
-        "status_when_missing": "deferred",
-        "match_tokens": ["n8n"],
-        "required_gates": [
-            "webhook allowlist",
-            "named credential reference",
-            "audit log",
-            "no control-plane ownership",
-        ],
-        "blocked_reason": "n8n is allowed only as edge automation and cannot replace AIAT workflow authority.",
-    },
-]
+DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = []
 
 
 GITHUB_REPO_RE = re.compile(
@@ -296,12 +225,16 @@ def _slugify_worker_name(value: str) -> str:
 def _department_for_hiring_text(text: str) -> str:
     lowered = text.lower()
     if any(token in lowered for token in ("qa", "quality", "test", "tester")):
-        return "dept_qa"
+        return "office_cto"
     if any(token in lowered for token in ("security", "cso", "secure")):
         return "office_cso"
     if any(token in lowered for token in ("devops", "infra", "sre", "platform")):
-        return "dept_devops"
-    return "dept_production"
+        return "office_cio"
+    if any(token in lowered for token in ("budget", "cost", "finance", "financial")):
+        return "office_cfo"
+    if any(token in lowered for token in ("hr", "hiring", "people", "resource")):
+        return "office_chrm"
+    return "office_chrm"
 
 
 def _transport_for_hiring_text(text: str) -> str:
@@ -780,7 +713,7 @@ class GitHubMetadataRequest(BaseModel):
 class N8nEdgePolicyRequest(BaseModel):
     webhook_url: str
     credential_name: str | None = None
-    owner_department: str = "dept_infra"
+    owner_department: str = "office_cio"
     allow_control_plane: bool = False
 
 
@@ -2452,16 +2385,13 @@ async def seed_default_company() -> dict[str, Any]:
     departments = [
         {"id": "exec_ceo", "name": "CEO Office"},
         {"id": "exec_coo", "name": "Operations"},
-        {"id": "dept_production", "name": "Production"},
-        {"id": "dept_qa", "name": "Quality Assurance"},
-        {"id": "dept_security", "name": "Security"},
-        {"id": "dept_infra", "name": "Infrastructure"},
+        {"id": "office_cfo", "name": "CFO Office"},
+        {"id": "office_cio", "name": "CIO Office"},
+        {"id": "office_chrm", "name": "CHRM Office"},
+        {"id": "office_cso", "name": "CSO Office"},
+        {"id": "office_cto", "name": "CTO Office"},
     ]
-    sample_project_template = {
-        "name": "Sample AIAT Project",
-        "description": "Baseline project template for first-run validation.",
-        "requested_by": "human_operator",
-    }
+    sample_project_template = None
 
     worker_summary = {"total": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
     workers_dir = Path(os.environ.get("WORKERS_DIR", "workers"))

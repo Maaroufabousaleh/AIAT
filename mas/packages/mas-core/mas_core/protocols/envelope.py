@@ -157,14 +157,14 @@ class MessageEnvelope(BaseModel):
     msg_type: MessageType = Field(..., description="Message type — governs routing and handling.")
     sender_id: str = Field(..., description="Agent ID of the sender (e.g. 'ceo_agent').")
     sender_role: AgentRole = Field(..., description="Sender's role in the corporate hierarchy.")
-    sender_team: str = Field(..., description="Sender team ID (e.g. 'exec_ceo', 'dept_system').")
+    sender_team: str = Field(..., description="Sender team ID (e.g. 'exec_ceo', 'office_cto').")
     recipient_id: str | None = Field(
         default=None,
         description="Target agent ID. Mutually exclusive with recipient_team for direct messages.",
     )
     recipient_team: str | None = Field(
         default=None,
-        description="Target team ID (e.g. 'dept_production'). Router delivers to team stream.",
+        description="Target team ID (e.g. 'office_chrm'). Router delivers to team stream.",
     )
 
     # --- Project context ---

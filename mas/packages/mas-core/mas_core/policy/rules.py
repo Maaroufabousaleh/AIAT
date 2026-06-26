@@ -23,8 +23,8 @@ C_SUITE_TEAMS: frozenset[str] = frozenset(
 )
 CTO_TEAM: str = "office_cto"
 
-DEPT_TEAMS: frozenset[str] = frozenset({"dept_production", "dept_system", "dept_qa", "dept_devops"})
-DEVOPS_TEAM: str = "dept_devops"
+DEPT_TEAMS: frozenset[str] = frozenset()
+DEVOPS_TEAM: str = ""
 
 #: Maps every known team_id to the AgentRole tier that *owns* that team stream.
 TEAM_TIERS: dict[str, AgentRole] = {
@@ -88,9 +88,9 @@ C_SUITE_CROSS_TEAM_TYPES: frozenset[MessageType] = frozenset(
         MessageType.REVIEW_RESPONSE,  # Reply to a cross-team review request
         MessageType.ESCALATION,  # Skip-one-level exception
         MessageType.ADMIN_REPLY,  # Reply to admin directive
-        MessageType.SPRINT_PLAN,  # CTO → dept PMs
-        MessageType.DIRECTIVE,  # CTO / others directing departments
-        MessageType.INFRA_READY,  # DevOps notifies CTO (admin→c_suite path)
+        MessageType.SPRINT_PLAN,  # CTO planning updates
+        MessageType.DIRECTIVE,  # C-Suite directives
+        MessageType.INFRA_READY,  # Technical readiness signal
     }
 )
 
@@ -198,13 +198,8 @@ ADMIN_BASE_TOOLS: tuple[str, ...] = (
     "shared_memory_write",
 )
 
-#: Extra tools available only to the DevOps PM team (dept_devops).
-DEVOPS_PM_EXTRA_TOOLS: tuple[str, ...] = (
-    "infra.*",
-    "cicd.*",
-    "monitoring.*",
-    "secrets.*",
-)
+#: No department-specific supplemental admin tools are enabled in the minimal environment.
+SUPPLEMENTAL_ADMIN_TOOLS: tuple[str, ...] = ()
 
 WORKER_TOOLS: tuple[str, ...] = (
     "document.get_latest",
@@ -218,12 +213,6 @@ WORKER_TOOLS: tuple[str, ...] = (
     "file_write",
     "shared_memory_read",
     "shared_memory_write",
-    "browser_navigate",
-    "browser_click",
-    "browser_type",
-    "browser_screenshot",
-    "browser_evaluate",
-    "browser_close",
 )
 
 #: Tools explicitly blocked for workers regardless of any allowlist.
@@ -278,7 +267,7 @@ POLICY_RULES: dict[str, dict] = {
         "allowed_targets": ["role:executive", "role:c_suite:cto", "team:own"],
         "allowed_msg_types": [t.value for t in ADMIN_MSG_TYPES],
         "allowed_tools": list(ADMIN_BASE_TOOLS),
-        "devops_pm_extra_tools": list(DEVOPS_PM_EXTRA_TOOLS),
+        "supplemental_admin_tools": list(SUPPLEMENTAL_ADMIN_TOOLS),
     },
     "worker": {
         "allowed_targets": ["team:own"],

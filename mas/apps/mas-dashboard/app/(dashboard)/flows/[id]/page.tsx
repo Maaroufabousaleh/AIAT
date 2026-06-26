@@ -683,7 +683,7 @@ export default function FlowEditorPage() {
                   <input
                     value={(nodeConfig.team_id as string) || ""}
                     onChange={(e) => updateNodeConfig({ ...nodeConfig, team_id: e.target.value })}
-                    placeholder="dept_devops"
+                    placeholder="office_cto"
                     data-testid="task-team-id-input"
                     aria-label="Team ID"
                     className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60"

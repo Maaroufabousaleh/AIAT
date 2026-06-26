@@ -110,7 +110,7 @@ def upgrade() -> None:
         sa.Column(
             "team_id",
             sa.Text(),
-            comment="Team stream this worker belongs to, e.g. 'dept_production'",
+            comment="Team stream this worker belongs to, e.g. 'office_chrm'",
         ),
         sa.Column(
             "status",

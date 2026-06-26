@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { RefreshCw, Users, CheckCircle, AlertTriangle, XCircle, Package, Plus, ChevronDown, ChevronRight, ChevronUp, ExternalLink, Settings, Power, ClipboardCheck, ShieldCheck } from "lucide-react";
+import { RefreshCw, Users, CheckCircle, AlertTriangle, XCircle, Package, Plus, ChevronDown, ChevronRight, ChevronUp, ExternalLink, Settings, Power, ClipboardCheck } from "lucide-react";
 import { clsx } from "clsx";
 import { BulkActionBar, RowCheckbox, SelectAllCheckbox } from "@/components/ui/BulkActionBar";
 import { useBulkSelection } from "@/lib/use-bulk-selection";
@@ -54,51 +54,6 @@ interface EvaluationReport {
   blocked_reasons?: string[];
   recommended_status?: string;
   requires_human_approval?: boolean;
-}
-
-interface DeltaIntegration {
-  id: string;
-  name: string;
-  bucket: string;
-  target: string;
-  owner_department: string;
-  status: string;
-  required_gates: string[];
-  blocked_reason?: string | null;
-  worker_refs: Array<{ id: string; name?: string; status?: string; evaluation_status?: string; source_repo?: string; team_id?: string }>;
-}
-
-interface DeltaReadiness {
-  phase: string;
-  status: string;
-  summary: { total: number; ready_or_wired: number; deferred: number; blocked: number };
-  principles: string[];
-  integrations: DeltaIntegration[];
-  scanner_visibility?: Record<string, { available: boolean; status: string; details: string }>;
-}
-
-interface EpsilonRuntime {
-  id: string;
-  name: string;
-  status: string;
-  tier: string;
-  description: string;
-  policy: {
-    sandbox_required?: string;
-    requires_approval?: boolean;
-    inner_runtime?: boolean;
-    read_only_by_default?: boolean;
-    max_concurrent_threads?: number;
-    max_instances?: number;
-    allowed_tools?: string;
-    crew_process?: string;
-    memory_audit?: boolean;
-    [key: string]: unknown;
-  };
-}
-
-interface EpsilonReadiness {
-  runtimes: EpsilonRuntime[];
 }
 
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; cls: string }> = {
@@ -581,7 +536,7 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.team_id}
                 onChange={(e) => setForm({ ...form, team_id: e.target.value })}
-                placeholder="dept_production"
+                placeholder="office_chrm"
               />
             </div>
             <div>
@@ -652,11 +607,8 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
 
 export default function WorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [deltaReadiness, setDeltaReadiness] = useState<DeltaReadiness | null>(null);
-  const [epsilonReadiness, setEpsilonReadiness] = useState<EpsilonReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [deltaError, setDeltaError] = useState("");
   // Filter state — initialized from localStorage so user choices persist
   // across page reloads. Falls back to empty/ALL on first visit.
   const [search, setSearch] = useState<string>(() => {
@@ -692,25 +644,11 @@ export default function WorkersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    setDeltaError("");
     try {
-      const [workersRes, deltaRes, epsRes] = await Promise.all([
-        fetch("/api/workers"),
-        fetch("/api/integrations/delta-readiness"),
-        fetch("/api/runtimes"),
-      ]);
+      const workersRes = await fetch("/api/workers");
       if (!workersRes.ok) throw new Error(await workersRes.text());
       const workersData = await workersRes.json();
       setWorkers(Array.isArray(workersData) ? workersData : []);
-      if (deltaRes.ok) {
-        setDeltaReadiness(await deltaRes.json());
-      } else {
-        setDeltaReadiness(null);
-        setDeltaError(await deltaRes.text());
-      }
-      if (epsRes.ok) {
-        setEpsilonReadiness(await epsRes.json());
-      }
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -875,9 +813,9 @@ export default function WorkersPage() {
             security scans, sandbox policy, budget posture, and compatibility before activation.
           </p>
           <p className="text-blue-200/70">
-            Shared tools (browser, web access, search, storage) are provided centrally by the
-            tool-service — workers consume them through a common interface rather than bundling
-            their own dependencies. Activation is blocked until evaluation verdict is approved.
+            Approved tools are provided centrally by the tool-service. Workers consume them
+            through a common interface, and activation stays blocked until the evaluation verdict
+            is approved.
           </p>
           <p className="text-blue-200/70 text-xs">
             Shortcuts: <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">/</kbd> focus search
@@ -889,173 +827,6 @@ export default function WorkersPage() {
             <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">Esc</kbd> clear search
           </p>
         </div>
-      </div>
-
-      {/* Delta readiness */}
-      <div className="dashboard-surface p-4 space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Delta Integration Readiness
-            </h2>
-            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-              Governed adoption path for Docling (PDF parsing), GitHub API metadata reads,
-              defensive scanners, and the optional n8n edge-automation bus. Each integration
-              must clear the listed gates before it can be wired into a runtime.
-            </p>
-          </div>
-          {deltaReadiness && (
-            <div className="grid grid-cols-4 gap-2 text-center text-xs">
-              <div>
-                <div className="text-white font-semibold">{deltaReadiness.summary.total}</div>
-                <div className="text-slate-500">total</div>
-              </div>
-              <div>
-                <div className="text-emerald-400 font-semibold">{deltaReadiness.summary.ready_or_wired}</div>
-                <div className="text-slate-500">ready</div>
-              </div>
-              <div>
-                <div className="text-amber-400 font-semibold">{deltaReadiness.summary.blocked}</div>
-                <div className="text-slate-500">blocked</div>
-              </div>
-              <div>
-                <div className="text-slate-400 font-semibold">{deltaReadiness.summary.deferred}</div>
-                <div className="text-slate-500">deferred</div>
-              </div>
-            </div>
-          )}
-        </div>
-        {deltaError && (
-          <div className="rounded border border-amber-700 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
-            Delta readiness unavailable: {deltaError}
-          </div>
-        )}
-        {deltaReadiness && (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-              {deltaReadiness.integrations.map((item) => (
-                <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-medium text-white">{item.name}</div>
-                      <div className="text-xs text-slate-500">{item.owner_department} / {item.target}</div>
-                    </div>
-                    <span className={clsx(
-                      "rounded border px-2 py-0.5 text-xs",
-                      item.status === "deferred"
-                        ? "border-slate-700 text-slate-400"
-                        : item.blocked_reason
-                          ? "border-amber-700 text-amber-300"
-                          : "border-emerald-700 text-emerald-300"
-                    )}>
-                      {item.status}
-                    </span>
-                  </div>
-                  <div className="mt-3 text-xs text-slate-400">
-                    {item.worker_refs.length > 0
-                      ? `${item.worker_refs.length} registry reference${item.worker_refs.length === 1 ? "" : "s"}`
-                      : "No registry reference yet"}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {item.required_gates.map((gate) => (
-                      <span key={gate} className="rounded border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                        {gate}
-                      </span>
-                    ))}
-                  </div>
-                  {item.blocked_reason && (
-                    <div className="mt-3 text-xs text-amber-300/80">{item.blocked_reason}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {Object.entries(deltaReadiness.scanner_visibility ?? {}).map(([name, scanner]) => (
-                <div key={name} className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-slate-300">{name}</span>
-                    <span className={scanner.available ? "text-emerald-400" : "text-amber-300"}>{scanner.status}</span>
-                  </div>
-                  <div className="mt-1 text-slate-500">{scanner.details}</div>
-                </div>
-              ))}
-              <div className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-400 md:col-span-2">
-                GitHub metadata reads use server-side named credentials and rate limits; write actions and n8n control-plane ownership remain approval-blocked.
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Epsilon: Advanced Runtime Status Panel */}
-        {epsilonReadiness && (
-          <div className="space-y-3 pt-3 border-t border-slate-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-white">Advanced Runtimes</h2>
-                <p className="text-xs text-slate-500 max-w-2xl">
-                  Epsilon — guardrailed LangGraph, CrewAI, AutoGen, and Letta runtimes. Each
-                  runtime is wrapped by an adapter and gated by sandbox, approval, and
-                  read-only policies so the platform controls authority and side-effects.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {epsilonReadiness.runtimes.map((runtime) => (
-                <div
-                  key={runtime.id}
-                  data-runtime={runtime.id}
-                  className="rounded-lg border border-slate-800 bg-slate-950 p-3"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-medium text-white">{runtime.name}</div>
-                      <div className="text-xs text-slate-500 capitalize">{runtime.tier} tier</div>
-                    </div>
-                    <span className={clsx(
-                      "rounded border px-2 py-0.5 text-xs",
-                      runtime.status === "available"
-                        ? "border-emerald-700 text-emerald-300"
-                        : runtime.status === "active"
-                          ? "border-emerald-700 text-emerald-300"
-                          : "border-amber-700 text-amber-300"
-                    )}>
-                      {runtime.status}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-xs text-slate-400 line-clamp-2">
-                    {runtime.description}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {runtime.policy.sandbox_required ? (
-                      <span className="rounded border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                        sandbox: {runtime.policy.sandbox_required}
-                      </span>
-                    ) : null}
-                    {runtime.policy.requires_approval ? (
-                      <span className="rounded border border-amber-800 px-1.5 py-0.5 text-[10px] text-amber-400">
-                        approval required
-                      </span>
-                    ) : null}
-                    {runtime.policy.inner_runtime ? (
-                      <span className="rounded border border-blue-800 px-1.5 py-0.5 text-[10px] text-blue-400">
-                        inner runtime
-                      </span>
-                    ) : null}
-                    {runtime.policy.read_only_by_default ? (
-                      <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
-                        read-only
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="rounded border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-400">
-              Advanced runtimes operate only through adapters and policy gates. AutoGen requires firecracker sandbox; Letta is read-only by default.
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Stats — use KpiCard for visual consistency with the rest of the dashboard */}

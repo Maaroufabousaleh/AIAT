@@ -15,7 +15,7 @@ work is validation and production hardening, tracked in
 - FastAPI services: orchestrator API, message router, tool service, and team runner.
 - Shared Python packages: `mas-core` and `mas-tools-sdk`.
 - Next.js dashboard at `apps/mas-dashboard`, exposed at `http://localhost:4000`.
-- 11 configured teams, 26 worker manifests, and 11 system prompts.
+- 7 configured executive/C-suite teams, 12 worker manifests, and 7 system prompts.
 - Postgres-first workflow and knowledge model with MinIO blob storage and
   optional pgvector semantic retrieval.
 - Configurable orchestration flows with API and dashboard support.
@@ -45,8 +45,8 @@ infra/
   docker/                Dockerfiles
   systemd/               masctl and systemd service units
   sandbox/               Sandbox profile notes/templates
-teams/                   11 team YAML configs
-workers/                 26 worker manifests
+teams/                   7 executive/C-suite team YAML configs
+workers/                 12 worker manifests
 prompts/                 11 role system prompts
 docs/                    Architecture notes
 ```
@@ -168,7 +168,7 @@ MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live
 Base compose defines 19 long-running services plus two one-shot init jobs:
 
 - Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
-  orchestrator-api, message-router, tool-service, dashboard, and 11 team runners.
+  orchestrator-api, message-router, tool-service, dashboard, and 7 team runners.
 - One-shot init jobs: Redis ACL init and MinIO bucket/user init.
 - Dev overlay adds pgAdmin, RedisInsight, Prometheus, and Grafana.
 

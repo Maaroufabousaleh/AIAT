@@ -1,7 +1,7 @@
 """AdminAgent — department project-manager agent.
 
 Routes tasks from the executive layer to workers within a single team.
-For example ``dept_production`` PM receives ``ADMIN_TASK`` from the COO
+For example an office worker receives ``ADMIN_TASK`` from the COO
 (ExecutiveAgent) and fans it out to workers, aggregating results back.
 
 Cross-team communication is handled exclusively via ``RouterClient.publish``

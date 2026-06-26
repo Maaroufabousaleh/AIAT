@@ -55,7 +55,7 @@ const testSuites = [
           await page.getByPlaceholder('What this worker does').fill('Testing worker registration');
 
           log('  Filling team ID...');
-          await page.getByPlaceholder('dept_production').fill('dept_qa');
+          await page.getByPlaceholder('office_chrm').fill('office_cto');
 
           log('  Filling GitHub URL...');
           await page.getByPlaceholder('https://github.com/org/repo').fill('https://github.com/test/worker');

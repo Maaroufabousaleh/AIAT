@@ -6,10 +6,6 @@ export const TEAM_STREAMS = [
   { id: "office_chrm",     label: "CHRM",       role: "C-Office",   description: "Human resources stream — workforce planning, role assignments, and HR escalations." },
   { id: "office_cso",      label: "CSO",        role: "C-Office",   description: "Security stream — security incidents, access reviews, and compliance directives." },
   { id: "office_cto",      label: "CTO",        role: "C-Office",   description: "Technology stream — architecture decisions, tech-radar updates, and engineering standards." },
-  { id: "dept_production", label: "Production", role: "Department", description: "Production department stream — build, release, and runtime operations traffic." },
-  { id: "dept_system",     label: "System",     role: "Department", description: "System department stream — infrastructure, networking, and platform-level events." },
-  { id: "dept_qa",         label: "QA",         role: "Department", description: "Quality assurance stream — test results, coverage reports, and defect escalations." },
-  { id: "dept_devops",     label: "DevOps",     role: "Department", description: "DevOps stream — CI/CD pipeline events, deploy approvals, and incident reports." },
 ] as const;
 
 export type TeamStreamId = (typeof TEAM_STREAMS)[number]["id"];

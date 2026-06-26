@@ -1,7 +1,7 @@
 # ── office_cfo — CFO office ───────────────────────────────────────────────────
 # MAS role: c_suite
 # Financial feasibility, budget review, cost/benefit analysis, ROI.
-# Reviews for: feasibility (Step 1), PDR budget sections (Step 4).
+# Hiring board role: budget and cost reviewer.
 
 team_id: office_cfo
 
@@ -21,12 +21,12 @@ admin:
     - web_search
 
 workers:
-  - agent_id: financial_analyst_1
+  - agent_id: cost_estimator
     role: worker
     class: WorkerAgent
-    display_name: "Financial Analyst"
+    display_name: "Cost Estimator"
     min_instances: 0
-    max_instances: 2
+    max_instances: 1
     budget_defaults:
       max_llm_calls: 20
       max_tool_calls: 10
@@ -34,3 +34,4 @@ workers:
     tools:
       - kpi.compute
       - web_search
+      - blob.upload

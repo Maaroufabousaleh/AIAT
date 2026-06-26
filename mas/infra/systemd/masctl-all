@@ -23,10 +23,6 @@ SERVICES=(
     team-office-chrm
     team-office-cso
     team-office-cto
-    team-dept-production
-    team-dept-system
-    team-dept-qa
-    team-dept-devops
 )
 
 COMMAND="$1"

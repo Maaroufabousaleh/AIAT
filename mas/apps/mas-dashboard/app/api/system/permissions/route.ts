@@ -52,7 +52,7 @@ const POLICY_RULES = {
       "document.list", "blob.*", "issue.update_status", "capability.search", "capability.list_workers",
       "file_read", "file_write", "shared_memory_read", "shared_memory_write"
     ],
-    devops_pm_extra_tools: ["infra.*", "cicd.*", "monitoring.*", "secrets.*"],
+    supplemental_admin_tools: [],
   },
   worker: {
     allowed_targets: ["team:own"],
@@ -82,10 +82,6 @@ const TEAM_TIERS = {
   office_chrm: "c_suite",
   office_cso: "c_suite",
   office_cto: "c_suite",
-  dept_production: "admin",
-  dept_system: "admin",
-  dept_qa: "admin",
-  dept_devops: "admin",
 };
 
 const MESSAGE_TYPE_GROUPS = {
@@ -101,7 +97,7 @@ const MESSAGE_TYPE_GROUPS = {
 function buildCommunicationMatrix() {
   const matrix: Record<string, Record<string, { allowed: boolean; msgTypes: string[] }>> = {};
   const roles = ["orchestrator", "executive", "c_suite", "admin", "worker", "sub_agent"];
-  const targets = ["exec_ceo", "exec_coo", "office_cfo", "office_cio", "office_chrm", "office_cso", "office_cto", "dept_production", "dept_system", "dept_qa", "dept_devops"];
+  const targets = ["exec_ceo", "exec_coo", "office_cfo", "office_cio", "office_chrm", "office_cso", "office_cto"];
   
   const rolePermissions: Record<string, Record<string, string[]>> = {
     orchestrator: {},
@@ -112,10 +108,6 @@ function buildCommunicationMatrix() {
       "office_chrm": ["TASK", "ADMIN_TASK", "REVIEW_REQUEST", "DOCUMENT_SUBMIT", "DIRECTIVE"],
       "office_cso": ["TASK", "ADMIN_TASK", "REVIEW_REQUEST", "DOCUMENT_SUBMIT", "DIRECTIVE"],
       "office_cto": ["TASK", "ADMIN_TASK", "REVIEW_REQUEST", "DOCUMENT_SUBMIT", "DIRECTIVE", "SPRINT_PLAN"],
-      "dept_production": ["TASK", "ADMIN_TASK", "SPRINT_PLAN", "DIRECTIVE"],
-      "dept_system": ["TASK", "ADMIN_TASK", "SPRINT_PLAN", "DIRECTIVE"],
-      "dept_qa": ["TASK", "ADMIN_TASK", "SPRINT_PLAN", "DIRECTIVE"],
-      "dept_devops": ["TASK", "ADMIN_TASK", "SPRINT_PLAN", "DIRECTIVE"],
     },
     c_suite: {
       "exec_ceo": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
@@ -125,31 +117,19 @@ function buildCommunicationMatrix() {
       "office_chrm": ["REVIEW_REQUEST", "REVIEW_RESPONSE", "ESCALATION", "ADMIN_REPLY"],
       "office_cso": ["REVIEW_REQUEST", "REVIEW_RESPONSE", "ESCALATION", "ADMIN_REPLY"],
       "office_cto": ["REVIEW_REQUEST", "REVIEW_RESPONSE", "ESCALATION", "ADMIN_REPLY"],
-      "dept_production": ["SPRINT_PLAN", "DIRECTIVE", "ADMIN_REPLY"],
-      "dept_system": ["SPRINT_PLAN", "DIRECTIVE", "ADMIN_REPLY"],
-      "dept_qa": ["SPRINT_PLAN", "DIRECTIVE", "ADMIN_REPLY"],
-      "dept_devops": ["SPRINT_PLAN", "INFRA_READY", "DIRECTIVE", "ADMIN_REPLY"],
     },
     admin: {
       "exec_coo": ["TASK", "RESULT", "QUERY", "RESPONSE", "SPRINT_REPORT", "ESCALATION", "ADMIN_REPLY"],
       "office_cto": ["TASK", "RESULT", "SPRINT_REPORT", "INFRA_READY", "ADMIN_REPLY"],
-      "dept_production": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE"],
-      "dept_system": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE"],
-      "dept_qa": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE"],
-      "dept_devops": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE"],
     },
     worker: {
-      "dept_production": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE", "ESCALATION", "ADMIN_REPLY"],
-      "dept_system": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE", "ESCALATION", "ADMIN_REPLY"],
-      "dept_qa": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE", "ESCALATION", "ADMIN_REPLY"],
-      "dept_devops": ["TASK", "RESULT", "QUERY", "RESPONSE", "ISSUE_COMPLETE", "ESCALATION", "ADMIN_REPLY"],
+      "office_cfo": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
+      "office_cio": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
+      "office_chrm": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
+      "office_cso": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
+      "office_cto": ["TASK", "RESULT", "QUERY", "RESPONSE", "ESCALATION", "ADMIN_REPLY"],
     },
-    sub_agent: {
-      "dept_production": ["RESULT", "QUERY"],
-      "dept_system": ["RESULT", "QUERY"],
-      "dept_qa": ["RESULT", "QUERY"],
-      "dept_devops": ["RESULT", "QUERY"],
-    },
+    sub_agent: {},
   };
 
   for (const senderRole of roles) {
