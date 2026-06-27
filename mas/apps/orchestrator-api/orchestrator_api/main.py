@@ -16,6 +16,7 @@ import asyncio
 import hmac
 import importlib
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -652,6 +653,9 @@ class RegisterWorkerRequest(BaseModel):
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     sandbox_profile: str = "restricted"
     capability_ids: list[UUID] = Field(default_factory=list)
+    capability_names: list[str] = Field(default_factory=list)
+    required_tools: list[str] = Field(default_factory=list)
+    role: str | None = None
     team_id: str | None = None
     source_repo: str | None = None
     version_pin: str | None = None
@@ -3007,6 +3011,69 @@ async def reject_during_shutdown(request: Request, call_next):  # noqa: ANN001
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+async def _resolve_worker_capability_ids(
+    storage: AgentStorage,
+    *,
+    capability_ids: list[UUID],
+    capability_names: list[str],
+    required_tools: list[str],
+    required_role: str | None = None,
+) -> list[UUID]:
+    """Resolve named hiring capabilities into persistent capability IDs."""
+    resolved: list[UUID] = list(capability_ids)
+    seen = {str(cap_id) for cap_id in resolved}
+    names = [name.strip() for name in capability_names if name and name.strip()]
+
+    if required_tools and not names:
+        names = [str(tool).strip() for tool in required_tools if str(tool).strip()]
+
+    for name in names:
+        existing = await storage.get_capability_by_name(name)
+        if existing is None:
+            existing = await storage.create_capability(
+                name=name,
+                description=f"Hiring capability for {name}",
+                risk_level="low",
+                required_tools=required_tools or [name],
+                required_role=required_role,
+            )
+        cap_id = existing["id"]
+        if str(cap_id) not in seen:
+            resolved.append(cap_id)
+            seen.add(str(cap_id))
+    return resolved
+
+
+async def _enrich_workers_with_capabilities(
+    storage: AgentStorage,
+    workers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    capabilities_result = storage.list_capabilities()
+    capabilities = (
+        await capabilities_result
+        if inspect.isawaitable(capabilities_result)
+        else capabilities_result
+    )
+    capability_by_id = {str(cap["id"]): cap for cap in capabilities}
+    enriched: list[dict[str, Any]] = []
+    for worker in workers:
+        serialized = _serialize(worker)
+        worker_caps = []
+        required_tools: list[str] = []
+        for cap_id in worker.get("capability_ids") or []:
+            capability = capability_by_id.get(str(cap_id))
+            if not capability:
+                continue
+            cap = _serialize(capability)
+            worker_caps.append(cap)
+            required_tools.extend(str(tool) for tool in capability.get("required_tools") or [])
+        serialized["capabilities"] = worker_caps
+        serialized["capability_names"] = [cap.get("name") for cap in worker_caps if cap.get("name")]
+        serialized["required_tools"] = sorted(set(required_tools))
+        enriched.append(serialized)
+    return enriched
+
+
 @app.get("/capabilities")
 async def list_capabilities(
     risk_level: str | None = None,
@@ -3027,17 +3094,18 @@ async def search_capabilities(req: CapabilitySearchRequest) -> list[dict[str, An
     if req.name:
         caps = [c for c in caps if req.name.lower() in c["name"].lower()]
 
-    # Get workers for matching capabilities
-    workers = await storage.list_workers(status="ACTIVE")
+    # Get workers for matching capabilities, including inactive hiring
+    # candidates so departments can discover and finish approvals.
+    workers = await storage.list_workers()
 
     results = []
     cap_ids = {c["id"] for c in caps}
     for w in workers:
         worker_caps = set(w.get("capability_ids") or [])
         if worker_caps & cap_ids:
-            results.append(_serialize(w))
+            results.append(w)
 
-    return results
+    return await _enrich_workers_with_capabilities(storage, results)
 
 
 @app.get("/capabilities/workers")
@@ -3048,7 +3116,7 @@ async def list_capability_workers(
     """List all registered workers with their capabilities and sandbox profiles."""
     storage = _storage()
     workers = await storage.list_workers(team_id=team_id, status=status)
-    return [_serialize(w) for w in workers]
+    return await _enrich_workers_with_capabilities(storage, workers)
 
 
 @app.post("/capabilities/workers", status_code=201)
@@ -3061,12 +3129,19 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
         )
     is_external_candidate = bool(req.source_repo)
+    capability_ids = await _resolve_worker_capability_ids(
+        storage,
+        capability_ids=req.capability_ids,
+        capability_names=req.capability_names,
+        required_tools=req.required_tools,
+        required_role=req.role,
+    )
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
         adapter_config=req.adapter_config,
         sandbox_profile=req.sandbox_profile,
-        capability_ids=req.capability_ids,
+        capability_ids=capability_ids,
         team_id=req.team_id,
         status="INACTIVE" if is_external_candidate else "ACTIVE",
         source_repo=req.source_repo,
@@ -3075,7 +3150,8 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         evaluation_status="pending" if is_external_candidate else None,
         adapter_entrypoint=str(req.adapter_config.get("entrypoint") or "WorkerAgent"),
     )
-    return _serialize(worker)
+    enriched = await _enrich_workers_with_capabilities(storage, [worker])
+    return enriched[0]
 
 
 @app.delete("/capabilities/workers/{worker_id}")

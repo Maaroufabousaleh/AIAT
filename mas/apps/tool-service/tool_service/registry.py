@@ -12,7 +12,7 @@ import subprocess
 import time
 from collections import deque
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -23,14 +23,18 @@ from mas_core.observability.metrics import (
     set_tool_circuit_state,
 )
 from mas_core.policy.engine import CommunicationPolicy
+from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.tool import ToolRequest, ToolResponse
-from mas_tools_sdk.base import BaseTool
-from mas_tools_sdk.manifest import all_manifest_entries, resolve_tool_name
+from mas_tools_sdk.manifest import TOOL_ALIASES, resolve_tool_name
 
-from .cache import ToolCache
 from .circuit_breaker import CircuitBreaker
-from .config import Settings
 from .rate_limiter import RateLimiterPool
+
+if TYPE_CHECKING:
+    from mas_tools_sdk.base import BaseTool
+
+    from .cache import ToolCache
+    from .config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +173,18 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     def get_manifest(self) -> list[dict[str, Any]]:
-        """Return the full tool manifest (for GET /tools)."""
-        return all_manifest_entries(include_aliases=True)
+        """Return registered tools and valid aliases for GET /tools."""
+        entries = [tool.to_manifest_entry() for _, tool in sorted(self._tools.items())]
+        for alias, canonical in sorted(TOOL_ALIASES.items()):
+            if canonical not in self._tools:
+                continue
+            base = self._tools[canonical].to_manifest_entry()
+            base["tool_name"] = alias
+            base["canonical_tool_name"] = canonical
+            base["deprecated_alias_of"] = canonical
+            base["alias"] = True
+            entries.append(base)
+        return entries
 
     def get_breaker_states(self) -> list[dict]:
         """Return breaker snapshots (for /health)."""
@@ -180,6 +194,8 @@ class ToolRegistry:
         """Execute a tool request through the full pipeline."""
         tool_name = request.tool_name
         resolved_tool_name = resolve_tool_name(tool_name)
+        if resolved_tool_name is None and tool_name in self._tools:
+            resolved_tool_name = tool_name
         if resolved_tool_name is None:
             logger.warning(
                 "tool_not_found",
@@ -220,10 +236,13 @@ class ToolRegistry:
             },
         )
 
-        result = self._policy.can_use_tool(
-            request.caller_role,
-            resolved_tool_name,
+        result = can_use_tool_with_metadata(
+            role=request.caller_role,
+            tool_name=resolved_tool_name,
             sender_team=request.caller_team,
+            allowed_roles=tool.allowed_roles,
+            blocked_roles=tool.blocked_roles,
+            policy=self._policy,
         )
         if result is not True:
             logger.warning(
@@ -492,12 +511,12 @@ class ToolRegistry:
         payload = json.dumps({"tool_name": tool_name, "kwargs": kwargs}).encode("utf-8")
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=timeout)
-        except TimeoutError:
+        except TimeoutError as exc:
             proc.kill()
             await proc.wait()
             raise RuntimeError(
                 f"Process transport timed out after {timeout}s for tool '{tool_name}'"
-            )
+            ) from exc
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Process transport failed for '{tool_name}': {stderr.decode('utf-8', errors='replace')}"

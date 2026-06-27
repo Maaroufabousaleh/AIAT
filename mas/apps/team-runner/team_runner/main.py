@@ -34,6 +34,7 @@ from mas_core.agent_runtime import (
     SubAgent,
     WorkerAgent,
 )
+from mas_core.agent_runtime.tool_catalog import tool_definitions_for_agent
 from mas_core.observability import configure_logging
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
@@ -186,6 +187,7 @@ class TeamRuntime:
         self.settings = settings
         self.team_config = team_config
         self.tool_client: ToolServiceClient | None = None
+        self._runtime_tool_manifest: list[dict[str, Any]] | None = None
         self.storage: AgentStorage | None = None
         self.checkpoint_store: CheckpointStore | None = None
         self.router = RouterClient(
@@ -210,6 +212,7 @@ class TeamRuntime:
                 self.settings.tool_service_url,
                 secret=self.settings.tool_secret,
             )
+            await self._load_runtime_tool_manifest()
 
         if self.settings.pgbouncer_dsn:
             from mas_core.memory import AgentStorage, CheckpointStore
@@ -320,6 +323,16 @@ class TeamRuntime:
             router_url=self.settings.router_url,
             budget_defaults=spec.budget_defaults,
             llm_model=self.settings.llm_model,
+            tool_names=spec.tools,
+            tool_definitions=[
+                tool.model_dump(mode="json")
+                for tool in tool_definitions_for_agent(
+                    role=spec.role,
+                    team_id=self.team_config.team_id,
+                    configured_tools=spec.tools,
+                    runtime_tools=self._runtime_tool_manifest,
+                )
+            ],
         )
 
         kwargs: dict[str, Any] = {
@@ -343,6 +356,19 @@ class TeamRuntime:
                 **kwargs,
             )
         raise ValueError(f"Unsupported agent class {class_name!r}")
+
+    async def _load_runtime_tool_manifest(self) -> None:
+        if self.tool_client is None:
+            return
+        try:
+            self._runtime_tool_manifest = await self.tool_client.list_tools()
+            log.info(
+                "team_runner.loaded_runtime_tool_manifest",
+                tool_count=len(self._runtime_tool_manifest),
+            )
+        except Exception:
+            self._runtime_tool_manifest = None
+            log.warning("team_runner.runtime_tool_manifest_unavailable", exc_info=True)
 
     def _load_prompt_text(self, prompt_file: str | None) -> str | None:
         if not prompt_file:

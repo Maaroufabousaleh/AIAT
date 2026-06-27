@@ -248,6 +248,31 @@ async def test_register_worker_minimal_payload(client):
 
 
 @pytest.mark.anyio
+async def test_register_worker_role_sets_auto_created_capability_required_role(client):
+    storage = _make_storage()
+    storage.get_capability_by_name = AsyncMock(return_value=None)
+    storage.create_capability = AsyncMock(
+        return_value={**_fake_capability("test.run"), "required_role": "worker"}
+    )
+    _patch_state(storage)
+
+    resp = await client.post(
+        "/capabilities/workers",
+        json={
+            "name": "worker-2",
+            "adapter_type": "subprocess",
+            "capability_names": ["test.run"],
+            "role": "worker",
+        },
+    )
+
+    assert resp.status_code == 201
+    storage.create_capability.assert_awaited_once()
+    _, kwargs = storage.create_capability.await_args
+    assert kwargs["required_role"] == "worker"
+
+
+@pytest.mark.anyio
 async def test_register_worker_missing_name_returns_422(client):
     """POST /capabilities/workers returns 422 when name is missing."""
     _patch_state(_make_storage())

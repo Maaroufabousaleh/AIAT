@@ -1,21 +1,73 @@
-"""Capability group tools.
-
-Phase 6 requires capability tooling before full Phase 7 persistence wiring.
-This module uses an in-memory registry as a compatibility bridge.
-"""
+"""Capability group tools backed by the orchestrator worker registry."""
 
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
+from ._orch_client import orch_delete, orch_get, orch_post
+
 _ADMIN = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
 _EXEC = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
 
+# Compatibility fallback for isolated tests or local tool-service runs when the
+# orchestrator is not available.
 _REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def _role_value(role: Any) -> str | None:
+    if role is None:
+        return None
+    return str(getattr(role, "value", role))
+
+
+def _fallback_search(name: str, role: Any = None) -> dict[str, Any]:
+    role_value = _role_value(role)
+    workers: list[dict[str, Any]] = []
+    for worker in _REGISTRY.values():
+        caps = worker.get("capabilities", [])
+        has_cap = any(str(c).lower() == name for c in caps) if name else True
+        if not has_cap:
+            continue
+        if role_value and _role_value(worker.get("role")) != role_value:
+            continue
+        workers.append(worker)
+    return {"query": {"name": name, "role": role_value}, "workers": workers, "count": len(workers)}
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+async def _resolve_orchestrator_worker_id(worker_id: str) -> str | None:
+    if _is_uuid(worker_id):
+        return worker_id
+
+    workers = await orch_get("/capabilities/workers")
+    if not isinstance(workers, list):
+        return None
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        adapter_config = worker.get("adapter_config") or {}
+        candidates = {
+            str(worker.get("id") or ""),
+            str(worker.get("name") or ""),
+            str(worker.get("worker_id") or ""),
+            str(adapter_config.get("worker_id") or ""),
+        }
+        if worker_id in candidates:
+            resolved = worker.get("id")
+            return str(resolved) if resolved else None
+    return None
 
 
 class CapabilitySearchTool(BaseTool):
@@ -27,17 +79,20 @@ class CapabilitySearchTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         name = str(kwargs.get("name", "")).strip().lower()
-        role = kwargs.get("role")
-        workers: list[dict[str, Any]] = []
-        for worker in _REGISTRY.values():
-            caps = worker.get("capabilities", [])
-            has_cap = any(str(c).lower() == name for c in caps) if name else True
-            if not has_cap:
-                continue
-            if role and worker.get("role") != role:
-                continue
-            workers.append(worker)
-        return {"query": {"name": name, "role": role}, "workers": workers, "count": len(workers)}
+        role = _role_value(kwargs.get("role"))
+        try:
+            if name:
+                body: dict[str, Any] = {"name": name}
+                if role:
+                    body["role"] = role
+                workers = await orch_post("/capabilities/search", body)
+            else:
+                workers = await orch_get("/capabilities/workers")
+            if not isinstance(workers, list):
+                workers = []
+            return {"query": {"name": name, "role": role}, "workers": workers, "count": len(workers)}
+        except Exception:
+            return _fallback_search(name, role)
 
 
 class CapabilityListWorkersTool(BaseTool):
@@ -48,7 +103,19 @@ class CapabilityListWorkersTool(BaseTool):
     cache_ttl_seconds = 15
 
     async def execute(self, **kwargs: Any) -> Any:
-        return {"workers": list(_REGISTRY.values()), "count": len(_REGISTRY)}
+        try:
+            params: dict[str, Any] = {}
+            if kwargs.get("team_id"):
+                params["team_id"] = kwargs["team_id"]
+            if kwargs.get("status"):
+                params["status"] = kwargs["status"]
+            workers = await orch_get("/capabilities/workers", params=params or None)
+            if not isinstance(workers, list):
+                workers = []
+            return {"workers": workers, "count": len(workers)}
+        except Exception:
+            workers = list(_REGISTRY.values())
+            return {"workers": workers, "count": len(workers)}
 
 
 class CapabilityRegisterTool(BaseTool):
@@ -71,8 +138,30 @@ class CapabilityRegisterTool(BaseTool):
             "sandbox_profile": kwargs.get("sandbox_profile", "standard"),
             "adapter_type": kwargs.get("adapter_type", "process"),
         }
-        _REGISTRY[worker_id] = record
-        return {"registered": True, "worker": record}
+        adapter_config = dict(kwargs.get("adapter_config") or {})
+        adapter_config.setdefault("worker_id", worker_id)
+        role = _role_value(record["role"])
+        try:
+            worker = await orch_post(
+                "/capabilities/workers",
+                {
+                    "name": record["name"],
+                    "adapter_type": record["adapter_type"],
+                    "adapter_config": adapter_config,
+                    "sandbox_profile": record["sandbox_profile"],
+                    "role": role,
+                    "team_id": kwargs.get("team_id"),
+                    "source_repo": kwargs.get("source_repo"),
+                    "version_pin": kwargs.get("version_pin"),
+                    "update_policy": kwargs.get("update_policy") or "manual",
+                    "capability_names": record["capabilities"],
+                    "required_tools": list(kwargs.get("required_tools", [])),
+                },
+            )
+            return {"registered": True, "worker": worker}
+        except Exception:
+            _REGISTRY[worker_id] = record
+            return {"registered": True, "worker": record, "fallback": True}
 
 
 class CapabilityDeregisterTool(BaseTool):
@@ -85,6 +174,19 @@ class CapabilityDeregisterTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         worker_id = str(kwargs.get("worker_id", "")).strip()
+        if not worker_id:
+            raise ValueError("worker_id is required")
+        try:
+            orchestrator_worker_id = await _resolve_orchestrator_worker_id(worker_id)
+            if orchestrator_worker_id:
+                result = await orch_delete(f"/capabilities/workers/{orchestrator_worker_id}")
+                return {
+                    "deregistered": True,
+                    "worker_id": worker_id,
+                    "orchestrator_worker_id": orchestrator_worker_id,
+                    "result": result,
+                }
+        except Exception:
+            pass
         removed = _REGISTRY.pop(worker_id, None)
         return {"deregistered": removed is not None, "worker_id": worker_id}
-

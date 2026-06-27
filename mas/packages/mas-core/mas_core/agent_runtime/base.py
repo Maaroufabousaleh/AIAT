@@ -42,6 +42,7 @@ from .attachment_manager import TempAttachmentManager
 from .budget import BudgetExhausted, BudgetTracker
 from .config import AgentConfig
 from .router_client import RouterClient
+from .tool_catalog import tool_catalog_prompt, tool_definitions_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,23 @@ class AgentBase(ABC):
         self._llm: LLMGatewayClient = llm_client or LLMGatewayClient()
         self._llm_started: bool = False
         self._tool_executor = tool_executor
+
+    def available_tool_definitions(self) -> list[ToolDefinition]:
+        """Return the runtime-discovered tool definitions for this agent."""
+        if self.config.tool_definitions:
+            return [ToolDefinition.model_validate(item) for item in self.config.tool_definitions]
+        return tool_definitions_for_agent(
+            role=self.role,
+            team_id=self.team_id,
+            configured_tools=self.config.tool_names,
+        )
+
+    def with_runtime_tool_catalog(self, prompt: str) -> str:
+        """Append the current runtime tool catalog to a static system prompt."""
+        catalog = tool_catalog_prompt(self.available_tool_definitions())
+        if not catalog:
+            return prompt
+        return f"{prompt.rstrip()}\n\n{catalog}"
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -393,6 +393,14 @@ _register(
 # --- KPI / Utility ---
 _register(
     _entry(
+        name="time_now",
+        group=ToolGroup.KPI_UTILITY,
+        description="Return the current date/time for the configured display timezone.",
+        allowed_roles=_ALL,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
         name="kpi.compute",
         group=ToolGroup.KPI_UTILITY,
         description="Compute KPI snapshot.",
@@ -566,6 +574,7 @@ TOOL_ALIASES: dict[str, str] = {
     "code_analyze": "capability.search",
     "capacity_check": "capability.list_workers",
     "agent_registry_query": "capability.list_workers",
+    "time.now": "time_now",
     "workload_report": "kpi.query_history",
     "team_recommend": "capability.search",
     "threat_model": "review.submit",

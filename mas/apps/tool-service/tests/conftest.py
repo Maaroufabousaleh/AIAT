@@ -71,6 +71,48 @@ def _mock_orchestrator_http(monkeypatch):
         pass
 
     try:
+        import tool_service.tools.capability as capability_mod
+
+        async def fake_capability_get(path, params=None):
+            return [
+                {
+                    "id": str(uuid4()),
+                    "name": "stub-worker",
+                    "status": params.get("status", "ACTIVE") if params else "ACTIVE",
+                    "capability_names": ["stub.capability"],
+                    "required_tools": ["web_search"],
+                }
+            ]
+
+        async def fake_capability_post(path, body=None):
+            if path == "/capabilities/search":
+                return [
+                    {
+                        "id": str(uuid4()),
+                        "name": "stub-worker",
+                        "status": "ACTIVE",
+                        "capability_names": [body.get("name", "stub.capability")],
+                        "required_tools": ["web_search"],
+                    }
+                ]
+            return {
+                "id": str(uuid4()),
+                "name": (body or {}).get("name", "stub-worker"),
+                "status": "ACTIVE",
+                "capability_names": (body or {}).get("capability_names", []),
+                "required_tools": (body or {}).get("required_tools", []),
+            }
+
+        async def fake_capability_delete(path):
+            return {"status": "deregistered"}
+
+        monkeypatch.setattr(capability_mod, "orch_get", fake_capability_get)
+        monkeypatch.setattr(capability_mod, "orch_post", fake_capability_post)
+        monkeypatch.setattr(capability_mod, "orch_delete", fake_capability_delete)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
         import tool_service.tools.web as web_mod
 
         async def fake_web_search_execute(self, **kwargs):

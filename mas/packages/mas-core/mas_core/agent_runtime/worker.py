@@ -53,7 +53,9 @@ class WorkerAgent(AgentBase):
     ) -> None:
         super().__init__(config, storage, **kwargs)
         self._tool_client = tool_client
-        self._system_prompt = system_prompt or self._default_system_prompt()
+        self._system_prompt = self.with_runtime_tool_catalog(
+            system_prompt or self._default_system_prompt()
+        )
 
     def _default_system_prompt(self) -> str:
         return (
@@ -128,7 +130,11 @@ class WorkerAgent(AgentBase):
         # Check for resume
         resume = envelope.payload.get("action") == "RESUME"
 
-        result_messages = await self.think(messages=messages, resume=resume)
+        result_messages = await self.think(
+            messages=messages,
+            resume=resume,
+            tools=self.available_tool_definitions(),
+        )
 
         # Extract the last assistant message as the result
         result_content = self._extract_result(result_messages)

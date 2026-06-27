@@ -34,6 +34,7 @@ from .rules import (
     CTO_EXTRA_TOOLS,
     CTO_TEAM,
     DEPT_TEAMS,
+    DEVOPS_PM_EXTRA_TOOLS,
     DEVOPS_TEAM,
     EXECUTIVE_MSG_TYPES,
     EXECUTIVE_TEAM,
@@ -63,6 +64,7 @@ __all__ = [
     "CTO_TEAM",
     "DEPT_TEAMS",
     "DEVOPS_TEAM",
+    "DEVOPS_PM_EXTRA_TOOLS",
     # Message-type sets
     "EXECUTIVE_MSG_TYPES",
     "C_SUITE_MSG_TYPES",

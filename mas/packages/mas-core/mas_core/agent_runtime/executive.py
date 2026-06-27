@@ -30,6 +30,7 @@ from ..protocols.domain import (
     ReviewSummary,
 )
 from ..protocols.enums import (
+    AgentRole,
     MessageType,
     ReviewSeverity,
     ReviewVerdict,
@@ -37,6 +38,7 @@ from ..protocols.enums import (
 from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
 from .config import AgentConfig
+from .tool_catalog import tool_definitions_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +245,14 @@ class ExecutiveAgent(AdminAgent):
         await self.think(messages=messages, tools=tools)
 
     def _build_workflow_tool_definitions(self) -> list[ToolDefinition]:
-        """Build ToolDefinition objects for the core workflow tools."""
+        """Build ToolDefinition objects from the dynamic runtime catalog."""
+        if hasattr(self, "available_tool_definitions"):
+            return self.available_tool_definitions()
+        return tool_definitions_for_agent(role=AgentRole.EXECUTIVE, team_id="exec_coo")
+
+        # Historical static definitions kept below as a readable reference for
+        # detailed argument shapes. Runtime exposure now comes from the manifest
+        # and policy so newly added tools do not require editing this method.
         return [
             ToolDefinition(
                 function=ToolFunction(

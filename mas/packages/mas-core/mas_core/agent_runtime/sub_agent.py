@@ -56,7 +56,9 @@ class SubAgent(AgentBase):
         super().__init__(config, storage, **kwargs)
         self._tool_client = tool_client
         self._parent_envelope = parent_envelope
-        self._system_prompt = system_prompt or self._default_system_prompt()
+        self._system_prompt = self.with_runtime_tool_catalog(
+            system_prompt or self._default_system_prompt()
+        )
 
     def _default_system_prompt(self) -> str:
         return (
@@ -113,7 +115,10 @@ class SubAgent(AgentBase):
             {"role": "user", "content": self._build_task_prompt(task_desc, context)},
         ]
 
-        result_messages = await self.think(messages=messages)
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
         result_content = self._extract_result(result_messages)
 
         reply = envelope.reply(
@@ -147,7 +152,10 @@ class SubAgent(AgentBase):
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": self._build_task_prompt(task, context)},
         ]
-        result_messages = await self.think(messages=messages)
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
         return self._extract_result(result_messages)
 
     # ------------------------------------------------------------------

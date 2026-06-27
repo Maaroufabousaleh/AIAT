@@ -30,6 +30,7 @@ from ..protocols.domain import (
     Sprint,
 )
 from ..protocols.enums import (
+    AgentRole,
     IssueType,
     MessageType,
     ReviewSeverity,
@@ -37,6 +38,7 @@ from ..protocols.enums import (
 )
 from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
+from .tool_catalog import tool_definitions_for_agent
 
 if TYPE_CHECKING:
     from .config import AgentConfig
@@ -380,7 +382,7 @@ class CSuiteAgent(AdminAgent):
             },
         ]
 
-        tools: list[ToolDefinition] = []
+        tools = self._build_workflow_tool_definitions()
         response_text = await self._handle_human_directive_command(instruction)
         if not response_text:
             try:
@@ -1181,7 +1183,14 @@ class CSuiteAgent(AdminAgent):
         await self.think(messages=messages, tools=tools)
 
     def _build_workflow_tool_definitions(self) -> list[ToolDefinition]:
-        """Build ToolDefinition objects for the core workflow tools."""
+        """Build ToolDefinition objects from the dynamic runtime catalog."""
+        if hasattr(self, "available_tool_definitions"):
+            return self.available_tool_definitions()
+        return tool_definitions_for_agent(role=AgentRole.ORCHESTRATOR, team_id="exec_ceo")
+
+        # Historical static definitions kept below as a readable reference for
+        # detailed argument shapes. Runtime exposure now comes from the manifest
+        # and policy so newly added tools do not require editing this method.
         return [
             ToolDefinition(
                 function=ToolFunction(
@@ -1709,7 +1718,10 @@ class CSuiteAgent(AdminAgent):
             },
         ]
 
-        result_messages = await self.think(messages=messages)
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
         review_text = self._extract_result(result_messages)
 
         # Parse review into structured comments
@@ -1869,7 +1881,10 @@ class CSuiteAgent(AdminAgent):
             },
         ]
 
-        result_messages = await self.think(messages=messages)
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
         response_text = self._extract_result(result_messages)
 
         reply = envelope.reply(
@@ -1914,7 +1929,10 @@ class CSuiteAgent(AdminAgent):
                 ),
             },
         ]
-        result_messages = await self.think(messages=messages)
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
         plan_text = self._extract_result(result_messages)
 
         # Publish sprint plan to relevant departments

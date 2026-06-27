@@ -110,6 +110,21 @@ class TestToolRegistry:
         assert resp.error_code == "FORBIDDEN"
 
     @pytest.mark.anyio
+    async def test_policy_denial_not_overridden_by_tool_metadata(self, make_registry):
+        """Team-scoped policy denials remain authoritative."""
+        registry = make_registry()
+        req = ToolRequest(
+            caller_id="office-cfo",
+            caller_role=AgentRole.C_SUITE,
+            caller_team="office_cfo",
+            tool_name="sprint.create",
+            tool_kwargs={},
+        )
+        resp = await registry.execute(req)
+        assert resp.success is False
+        assert resp.error_code == "FORBIDDEN"
+
+    @pytest.mark.anyio
     async def test_sub_agent_can_download_blob(self, make_registry):
         """Sub-agents have blob.download access."""
         registry = make_registry()

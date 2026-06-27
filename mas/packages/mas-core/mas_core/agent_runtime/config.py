@@ -8,6 +8,7 @@ when constructing each agent.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,17 @@ class AgentConfig(BaseSettings):
     budget_defaults: TaskBudget = Field(
         default_factory=TaskBudget,
         description="Default resource caps applied when a TASK message has no budget.",
+    )
+    tool_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Canonical tool names declared by team configuration. These are additive "
+            "hints; runtime tool exposure is derived from the manifest and policy."
+        ),
+    )
+    tool_definitions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Runtime-discovered OpenAI-format tool definitions for this agent.",
     )
 
     # --- Think-loop tuning ---

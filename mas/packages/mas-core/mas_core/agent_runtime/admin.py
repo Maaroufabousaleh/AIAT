@@ -57,7 +57,9 @@ class AdminAgent(AgentBase):
     ) -> None:
         super().__init__(config, storage, **kwargs)
         self._tool_client = tool_client
-        self._system_prompt = system_prompt or self._default_system_prompt()
+        self._system_prompt = self.with_runtime_tool_catalog(
+            system_prompt or self._default_system_prompt()
+        )
         # Track pending delegated tasks: correlation_id → list of pending entry_ids
         self._pending_delegations: dict[str, list[str]] = {}
         # Accumulate results keyed by correlation_id
@@ -155,7 +157,10 @@ class AdminAgent(AgentBase):
                     ),
                 },
             ]
-            result_messages = await self.think(messages=messages)
+            result_messages = await self.think(
+                messages=messages,
+                tools=self.available_tool_definitions(),
+            )
             # For now, forward the full task to a single worker
             await self._delegate_single_task(
                 task_desc, context, envelope
