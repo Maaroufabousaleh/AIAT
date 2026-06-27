@@ -77,8 +77,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time as _time
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -96,7 +97,12 @@ from .models import (
 from .providers import MODEL_REGISTRY, ApiStyle, ModelEntry
 from .rate_limits import RateLimitTracker
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 logger = logging.getLogger(__name__)
+
+_OPENAI_TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +539,12 @@ class LLMGatewayClient:
         rid = request_id or _uuid.uuid4().hex[:16]
         resolved_model = model or self._config.default_model
 
+        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith(
+            "legacy:"
+        )
+        if force_legacy_backend:
+            resolved_model = resolved_model.removeprefix("legacy:")
+
         # ── Thinking chain / non-streamable shortcut ─────────────────
         if resolved_model.startswith("gemma-think"):
             resp = await self.chat_completion(
@@ -542,6 +554,18 @@ class LLMGatewayClient:
                 max_tokens=max_tokens,
             )
             async for line in self._chat_response_to_sse(resp, rid):
+                yield line
+            return
+
+        if self._uses_litellm_backend() and not force_legacy_backend:
+            async for line in self._stream_default_raw_sse(
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+            ):
                 yield line
             return
 
@@ -701,12 +725,49 @@ class LLMGatewayClient:
     ) -> ChatResponse:
         """Internal dispatch — routes to the correct API style."""
 
+        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith(
+            "legacy:"
+        )
+        if force_legacy_backend:
+            resolved_model = resolved_model.removeprefix("legacy:")
+
         # ── Thinking chain dispatch ──────────────────────────────────
         if resolved_model.startswith("gemma-think"):
             return await self._dispatch_thinking_chain(
                 messages=messages,
                 resolved_model=resolved_model,
                 max_tokens=max_tokens,
+            )
+
+        preserve_native_grounding = self._should_preserve_native_grounding(
+            resolved_model,
+            search_grounding,
+        )
+
+        # ── LiteLLM backend dispatch ─────────────────────────────────
+        # In migration mode, LiteLLM is the provider/routing layer.  The AIAT
+        # client keeps response parsing, audit, metrics, and retry semantics.
+        # Explicit Gemini search-grounding requests stay on AIAT's native
+        # Gemini path because LiteLLM/OmniRoute do not expose this internal
+        # feature contract without custom changes.
+        if (
+            self._uses_litellm_backend()
+            and not force_legacy_backend
+            and not preserve_native_grounding
+        ):
+            _audit_evt.resolved_model = resolved_model
+            _audit_evt.provider = "litellm"
+            _audit_evt.api_style = ApiStyle.CHAT_COMPLETIONS.value
+            return await self._call_default_chat_completions_api(
+                messages=messages,
+                model=resolved_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                stream=stream,
+                _retry_counter_ref=_retry_counter_ref,
+                _max_retries=_max_retries,
             )
 
         # ── Pool resolution ──────────────────────────────────────────
@@ -1236,6 +1297,244 @@ class LLMGatewayClient:
             )
         return self._http
 
+    def _uses_litellm_backend(self) -> bool:
+        return self._config.backend.strip().lower() == "litellm"
+
+    def _should_preserve_native_grounding(
+        self,
+        model: str,
+        search_grounding: bool,
+    ) -> bool:
+        if not search_grounding:
+            return False
+        entry, _pool = self._registry.resolve_pool(model)
+        return (
+            entry is not None
+            and entry.provider == "gemini"
+            and entry.capabilities.supports_search_grounding
+        )
+
+    @staticmethod
+    def _openai_safe_tool_name(name: str) -> str:
+        """Return a provider-safe tool name for OpenAI-compatible gateways."""
+        if _OPENAI_TOOL_NAME_RE.fullmatch(name):
+            return name
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "__", name).strip("_")
+        return safe or "tool"
+
+    @classmethod
+    def _serialise_openai_tools(
+        cls,
+        tools: list[ToolDefinition] | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        serialised: list[dict[str, Any]] = []
+        name_map: dict[str, str] = {}
+        if not tools:
+            return serialised, name_map
+
+        used: set[str] = set()
+        for tool in tools:
+            payload = tool.model_dump()
+            original_name = tool.function.name
+            base_safe_name = cls._openai_safe_tool_name(original_name)
+            safe_name = base_safe_name
+            if safe_name in used:
+                suffix = 2
+                candidate = f"{base_safe_name}_{suffix}"
+                while candidate in used:
+                    suffix += 1
+                    candidate = f"{base_safe_name}_{suffix}"
+                safe_name = candidate
+            used.add(safe_name)
+            payload["function"]["name"] = safe_name
+            serialised.append(payload)
+            if safe_name != original_name:
+                name_map[safe_name] = original_name
+        return serialised, name_map
+
+    @staticmethod
+    def _restore_tool_call_names(resp: ChatResponse, name_map: dict[str, str]) -> ChatResponse:
+        if not name_map:
+            return resp
+        seen: set[int] = set()
+        all_tool_calls = [*resp.tool_calls, *(resp.message.tool_calls or [])]
+        for tool_call in all_tool_calls:
+            tool_call_id = id(tool_call)
+            if tool_call_id in seen:
+                continue
+            seen.add(tool_call_id)
+            original_name = name_map.get(tool_call.function.name)
+            if original_name:
+                tool_call.function.name = original_name
+        return resp
+
+    async def _call_default_chat_completions_api(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_tokens: int | None,
+        temperature: float,
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | dict[str, Any],
+        stream: bool,
+        _retry_counter_ref: list[int],
+        _max_retries: int | None,
+    ) -> ChatResponse:
+        """Call the configured OpenAI-compatible gateway directly.
+
+        This is used by ``LLM_BACKEND=litellm`` so model aliases registered in
+        LiteLLM are not intercepted by AIAT's legacy provider registry.
+        """
+        client = self._require_http()
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        serialised_tools, tool_name_map = self._serialise_openai_tools(tools)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if serialised_tools:
+            payload["tools"] = serialised_tools
+            payload["tool_choice"] = tool_choice
+        if stream:
+            payload["stream"] = True
+            payload["stream_options"] = {"include_usage": True}
+
+        last_exc: Exception | None = None
+        wait_s = self._config.retry_min_wait_s
+        max_retries = self._config.max_retries if _max_retries is None else _max_retries
+
+        for attempt in range(max_retries + 1):
+            try:
+                if stream:
+                    async with client.stream(
+                        "POST",
+                        "/v1/chat/completions",
+                        json=payload,
+                    ) as response:
+                        if response.status_code == 200:
+                            return self._restore_tool_call_names(
+                                await self._parse_stream_response(response),
+                                tool_name_map,
+                            )
+                        detail = (await response.aread()).decode("utf-8", errors="replace")
+                        if self._is_retryable_status(response.status_code):
+                            _retry_counter_ref[0] = attempt + 1
+                            if response.status_code == 429:
+                                self.rate_limits.record_rate_limit(model)
+                            last_exc = (
+                                LLMRateLimited(response.status_code, detail)
+                                if response.status_code == 429
+                                else LLMGatewayError(response.status_code, detail)
+                            )
+                            self._log_retry(response.status_code, attempt, max_retries, wait_s)
+                            if attempt < max_retries:
+                                await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                                wait_s *= 2
+                                continue
+                            break
+                        raise LLMGatewayError(response.status_code, detail)
+
+                response = await client.post("/v1/chat/completions", json=payload)
+            except httpx.TimeoutException as exc:
+                _retry_counter_ref[0] = attempt + 1
+                last_exc = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+            if response.status_code == 200:
+                return self._restore_tool_call_names(
+                    self._parse_response(response.json()),
+                    tool_name_map,
+                )
+
+            if self._is_retryable_status(response.status_code):
+                _retry_counter_ref[0] = attempt + 1
+                if response.status_code == 429:
+                    self.rate_limits.record_rate_limit(model)
+                last_exc = (
+                    LLMRateLimited(response.status_code, response.text)
+                    if response.status_code == 429
+                    else LLMGatewayError(response.status_code, response.text)
+                )
+                self._log_retry(response.status_code, attempt, max_retries, wait_s)
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+            raise LLMGatewayError(response.status_code, response.text)
+
+        raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
+    async def _stream_default_raw_sse(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str,
+        temperature: float,
+        max_tokens: int | None,
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | dict[str, Any],
+    ) -> AsyncIterator[str]:
+        """Stream raw SSE from the configured OpenAI-compatible gateway."""
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        serialised_tools, _tool_name_map = self._serialise_openai_tools(tools)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if serialised_tools:
+            payload["tools"] = serialised_tools
+            payload["tool_choice"] = tool_choice
+
+        http_client = self._require_http()
+        wait_s = self._config.retry_min_wait_s
+        max_retries = self._config.max_retries
+        last_exc: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with http_client.stream(
+                    "POST",
+                    "/v1/chat/completions",
+                    json=payload,
+                ) as response:
+                    if response.status_code == 200:
+                        async for raw_line in response.aiter_lines():
+                            if raw_line:
+                                yield raw_line + "\n\n"
+                        return
+                    detail = (await response.aread()).decode("utf-8", errors="replace")
+                    if self._is_retryable_status(response.status_code):
+                        last_exc = (
+                            LLMRateLimited(response.status_code, detail)
+                            if response.status_code == 429
+                            else LLMGatewayError(response.status_code, detail)
+                        )
+                        self._log_retry(response.status_code, attempt, max_retries, wait_s)
+                        if attempt < max_retries:
+                            await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                            wait_s *= 2
+                        continue
+                    raise LLMGatewayError(response.status_code, detail)
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
+                    wait_s *= 2
+                continue
+
+        raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
+
     # ------------------------------------------------------------------
     # Provider-aware HTTP client + endpoint resolution
     # ------------------------------------------------------------------
@@ -1341,10 +1640,7 @@ class LLMGatewayClient:
                     system_parts.append(text)
                 continue
 
-            if role == "assistant":
-                gemini_role = "model"
-            else:
-                gemini_role = "user"
+            gemini_role = "model" if role == "assistant" else "user"
 
             if role == "tool":
                 tool_name = msg.get("name") or "tool"
@@ -2014,6 +2310,8 @@ class LLMGatewayClient:
         chain: list[str] = []
         if model:
             chain.append(model)
+        elif self._uses_litellm_backend() and not (needs_search_grounding or search_grounding):
+            chain.append(self._config.default_model)
 
         ranked = selector.fallback_chain(
             task=task,
@@ -2152,6 +2450,8 @@ class LLMGatewayClient:
         needs_search_grounding: bool = False,
     ) -> str:
         """Return the best model ID (internal, no exclude support)."""
+        if self._uses_litellm_backend() and not needs_search_grounding:
+            return self._config.default_model
         return self.model_selector.pick(
             task=task,
             needs_tools=needs_tools,

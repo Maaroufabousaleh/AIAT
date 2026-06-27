@@ -184,7 +184,7 @@ The following **replace vs keep custom** table turns that into concrete implemen
 | Dashboard canvas | Existing dashboard shell | React Flow + Cytoscape + Mermaid | Rich editing and graph UX | Operator workflow, auth boundary, app IA | Low | Low | Extend current dashboard |
 | Secrets | Current custom credentials manager | Vault | Dynamic secrets, rotation, encryption/tokenization, audit | Which worker gets what, approval policy, masking rules | High | Low | Later-stage hardening |
 | Operator auth | Current local auth / custom tables | ZITADEL | MFA, SSO, B2B multi-tenancy, auditability | AIAT permission graph and company-specific access semantics | High | Low | Later-stage hardening |
-| Telemetry | Current developer monitoring + dashboard logs | Prometheus + Grafana, maybe VictoriaMetrics | Mature metrics visualization; scalable TSDB later | AIAT-specific audit/event semantics | Medium | Low | Keep hooks, improve backend |
+| Telemetry | Current developer monitoring + dashboard logs | LiteLLM UI + OmniRoute analytics; optional Prometheus-compatible platform metrics | LLM usage, cost, routing, provider health, and evaluations | AIAT-specific audit/event semantics and non-LLM service health | Medium | Low | Link the external analytics surfaces; keep platform metrics optional |
 | Object store | Current MinIO hot-path | Garage, later maybe SeaweedFS | Better distributed/redundant object patterns | Artifact semantics, lifecycle, retention, ACL mapping | Medium | Low | Keep current now |
 | Vector retrieval | Postgres-first knowledge model | Qdrant | Better ANN/hybrid retrieval at scale | AIAT project/context graph and policy | Medium | Low | Delay until needed |
 | Graph analytics | Org graph likely in app/data model | Neo4j | Advanced graph querying and analytics | AIAT company source-of-truth and edits | Medium | Low | Optional read-model only |
@@ -402,9 +402,9 @@ The essential test stack is:
 | Adapter conformance | process/http/mcp/oci adapters all round-trip the same canonical task/result shape | SDK conformance suite |
 | Security intake | secrets scans, code scans, unsafe tool requests, permission denials | TruffleHog + Semgrep + policy tests |
 | Sandbox controls | filesystem scope, blocked host access, egress rules, syscall restrictions | gVisor tests; optional Firecracker tests |
-| Observability | metrics labels, log completeness, trace correlation, cost accounting | Prometheus/Grafana or VictoriaMetrics-backed checks |
+| Observability | metrics labels, log completeness, trace correlation, cost accounting | LiteLLM/OmniRoute analytics plus AIAT API/Playwright checks; optional Prometheus-compatible checks |
 
-The open-source security tools fit very cleanly here: TruffleHog for exposed secrets and verified live credentials, Semgrep for code and policy quality, and gVisor or Firecracker for runtime containment. Prometheus and Grafana remain good defaults, but the uploaded audit is correct that high-cardinality labels can become a real scaling risk; if that becomes painful, VictoriaMetrics is a strong backend alternative. fileciteturn56file0 citeturn17view0turn17view1turn15view0turn15view1turn14view0turn13view2turn13view3
+The open-source security tools fit very cleanly here: TruffleHog for exposed secrets and verified live credentials, Semgrep for code and policy quality, and gVisor or Firecracker for runtime containment. LiteLLM and OmniRoute provide the default operator-facing LLM and routing analytics. AIAT keeps its own health, audit, DLQ, workflow, and tool telemetry, with Prometheus-compatible collection available only when broader platform time-series analysis is needed. fileciteturn56file0 citeturn17view0turn17view1turn15view0turn15view1turn14view0turn13view2turn13view3
 
 The phased roadmap below is the shortest safe path to a production-grade AIAT.
 

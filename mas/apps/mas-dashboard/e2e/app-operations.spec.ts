@@ -139,6 +139,14 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByRole("heading", { name: "Metrics" })).toBeVisible();
     await expect(page.getByText(/LLM Calls\/min by Model/i)).toBeVisible();
     await page.getByRole("button", { name: "15m" }).click();
+    await expect(page.getByRole("link", { name: "LiteLLM Analytics" })).toHaveAttribute(
+      "href",
+      "/analytics/litellm",
+    );
+    await expect(page.getByRole("link", { name: "OmniRoute Analytics" })).toHaveAttribute(
+      "href",
+      "/analytics/omniroute",
+    );
 
     await page.goto("/dlq");
     await expect(page.getByRole("heading", { name: "Dead Letter Queue" })).toBeVisible();

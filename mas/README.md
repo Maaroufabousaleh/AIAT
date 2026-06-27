@@ -24,8 +24,8 @@ work is validation and production hardening, tracked in
 - Centralized tool-service layer with grants, rate limiting, caching, audit, and
   circuit breakers.
 - Credentials manager and CEO privileged-operation audit/policy layer.
-- Prometheus/Grafana dev overlay, metrics endpoints, DLQ inspection, and system
-  visualization pages.
+- LiteLLM and OmniRoute analytics shortcuts, optional Prometheus platform
+  metrics, DLQ inspection, and system visualization pages.
 
 ## Repository Layout
 
@@ -113,7 +113,8 @@ Open the dashboard at `http://localhost:4000`.
 ## Development Mode
 
 The dev overlay exposes Redis, Postgres, MinIO, message-router, tool-service,
-Prometheus, Grafana, pgAdmin, and RedisInsight ports:
+LiteLLM, OmniRoute, optional Prometheus platform metrics, pgAdmin, and
+RedisInsight ports:
 
 ```bash
 docker compose \
@@ -134,8 +135,19 @@ Useful local URLs:
 | RedisInsight | `http://localhost:8003` |
 | pgAdmin | `http://localhost:5050` |
 | MinIO Console | `http://localhost:9001` |
-| Prometheus | `http://localhost:9090` |
-| Grafana | `http://localhost:3000` |
+| LiteLLM analytics | `http://localhost:4001/ui/` |
+| OmniRoute analytics | `http://localhost:20128/dashboard/analytics` |
+| Prometheus platform metrics (optional) | `http://localhost:9090` |
+
+The AIAT sidebar links to both analytics pages. For remote or reverse-proxied
+deployments, set `LITELLM_DASHBOARD_URL` and `OMNIROUTE_DASHBOARD_URL` to the
+browser-reachable URLs.
+
+The gateway path is AIAT -> LiteLLM -> OmniRoute -> provider. On `mas.sh up`,
+AIAT idempotently imports the configured legacy provider keys into OmniRoute,
+enables model/pricing synchronization, and starts 9Router and CLIProxyAPI.
+See [the OmniRoute gateway guide](docs/OMNIROUTE.md) for aliases, embedded
+service behavior, and the authentication handoff.
 
 ## Tests
 
@@ -165,12 +177,14 @@ MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live
 
 ## Runtime Shape
 
-Base compose defines 19 long-running services plus two one-shot init jobs:
+Base compose defines 17 long-running services plus two one-shot init jobs:
 
 - Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
-  orchestrator-api, message-router, tool-service, dashboard, and 7 team runners.
+  orchestrator-api, message-router, tool-service, dashboard, LiteLLM,
+  OmniRoute, and 7 team runners.
 - One-shot init jobs: Redis ACL init and MinIO bucket/user init.
-- Dev overlay adds pgAdmin, RedisInsight, Prometheus, and Grafana.
+- Dev overlay adds pgAdmin, RedisInsight, LiteLLM and OmniRoute host access,
+  plus optional Prometheus platform metrics. Grafana is not bundled.
 
 The dashboard is an authenticated server-side proxy. Browser code calls
 Next.js API routes, and those routes hold service credentials server-side.

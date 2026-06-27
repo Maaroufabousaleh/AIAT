@@ -51,9 +51,11 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Observe",
     items: [
-      { href: "/metrics", label: "Metrics",      icon: BarChart3 },
-      { href: "/dlq",     label: "Dead Letters", icon: Inbox },
-      { href: "/logs",    label: "Logs",         icon: ScrollText },
+      { href: "/analytics/litellm",   label: "LiteLLM Analytics", icon: BarChart3 },
+      { href: "/analytics/omniroute", label: "OmniRoute Analytics", icon: Network },
+      { href: "/metrics",             label: "Platform Metrics", icon: BarChart3 },
+      { href: "/dlq",                 label: "Dead Letters", icon: Inbox },
+      { href: "/logs",                label: "Logs", icon: ScrollText },
     ],
   },
   {
@@ -109,7 +111,11 @@ export default function Sidebar() {
             </div>
             <div className="space-y-0.5">
               {group.items.map(({ href, label, icon: Icon }) => {
-                const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+                const active = href.startsWith("/analytics/")
+                  ? pathname === href
+                  : href === "/"
+                    ? pathname === "/"
+                    : pathname.startsWith(href);
                 return (
                   <Link
                     key={href}

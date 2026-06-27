@@ -1,0 +1,72 @@
+model_list:
+  # AIAT-facing default aliases. Keep these stable so workers do not need to
+  # know which provider or router is currently serving a request.
+  - model_name: auto
+    litellm_params:
+      model: openai/auto
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: omniroute-auto
+    litellm_params:
+      model: openai/auto
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: omniroute-free
+    litellm_params:
+      model: openai/auto/cheap
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: omniroute-coding
+    litellm_params:
+      model: openai/auto/coding
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: omniroute-smart
+    litellm_params:
+      model: openai/auto/smart
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  # Legacy AIAT aliases now stay compatible while flowing through OmniRoute,
+  # so provider health, fallback, usage, and analytics remain centralized.
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/auto
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: gemma-3-27b-it
+    litellm_params:
+      model: openai/gemini/gemma-4-31b-it
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: openai/gemini/gemini-2.0-flash
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+  - model_name: llama-3.3-70b-versatile
+    litellm_params:
+      model: openai/groq/llama-3.3-70b-versatile
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+router_settings:
+  fallbacks:
+    - gpt-4o-mini: ["omniroute-smart", "omniroute-auto"]
+    - gemma-3-27b-it: ["omniroute-auto"]
+    - gemini-2.0-flash: ["omniroute-auto"]
+    - llama-3.3-70b-versatile: ["omniroute-coding", "omniroute-auto"]
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

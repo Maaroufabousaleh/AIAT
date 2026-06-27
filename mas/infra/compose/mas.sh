@@ -85,8 +85,19 @@ case "$CMD" in
     up)
         info "Starting all MAS containers..."
         docker compose $COMPOSE_FILES up -d "${@:2}"
+        if [ "${AIAT_OMNIROUTE_BOOTSTRAP:-true}" != "false" ]; then
+            info "Configuring OmniRoute providers and embedded services..."
+            if command -v python3 >/dev/null 2>&1; then
+                python3 "$COMPOSE_DIR/configure_omniroute.py" \
+                    || warn "OmniRoute configuration did not complete; see the message above."
+            else
+                warn "python3 is unavailable; skipping OmniRoute configuration."
+            fi
+        fi
         success "Containers started. Dashboard: http://localhost:4000"
-        success "API: http://localhost:8000  Metrics: http://localhost:9090"
+        success "LiteLLM analytics: http://localhost:4001/ui/"
+        success "OmniRoute analytics: http://localhost:20128/dashboard/analytics"
+        success "API: http://localhost:8000  Platform metrics: http://localhost:9090"
         ;;
 
     down)

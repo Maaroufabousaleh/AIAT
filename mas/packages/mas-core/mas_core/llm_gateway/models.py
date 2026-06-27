@@ -49,6 +49,14 @@ class LLMConfig(BaseSettings):
             "set to the appropriate token."
         ),
     )
+    backend: str = Field(
+        default="legacy",
+        description=(
+            "Gateway backend selector. 'legacy' uses AIAT's built-in provider "
+            "registry; 'litellm' sends normal chat-completions traffic to "
+            "LLM_GATEWAY_URL and reserves 'legacy:<model>' for rollback."
+        ),
+    )
     timeout_s: float = Field(
         default=120.0,
         ge=1.0,

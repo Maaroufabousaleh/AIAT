@@ -1,6 +1,7 @@
 # ── docker-compose.dev.yml ────────────────────────────────────────────────────
 # Development overlay: exposes Redis/Postgres ports, adds admin UIs,
-# adds Prometheus + Grafana (Phase 12), enables hot-reload for FastAPI services.
+# exposes LiteLLM/OmniRoute analytics, keeps Prometheus for optional platform
+# metrics, and enables hot-reload for FastAPI services.
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -74,27 +75,15 @@ services:
       start_period: 10s
       retries: 3
 
-  # ── Grafana (Phase 12) ────────────────────────────────────────────────────
-  grafana:
-    image: grafana/grafana-oss:10.4.0
-    restart: unless-stopped
-    networks:
-      - internal
-      - public
+  # Expose LLM gateway internals for local debugging.
+  # Dashboard already uses host port 4000, so LiteLLM uses 4001 on the host.
+  litellm:
     ports:
-      - "3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    mem_limit: 256m
-    cpus: "0.5"
+      - "4001:4000"
+
+  omniroute:
+    ports:
+      - "20128:20128"
 
   # Hot-reload overrides for FastAPI services
   orchestrator-api:
@@ -138,4 +127,3 @@ services:
 # ── Volumes (dev-only) ─────────────────────────────────────────────────────
 volumes:
   prometheus_data:
-  grafana_data:

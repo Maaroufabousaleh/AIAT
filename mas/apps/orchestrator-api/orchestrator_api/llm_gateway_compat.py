@@ -35,12 +35,15 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +128,27 @@ _AVAILABLE_MODELS = [
 async def list_models(authorization: str | None = Header(None)) -> dict[str, Any]:
     """Return the list of models available through the gateway."""
     _check_auth(authorization)
+    try:
+        from mas_core.llm_gateway.models import LLMConfig
+
+        config = LLMConfig()
+        if config.backend.strip().lower() == "litellm":
+            headers: dict[str, str] = {}
+            if config.api_key:
+                headers["Authorization"] = f"Bearer {config.api_key}"
+            async with httpx.AsyncClient(
+                base_url=config.gateway_url,
+                headers=headers,
+                timeout=min(config.timeout_s, 10.0),
+            ) as client:
+                response = await client.get("/v1/models")
+                response.raise_for_status()
+                data = response.json()
+                if isinstance(data, dict) and isinstance(data.get("data"), list):
+                    return data
+    except Exception:
+        logger.warning("Falling back to static model list", exc_info=True)
+
     return {
         "object": "list",
         "data": [

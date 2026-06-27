@@ -14,7 +14,7 @@
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
-#             LLM_GATEWAY_URL, LLM_API_KEY
+#             LLM_GATEWAY_URL, LLM_API_KEY, LITELLM_MASTER_KEY
 
 name: mas
 
@@ -32,6 +32,7 @@ x-team-env: &team-env
   MAS_API_KEY: "${MAS_API_KEY}"
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
+  LLM_BACKEND: "${LLM_BACKEND:-legacy}"
   LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
   LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -43,6 +44,9 @@ x-team-env: &team-env
   MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
   CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
   CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+  MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
+  NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+  OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
   OPENCODE_API_KEY: "${OPENCODE_API_KEY:-public}"
 
 # ── Shared team defaults ───────────────────────────────────────────────────
@@ -75,6 +79,7 @@ volumes:
   postgres_data:
   minio_data:
   worker_mirrors:
+  omniroute_data:
 
 # ── Services ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +142,7 @@ services:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - internal
     mem_limit: 512m
@@ -278,6 +284,7 @@ services:
       REDIS_USERNAME: "toolcache_user"
       REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
+      LLM_BACKEND: "${LLM_BACKEND:-legacy}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
       LOG_LEVEL: "INFO"
@@ -290,6 +297,80 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  # ── 7a. OmniRoute ─────────────────────────────────────────────────────────
+  # Internal OpenAI-compatible route optimizer used as an explicit LiteLLM
+  # fallback/free-tier route.
+  omniroute:
+    image: "${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    environment:
+      PORT: "20128"
+      OMNIROUTE_API_KEY: "${OMNIROUTE_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+      MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      PRICING_SYNC_ENABLED: "${PRICING_SYNC_ENABLED:-true}"
+      REQUEST_TIMEOUT_MS: "${OMNIROUTE_REQUEST_TIMEOUT_MS:-120000}"
+      NINEROUTER_PORT: "20130"
+      NINEROUTER_DISABLE_MITM: "true"
+      CLIPROXYAPI_PORT: "8317"
+      LOCAL_HOSTNAMES: "omniroute,litellm,host.docker.internal"
+    volumes:
+      - omniroute_data:/app/data
+      - ./cliproxyapi-compat-wrapper.sh:/opt/aiat/cliproxyapi-compat-wrapper.sh:ro
+      - ./repair-cliproxyapi.sh:/opt/aiat/repair-cliproxyapi.sh:ro
+    mem_limit: 512m
+    cpus: "0.5"
+
+  # ── 7b. LiteLLM Gateway ───────────────────────────────────────────────────
+  # Primary internal OpenAI-compatible LLM gateway. AIAT keeps its public /v1
+  # adapter stable and points outbound model calls here when LLM_BACKEND=litellm.
+  litellm:
+    image: "${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
+    restart: unless-stopped
+    networks:
+      - internal
+      - public
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    depends_on:
+      postgres:
+        condition: service_healthy
+      omniroute:
+        condition: service_started
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY}"
+      LITELLM_SALT_KEY: "${LITELLM_SALT_KEY:-}"
+      DATABASE_URL: "postgresql://mas_user:${POSTGRES_PASSWORD}@postgres:5432/litellm"
+      OMNIROUTE_API_KEY: "${OMNIROUTE_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+      MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    mem_limit: 768m
+    cpus: "0.75"
 
   # ── 7. Orchestrator API ─────────────────────────────────────────────────────
   orchestrator-api:
@@ -322,9 +403,12 @@ services:
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
       MAS_API_KEY: "${MAS_API_KEY}"
+      LLM_BACKEND: "${LLM_BACKEND:-legacy}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
+      LITELLM_MASTER_KEY: "${LITELLM_MASTER_KEY:-}"
+      OMNIROUTE_API_KEY: "${OMNIROUTE_API_KEY:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
@@ -332,6 +416,9 @@ services:
       MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
       CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
+      MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENCODE_API_KEY: "${OPENCODE_API_KEY:-public}"
       WORKER_MIRROR_DIR: "/data/worker-mirrors"
     volumes:
@@ -374,6 +461,8 @@ services:
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
       PROMETHEUS_URL: "http://prometheus:9090"
+      LITELLM_DASHBOARD_URL: "${LITELLM_DASHBOARD_URL:-http://localhost:4001/ui/}"
+      OMNIROUTE_DASHBOARD_URL: "${OMNIROUTE_DASHBOARD_URL:-http://localhost:20128/dashboard/analytics}"
       NODE_ENV: "production"
       PORT: "3000"
     volumes:

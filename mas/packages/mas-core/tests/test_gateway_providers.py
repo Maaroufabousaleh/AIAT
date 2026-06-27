@@ -23,20 +23,22 @@ from mas_core.llm_gateway.client import (
     LLMGatewayClient,
     LLMGatewayError,
 )
-from mas_core.llm_gateway.models import LLMConfig
-from mas_core.llm_gateway.providers.api.openrouter import (
-    OPENROUTER_CHAT_COMPLETIONS_ENDPOINT,
-    OPENROUTER_FREE_ROUTER_MODEL_ID,
-    OPENROUTER_FREE_ROUTER_WIRE_MODEL,
-    _register as register_openrouter_model,
-    ensure_free_openrouter_model,
-)
+from mas_core.llm_gateway.models import LLMConfig, ToolDefinition, ToolFunction
 from mas_core.llm_gateway.providers import (
     MODEL_REGISTRY,
     ApiStyle,
     ModelEntry,
     ModelRegistry,
     ProviderConfig,
+)
+from mas_core.llm_gateway.providers.api.openrouter import (
+    OPENROUTER_CHAT_COMPLETIONS_ENDPOINT,
+    OPENROUTER_FREE_ROUTER_MODEL_ID,
+    OPENROUTER_FREE_ROUTER_WIRE_MODEL,
+    ensure_free_openrouter_model,
+)
+from mas_core.llm_gateway.providers.api.openrouter import (
+    _register as register_openrouter_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -449,6 +451,215 @@ class TestChatCompletions:
         assert resp.text == "Spain won Euro 2024."
         assert resp.extra["grounding_metadata"] == {"sources": ["google-search"]}
         assert resp.usage.total_tokens == 13
+
+
+class TestLiteLLMBackend:
+    @pytest.mark.asyncio
+    async def test_litellm_backend_sends_registered_model_to_default_gateway(self):
+        reg = _make_registry()
+        config = _make_config(
+            backend="litellm",
+            gateway_url="http://litellm:4000",
+            api_key="litellm-key",
+        )
+        client = LLMGatewayClient(config, registry=reg)
+        captured: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            return _ok_chat_response("LiteLLM reply", "test-pickle")
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "hi"}],
+                    model="test-pickle",
+                )
+
+        assert resp.text == "LiteLLM reply"
+        assert captured["url"] == "/v1/chat/completions"
+        assert captured["json"]["model"] == "test-pickle"
+        assert client._provider_clients == {}
+
+    @pytest.mark.asyncio
+    async def test_litellm_backend_sanitizes_dotted_tool_names(self):
+        reg = _make_registry()
+        config = _make_config(
+            backend="litellm",
+            gateway_url="http://litellm:4000",
+            api_key="litellm-key",
+        )
+        client = LLMGatewayClient(config, registry=reg)
+        captured: dict[str, Any] = {}
+        tools = [
+            ToolDefinition(
+                function=ToolFunction(
+                    name="human.notify",
+                    description="Notify the operator.",
+                    parameters={"type": "object", "properties": {}},
+                )
+            ),
+            ToolDefinition(
+                function=ToolFunction(
+                    name="human__notify",
+                    description="Already-safe internal tool name.",
+                    parameters={"type": "object", "properties": {}},
+                )
+            )
+        ]
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": "chatcmpl-tool",
+                "model": "test-pickle",
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "human__notify",
+                                        "arguments": '{"message":"ok"}',
+                                    },
+                                },
+                                {
+                                    "id": "call_2",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "human__notify_2",
+                                        "arguments": '{"message":"safe"}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            }
+            return resp
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "notify me"}],
+                    model="test-pickle",
+                    tools=tools,
+                )
+
+        assert captured["url"] == "/v1/chat/completions"
+        assert captured["json"]["tools"][0]["function"]["name"] == "human__notify"
+        assert captured["json"]["tools"][1]["function"]["name"] == "human__notify_2"
+        assert len({t["function"]["name"] for t in captured["json"]["tools"]}) == 2
+        assert resp.tool_calls[0].function.name == "human.notify"
+        assert resp.tool_calls[1].function.name == "human__notify"
+        assert resp.message.tool_calls[0].function.name == "human.notify"
+        assert resp.message.tool_calls[1].function.name == "human__notify"
+
+    @pytest.mark.asyncio
+    async def test_litellm_backend_fallback_starts_with_configured_default_model(self):
+        reg = _make_registry()
+        config = _make_config(
+            backend="litellm",
+            gateway_url="http://litellm:4000",
+            api_key="litellm-key",
+            default_model="llama-3.3-70b-versatile",
+        )
+        client = LLMGatewayClient(config, registry=reg)
+        captured: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            return _ok_chat_response("Default model reply", "llama-3.3-70b-versatile")
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion_with_fallback(
+                    [{"role": "user", "content": "hi"}],
+                )
+
+        assert resp.text == "Default model reply"
+        assert captured["url"] == "/v1/chat/completions"
+        assert captured["json"]["model"] == "llama-3.3-70b-versatile"
+
+    @pytest.mark.asyncio
+    async def test_litellm_backend_legacy_prefix_uses_provider_registry(self):
+        reg = _make_registry()
+        config = _make_config(backend="litellm")
+        client = LLMGatewayClient(config, registry=reg)
+        captured: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            return _ok_chat_response("Legacy reply", "test-pickle")
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "hi"}],
+                    model="legacy:test-pickle",
+                )
+                assert "test_zen" in client._provider_clients
+
+        assert resp.text == "Legacy reply"
+        assert captured["url"] == "https://opencode.ai/zen/v1/chat/completions"
+        assert captured["json"]["model"] == "test-pickle"
+
+    @pytest.mark.asyncio
+    async def test_litellm_backend_preserves_native_gemini_search_grounding(self):
+        config = _make_config(backend="litellm", gateway_url="http://litellm:4000")
+        client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
+        captured: dict[str, Any] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs["json"]
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "responseId": "resp-grounded",
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "Grounded answer."}],
+                        },
+                        "finishReason": "STOP",
+                        "groundingMetadata": {"sources": ["google-search"]},
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 4,
+                    "candidatesTokenCount": 3,
+                    "totalTokenCount": 7,
+                },
+            }
+            return resp
+
+        with patch.object(httpx.AsyncClient, "post", new=mock_post):
+            async with client:
+                resp = await client.chat_completion(
+                    [{"role": "user", "content": "Find current context."}],
+                    model="gemma-4-31b-it",
+                    search_grounding=True,
+                )
+
+        assert captured["url"].endswith("/models/gemma-4-31b-it:generateContent")
+        assert captured["url"] != "/v1/chat/completions"
+        assert captured["json"]["tools"] == [{"google_search": {}}]
+        assert resp.text == "Grounded answer."
+        assert resp.extra["grounding_metadata"] == {"sources": ["google-search"]}
 
 
 # ===========================================================================
