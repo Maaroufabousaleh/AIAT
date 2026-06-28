@@ -1,0 +1,25 @@
+metadata:
+  id: human_approval_gate
+  name: Human Approval Gate
+  version: "1.0"
+  description: Guarded human approval gate for hiring-board and privileged-action decisions.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, exec_ceo]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: human
+  adapter_config:
+    entrypoint: WorkerAgent
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: approval.human_gate
+    description: Prepare and track human approval requests with audit-ready decision context.
+    required_tools: [human.notify, human.await_decision, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-deny-all

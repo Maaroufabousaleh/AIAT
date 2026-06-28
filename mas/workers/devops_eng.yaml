@@ -1,0 +1,29 @@
+metadata:
+  id: devops_eng
+  name: DevOps Engineer
+  version: "1.0"
+  description: DevOps worker using OpenTofu and GitHub Actions; Ansible is optional external user-installed tooling only.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_devops]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    default_iac: opentofu
+    default_ci: github_actions
+    optional_external_adapters: [ansible]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: devops.implement
+    description: Prepare infrastructure and CI/CD changes using OpenTofu and GitHub Actions adapters.
+    required_tools: [file_read, file_write, web_search, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

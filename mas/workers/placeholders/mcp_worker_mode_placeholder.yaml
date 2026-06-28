@@ -1,0 +1,27 @@
+metadata:
+  id: mcp_worker_mode_placeholder
+  name: MCP Worker Mode Placeholder
+  version: "0.1"
+  description: Placeholder manifest for a future MCP-transport worker mode; not seeded by default.
+  source_repo: local
+  source_revision: placeholder
+  tags: [placeholder, mcp, protocol]
+  update_policy: manual
+  evaluation_status: pending
+runtime:
+  transport: mcp
+  adapter_config:
+    entrypoint: WorkerAgent
+    protocol: mcp
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: protocol.mcp_worker_placeholder
+    description: Placeholder capability for future MCP worker protocol validation.
+    required_tools: [capability.search, capability.list_workers, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

@@ -114,8 +114,12 @@ class Settings(BaseSettings):
             "office_chrm",
             "office_cso",
             "office_cto",
+            "dept_production",
+            "dept_system",
+            "dept_qa",
+            "dept_devops",
         ],
-        description="All 7 executive/C-suite team IDs. Consumer groups are pre-created for these on startup.",
+        description="All default AIAT team IDs. Consumer groups are pre-created for these on startup.",
     )
 
     # ── Orchestrator stream ────────────────────────────────────────────────────

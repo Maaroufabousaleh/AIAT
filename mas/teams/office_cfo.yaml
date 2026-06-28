@@ -16,15 +16,17 @@ admin:
     max_tool_calls: 15
     max_cost_usd: 1.00
   tools:
-    - kpi.compute
-    - kpi.query_history
+    - document.get_latest
+    - document.list
+    - review.submit
     - web_search
+    - web_fetch
 
 workers:
-  - agent_id: cost_estimator
+  - agent_id: financial_analyst
     role: worker
     class: WorkerAgent
-    display_name: "Cost Estimator"
+    display_name: "Financial Analyst"
     min_instances: 0
     max_instances: 1
     budget_defaults:
@@ -33,5 +35,22 @@ workers:
       max_cost_usd: 0.50
     tools:
       - kpi.compute
+      - kpi.query_history
+      - web_search
+      - blob.upload
+
+  - agent_id: budget_evaluator
+    role: worker
+    class: WorkerAgent
+    display_name: "Budget Evaluator"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - kpi.compute
+      - kpi.query_history
       - web_search
       - blob.upload

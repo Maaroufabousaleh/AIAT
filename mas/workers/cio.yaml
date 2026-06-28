@@ -2,7 +2,7 @@ metadata:
   id: cio
   name: Chief Information Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for cio
+  description: AIAT information and integration governance shell for stack feasibility, tool boundaries, and adapter oversight.
   source_repo: local
   source_revision: working-tree
   tags:

@@ -123,18 +123,18 @@ STATE_TO_TEAM = {
     "INIT": "exec_ceo",
     "FEASIBILITY_CHECK": "exec_coo",
     "FEASIBILITY_REPORT": "exec_ceo",
-    "PDR_CREATION": "office_cto",
+    "PDR_CREATION": "dept_production",
     "PDR_REVIEW": "exec_coo",
     "SECURITY_BLOCKED": "office_cso",
-    "CDR_CREATION": "office_cto",
+    "CDR_CREATION": "dept_system",
     "CDR_REVIEW": "exec_coo",
     "HUMAN_APPROVAL": "exec_ceo",
-    "RR_CREATION": "office_cto",
+    "RR_CREATION": "dept_production",
     "SPRINT_PLANNING": "exec_coo",
-    "INFRA_PROVISIONING": "office_cto",
+    "INFRA_PROVISIONING": "dept_devops",
     "IN_PROGRESS": "exec_coo",
     "RETROSPECTIVE": "exec_coo",
-    "KPI_PERSISTENCE": "office_cfo",
+    "KPI_PERSISTENCE": "office_cto",
 }
 
 
@@ -200,7 +200,73 @@ def _graph_id(prefix: str, value: Any) -> str:
     return f"{prefix}_{str(value).replace('-', '_').replace('.', '_').replace(':', '_')}"
 
 
-DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = []
+DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
+    {
+        "id": "docling_ingestion",
+        "name": "Docling document ingestion",
+        "bucket": "document/spec stack",
+        "target": "Docling-backed large-document extraction via artifact references",
+        "owner_department": "dept_production",
+        "match_tokens": ["docling", "document.ingest.docling", "docling_ingestion"],
+        "status_when_present": "placeholder_ready",
+        "status_when_missing": "blocked",
+        "required_gates": [
+            "adapter contract",
+            "license/provenance approval",
+            "gVisor sandbox profile",
+            "artifact reference output contract",
+        ],
+        "blocked_reason": "Docling ingestion is blocked until a certified worker is approved.",
+    },
+    {
+        "id": "github_rest",
+        "name": "GitHub REST metadata",
+        "bucket": "protocol/integration",
+        "target": "Repository metadata read adapter using named credentials",
+        "owner_department": "office_cio",
+        "match_tokens": ["github", "github_rest", "api.github.com"],
+        "status_when_present": "intake_visible",
+        "status_when_missing": "intake_visible",
+        "required_gates": [
+            "named credential reference",
+            "server-side credential resolution",
+            "approval gate for write actions",
+        ],
+        "blocked_reason": None,
+    },
+    {
+        "id": "defensive_scanners",
+        "name": "Defensive scanners",
+        "bucket": "security evaluator",
+        "target": "Semgrep/SkillSpector default checks with optional scanner visibility",
+        "owner_department": "office_cso",
+        "match_tokens": ["semgrep", "skillspector", "defensive_scanners"],
+        "status_when_present": "wired_optional",
+        "status_when_missing": "wired_optional",
+        "required_gates": [
+            "skipped-tool reporting",
+            "sandboxed execution",
+            "license/provenance approval",
+        ],
+        "blocked_reason": None,
+    },
+    {
+        "id": "n8n_edge_automation",
+        "name": "n8n edge automation",
+        "bucket": "optional personal stack",
+        "target": "HTTPS webhook edge adapter only; never AIAT workflow authority",
+        "owner_department": "dept_devops",
+        "match_tokens": ["n8n", "edge_automation", "webhook"],
+        "status_when_present": "deferred",
+        "status_when_missing": "deferred",
+        "required_gates": [
+            "edge-only policy",
+            "named credential reference",
+            "no control-plane authority",
+        ],
+        "blocked_reason": "Deferred to optional external integration; not shipped as default.",
+    },
+]
 
 
 GITHUB_REPO_RE = re.compile(
@@ -226,11 +292,13 @@ def _slugify_worker_name(value: str) -> str:
 def _department_for_hiring_text(text: str) -> str:
     lowered = text.lower()
     if any(token in lowered for token in ("qa", "quality", "test", "tester")):
-        return "office_cto"
+        return "dept_qa"
     if any(token in lowered for token in ("security", "cso", "secure")):
         return "office_cso"
     if any(token in lowered for token in ("devops", "infra", "sre", "platform")):
-        return "office_cio"
+        return "dept_devops"
+    if any(token in lowered for token in ("software", "engineer", "developer", "coding", "code")):
+        return "dept_production"
     if any(token in lowered for token in ("budget", "cost", "finance", "financial")):
         return "office_cfo"
     if any(token in lowered for token in ("hr", "hiring", "people", "resource")):
@@ -364,7 +432,7 @@ def _delta_worker_refs(workers: list[dict[str, Any]], tokens: list[str]) -> list
 
 def _scanner_visibility() -> dict[str, Any]:
     scanners = {}
-    for tool_name in ("trufflehog", "semgrep"):
+    for tool_name in ("semgrep", "trufflehog"):
         binary = shutil.which(tool_name)
         scanners[tool_name] = {
             "available": binary is not None,
@@ -2180,8 +2248,10 @@ async def get_task(task_id: UUID) -> dict[str, Any]:
 
 @app.get("/teams")
 async def list_teams() -> list[dict[str, str]]:
-    """List known team IDs (from state→team mapping)."""
-    teams = sorted(set(STATE_TO_TEAM.values()))
+    """List all known default AIAT team IDs from the policy registry."""
+    from mas_core.policy.rules import TEAM_TIERS
+
+    teams = sorted(TEAM_TIERS)
     return [{"team_id": t} for t in teams]
 
 
@@ -2226,7 +2296,9 @@ async def system_shutdown() -> dict[str, Any]:
     await storage.set_config("system_state", "SHUTTING_DOWN")
 
     # G1 fix: use MessageType.SHUTDOWN, not SYSTEM_EVENT
-    all_teams = sorted(set(STATE_TO_TEAM.values()))
+    from mas_core.policy.rules import TEAM_TIERS
+
+    all_teams = sorted(TEAM_TIERS)
     envelope = {
         "message_id": str(uuid4()),
         "msg_type": MessageType.SHUTDOWN.value,
@@ -2394,6 +2466,10 @@ async def seed_default_company() -> dict[str, Any]:
         {"id": "office_chrm", "name": "CHRM Office"},
         {"id": "office_cso", "name": "CSO Office"},
         {"id": "office_cto", "name": "CTO Office"},
+        {"id": "dept_production", "name": "Production"},
+        {"id": "dept_system", "name": "System"},
+        {"id": "dept_qa", "name": "Quality Assurance"},
+        {"id": "dept_devops", "name": "DevOps"},
     ]
     sample_project_template = None
 
@@ -4983,7 +5059,7 @@ async def _handle_ceo_readiness_intent(instruction: str) -> dict[str, Any] | Non
             ),
             "trace": ["parsed_runtime_readiness_intent", "read_runtime_policy"],
         }
-    if any(token in lowered for token in ("integration", "docling", "github", "semgrep", "trufflehog", "n8n")):
+    if any(token in lowered for token in ("integration", "docling", "github", "semgrep", "n8n")):
         integrations = await get_delta_integration_readiness()
         return {
             "type": "integration_readiness",
@@ -5036,7 +5112,6 @@ def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
             "docling",
             "github",
             "semgrep",
-            "trufflehog",
             "n8n",
         )
     ):

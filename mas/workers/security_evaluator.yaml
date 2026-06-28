@@ -1,0 +1,28 @@
+metadata:
+  id: security_evaluator
+  name: Security Evaluator
+  version: "1.0"
+  description: Default security evaluator using Semgrep CLI and SkillSpector without TruffleHog as a shipped default.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cso]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    default_tools: [semgrep, skillspector]
+    excluded_default_tools: [trufflehog]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: security.evaluate_candidate
+    description: Evaluate candidate code or worker packages with Semgrep/SkillSpector and sandbox evidence.
+    required_tools: [file_read, web_search, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

@@ -31,4 +31,18 @@ admin:
     - review.aggregate
     - approval.override_cso
 
-workers: []    # CEO operates alone; no worker agents in this team
+workers:
+  - agent_id: human_approval_gate
+    role: orchestrator
+    class: WorkerAgent
+    display_name: "Human Approval Gate"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 10
+      max_tool_calls: 10
+      max_cost_usd: 0.20
+    tools:
+      - human.notify
+      - human.await_decision
+      - blob.upload

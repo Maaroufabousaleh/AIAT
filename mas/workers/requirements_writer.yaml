@@ -1,0 +1,29 @@
+metadata:
+  id: requirements_writer
+  name: Requirements Writer
+  version: "1.0"
+  description: Production worker for PDR/CDR-ready requirements using Docling, GitHub Spec Kit, and LangGraph/CrewAI.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_production]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+    document_stack: [docling, github-spec-kit]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+allowed_inner_runtimes: [crewai]
+capabilities:
+  - name: docs.requirements_write
+    description: Draft and revise requirements/spec documents with acceptance criteria and traceability.
+    required_tools: [document.get_latest, document.list, web_search, web_fetch, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

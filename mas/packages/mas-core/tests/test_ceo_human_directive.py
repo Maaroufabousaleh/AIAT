@@ -78,7 +78,7 @@ class FakeCeo:
                         "capabilities": ["code.generate"],
                     },
                     {
-                        "worker_id": "tester_1",
+                        "worker_id": "tester",
                         "name": "Tester",
                         "status": "ACTIVE",
                         "capabilities": ["test.run"],
@@ -91,7 +91,7 @@ class FakeCeo:
                 "count": 1,
                 "workers": [
                     {
-                        "worker_id": "tester_1",
+                        "worker_id": "tester",
                         "name": "Tester",
                         "status": "ACTIVE",
                     }

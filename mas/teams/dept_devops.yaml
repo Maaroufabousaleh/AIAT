@@ -1,0 +1,62 @@
+# ── dept_devops — DevOps department ───────────────────────────────────────────
+# MAS role: admin
+# Infrastructure, CI/CD, monitoring, and SRE health checks.
+
+team_id: dept_devops
+
+admin:
+  agent_id: devops_pm
+  role: admin
+  class: AdminAgent
+  display_name: "DevOps PM"
+  system_prompt_file: prompts/devops_pm.md
+  budget_defaults:
+    max_llm_calls: 60
+    max_tool_calls: 60
+    max_cost_usd: 1.50
+  tools:
+    - document.get_latest
+    - document.list
+    - issue.update_status
+    - capability.search
+    - capability.list_workers
+    - infra.provision
+    - cicd.configure
+    - monitoring.setup
+    - secrets.manage
+    - infra.ready_signal
+    - blob.upload
+
+workers:
+  - agent_id: devops_eng
+    role: worker
+    class: WorkerAgent
+    display_name: "DevOps Engineer"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 20
+      max_cost_usd: 0.75
+    tools:
+      - file_read
+      - file_write
+      - web_search
+      - blob.upload
+
+  - agent_id: sre_agent
+    role: worker
+    class: WorkerAgent
+    display_name: "SRE Agent"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 20
+      max_cost_usd: 0.75
+    tools:
+      - web_search
+      - web_fetch
+      - browser_navigate
+      - browser_screenshot
+      - blob.upload

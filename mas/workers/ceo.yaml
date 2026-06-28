@@ -2,7 +2,7 @@ metadata:
   id: ceo
   name: Chief Executive Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for ceo
+  description: AIAT top-level orchestrator for human directives, project lifecycle control, approvals, and audited CSO overrides.
   source_repo: local
   source_revision: working-tree
   tags:

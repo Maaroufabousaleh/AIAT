@@ -1472,7 +1472,6 @@ class TestRegistryCompleteness:
             "cloudflare",
             "openrouter",
             "zen",
-            "minimax",
             "nvidia",
             "copilot",
         ):

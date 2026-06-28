@@ -26,10 +26,10 @@ admin:
     - estimation.adjust
 
 workers:
-  - agent_id: tester_1
+  - agent_id: sprint_planner
     role: worker
     class: WorkerAgent
-    display_name: "Tester"
+    display_name: "Sprint Planner"
     min_instances: 0
     max_instances: 1
     budget_defaults:
@@ -37,7 +37,22 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - file_read
       - capability.search
-      - web_search
+      - capability.list_workers
+      - kpi.query_history
+      - blob.upload
+
+  - agent_id: kpi_analyst
+    role: worker
+    class: WorkerAgent
+    display_name: "KPI Analyst"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - kpi.compute
+      - kpi.query_history
       - blob.upload

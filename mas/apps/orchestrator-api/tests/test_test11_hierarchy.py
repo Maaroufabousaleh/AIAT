@@ -40,7 +40,7 @@ def _patch(storage):
     app.state.storage = storage
 
 
-# Teams that appear in STATE_TO_TEAM (i.e., actually returned by /teams endpoint)
+# Teams that appear in STATE_TO_TEAM.
 TEAMS_IN_STATE_MACHINE = {
     "exec_ceo",
     "exec_coo",
@@ -87,20 +87,14 @@ EXPECTED_ROLES = {
 
 @pytest.mark.anyio
 async def test_get_teams_returns_all_teams(client):
-    """GET /teams returns teams referenced in the state machine (STATE_TO_TEAM).
-
-    NOTE: /teams only returns teams used in workflow states, not all 11 MAS teams.
-    Production gap: teams not in the state machine (e.g. dept_production, dept_qa)
-    are NOT returned. A full team registry would require a separate data source.
-    """
+    """GET /teams returns all teams from the default policy registry."""
     r = await client.get("/teams")
     assert r.status_code == 200
     teams = r.json()
     assert isinstance(teams, list)
     team_ids = {t["team_id"] for t in teams}
-    # All state-machine teams must be present
-    missing = TEAMS_IN_STATE_MACHINE - team_ids
-    assert not missing, f"State-machine teams missing from /teams response: {sorted(missing)}"
+    missing = EXPECTED_TEAM_IDS - team_ids
+    assert not missing, f"Default teams missing from /teams response: {sorted(missing)}"
 
 
 @pytest.mark.anyio
@@ -136,17 +130,12 @@ async def test_get_teams_roles_match_policy(client):
 
 @pytest.mark.anyio
 async def test_get_teams_exactly_eleven(client):
-    """The /teams endpoint returns 6 state-machine teams (production gap: not all 11).
-
-    The full 11-team registry exists in policy/rules.py TEAM_TIERS but
-    /teams only exposes teams referenced in STATE_TO_TEAM.
-    """
+    """The /teams endpoint returns the full 11-team default registry."""
     r = await client.get("/teams")
     assert r.status_code == 200
     teams = r.json()
-    # Currently returns 6 (state-machine teams only)
-    assert len(teams) == len(TEAMS_IN_STATE_MACHINE), (
-        f"Expected {len(TEAMS_IN_STATE_MACHINE)} state-machine teams, got {len(teams)}"
+    assert len(teams) == len(EXPECTED_TEAM_IDS), (
+        f"Expected {len(EXPECTED_TEAM_IDS)} default teams, got {len(teams)}"
     )
 
 

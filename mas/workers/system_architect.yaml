@@ -1,0 +1,29 @@
+metadata:
+  id: system_architect
+  name: System Architect
+  version: "1.0"
+  description: System worker for architecture design with LangGraph/CrewAI and Mermaid export tools.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_system]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: crewai
+    diagram_stack: [mermaid]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: crewai
+runtime_tier: crewai
+allowed_inner_runtimes: [langgraph]
+capabilities:
+  - name: system.architecture_design
+    description: Produce system architecture, interfaces, constraints, and Mermaid diagrams.
+    required_tools: [document.get_latest, document.list, web_search, web_fetch, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

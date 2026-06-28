@@ -2,7 +2,7 @@ metadata:
   id: cso
   name: Chief Security Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for cso
+  description: AIAT security governance shell with review authority, veto power, and license/provenance safety oversight.
   source_repo: local
   source_revision: working-tree
   tags:

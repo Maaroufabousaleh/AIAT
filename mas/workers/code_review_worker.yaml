@@ -1,0 +1,30 @@
+metadata:
+  id: code_review_worker
+  name: Code Review Worker
+  version: "1.0"
+  description: QA worker for PR/code review using pinned OSS review adapters.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_qa]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    review_adapters:
+      - qodo-ai/pr-agent
+      - open-code-review
+      - stage-cli
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: qa.code_review
+    description: Review pull requests and code changes for defects, tests, and maintainability.
+    required_tools: [file_read, web_search, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

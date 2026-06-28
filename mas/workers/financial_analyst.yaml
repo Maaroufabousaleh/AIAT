@@ -1,0 +1,27 @@
+metadata:
+  id: financial_analyst
+  name: Financial Analyst
+  version: "1.0"
+  description: LangGraph-backed CFO worker for cost, KPI, and budget-history analysis.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cfo]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: finance.kpi_analysis
+    description: Analyze cost, KPI, and budget history for CFO review.
+    required_tools: [kpi.compute, kpi.query_history, web_search, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

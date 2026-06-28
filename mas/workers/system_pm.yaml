@@ -1,0 +1,29 @@
+metadata:
+  id: system_pm
+  name: System PM
+  version: "1.0"
+  description: Default AIAT system department manager for architecture, design, and technical documentation work.
+  source_repo: local
+  source_revision: working-tree
+  tags: [admin, dept_system]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+integration:
+  adapter_entrypoint: AdminAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: system.design_plan
+    description: Coordinate architecture and solution-design tasks.
+    required_tools: [document.create_draft, document.submit, capability.search, capability.list_workers, blob.upload]
+  - name: system.documentation_route
+    description: Route architecture documentation and Mermaid/export work.
+    required_tools: [document.get_latest, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

@@ -1,0 +1,29 @@
+metadata:
+  id: production_pm
+  name: Production PM
+  version: "1.0"
+  description: Default AIAT production department manager for requirements, planning, cost, and research work.
+  source_repo: local
+  source_revision: working-tree
+  tags: [admin, dept_production]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+integration:
+  adapter_entrypoint: AdminAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: production.plan
+    description: Coordinate production planning and requirements work.
+    required_tools: [document.create_draft, document.submit, capability.search, capability.list_workers, blob.upload]
+  - name: production.research_route
+    description: Route research and document-fetch subtasks to approved workers.
+    required_tools: [web_search, web_fetch, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

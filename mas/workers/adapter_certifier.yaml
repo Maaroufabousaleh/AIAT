@@ -1,0 +1,27 @@
+metadata:
+  id: adapter_certifier
+  name: Adapter Certifier
+  version: "1.0"
+  description: Hiring-board certifier for AIAT adapter manifests and wrapper compatibility.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cio]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: hiring.adapter_certify
+    description: Certify adapter-backed workers against AIAT manifest, transport, and isolation requirements.
+    required_tools: [capability.search, capability.list_workers, file_read, web_search, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

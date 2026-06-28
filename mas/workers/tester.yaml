@@ -1,0 +1,27 @@
+metadata:
+  id: tester
+  name: Tester
+  version: "1.0"
+  description: QA worker for Playwright, pytest, OpenCode, and OpenHands-core test execution.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_qa]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    coding_stack: [opencode, openhands-core, playwright, pytest]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: qa.test_execute
+    description: Execute focused tests, browser checks, and verification commands.
+    required_tools: [file_read, file_write, browser_navigate, browser_screenshot, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

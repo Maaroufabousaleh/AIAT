@@ -1,0 +1,22 @@
+[Unit]
+Description=MAS team-dept-devops Service
+After=network.target local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/mas
+EnvironmentFile=-/opt/mas/.env
+ExecStart=/usr/local/bin/masctl team-dept-devops start
+ExecStop=/usr/local/bin/masctl team-dept-devops stop
+ExecReload=/usr/local/bin/masctl team-dept-devops restart
+Restart=unless-stopped
+RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+MemoryLimit=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

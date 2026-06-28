@@ -1,0 +1,27 @@
+metadata:
+  id: budget_evaluator
+  name: Budget Evaluator
+  version: "1.0"
+  description: Hiring-board budget and cost evaluator for worker adoption decisions.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cfo]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: hiring.budget_evaluate
+    description: Evaluate cost posture, expected usage, and budget risk for candidate workers or tools.
+    required_tools: [kpi.compute, kpi.query_history, web_search, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

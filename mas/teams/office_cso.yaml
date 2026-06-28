@@ -28,7 +28,7 @@ admin:
     - review.submit_veto
 
 workers:
-  - agent_id: security_analyst_1
+  - agent_id: security_analyst
     role: worker
     class: WorkerAgent
     display_name: "Security Analyst"
@@ -39,4 +39,66 @@ workers:
       max_tool_calls: 10
       max_cost_usd: 0.50
     tools:
-      - review.submit
+      - file_read
+      - web_search
+      - blob.upload
+
+  - agent_id: security_evaluator
+    role: worker
+    class: WorkerAgent
+    display_name: "Security Evaluator"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.50
+    tools:
+      - file_read
+      - web_search
+      - blob.upload
+
+  - agent_id: sandbox_evaluator
+    role: worker
+    class: WorkerAgent
+    display_name: "Sandbox Evaluator"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.50
+    tools:
+      - file_read
+      - web_search
+      - blob.upload
+
+  - agent_id: license_provenance_evaluator
+    role: worker
+    class: WorkerAgent
+    display_name: "License Provenance Evaluator"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.50
+    tools:
+      - file_read
+      - web_search
+      - blob.upload
+
+  - agent_id: policy_grant_reviewer
+    role: worker
+    class: WorkerAgent
+    display_name: "Policy Grant Reviewer"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.40
+    tools:
+      - capability.search
+      - capability.list_workers
+      - blob.upload

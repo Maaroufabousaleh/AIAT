@@ -2,7 +2,7 @@ metadata:
   id: coo
   name: Chief Operating Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for coo
+  description: AIAT executive coordinator for department tasking, document review sessions, project status, and operational handoffs.
   source_repo: local
   source_revision: working-tree
   tags:

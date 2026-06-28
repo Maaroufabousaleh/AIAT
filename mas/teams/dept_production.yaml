@@ -1,0 +1,93 @@
+# ── dept_production — Production department ───────────────────────────────────
+# MAS role: admin
+# Requirements, planning, cost estimation, and research/document fetch work.
+
+team_id: dept_production
+
+admin:
+  agent_id: production_pm
+  role: admin
+  class: AdminAgent
+  display_name: "Production PM"
+  system_prompt_file: prompts/production_pm.md
+  budget_defaults:
+    max_llm_calls: 60
+    max_tool_calls: 40
+    max_cost_usd: 1.50
+  tools:
+    - document.create_draft
+    - document.submit
+    - document.revise
+    - document.get_latest
+    - document.list
+    - capability.search
+    - capability.list_workers
+    - blob.upload
+    - blob.download
+
+workers:
+  - agent_id: requirements_writer
+    role: worker
+    class: WorkerAgent
+    display_name: "Requirements Writer"
+    min_instances: 0
+    max_instances: 2
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 15
+      max_cost_usd: 0.60
+    tools:
+      - document.get_latest
+      - document.list
+      - web_search
+      - web_fetch
+      - blob.upload
+
+  - agent_id: planner
+    role: worker
+    class: WorkerAgent
+    display_name: "Planner"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 25
+      max_tool_calls: 15
+      max_cost_usd: 0.60
+    tools:
+      - document.get_latest
+      - document.list
+      - capability.search
+      - capability.list_workers
+      - blob.upload
+
+  - agent_id: cost_estimator
+    role: worker
+    class: WorkerAgent
+    display_name: "Cost Estimator"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 10
+      max_cost_usd: 0.50
+    tools:
+      - kpi.compute
+      - kpi.query_history
+      - web_search
+      - blob.upload
+
+  - agent_id: research_worker
+    role: worker
+    class: WorkerAgent
+    display_name: "Research Worker"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 20
+      max_cost_usd: 0.50
+    tools:
+      - web_search
+      - web_fetch
+      - document.get_latest
+      - blob.upload

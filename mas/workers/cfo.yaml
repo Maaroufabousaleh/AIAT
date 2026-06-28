@@ -2,7 +2,7 @@ metadata:
   id: cfo
   name: Chief Financial Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for cfo
+  description: AIAT finance governance shell for budget review, cost-risk decisions, and routing detailed KPI analysis to finance workers.
   source_repo: local
   source_revision: working-tree
   tags:
@@ -18,24 +18,22 @@ runtime:
   timeout_seconds: 300
   stop_grace_seconds: 60
 capabilities:
-- name: kpi.compute
+- name: finance.review
   version: '1.0'
-  description: Compute KPI snapshot.
+  description: Review financial feasibility, budget posture, and cost evidence for executive decision points.
   risk_level: low
   required_tools:
-  - kpi.compute
-- name: kpi.query_history
+  - document.get_latest
+  - document.list
+  - web_search
+  - review.submit
+- name: finance.research
   version: '1.0'
-  description: Query KPI history.
-  risk_level: low
-  required_tools:
-  - kpi.query_history
-- name: web_search
-  version: '1.0'
-  description: Search the web.
+  description: Gather external pricing, benchmark, and commercial-risk context for finance review.
   risk_level: low
   required_tools:
   - web_search
+  - web_fetch
 sandbox:
   profile: restricted
   filesystem: {}

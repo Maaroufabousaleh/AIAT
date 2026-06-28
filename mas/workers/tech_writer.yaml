@@ -1,0 +1,29 @@
+metadata:
+  id: tech_writer
+  name: Technical Writer
+  version: "1.0"
+  description: System worker for technical documentation with Docling, Mermaid, and LangGraph/CrewAI.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_system]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+    document_stack: [docling, mermaid]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+allowed_inner_runtimes: [crewai]
+capabilities:
+  - name: docs.technical_write
+    description: Draft technical docs, architecture notes, and Mermaid-backed design artifacts.
+    required_tools: [document.get_latest, document.list, web_search, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

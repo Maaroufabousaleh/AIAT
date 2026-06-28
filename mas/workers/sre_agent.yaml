@@ -1,0 +1,28 @@
+metadata:
+  id: sre_agent
+  name: SRE Agent
+  version: "1.0"
+  description: DevOps SRE worker for LiteLLM/OmniRoute analytics, Playwright/API checks, and optional Prometheus-compatible metrics.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_devops]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    monitoring_stack: [litellm-ui, omniroute-analytics, playwright-api-checks]
+    optional_metrics: prometheus-compatible
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: sre.health_check
+    description: Run health checks and summarize routing/LLM observability signals.
+    required_tools: [web_fetch, browser_navigate, browser_screenshot, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

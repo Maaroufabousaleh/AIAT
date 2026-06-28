@@ -1,0 +1,28 @@
+metadata:
+  id: research_worker
+  name: Research Worker
+  version: "1.0"
+  description: Guarded research/browser-fetch worker using Scrapling-style fetch by default; browser-use only under sandbox limits.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_production]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    default_fetch_adapter: scrapling
+    browser_use_mode: sandboxed
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: research.fetch
+    description: Fetch and summarize web or document sources with network/action limits.
+    required_tools: [web_search, web_fetch, document.get_latest, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

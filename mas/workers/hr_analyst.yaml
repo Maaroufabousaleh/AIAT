@@ -1,0 +1,27 @@
+metadata:
+  id: hr_analyst
+  name: HR Analyst
+  version: "1.0"
+  description: CHRM worker for capacity, staffing, worker registry, and utilization analysis.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_chrm]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: workforce.capacity_analysis
+    description: Analyze worker registry, skill coverage, and KPI history for workforce planning.
+    required_tools: [capability.list_workers, capability.search, kpi.query_history, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

@@ -1,0 +1,26 @@
+metadata:
+  id: hiring_agent
+  name: Hiring Agent
+  version: "1.0"
+  description: Hiring-board coordinator for candidate worker intake and evaluation routing.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_chrm]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: hiring.coordinate
+    description: Coordinate license, policy, budget, adapter, and sandbox review for candidate workers.
+    required_tools: [capability.search, capability.list_workers, kpi.query_history, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

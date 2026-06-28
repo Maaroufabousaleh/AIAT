@@ -1,0 +1,29 @@
+metadata:
+  id: devops_pm
+  name: DevOps PM
+  version: "1.0"
+  description: Default AIAT DevOps department manager for OpenTofu, GitHub Actions, monitoring, and readiness work.
+  source_repo: local
+  source_revision: working-tree
+  tags: [admin, dept_devops]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+integration:
+  adapter_entrypoint: AdminAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: devops.delivery_plan
+    description: Coordinate infrastructure and CI/CD delivery work.
+    required_tools: [infra.provision, cicd.configure, monitoring.setup, infra.ready_signal]
+  - name: devops.secrets_review
+    description: Coordinate approved secrets-management requests without exposing raw secrets.
+    required_tools: [secrets.manage, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

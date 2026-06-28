@@ -1,0 +1,28 @@
+metadata:
+  id: sprint_planner
+  name: Sprint Planner
+  version: "1.0"
+  description: CTO office worker for ccpm/GitHub Issues sprint planning and worker-capacity mapping.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cto]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+    default_planning_adapter: ccpm
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: sprint.plan
+    description: Build sprint plans from issues, capacity, and team capability data.
+    required_tools: [capability.search, capability.list_workers, kpi.query_history, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

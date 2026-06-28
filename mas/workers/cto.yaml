@@ -2,7 +2,7 @@ metadata:
   id: cto
   name: Chief Technology Officer
   version: '1.0'
-  description: Auto-generated baseline manifest for cto
+  description: AIAT technical execution governance shell for sprint planning, issue decomposition, KPI policy, and delivery estimation.
   source_repo: local
   source_revision: working-tree
   tags:

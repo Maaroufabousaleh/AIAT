@@ -1,0 +1,27 @@
+metadata:
+  id: tool_interface_auditor
+  name: Tool Interface Auditor
+  version: "1.0"
+  description: Hiring-board auditor for tool schemas, adapter contracts, and MCP/API boundaries.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cio]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: hiring.tool_interface_audit
+    description: Audit candidate tool manifests, schemas, transports, and contract compatibility.
+    required_tools: [capability.search, capability.list_workers, web_search, file_read, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

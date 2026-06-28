@@ -17,11 +17,14 @@ admin:
     max_cost_usd: 0.75
   tools:
     - capability.list_workers
-    - kpi.query_history
     - capability.search
+    - document.get_latest
+    - document.list
+    - review.submit
+    - web_search
 
 workers:
-  - agent_id: hr_analyst_1
+  - agent_id: hr_analyst
     role: worker
     class: WorkerAgent
     display_name: "HR Analyst"
@@ -33,4 +36,21 @@ workers:
       max_cost_usd: 0.30
     tools:
       - capability.list_workers
+      - capability.search
       - kpi.query_history
+
+  - agent_id: hiring_agent
+    role: worker
+    class: WorkerAgent
+    display_name: "Hiring Agent"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.40
+    tools:
+      - capability.search
+      - capability.list_workers
+      - kpi.query_history
+      - blob.upload

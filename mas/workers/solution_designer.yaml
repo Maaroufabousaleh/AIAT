@@ -1,0 +1,29 @@
+metadata:
+  id: solution_designer
+  name: Solution Designer
+  version: "1.0"
+  description: System worker for solution design over MCP/GitHub/web adapters.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, dept_system]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+    supported_frameworks: [langgraph, microsoft_agent_framework]
+    integration_adapters: [mcp, github, web]
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: system.solution_design
+    description: Translate architecture into implementation-ready solution designs and integration contracts.
+    required_tools: [document.get_latest, capability.search, web_search, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

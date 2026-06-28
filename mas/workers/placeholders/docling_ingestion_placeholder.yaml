@@ -1,0 +1,27 @@
+metadata:
+  id: docling_ingestion_placeholder
+  name: Docling Ingestion Placeholder
+  version: "0.1"
+  description: Placeholder manifest for a future Docling-backed ingestion worker; not seeded by default.
+  source_repo: local
+  source_revision: placeholder
+  tags: [placeholder, docs, ingestion]
+  update_policy: manual
+  evaluation_status: pending
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    default_document_adapter: docling
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: wrapper
+runtime_tier: external
+capabilities:
+  - name: docs.ingest_placeholder
+    description: Placeholder capability for future document extraction and normalization.
+    required_tools: [document.get_latest, document.list, blob.upload]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

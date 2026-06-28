@@ -476,7 +476,7 @@ services:
       start_period: 20s
       retries: 3
 
-  # ── Team runners (7 containers) ─────────────────────────────────────────────
+  # ── Team runners (11 containers) ────────────────────────────────────────────
   # Each team merges &team-env (env vars only) then adds TEAM_CONFIG.
   # Using <<: *team-env inside environment: is correct because *team-env
   # contains ONLY key=value environment pairs, not service-level keys.
@@ -529,4 +529,32 @@ services:
     environment:
       <<: *team-env
       TEAM_CONFIG: /app/teams/office_cto.yaml
+
+  team-dept-production:
+    <<: *team-defaults
+    container_name: mas-team-dept-production
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_production.yaml
+
+  team-dept-system:
+    <<: *team-defaults
+    container_name: mas-team-dept-system
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_system.yaml
+
+  team-dept-qa:
+    <<: *team-defaults
+    container_name: mas-team-dept-qa
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_qa.yaml
+
+  team-dept-devops:
+    <<: *team-defaults
+    container_name: mas-team-dept-devops
+    environment:
+      <<: *team-env
+      TEAM_CONFIG: /app/teams/dept_devops.yaml
 

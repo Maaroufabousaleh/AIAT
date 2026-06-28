@@ -20,7 +20,7 @@ admin:
     - web_search
 
 workers:
-  - agent_id: tech_analyst_1
+  - agent_id: tech_analyst
     role: worker
     class: WorkerAgent
     display_name: "Tech Analyst"
@@ -33,3 +33,35 @@ workers:
     tools:
       - capability.search
       - web_search
+
+  - agent_id: tool_interface_auditor
+    role: worker
+    class: WorkerAgent
+    display_name: "Tool Interface Auditor"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.40
+    tools:
+      - capability.search
+      - capability.list_workers
+      - web_search
+      - blob.upload
+
+  - agent_id: adapter_certifier
+    role: worker
+    class: WorkerAgent
+    display_name: "Adapter Certifier"
+    min_instances: 0
+    max_instances: 1
+    budget_defaults:
+      max_llm_calls: 20
+      max_tool_calls: 12
+      max_cost_usd: 0.40
+    tools:
+      - capability.search
+      - capability.list_workers
+      - web_search
+      - blob.upload

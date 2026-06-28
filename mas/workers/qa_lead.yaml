@@ -1,0 +1,29 @@
+metadata:
+  id: qa_lead
+  name: QA Lead
+  version: "1.0"
+  description: Default AIAT QA department manager for tests, code review, and validation work.
+  source_repo: local
+  source_revision: working-tree
+  tags: [admin, dept_qa]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: AdminAgent
+integration:
+  adapter_entrypoint: AdminAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: qa.test_plan
+    description: Coordinate Playwright, pytest, coding, and review workers.
+    required_tools: [file_read, file_write, capability.search, capability.list_workers, blob.upload]
+  - name: qa.issue_status
+    description: Update issue status from test and review evidence.
+    required_tools: [issue.update_status, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

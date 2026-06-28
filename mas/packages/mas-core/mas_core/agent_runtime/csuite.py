@@ -382,7 +382,9 @@ class CSuiteAgent(AdminAgent):
             },
         ]
 
-        tools = self._build_workflow_tool_definitions()
+        # Direct operator chat should not advertise the full workflow catalog to
+        # the LLM. Explicit command parsing above still executes clear actions.
+        tools: list[ToolDefinition] = []
         response_text = await self._handle_human_directive_command(instruction)
         if not response_text:
             try:

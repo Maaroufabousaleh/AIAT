@@ -78,6 +78,10 @@ const TIER_MAP: Record<string, "orchestrator" | "executive" | "c_suite" | "admin
   office_chrm: "c_suite",
   office_cso: "c_suite",
   office_cto: "c_suite",
+  dept_production: "admin",
+  dept_system: "admin",
+  dept_qa: "admin",
+  dept_devops: "admin",
 };
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -88,7 +92,26 @@ const DISPLAY_NAMES: Record<string, string> = {
   office_chrm: "CHRM Office",
   office_cso: "CSO Office",
   office_cto: "CTO Office",
+  dept_production: "Production",
+  dept_system: "System",
+  dept_qa: "Quality Assurance",
+  dept_devops: "DevOps",
 };
+
+const C_SUITE_TEAM_IDS = [
+  "office_cfo",
+  "office_cio",
+  "office_chrm",
+  "office_cso",
+  "office_cto",
+];
+
+const CTO_DEPARTMENT_TEAM_IDS = [
+  "dept_production",
+  "dept_system",
+  "dept_qa",
+  "dept_devops",
+];
 
 function loadTeamConfig(teamId: string): TeamConfig | null {
   const teamsDir = findTeamsDir();
@@ -140,9 +163,15 @@ function buildHierarchy(): TeamHierarchyNode[] {
   if (nodes.exec_ceo) {
     if (nodes.exec_coo) {
       nodes.exec_ceo.children = [nodes.exec_coo];
-      nodes.exec_coo.children = Object.values(nodes).filter(n => 
-        n.teamId !== "exec_ceo" && n.teamId !== "exec_coo"
-      );
+      nodes.exec_coo.children = C_SUITE_TEAM_IDS
+        .map(teamId => nodes[teamId])
+        .filter((node): node is TeamHierarchyNode => Boolean(node));
+
+      if (nodes.office_cto) {
+        nodes.office_cto.children = CTO_DEPARTMENT_TEAM_IDS
+          .map(teamId => nodes[teamId])
+          .filter((node): node is TeamHierarchyNode => Boolean(node));
+      }
     }
     hierarchy.push(nodes.exec_ceo);
   }

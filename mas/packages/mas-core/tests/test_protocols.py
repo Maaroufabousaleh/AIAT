@@ -1056,13 +1056,13 @@ class TestCapabilityModels:
     def test_capability_search_roundtrip(self):
         req = CapabilitySearchRequest(name="write_test", min_sandbox_tier=1)
         worker = WorkerCapabilityRecord(
-            worker_id="tester_1",
+            worker_id="tester",
             name="Tester",
             capabilities=["write_test"],
         )
         resp = CapabilitySearchResponse(query=req, workers=[worker], count=1)
         assert resp.count == 1
-        assert resp.workers[0].worker_id == "tester_1"
+        assert resp.workers[0].worker_id == "tester"
 
 
 class TestWorkerManifestModel:

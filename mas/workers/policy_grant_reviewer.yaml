@@ -1,0 +1,26 @@
+metadata:
+  id: policy_grant_reviewer
+  name: Policy Grant Reviewer
+  version: "1.0"
+  description: Hiring-board reviewer for least-privilege tool, credential, and policy grants.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cso]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: native
+runtime_tier: builtin
+capabilities:
+  - name: hiring.policy_grant_review
+    description: Review requested tools, credentials, network access, and approval requirements for candidate workers.
+    required_tools: [capability.search, capability.list_workers, file_read, blob.upload]
+sandbox:
+  profile: restricted
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]

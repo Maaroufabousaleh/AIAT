@@ -1,0 +1,27 @@
+metadata:
+  id: kpi_analyst
+  name: KPI Analyst
+  version: "1.0"
+  description: CTO office worker for KPI trend analysis over AIAT telemetry and history.
+  source_repo: local
+  source_revision: working-tree
+  tags: [worker, office_cto]
+  update_policy: manual
+  evaluation_status: approved
+runtime:
+  transport: process
+  adapter_config:
+    entrypoint: WorkerAgent
+    preferred_runtime: langgraph
+integration:
+  adapter_entrypoint: WorkerAgent
+  isolation_mode: langgraph
+runtime_tier: langgraph
+capabilities:
+  - name: kpi.analyze
+    description: Analyze KPI snapshots, velocity, and worker performance history.
+    required_tools: [kpi.compute, kpi.query_history, blob.upload]
+sandbox:
+  profile: standard
+  network_mode: egress-allowlist
+  egress_allowlist: [api.github.com:443]
