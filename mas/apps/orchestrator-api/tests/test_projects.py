@@ -13,6 +13,7 @@ Tests for Projects CRUD endpoints:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from conftest import PROJECT_ID, _fake_project
@@ -212,6 +213,39 @@ async def test_get_project_503_no_storage(client):
     _patch_state(None)
     resp = await client.get(f"/projects/{PROJECT_ID}")
     assert resp.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_list_project_issues_reads_persisted_records(client):
+    sprint_id = "00000000-0000-4000-a000-000000000010"
+    storage = _make_storage(project=_fake_project("IN_PROGRESS"))
+    storage.list_issues = AsyncMock(
+        return_value=[
+            {
+                "id": "00000000-0000-4000-a000-000000000099",
+                "project_id": PROJECT_ID,
+                "sprint_id": sprint_id,
+                "status": "backlog",
+                "title": "Fix boundary",
+                "assigned_team": "dept_qa",
+            }
+        ]
+    )
+    _patch_state(storage)
+
+    resp = await client.get(
+        f"/projects/{PROJECT_ID}/issues?sprint_id={sprint_id}"
+        "&status=backlog&assigned_team=dept_qa"
+    )
+
+    assert resp.status_code == 200
+    assert [issue["title"] for issue in resp.json()] == ["Fix boundary"]
+    storage.list_issues.assert_awaited_once_with(
+        project_id=PROJECT_ID,
+        sprint_id=UUID(sprint_id),
+        status="backlog",
+        assigned_team="dept_qa",
+    )
 
 
 # ── GET /projects/{id}/allowed-transitions ────────────────────────────────────

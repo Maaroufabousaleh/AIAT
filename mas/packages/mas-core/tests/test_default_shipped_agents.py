@@ -1,10 +1,14 @@
 from pathlib import Path
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
+import pytest
 import yaml
 
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.worker_manifest import WorkerManifest
+from mas_core.worker_registry.evaluator import DEFAULT_GUARDED_CHECKS, MANDATORY_GUARDED_CHECKS
 from mas_tools_sdk.manifest import TOOL_MANIFEST
 
 EXPECTED_DEFAULT_AGENTS = {
@@ -149,6 +153,42 @@ def test_default_security_evaluator_excludes_trufflehog():
     assert "semgrep" in config["default_tools"]
     assert "skillspector" in config["default_tools"]
     assert "trufflehog" in config["excluded_default_tools"]
+
+
+def test_hiring_defaults_make_license_and_provenance_mandatory_without_trufflehog():
+    assert set(MANDATORY_GUARDED_CHECKS) == {"licensing", "provenance"}
+    assert set(MANDATORY_GUARDED_CHECKS) <= set(DEFAULT_GUARDED_CHECKS)
+    assert "trufflehog" not in DEFAULT_GUARDED_CHECKS
+
+
+@pytest.mark.anyio
+async def test_custom_hiring_evaluation_cannot_bypass_mandatory_gates(tmp_path, monkeypatch):
+    from mas_core.worker_registry import evaluator
+
+    async def passed(*_args, **_kwargs):
+        return {"passed": True, "score": 100.0, "details": "passed"}
+
+    monkeypatch.setattr(evaluator, "_check_provenance", passed)
+    monkeypatch.setattr(evaluator, "_check_licensing", passed)
+    monkeypatch.setattr(evaluator, "_check_semgrep", passed)
+    storage = AsyncMock()
+
+    async def store_report(**kwargs):
+        return {"id": uuid4(), **kwargs}
+
+    storage.create_evaluation_report.side_effect = store_report
+
+    report = await evaluator.evaluate_repository(
+        worker_id=uuid4(),
+        source_repo="https://github.com/example/worker",
+        storage=storage,
+        checks=["semgrep"],
+        mirror_path=tmp_path,
+        worker={"sandbox_profile": "gvisor"},
+    )
+
+    assert {"provenance", "licensing", "semgrep"} <= set(report["checks"])
+    assert "trufflehog" not in report["checks"]
 
 
 def test_default_manifest_metadata_runtime_and_tools_are_production_ready():

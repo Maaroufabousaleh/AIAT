@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -12,6 +15,46 @@ from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
 logger = logging.getLogger(__name__)
+
+_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
+_BLOCKED_SUFFIXES = (".local", ".internal", ".corp", ".lan", ".home", ".intranet")
+
+
+def _is_non_public_ip(value: str) -> bool:
+    ip = ipaddress.ip_address(value)
+    return not ip.is_global
+
+
+def _validate_public_url(url: str) -> None:
+    if not url:
+        raise ValueError("url is required")
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("url must use http or https")
+
+    hostname = parsed.hostname or ""
+    lowered = hostname.lower()
+    if lowered in _BLOCKED_HOSTS:
+        raise ValueError(f"URL blocked: {hostname} is not allowed")
+    if any(lowered.endswith(suffix) for suffix in _BLOCKED_SUFFIXES):
+        raise ValueError(f"URL blocked: {hostname} matches a blocked internal domain suffix")
+
+    try:
+        if _is_non_public_ip(hostname):
+            raise ValueError(f"URL blocked: {hostname} is a private/internal address")
+    except ValueError as exc:
+        if "URL blocked" in str(exc):
+            raise
+
+    try:
+        for info in socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            if _is_non_public_ip(info[4][0]):
+                raise ValueError(
+                    f"URL blocked: {hostname} resolves to a private address ({info[4][0]})"
+                )
+    except socket.gaierror:
+        pass
 
 
 class WebSearchTool(BaseTool):
@@ -69,7 +112,7 @@ class WebSearchTool(BaseTool):
                 }
         except httpx.HTTPError as e:
             logger.error("web_search_error", extra={"query": query, "error": str(e)}, exc_info=True)
-            raise RuntimeError(f"Web search failed: {e}")
+            raise RuntimeError(f"Web search failed: {e}") from e
 
 
 class WebFetchTool(BaseTool):
@@ -93,14 +136,26 @@ class WebFetchTool(BaseTool):
 
         if not url:
             raise ValueError("url is required")
+        _validate_public_url(url)
 
         try:
             async with httpx.AsyncClient(
                 timeout=30.0,
-                follow_redirects=True,
+                follow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; AIAT/1.0)"},
             ) as client:
-                resp = await client.get(url)
+                current_url = url
+                for _redirect in range(6):
+                    _validate_public_url(current_url)
+                    resp = await client.get(current_url)
+                    if not resp.is_redirect:
+                        break
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise RuntimeError("Redirect response did not include a location")
+                    current_url = str(resp.url.join(location))
+                else:
+                    raise RuntimeError("Too many redirects")
                 resp.raise_for_status()
 
                 content_type = resp.headers.get("content-type", "")
@@ -132,4 +187,4 @@ class WebFetchTool(BaseTool):
                 return result
         except httpx.HTTPError as e:
             logger.error("web_fetch_error", extra={"url": url, "error": str(e)}, exc_info=True)
-            raise RuntimeError(f"Web fetch failed: {e}")
+            raise RuntimeError(f"Web fetch failed: {e}") from e

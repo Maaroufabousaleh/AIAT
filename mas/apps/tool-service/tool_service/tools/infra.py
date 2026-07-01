@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import shlex
+from pathlib import Path
 from typing import Any
 
-import httpx
-
-from mas_core.protocols.enums import AgentRole
 from mas_core.memory.blob import BlobClient
+from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
+
 from ..config import get_settings
+from .adapters import _run_process
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,27 @@ _WORKER = [
 _ALL = list(AgentRole)
 
 
+def _adapter_configured(env_name: str) -> bool:
+    return bool(os.getenv(env_name, "").strip())
+
+
+async def _run_configured_adapter(env_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Run a pinned operator-configured adapter without shell interpretation."""
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return {"available": False, "configured": False, "reason": f"{env_name}_not_configured"}
+    argv = shlex.split(raw)
+    result = await _run_process(
+        argv,
+        cwd=Path.cwd(),
+        input_text=json.dumps(payload),
+        timeout=120,
+        max_output_bytes=256_000,
+    )
+    result["configured"] = True
+    return result
+
+
 class InfraProvisionTool(BaseTool):
     name = "infra.provision"
     group = ToolGroup.DEVOPS
@@ -64,7 +89,11 @@ class InfraProvisionTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         resource = kwargs.get("resource", "")
         config = kwargs.get("config", {})
-        return {"resource": resource, "config": config, "provisioned": True}
+        if _adapter_configured("TOOL_INFRA_PROVISION_COMMAND") and not resource:
+            raise ValueError("resource is required")
+        return await _run_configured_adapter(
+            "TOOL_INFRA_PROVISION_COMMAND", {"resource": resource, "config": config}
+        )
 
 
 class CICDConfigureTool(BaseTool):
@@ -79,7 +108,11 @@ class CICDConfigureTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         pipeline = kwargs.get("pipeline", "")
         config = kwargs.get("config", {})
-        return {"pipeline": pipeline, "config": config, "configured": True}
+        if _adapter_configured("TOOL_CICD_CONFIGURE_COMMAND") and not pipeline:
+            raise ValueError("pipeline is required")
+        return await _run_configured_adapter(
+            "TOOL_CICD_CONFIGURE_COMMAND", {"pipeline": pipeline, "config": config}
+        )
 
 
 class MonitoringSetupTool(BaseTool):
@@ -93,7 +126,7 @@ class MonitoringSetupTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         rules = kwargs.get("rules", [])
-        return {"rules": rules, "setup": True}
+        return await _run_configured_adapter("TOOL_MONITORING_SETUP_COMMAND", {"rules": rules})
 
 
 class SecretsManageTool(BaseTool):
@@ -108,8 +141,15 @@ class SecretsManageTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         action = kwargs.get("action", "create")
         name = kwargs.get("name", "")
-        value = kwargs.get("value", "")
-        return {"action": action, "secret_name": name, "ok": True}
+        configured = _adapter_configured("TOOL_SECRETS_COMMAND")
+        if configured and action not in {"create", "rotate", "revoke"}:
+            raise ValueError("action must be create, rotate, or revoke")
+        if configured and not name:
+            raise ValueError("name is required")
+        return await _run_configured_adapter(
+            "TOOL_SECRETS_COMMAND",
+            {"action": action, "name": name, "value": kwargs.get("value")},
+        )
 
 
 class InfraReadySignalTool(BaseTool):
@@ -123,7 +163,9 @@ class InfraReadySignalTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         target = kwargs.get("target", "")
-        return {"signaled": True, "target": target}
+        if _adapter_configured("TOOL_INFRA_READY_COMMAND") and not target:
+            raise ValueError("target is required")
+        return await _run_configured_adapter("TOOL_INFRA_READY_COMMAND", {"target": target})
 
 
 class BlobUploadTool(BaseTool):
@@ -162,7 +204,7 @@ class BlobUploadTool(BaseTool):
             }
         except Exception as e:
             logger.error("blob_upload_error", extra={"key": key, "error": str(e)}, exc_info=True)
-            raise RuntimeError(f"Blob upload failed: {e}")
+            raise RuntimeError(f"Blob upload failed: {e}") from e
 
 
 class BlobDownloadTool(BaseTool):
@@ -190,7 +232,7 @@ class BlobDownloadTool(BaseTool):
             }
         except Exception as e:
             logger.error("blob_download_error", extra={"key": key, "error": str(e)}, exc_info=True)
-            raise RuntimeError(f"Blob download failed: {e}")
+            raise RuntimeError(f"Blob download failed: {e}") from e
 
 
 class BlobListTool(BaseTool):
@@ -217,4 +259,32 @@ class BlobListTool(BaseTool):
             logger.error(
                 "blob_list_error", extra={"project_id": project_id, "error": str(e)}, exc_info=True
             )
-            raise RuntimeError(f"Blob list failed: {e}")
+            raise RuntimeError(f"Blob list failed: {e}") from e
+
+
+class BlobDeleteTool(BaseTool):
+    name = "blob.delete"
+    group = ToolGroup.KPI_UTILITY
+    description = "Delete an object from S3-compatible blob storage."
+    allowed_roles = _WORKER
+    cache_ttl_seconds = 0
+    idempotent = False
+
+    async def execute(self, **kwargs: Any) -> Any:
+        project_id = kwargs.get("project_id", "default")
+        key = kwargs.get("key", "")
+
+        if not key:
+            raise ValueError("key is required")
+
+        blob = await get_blob_client()
+        try:
+            await blob.delete_by_key(project_id=project_id, key=key)
+            return {
+                "project_id": project_id,
+                "key": f"{project_id}/{key}",
+                "deleted": True,
+            }
+        except Exception as e:
+            logger.error("blob_delete_error", extra={"key": key, "error": str(e)}, exc_info=True)
+            raise RuntimeError(f"Blob delete failed: {e}") from e

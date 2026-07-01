@@ -165,6 +165,26 @@ class IssueUpdateStatusTool(BaseTool):
         return await orch_post("/tasks", body)
 
 
+class IssueListTool(BaseTool):
+    name = "issue.list"
+    group = ToolGroup.SPRINT_ISSUE
+    description = "List issues for a project or sprint."
+    allowed_roles = _ADMIN
+    cache_ttl_seconds = 15
+
+    async def execute(self, **kwargs: Any) -> Any:
+        project_id = kwargs.get("project_id", "")
+        params = {}
+        if kwargs.get("sprint_id"):
+            params["sprint_id"] = kwargs["sprint_id"]
+        if kwargs.get("status"):
+            params["status"] = kwargs["status"]
+        if kwargs.get("assigned_team"):
+            params["assigned_team"] = kwargs["assigned_team"]
+        issues = await orch_get(f"/projects/{project_id}/issues", params=params)
+        return {"issues": issues, "total": len(issues) if isinstance(issues, list) else 0}
+
+
 # ── KPI ────────────────────────────────────────────────────────────────────
 
 

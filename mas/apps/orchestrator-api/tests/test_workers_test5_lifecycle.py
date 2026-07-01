@@ -651,6 +651,37 @@ async def test_licensing_check_passes_for_mit_license(tmp_path):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("license_text", "expected_license"),
+    [
+        (
+            "Apache License\nVersion 2.0, January 2004\n"
+            "Terms and Conditions for Use, Reproduction, and Distribution",
+            "apache-2.0",
+        ),
+        (
+            "Redistributions of source code must retain the above copyright notice.\n"
+            "Redistributions in binary form must reproduce the above copyright notice.\n"
+            "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "
+            '"AS IS".',
+            "bsd",
+        ),
+    ],
+)
+async def test_licensing_check_recognizes_canonical_permissive_texts(
+    tmp_path, license_text, expected_license
+):
+    from mas_core.worker_registry.evaluator import _check_licensing
+
+    (tmp_path / "LICENSE").write_text(license_text, encoding="utf-8")
+    result = await _check_licensing("https://github.com/example/repo", tmp_path)
+
+    assert result["passed"] is True
+    assert result["score"] == 100.0
+    assert result["license"] == expected_license
+
+
+@pytest.mark.anyio
 async def test_licensing_check_fails_for_gpl_license(tmp_path):
     """_check_licensing returns passed=False for GPL license (text contains 'gpl-3.0')."""
     from mas_core.worker_registry.evaluator import _check_licensing

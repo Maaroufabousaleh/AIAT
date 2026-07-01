@@ -1398,6 +1398,27 @@ async def list_project_artifacts(
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
 
 
+@app.get("/projects/{project_id}/issues")
+async def list_project_issues(
+    project_id: UUID,
+    sprint_id: UUID | None = None,
+    status: str | None = None,
+    assigned_team: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    """List persisted issue records for a project."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    issues = await storage.list_issues(
+        project_id=project_id,
+        sprint_id=sprint_id,
+        status=status,
+        assigned_team=assigned_team,
+    )
+    return [_serialize(issue) for issue in issues[:limit]]
+
+
 @app.get("/projects/{project_id}/audit-timeline")
 async def get_project_audit_timeline(
     project_id: UUID,

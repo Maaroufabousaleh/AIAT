@@ -13,6 +13,9 @@ runtime:
   adapter_config:
     entrypoint: WorkerAgent
     default_tools: [semgrep, skillspector]
+    tool_options:
+      security.scan:
+        default_scanners: [semgrep, skillspector]
     excluded_default_tools: [trufflehog]
 integration:
   adapter_entrypoint: WorkerAgent
@@ -21,7 +24,7 @@ runtime_tier: external
 capabilities:
   - name: security.evaluate_candidate
     description: Evaluate candidate code or worker packages with Semgrep/SkillSpector and sandbox evidence.
-    required_tools: [file_read, web_search, blob.upload]
+    required_tools: [file_read, repo.read, repo.search, security.scan, web_search, blob.upload]
 sandbox:
   profile: gvisor
   network_mode: egress-allowlist

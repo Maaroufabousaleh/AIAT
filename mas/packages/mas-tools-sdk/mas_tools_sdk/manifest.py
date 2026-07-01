@@ -205,6 +205,20 @@ _register(
         allowed_roles=_WORKER,
         cache_ttl=15,
     ),
+    _entry(
+        name="document.ingest",
+        group=ToolGroup.DOCUMENT,
+        description="Parse documents with Docling behind the AIAT lifecycle boundary.",
+        allowed_roles=_WORKER,
+        cache_ttl=30,
+    ),
+    _entry(
+        name="diagram.render",
+        group=ToolGroup.DOCUMENT,
+        description="Validate or render Mermaid diagrams when the Mermaid CLI is available.",
+        allowed_roles=_WORKER,
+        cache_ttl=30,
+    ),
 )
 
 # --- Review ---
@@ -305,6 +319,13 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="issue.list",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="List issues for a project or sprint.",
+        allowed_roles=_ADMIN,
+        cache_ttl=15,
+    ),
 )
 
 # --- DevOps ---
@@ -354,6 +375,15 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="iac.plan",
+        group=ToolGroup.DEVOPS,
+        description="Run OpenTofu/tofu plan through the DevOps adapter.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
 )
 
 # --- Capability ---
@@ -388,6 +418,15 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="mcp.invoke",
+        group=ToolGroup.CAPABILITY,
+        description="Invoke a configured MCP bridge endpoint.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+        transport="mcp",
+    ),
 )
 
 # --- KPI / Utility ---
@@ -404,6 +443,13 @@ _register(
         name="kpi.compute",
         group=ToolGroup.KPI_UTILITY,
         description="Compute KPI snapshot.",
+        allowed_roles=_CSUITE,
+        cache_ttl=30,
+    ),
+    _entry(
+        name="kpi.compute_project",
+        group=ToolGroup.KPI_UTILITY,
+        description="Compute project-level KPIs across all sprints.",
         allowed_roles=_CSUITE,
         cache_ttl=30,
     ),
@@ -460,6 +506,14 @@ _register(
         cache_ttl=15,
     ),
     _entry(
+        name="blob.delete",
+        group=ToolGroup.KPI_UTILITY,
+        description="Delete blobs from object storage.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
         name="web_search",
         group=ToolGroup.KPI_UTILITY,
         description="Search the web.",
@@ -484,6 +538,60 @@ _register(
         name="file_write",
         group=ToolGroup.KPI_UTILITY,
         description="Write a workspace file.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="file.patch",
+        group=ToolGroup.KPI_UTILITY,
+        description="Apply a safe patch inside the workspace.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="repo.read",
+        group=ToolGroup.KPI_UTILITY,
+        description="Read repository files through the workspace boundary.",
+        allowed_roles=_WORKER,
+        cache_ttl=10,
+    ),
+    _entry(
+        name="repo.search",
+        group=ToolGroup.KPI_UTILITY,
+        description="Search repository text through the workspace boundary.",
+        allowed_roles=_WORKER,
+        cache_ttl=10,
+    ),
+    _entry(
+        name="command.run_safe",
+        group=ToolGroup.KPI_UTILITY,
+        description="Run a budgeted allowlisted command inside the workspace.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="security.scan",
+        group=ToolGroup.KPI_UTILITY,
+        description="Run Semgrep/SkillSpector-style static checks through a safe adapter.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="test.run",
+        group=ToolGroup.KPI_UTILITY,
+        description="Run pytest or Playwright through the safe command adapter.",
+        allowed_roles=_WORKER,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="code.review",
+        group=ToolGroup.KPI_UTILITY,
+        description="Run a pinned external code-review adapter command when configured.",
         allowed_roles=_WORKER,
         cache_ttl=0,
         idempotent=False,
@@ -563,7 +671,6 @@ TOOL_ALIASES: dict[str, str] = {
     "review.submit_response": "review.submit",
     # legacy KPI split names
     "kpi.compute_sprint": "kpi.compute",
-    "kpi.compute_project": "kpi.compute",
     # legacy org-specific helper names
     "cost_estimate": "kpi.compute",
     "budget_check": "kpi.query_history",
@@ -577,10 +684,20 @@ TOOL_ALIASES: dict[str, str] = {
     "time.now": "time_now",
     "workload_report": "kpi.query_history",
     "team_recommend": "capability.search",
-    "threat_model": "review.submit",
-    "compliance_check": "review.submit",
-    "security_scan": "review.submit",
-    "risk_assess": "review.submit",
+    "threat_model": "security.scan",
+    "compliance_check": "security.scan",
+    "security_scan": "security.scan",
+    "risk_assess": "security.scan",
+    "semgrep": "security.scan",
+    "skillspector": "security.scan",
+    "docling": "document.ingest",
+    "docling.parse": "document.ingest",
+    "mermaid": "diagram.render",
+    "pytest": "test.run",
+    "playwright.test": "test.run",
+    "opentofu.plan": "iac.plan",
+    "tofu.plan": "iac.plan",
+    "mcp.call": "mcp.invoke",
 }
 
 

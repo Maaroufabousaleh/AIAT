@@ -7,28 +7,33 @@ import json
 import logging
 import re
 import shutil
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import yaml
 
 from mas_core.protocols.worker_manifest import WorkerManifest
-from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
+from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from mas_core.memory.storage import AgentStorage
 
 logger = logging.getLogger(__name__)
 
 EVALUATOR_VERSION = "1.1.0"
 
+MANDATORY_GUARDED_CHECKS = (
+    "provenance",
+    "licensing",
+)
+
 DEFAULT_GUARDED_CHECKS = [
     "provenance",
+    "licensing",
     "version_pin",
     "manifest_validation",
-    "trufflehog",
     "semgrep",
     "compatibility",
     "sandbox_profile",
@@ -50,6 +55,27 @@ COMPATIBLE_LICENSES = {
     "bsd",
     "0bsd",
 }
+
+# Canonical license bodies often omit their SPDX identifier. Require multiple
+# stable phrases so ordinary prose does not accidentally satisfy the gate.
+COMPATIBLE_LICENSE_TEXT_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "apache-2.0",
+        (
+            "apache license",
+            "version 2.0, january 2004",
+            "terms and conditions for use, reproduction, and distribution",
+        ),
+    ),
+    (
+        "bsd",
+        (
+            "redistributions of source code must retain the above copyright notice",
+            "redistributions in binary form must reproduce the above copyright notice",
+            "this software is provided by the copyright holders and contributors",
+        ),
+    ),
+)
 
 REJECTED_LICENSES = {
     "gpl-2.0",
@@ -106,27 +132,22 @@ async def evaluate_runtime(
     specialist runtimes. This function validates their configuration
     against the hiring board criteria.
     """
-    criteria_map = {
-        "langgraph": LANGGRAPH_EVALUATION_CRITERIA,
-        "crewai": CREWAI_EVALUATION_CRITERIA,
-        "autogen": AUTOGEN_EVALUATION_CRITERIA,
-        "letta": LETTA_EVALUATION_CRITERIA,
-    }
-
     checks: dict[str, bool] = {}
     policy_notes: list[str] = []
-
-    criteria = criteria_map.get(runtime_tier, [])
 
     if runtime_tier == "langgraph":
         checks["state_schema_is_valid"] = bool(runtime_config.get("state_schema"))
         checks["checkpointer_configured"] = runtime_config.get("checkpointer") in (
-            "memory", "postgres", "none"
+            "memory",
+            "postgres",
+            "none",
         )
         # interrupt hooks are optional — validated by presence in config
         interrupt_before = runtime_config.get("interrupt_before", [])
         interrupt_after = runtime_config.get("interrupt_after", [])
-        checks["interrupt_hooks_defined"] = isinstance(interrupt_before, list) and isinstance(interrupt_after, list)
+        checks["interrupt_hooks_defined"] = isinstance(interrupt_before, list) and isinstance(
+            interrupt_after, list
+        )
         # tool bindings are validated via manifest.capabilities in the hiring board
         checks["tool_bindings_resolved"] = True
         # memory isolation: each worker gets its own graph instance (enforced by adapter)
@@ -138,8 +159,13 @@ async def evaluate_runtime(
         agents = crew_cfg.get("agents", [])
         tasks = crew_cfg.get("tasks", [])
         checks["agents_have_roles"] = all(a.get("role") for a in agents) if agents else False
-        checks["tasks_have_descriptions"] = all(t.get("description") for t in tasks) if tasks else False
-        checks["process_type_valid"] = runtime_config.get("process") in ("sequential", "hierarchical")
+        checks["tasks_have_descriptions"] = (
+            all(t.get("description") for t in tasks) if tasks else False
+        )
+        checks["process_type_valid"] = runtime_config.get("process") in (
+            "sequential",
+            "hierarchical",
+        )
         checks["tool_bindings_resolved"] = True
         checks["memory_if_enabled"] = True
         policy_notes.append("requires_approval=True — CrewAI crew activation needs human gate")
@@ -150,8 +176,8 @@ async def evaluate_runtime(
         max_round = runtime_config.get("max_round", 20)
         checks["max_round_reasonable"] = 1 <= max_round <= 100
         checks["allowed_speakers_enforced"] = True  # Via manifest config
-        checks["no_dangerous_plugins"] = True       # Evaluated separately by hiring board
-        checks["sandbox_profile_verified"] = True    # Via sandbox_profile check
+        checks["no_dangerous_plugins"] = True  # Evaluated separately by hiring board
+        checks["sandbox_profile_verified"] = True  # Via sandbox_profile check
         policy_notes.append("sandbox_required=firecracker — AutoGen needs microVM isolation")
         policy_notes.append("max_instances=1 — no concurrent AutoGen group chats")
 
@@ -159,18 +185,18 @@ async def evaluate_runtime(
         checks["persona_defined"] = bool(runtime_config.get("persona"))
         checks["embedding_model_available"] = bool(runtime_config.get("embedding_model"))
         checks["persistence_store_accessible"] = runtime_config.get("persistence_store") in (
-            "postgres", "sqlite", "memory"
+            "postgres",
+            "sqlite",
+            "memory",
         )
         # Memory blocks are audited by the hiring board — check they are declared
         memory_blocks = runtime_config.get("memory_block_types", [])
-        checks["memory_blocks_audited"] = (
-            isinstance(memory_blocks, list) and len(memory_blocks) > 0
-        )
+        checks["memory_blocks_audited"] = isinstance(memory_blocks, list) and len(memory_blocks) > 0
         # External memory leak: block list must not include untrusted external sources
         allowed_blocks = {"human", "persona", "archival", "buffer"}
-        checks["no_external_memory_leak"] = all(
-            b in allowed_blocks for b in memory_blocks
-        ) if memory_blocks else True
+        checks["no_external_memory_leak"] = (
+            all(b in allowed_blocks for b in memory_blocks) if memory_blocks else True
+        )
         policy_notes.append("read_only_by_default — Letta cannot make outbound network calls")
         policy_notes.append("memory_audit_required — memory blocks reviewed before activation")
 
@@ -185,7 +211,9 @@ async def evaluate_runtime(
         }
 
     passed = all(checks.values()) if checks else False
-    blocked_reason = None if passed else f"Unmet criteria: {[k for k, v in checks.items() if not v]}"
+    blocked_reason = (
+        None if passed else f"Unmet criteria: {[k for k, v in checks.items() if not v]}"
+    )
 
     return {
         "runtime_tier": runtime_tier,
@@ -195,6 +223,7 @@ async def evaluate_runtime(
         "blocked_reason": blocked_reason,
         "policy_notes": policy_notes,
     }
+
 
 ENTRYPOINT_PATTERNS = [
     r"def\s+main\s*\(",
@@ -265,7 +294,13 @@ async def evaluate_repository(
         "approval": _check_approval_policy,
     }
 
-    requested = checks or DEFAULT_GUARDED_CHECKS
+    # License and source provenance are product gates, not optional scan
+    # selections.  Callers may add or narrow diagnostic checks, but cannot
+    # bypass either gate.  TruffleHog remains available only when explicitly
+    # requested because it is not part of AIAT's shipped default stack.
+    requested = list(
+        dict.fromkeys([*MANDATORY_GUARDED_CHECKS, *(checks or DEFAULT_GUARDED_CHECKS)])
+    )
     results: dict[str, dict] = {}
 
     for check_name in requested:
@@ -348,7 +383,11 @@ async def _check_version_pin(
     worker: dict[str, Any],
 ) -> dict:
     """Require a tag, commit, branch, or recorded upstream revision for external workers."""
-    pin = worker.get("version_pin") or worker.get("source_revision") or worker.get("upstream_commit_sha")
+    pin = (
+        worker.get("version_pin")
+        or worker.get("source_revision")
+        or worker.get("upstream_commit_sha")
+    )
     passed = bool(pin)
     return {
         "passed": passed,
@@ -372,8 +411,12 @@ async def _check_manifest_validation(
         mirror_path / "worker.yaml",
         mirror_path / "worker.yml",
     ]
-    candidates.extend((mirror_path / "workers").glob("*.yaml") if (mirror_path / "workers").is_dir() else [])
-    candidates.extend((mirror_path / "workers").glob("*.yml") if (mirror_path / "workers").is_dir() else [])
+    candidates.extend(
+        (mirror_path / "workers").glob("*.yaml") if (mirror_path / "workers").is_dir() else []
+    )
+    candidates.extend(
+        (mirror_path / "workers").glob("*.yml") if (mirror_path / "workers").is_dir() else []
+    )
 
     for candidate in candidates:
         if not candidate.exists():
@@ -550,9 +593,16 @@ async def _check_licensing(
             "details": "No LICENSE file found",
         }
 
-    detected = None
+    detected = next(
+        (
+            license_id
+            for license_id, signature in COMPATIBLE_LICENSE_TEXT_SIGNATURES
+            if all(fragment in license_text for fragment in signature)
+        ),
+        None,
+    )
     for lic in COMPATIBLE_LICENSES:
-        if lic in license_text:
+        if detected is None and lic in license_text:
             detected = lic
             break
 
@@ -606,7 +656,7 @@ async def _check_security(
             scanned_files += 1
             for pattern in SECRET_PATTERNS:
                 matches = re.findall(pattern, content)
-                for match in matches:
+                for _match in matches:
                     secrets_found.append(f"{py_file.name}: potential secret")
         except (OSError, UnicodeDecodeError):
             continue

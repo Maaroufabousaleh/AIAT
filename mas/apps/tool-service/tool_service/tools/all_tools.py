@@ -2,24 +2,36 @@
 
 from __future__ import annotations
 
-from mas_tools_sdk.base import BaseTool
+from typing import TYPE_CHECKING
 
+from .adapters import (
+    CodeReviewTool,
+    CommandRunSafeTool,
+    DiagramRenderTool,
+    DocumentIngestTool,
+    IaCPlanTool,
+    MCPInvokeTool,
+    RepoReadTool,
+    RepoSearchTool,
+    SecurityScanTool,
+    TestRunTool,
+)
 from .capability import (
     CapabilityDeregisterTool,
     CapabilityListWorkersTool,
     CapabilityRegisterTool,
     CapabilitySearchTool,
 )
-from .file import FileReadTool, FileWriteTool
+from .file import FilePatchTool, FileReadTool, FileWriteTool
 
 try:
     from .browser import (
-        BrowserNavigateTool,
         BrowserClickTool,
-        BrowserTypeTool,
-        BrowserScreenshotTool,
-        BrowserEvaluateTool,
         BrowserCloseTool,
+        BrowserEvaluateTool,
+        BrowserNavigateTool,
+        BrowserScreenshotTool,
+        BrowserTypeTool,
     )
 except ModuleNotFoundError:  # pragma: no cover - optional local dependency
     BrowserNavigateTool = None
@@ -28,7 +40,16 @@ except ModuleNotFoundError:  # pragma: no cover - optional local dependency
     BrowserScreenshotTool = None
     BrowserEvaluateTool = None
     BrowserCloseTool = None
+from .flow import (
+    FlowAdvanceTool,
+    FlowAssignTool,
+    FlowInvokeTool,
+    FlowListTool,
+    FlowRecommendTool,
+    FlowStatusTool,
+)
 from .infra import (
+    BlobDeleteTool,
     BlobDownloadTool,
     BlobListTool,
     BlobUploadTool,
@@ -58,19 +79,13 @@ from .project import (
     ReviewSubmitResponseTool,
     ReviewSubmitVetoTool,
 )
-from .flow import (
-    FlowAdvanceTool,
-    FlowAssignTool,
-    FlowInvokeTool,
-    FlowListTool,
-    FlowRecommendTool,
-    FlowStatusTool,
-)
 from .sprint_kpi import (
     EstimationAdjustTool,
     IssueCreateTool,
     IssueDecomposeTool,
+    IssueListTool,
     IssueUpdateStatusTool,
+    KPIComputeProjectTool,
     KPIComputeSprintTool,
     KPIQueryHistoryTool,
     KPIUpdateAgentProfileTool,
@@ -82,6 +97,9 @@ from .sprint_kpi import (
 from .time import TimeNowTool
 from .web import WebFetchTool, WebSearchTool
 
+if TYPE_CHECKING:
+    from mas_tools_sdk.base import BaseTool
+
 
 def get_all_tools() -> list[BaseTool]:
     """Instantiate and return all concrete tool implementations."""
@@ -92,6 +110,10 @@ def get_all_tools() -> list[BaseTool]:
         # FILE
         FileReadTool(),
         FileWriteTool(),
+        FilePatchTool(),
+        RepoReadTool(),
+        RepoSearchTool(),
+        CommandRunSafeTool(),
         # BROWSER
         *(
             [
@@ -140,7 +162,9 @@ def get_all_tools() -> list[BaseTool]:
         IssueCreateTool(),
         IssueDecomposeTool(),
         IssueUpdateStatusTool(),
+        IssueListTool(),
         KPIComputeSprintTool(),
+        KPIComputeProjectTool(),
         KPIQueryHistoryTool(),
         KPIUpdateAgentProfileTool(),
         VelocityReportTool(),
@@ -152,6 +176,14 @@ def get_all_tools() -> list[BaseTool]:
         CapabilityDeregisterTool(),
         # TIME
         TimeNowTool(),
+        # DEFAULT OSS CAPABILITY ADAPTERS
+        DocumentIngestTool(),
+        SecurityScanTool(),
+        TestRunTool(),
+        CodeReviewTool(),
+        IaCPlanTool(),
+        DiagramRenderTool(),
+        MCPInvokeTool(),
         # INFRA
         InfraProvisionTool(),
         CICDConfigureTool(),
@@ -161,4 +193,5 @@ def get_all_tools() -> list[BaseTool]:
         BlobUploadTool(),
         BlobDownloadTool(),
         BlobListTool(),
+        BlobDeleteTool(),
     ]
