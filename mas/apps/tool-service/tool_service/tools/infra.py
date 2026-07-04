@@ -112,15 +112,17 @@ class InfraProvisionTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        if not _adapter_configured("TOOL_INFRA_PROVISION_COMMAND"):
+            return {
+                "available": False,
+                "configured": False,
+                "reason": "TOOL_INFRA_PROVISION_COMMAND_not_configured",
+            }
+
         resource = kwargs.get("resource", "")
         config = dict(kwargs.get("config") or {})
-        configured = _adapter_configured("TOOL_INFRA_PROVISION_COMMAND")
-        if configured and not resource:
+        if not resource:
             raise ValueError("resource is required")
-        if not configured:
-            return await _run_configured_adapter(
-                "TOOL_INFRA_PROVISION_COMMAND", {"resource": resource, "config": config}
-            )
         cwd = _workspace_cwd(str(kwargs.get("project_id") or ""), str(config.pop("cwd", ".")))
         return await _run_configured_adapter(
             "TOOL_INFRA_PROVISION_COMMAND",

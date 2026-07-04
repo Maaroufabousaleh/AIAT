@@ -530,7 +530,7 @@ async def test_infra_ready_signal_transitions_real_project(make_registry, monkey
 
 
 @pytest.mark.anyio
-async def test_privileged_infra_adapter_fails_closed_when_unconfigured(make_registry, monkeypatch):
+async def test_infra_provision_fails_closed_when_unconfigured(make_registry, monkeypatch):
     monkeypatch.delenv("TOOL_INFRA_PROVISION_COMMAND", raising=False)
     registry = make_registry()
 
