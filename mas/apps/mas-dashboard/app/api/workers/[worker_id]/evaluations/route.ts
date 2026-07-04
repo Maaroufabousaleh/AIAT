@@ -3,13 +3,14 @@ import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { worker_id: string } }
+  props: { params: Promise<{ worker_id: string }> },
 ) {
+  const params = await props.params;
   try {
     const { searchParams } = new URL(req.url);
     const limit = searchParams.get("limit") ?? "20";
     const result = await orchestratorFetch(
-      `/capabilities/workers/${params.worker_id}/evaluations?limit=${encodeURIComponent(limit)}`
+      `/capabilities/workers/${params.worker_id}/evaluations?limit=${encodeURIComponent(limit)}`,
     );
     return NextResponse.json(result);
   } catch (e: unknown) {

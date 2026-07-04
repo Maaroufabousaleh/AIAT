@@ -58,6 +58,34 @@ def test_tool_catalog_filters_to_runtime_registered_tools():
     assert names == {"web_search"}
 
 
+def test_tool_catalog_filters_runtime_tools_reported_unavailable():
+    tools = tool_definitions_for_agent(
+        role=AgentRole.WORKER,
+        team_id="dept_qa",
+        runtime_tools=[
+            {
+                "tool_name": "security.scan",
+                "description": "Scan code.",
+                "allowed_roles": ["worker"],
+                "blocked_roles": [],
+                "available": False,
+                "configured": False,
+                "unavailable_reason": "TOOL_SANDBOX_COMMAND_not_configured",
+            },
+            {
+                "tool_name": "web_search",
+                "description": "Search the web.",
+                "allowed_roles": ["worker"],
+                "blocked_roles": [],
+                "available": True,
+                "configured": True,
+            },
+        ],
+    )
+
+    assert {tool.function.name for tool in tools} == {"web_search"}
+
+
 def test_tool_catalog_static_fallback_filters_missing_optional_dependencies(monkeypatch):
     def fake_find_spec(module_name):
         if module_name == "playwright":

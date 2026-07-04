@@ -239,11 +239,14 @@ class MessageEnvelope(BaseModel):
     def routing_check(self) -> MessageEnvelope:
         """Validate recipient routing target shape."""
         exempt = {MessageType.HEARTBEAT, MessageType.ACK, MessageType.BROADCAST}
-        if self.msg_type not in exempt:
-            if self.recipient_id is None and self.recipient_team is None:
-                raise ValueError(
-                    "At least one of 'recipient_id' or 'recipient_team' must be set."
-                )
+        if (
+            self.msg_type not in exempt
+            and self.recipient_id is None
+            and self.recipient_team is None
+        ):
+            raise ValueError(
+                "At least one of 'recipient_id' or 'recipient_team' must be set."
+            )
         if (
             self.recipient_id is not None
             and self.recipient_team is not None
@@ -302,13 +305,20 @@ class MessageEnvelope(BaseModel):
         sender_team: str,
         **kwargs: Any,
     ) -> MessageEnvelope:
-        """Construct a reply to this message with correlation wired up."""
+        """Construct a reply routed to the original sender's team.
+
+        The message router can route by team but does not maintain a global
+        agent-to-team directory. Targeting only ``self.sender_id`` causes a
+        cross-team reply to fall back to the responder's own stream. The
+        destination team runner is responsible for dispatching reply message
+        types to its administrative/requesting agent.
+        """
         return MessageEnvelope(
             msg_type=msg_type,
             sender_id=sender_id,
             sender_role=sender_role,
             sender_team=sender_team,
-            recipient_id=self.sender_id,
+            recipient_team=self.sender_team,
             correlation_id=self.correlation_id,
             parent_id=self.message_id,
             project_id=self.project_id,

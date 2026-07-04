@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import shutil
+import sys
 from typing import TYPE_CHECKING, Any
 
 from mas_core.protocols.enums import AgentRole
@@ -275,7 +276,7 @@ class RepoReadTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Read a repository file through the workspace boundary."
     allowed_roles = _WORKER
-    cache_ttl_seconds = 10
+    cache_ttl_seconds = 0
     max_concurrency = 10
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -296,7 +297,7 @@ class RepoSearchTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Search repository text with rg when available."
     allowed_roles = _WORKER
-    cache_ttl_seconds = 10
+    cache_ttl_seconds = 0
     max_concurrency = 5
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -352,7 +353,7 @@ class DocumentIngestTool(BaseTool):
     group = ToolGroup.DOCUMENT
     description = "Parse a document with Docling when installed, otherwise return text/metadata."
     allowed_roles = _WORKER
-    cache_ttl_seconds = 30
+    cache_ttl_seconds = 0
     max_concurrency = 2
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -362,12 +363,14 @@ class DocumentIngestTool(BaseTool):
         docling = shutil.which("docling")
         if docling:
             result = await _run_process(
-                [docling, str(safe_path), "--to", "json"],
+                [sys.executable, "-m", "tool_service.docling_runner", str(safe_path)],
                 cwd=safe_path.parent,
                 timeout=float(kwargs.get("timeout_seconds", 60)),
                 max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
             )
             result["backend"] = "docling"
+            if result.get("returncode") == 0 and result.get("stdout"):
+                result["document"] = json.loads(result["stdout"])
             return result
         return {
             "available": False,
@@ -392,7 +395,35 @@ class SecurityScanTool(BaseTool):
         project_id = kwargs.get("project_id", "")
         cwd = _workspace_cwd(project_id, kwargs.get("path", "."))
         config = kwargs.get("config", "auto")
-        argv = ["semgrep", "scan", "--json", "--config", str(config), "."]
+        if config in ("", "auto"):
+            config = "/workspace/mas/apps/tool-service/tool_service/semgrep-default.yml"
+        semgrep_cmd = " ".join(
+            [
+                "semgrep",
+                "scan",
+                "--json",
+                "--metrics=off",
+                "--disable-version-check",
+                "--no-git-ignore",
+                "--include=*.py",
+                "--exclude=.git",
+                "--config",
+                shlex.quote(str(config)),
+                ".",
+            ]
+        )
+        argv = [
+            "sh",
+            "-lc",
+            (
+                "set -e; "
+                "rm -rf /tmp/aiat-semgrep-src; "
+                "mkdir -p /tmp/aiat-semgrep-src; "
+                "cp -R . /tmp/aiat-semgrep-src/; "
+                "cd /tmp/aiat-semgrep-src; "
+                f"{semgrep_cmd}"
+            ),
+        ]
         result = await _run_sandboxed_process(
             argv,
             cwd=cwd,
@@ -449,14 +480,24 @@ class CodeReviewTool(BaseTool):
         raw = os.getenv("TOOL_CODE_REVIEW_COMMAND", "").strip()
         if not raw:
             return {"available": False, "reason": "TOOL_CODE_REVIEW_COMMAND_not_configured"}
-        argv = shlex.split(raw) + [str(arg) for arg in kwargs.get("args", [])]
         cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
-        return await _run_process(
-            argv,
+        payload = {
+            "mode": str(kwargs.get("mode") or "diff"),
+            "base": str(kwargs.get("base") or ""),
+            "head": str(kwargs.get("head") or "HEAD"),
+            "severity_threshold": str(kwargs.get("severity_threshold") or "medium"),
+        }
+        result = await _run_process(
+            shlex.split(raw),
             cwd=cwd,
+            input_text=json.dumps(payload),
             timeout=float(kwargs.get("timeout_seconds", 120)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
         )
+        if result.get("returncode") == 0 and result.get("stdout"):
+            result["review"] = json.loads(result["stdout"])
+        result["backend"] = "aiat_code_review"
+        return result
 
 
 class IaCPlanTool(BaseTool):
@@ -487,7 +528,7 @@ class DiagramRenderTool(BaseTool):
     group = ToolGroup.DOCUMENT
     description = "Validate/render Mermaid diagrams when Mermaid CLI is installed."
     allowed_roles = _WORKER
-    cache_ttl_seconds = 30
+    cache_ttl_seconds = 0
     max_concurrency = 2
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -506,7 +547,15 @@ class DiagramRenderTool(BaseTool):
         output = str(kwargs.get("output", "diagram.svg"))
         out_path = _safe_workspace_path(output, project_id=kwargs.get("project_id", ""))
         return await _run_process(
-            [mmdc, "-i", "-", "-o", str(out_path)],
+            [
+                mmdc,
+                "-p",
+                "/app/puppeteer-config.json",
+                "-i",
+                "-",
+                "-o",
+                str(out_path),
+            ],
             cwd=cwd,
             input_text=source,
             timeout=float(kwargs.get("timeout_seconds", 30)),

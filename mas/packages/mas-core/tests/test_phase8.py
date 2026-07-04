@@ -285,6 +285,10 @@ class TestAdminAgent:
         # First, delegate subtasks
         parent_env = _make_envelope(
             msg_type=MessageType.ADMIN_TASK,
+            sender_id="coo",
+            sender_role=AgentRole.EXECUTIVE,
+            sender_team="exec_coo",
+            recipient_team="dept_production",
             payload={
                 "subtasks": [
                     {"task": "sub 1"},
@@ -297,7 +301,6 @@ class TestAdminAgent:
         await agent._handle_admin_task(parent_env)
 
         # Now simulate two worker replies
-        corr_id = str(parent_env.correlation_id)
         router.publish.reset_mock()
 
         reply1 = _make_envelope(
@@ -323,6 +326,8 @@ class TestAdminAgent:
         last_call = router.publish.call_args[0][0]
         assert last_call.msg_type == MessageType.ADMIN_REPLY
         assert last_call.payload["result_count"] == 2
+        assert last_call.recipient_team == "exec_coo"
+        assert last_call.parent_id == parent_env.message_id
 
     @pytest.mark.asyncio
     async def test_shutdown_cascade(self):
@@ -485,6 +490,33 @@ class TestSubAgent:
 
 class TestExecutiveAgent:
     """ExecutiveAgent: document lifecycle, review, CSO veto, revision."""
+
+    @pytest.mark.asyncio
+    async def test_generic_task_is_executed_directly_and_replied_upstream(self):
+        config = _make_config(
+            agent_id="coo", team_id="exec_coo", agent_role=AgentRole.EXECUTIVE
+        )
+        agent = ExecutiveAgent(config, llm_client=_FakeLLMClient("executive result"))
+        router = _patch_router(agent)
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="ceo",
+            sender_role=AgentRole.ORCHESTRATOR,
+            sender_team="exec_ceo",
+            recipient_team="exec_coo",
+            payload={"task": "analyze operations", "context": "live audit"},
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert router.publish.call_count == 1
+        reply = router.publish.call_args.args[0]
+        assert reply.msg_type == MessageType.ADMIN_REPLY
+        assert reply.recipient_team == "exec_ceo"
+        assert reply.payload["result"] == "executive result"
+        assert agent._pending_delegations == {}
 
     @pytest.mark.asyncio
     async def test_document_submit_triggers_review_fanout(self):

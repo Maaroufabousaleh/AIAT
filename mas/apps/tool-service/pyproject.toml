@@ -16,7 +16,13 @@ dependencies = [
     "pydantic-settings>=2.3",
     "structlog>=24.2",
     "prometheus-fastapi-instrumentator>=7.0",
+    "mcp==1.23.3",
 ]
+
+[project.scripts]
+aiat-sandbox-runner = "tool_service.sandbox_runner:main"
+aiat-code-review = "tool_service.code_review_runner:main"
+aiat-devops-adapter = "tool_service.devops_adapter:main"
 
 [build-system]
 requires = ["hatchling"]

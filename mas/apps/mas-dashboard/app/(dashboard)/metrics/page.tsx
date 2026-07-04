@@ -309,7 +309,7 @@ export default function MetricsPage() {
         />
       </div>
 
-      {noData ? (
+      {noData && (
         <EmptyState
           icon="alert"
           tone="neutral"
@@ -326,7 +326,7 @@ export default function MetricsPage() {
             </button>
           }
         />
-      ) : (
+      )}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {!mounted ? (
           <div className="col-span-2 h-48 flex items-center justify-center text-slate-500 text-sm">
@@ -595,7 +595,6 @@ export default function MetricsPage() {
         )}
         </>)}
       </div>
-      )}
     </div>
   );
 }

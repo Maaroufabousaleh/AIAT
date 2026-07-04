@@ -18,7 +18,7 @@ Usage
         )
         response2 = await client.chat_completion(
             messages=[{"role": "user", "content": "Analyse this"}],
-            model="gpt-5-nano",          # Zen free responses API
+            model="north-mini-code-free",  # Zen free chat-completions
         )
 
 Agent convenience API
@@ -481,7 +481,7 @@ class LLMGatewayClient:
                 str(exc),
             )
             raise
-        except httpx.TimeoutException:
+        except httpx.TransportError:
             latency = _time.time() - t0
             self._record_failure(
                 audit_evt,
@@ -539,9 +539,7 @@ class LLMGatewayClient:
         rid = request_id or _uuid.uuid4().hex[:16]
         resolved_model = model or self._config.default_model
 
-        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith(
-            "legacy:"
-        )
+        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith("legacy:")
         if force_legacy_backend:
             resolved_model = resolved_model.removeprefix("legacy:")
 
@@ -651,7 +649,7 @@ class LLMGatewayClient:
                             wait_s *= 2
                         continue
                     raise LLMGatewayError(response.status_code, detail)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 last_exc = exc
                 if attempt < max_retries:
                     await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
@@ -725,9 +723,7 @@ class LLMGatewayClient:
     ) -> ChatResponse:
         """Internal dispatch — routes to the correct API style."""
 
-        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith(
-            "legacy:"
-        )
+        force_legacy_backend = self._uses_litellm_backend() and resolved_model.startswith("legacy:")
         if force_legacy_backend:
             resolved_model = resolved_model.removeprefix("legacy:")
 
@@ -925,7 +921,7 @@ class LLMGatewayClient:
                         raise LLMGatewayError(response.status_code, detail)
 
                 response = await client.post(endpoint, json=payload)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 _retry_counter_ref[0] = attempt + 1
                 last_exc = exc
                 if attempt < max_retries:
@@ -1438,7 +1434,7 @@ class LLMGatewayClient:
                         raise LLMGatewayError(response.status_code, detail)
 
                 response = await client.post("/v1/chat/completions", json=payload)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 _retry_counter_ref[0] = attempt + 1
                 last_exc = exc
                 if attempt < max_retries:
@@ -1526,7 +1522,7 @@ class LLMGatewayClient:
                             wait_s *= 2
                         continue
                     raise LLMGatewayError(response.status_code, detail)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 last_exc = exc
                 if attempt < max_retries:
                     await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
@@ -1750,7 +1746,7 @@ class LLMGatewayClient:
         for attempt in range(max_retries + 1):
             try:
                 response = await client.post(endpoint, json=payload)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 last_exc = exc
                 if attempt < max_retries:
                     await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))
@@ -1831,7 +1827,7 @@ class LLMGatewayClient:
         for attempt in range(max_retries + 1):
             try:
                 response = await client.post(endpoint, json=payload)
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 last_exc = exc
                 if attempt < max_retries:
                     await asyncio.sleep(min(wait_s, self._config.retry_max_wait_s))

@@ -65,6 +65,7 @@ def _make_config(**overrides: Any) -> LLMConfig:
     defaults = dict(
         gateway_url="http://fake-llm:8080",
         default_model="gpt-4o",
+        backend="legacy",
         api_key="test-key",
         max_retries=1,
         retry_min_wait_s=0.001,
@@ -292,7 +293,6 @@ class TestCopilotBackgroundScan:
         scanner = CopilotModelScanner(registry=reg, binary="copilot", scan_interval=0.05)
 
         scan_count = 0
-        original_scan = scanner.scan_and_register
 
         async def counting_scan():
             nonlocal scan_count

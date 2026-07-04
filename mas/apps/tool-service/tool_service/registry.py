@@ -174,7 +174,13 @@ class ToolRegistry:
 
     def get_manifest(self) -> list[dict[str, Any]]:
         """Return registered tools and valid aliases for GET /tools."""
-        entries = [tool.to_manifest_entry() for _, tool in sorted(self._tools.items())]
+        from .readiness import tool_readiness
+
+        entries = []
+        for tool_name, tool in sorted(self._tools.items()):
+            entry = tool.to_manifest_entry()
+            entry.update(tool_readiness(tool_name, self._settings))
+            entries.append(entry)
         for alias, canonical in sorted(TOOL_ALIASES.items()):
             if canonical not in self._tools:
                 continue
@@ -183,6 +189,7 @@ class ToolRegistry:
             base["canonical_tool_name"] = canonical
             base["deprecated_alias_of"] = canonical
             base["alias"] = True
+            base.update(tool_readiness(canonical, self._settings))
             entries.append(base)
         return entries
 
@@ -485,9 +492,21 @@ class ToolRegistry:
             return resp.json()
 
     async def _execute_mcp_transport(self, tool_name: str, kwargs: dict[str, Any]) -> Any:
+        if self._settings.mcp_servers:
+            from .mcp_client import invoke_mcp_tool
+
+            return await invoke_mcp_tool(
+                self._settings.mcp_servers,
+                kwargs,
+                timeout=self._settings.transport_request_timeout_seconds,
+            )
         endpoint = self._settings.mcp_transport_endpoints.get(tool_name)
         if not endpoint:
-            raise ValueError(f"No MCP transport endpoint configured for tool '{tool_name}'")
+            return {
+                "available": False,
+                "configured": False,
+                "reason": f"MCP transport endpoint not configured for {tool_name}",
+            }
         timeout = self._settings.transport_request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(

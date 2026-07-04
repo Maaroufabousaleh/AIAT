@@ -24,37 +24,61 @@ async function renameNode(page: Page, label: string) {
   await page.getByTestId("node-label-input").fill(label);
 }
 
-async function connectNodes(page: Page, sourceIndex: number, targetIndex: number) {
-  const sourceId = await page.locator(".react-flow__node").nth(sourceIndex).getAttribute("data-id");
-  const targetId = await page.locator(".react-flow__node").nth(targetIndex).getAttribute("data-id");
+async function connectNodes(
+  page: Page,
+  sourceIndex: number,
+  targetIndex: number,
+) {
+  const sourceId = await page
+    .locator(".react-flow__node")
+    .nth(sourceIndex)
+    .getAttribute("data-id");
+  const targetId = await page
+    .locator(".react-flow__node")
+    .nth(targetIndex)
+    .getAttribute("data-id");
   if (!sourceId || !targetId) {
     throw new Error("Unable to resolve flow node ids");
   }
   await page.evaluate(
     ({ source, target }) => {
-      window.dispatchEvent(new CustomEvent("flow-quick-connect", { detail: { source, target } }));
+      window.dispatchEvent(
+        new CustomEvent("flow-quick-connect", { detail: { source, target } }),
+      );
     },
-    { source: sourceId, target: targetId }
+    { source: sourceId, target: targetId },
   );
 }
 
-async function createProjectWithFlow(page: Page, flowName: string, projectName: string) {
+async function createProjectWithFlow(
+  page: Page,
+  flowName: string,
+  projectName: string,
+): Promise<string> {
   await page.goto("/projects");
   await page.getByRole("button", { name: /new project/i }).click();
   await page.getByPlaceholder("my-project").fill(projectName);
-  await page.getByPlaceholder("What should the agents build\?").fill("Operator validation project");
-  await page.locator("select").last().selectOption({ label: `${flowName} (v2)` });
+  await page
+    .getByPlaceholder("What should the agents build\?")
+    .fill("Operator validation project");
+  await page
+    .locator("select")
+    .last()
+    .selectOption({ label: `${flowName} (v2)` });
   await page.getByRole("button", { name: /^create$/i }).click();
   await expect(page.getByText(projectName)).toBeVisible();
   const row = page.getByRole("row", { name: new RegExp(projectName) });
   const projectLink = row.getByRole("link", { name: /^Open / });
   const href = await projectLink.getAttribute("href");
   if (!href) throw new Error("Created project row is missing its open link");
-  await expect.poll(async () => {
-    const response = await page.request.get(`/api${href}/flow-instance`);
-    return response.status();
-  }).toBe(200);
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`/api${href}/flow-instance`);
+      return response.status();
+    })
+    .toBe(200);
   await projectLink.click();
+  return href;
 }
 
 test("operator can build, version, assign, refresh, and override a flow from the UI", async ({
@@ -80,7 +104,9 @@ test("operator can build, version, assign, refresh, and override a flow from the
 
   await openNodeConfig(page, 1);
   await renameNode(page, "Feasibility Review");
-  await page.getByTestId("task-team-id-input").fill("office_cfo+office_cio+office_chrm+office_cso");
+  await page
+    .getByTestId("task-team-id-input")
+    .fill("office_cfo+office_cio+office_chrm+office_cso");
   await page.getByTestId("task-timeout-input").fill("900");
   await page.getByTestId("task-escalate-team-input").fill("exec_ceo");
 
@@ -106,8 +132,13 @@ test("operator can build, version, assign, refresh, and override a flow from the
   await connectNodes(page, 3, 4);
   await connectNodes(page, 4, 5);
 
+  const createFlowResponse = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/api/flows") && res.request().method() === "POST",
+  );
   await page.getByTestId("flow-save-button").click();
-  await expect(page).toHaveURL(/\/flows\/(?!new$)[^/]+$/);
+  expect((await createFlowResponse).status()).toBe(201);
+  await expect(page).toHaveURL(/\/flows\/(?!new$)[^/]+$/, { timeout: 30_000 });
   await expect(page.getByTestId("flow-name-input")).toHaveValue(flowName);
 
   await page.reload();
@@ -128,23 +159,54 @@ test("operator can build, version, assign, refresh, and override a flow from the
   await page.goto("/flows");
   await expect(page.getByText(flowName)).toHaveCount(2);
 
-  await createProjectWithFlow(page, flowName, projectName);
+  const projectHref = await createProjectWithFlow(page, flowName, projectName);
 
   await page.getByTestId("project-tab-flow").click();
   await expect(page.getByText("NOT_STARTED").nth(1)).toBeVisible();
   await page.getByTestId("flow-start-button").click();
   await expect(page.getByText("Current Node")).toBeVisible();
-  await expect(page.getByText("Intake").first()).toBeVisible();
+  await expect(page.getByTestId("current-node-label").first()).toHaveText(
+    "Intake",
+  );
   await expect(page.getByText("Feasibility Review").first()).toBeVisible();
 
-  await page.getByTestId("override-node-select").selectOption({ label: "Implementation" });
-  await page.getByTestId("override-reason-input").fill("Operator expedited implementation");
+  await page
+    .getByTestId("override-node-select")
+    .selectOption({ label: "Implementation" });
+  const targetNodeId = await page
+    .getByTestId("override-node-select")
+    .inputValue();
+  await page
+    .getByTestId("override-reason-input")
+    .fill("Operator expedited implementation");
+  const overrideResponse = page.waitForResponse(
+    (res) =>
+      res.url().includes("/api/flows/instances/") &&
+      res.url().endsWith("/override") &&
+      res.request().method() === "POST",
+  );
   await page.getByTestId("override-node-button").click();
-  await expect(page.getByText("Implementation").first()).toBeVisible();
+  expect((await overrideResponse).ok()).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `/api${projectHref}/flow-instance`,
+      );
+      const instance = await response.json();
+      return instance.active_node_ids ?? [];
+    })
+    .toContain(targetNodeId);
+  await expect(page.getByTestId("current-node-label").first()).toHaveText(
+    "Implementation",
+  );
 
   await page.reload();
   await page.getByTestId("project-tab-flow").click();
-  await expect(page.getByText("Implementation").first()).toBeVisible();
+  await expect(page.getByTestId("current-node-label").first()).toHaveText(
+    "Implementation",
+  );
   await page.getByTestId("project-tab-workflow").click();
-  await expect(page.getByText("Operator expedited implementation")).toBeVisible();
+  await expect(page.getByTestId("project-history-list")).toContainText(
+    "Operator expedited implementation",
+  );
 });

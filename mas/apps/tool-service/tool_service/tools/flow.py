@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
+
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
@@ -21,6 +23,15 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+async def _get_flow_instance(project_id: str) -> dict[str, Any]:
+    try:
+        return _as_dict(await orch_get(f"/projects/{project_id}/flow-instance"))
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {}
+        raise
+
+
 # ── Flow ───────────────────────────────────────────────────────────────────
 
 
@@ -29,7 +40,7 @@ class FlowListTool(BaseTool):
     group = ToolGroup.WORKFLOW
     description = "List flows with optional active filter."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         params = {}
@@ -43,7 +54,7 @@ class FlowRecommendTool(BaseTool):
     group = ToolGroup.WORKFLOW
     description = "Recommend the best available flow for a project based on name and description."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_name = str(kwargs.get("project_name") or "").strip()
@@ -110,7 +121,7 @@ class FlowInvokeTool(BaseTool):
         action = kwargs.get("action", "start")
         flow_id = kwargs.get("flow_id")
 
-        instance_resp = _as_dict(await orch_get(f"/projects/{project_id}/flow-instance"))
+        instance_resp = await _get_flow_instance(project_id)
 
         if not instance_resp or instance_resp.get("status") == 404:
             if not flow_id:
@@ -134,11 +145,14 @@ class FlowStatusTool(BaseTool):
     group = ToolGroup.WORKFLOW
     description = "Get the flow instance status for a project."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
-        return await orch_get(f"/projects/{project_id}/flow-instance")
+        instance = await _get_flow_instance(project_id)
+        if not instance:
+            return {"error": "flow_instance_not_found", "project_id": project_id}
+        return instance
 
 
 class FlowAdvanceTool(BaseTool):
@@ -154,7 +168,7 @@ class FlowAdvanceTool(BaseTool):
         node_id = kwargs.get("node_id", "")
         action = kwargs.get("action", "complete")
 
-        instance_resp = _as_dict(await orch_get(f"/projects/{project_id}/flow-instance"))
+        instance_resp = await _get_flow_instance(project_id)
         instance_id = instance_resp.get("id") or instance_resp.get("instance_id")
         if not instance_id:
             return {"error": "No flow instance found for project"}
@@ -187,7 +201,7 @@ class FlowAssignTool(BaseTool):
         if not project_id or not flow_id:
             return {"error": "project_id and flow_id are required"}
 
-        instance_resp = _as_dict(await orch_get(f"/projects/{project_id}/flow-instance"))
+        instance_resp = await _get_flow_instance(project_id)
 
         if not instance_resp or instance_resp.get("status") == 404:
             body = {

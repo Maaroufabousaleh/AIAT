@@ -3,10 +3,13 @@ import { orchestratorFetch } from "@/lib/orchestrator";
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { worker_id: string } }
+  props: { params: Promise<{ worker_id: string }> },
 ) {
+  const params = await props.params;
   try {
-    const worker = await orchestratorFetch(`/capabilities/workers/${params.worker_id}`);
+    const worker = await orchestratorFetch(
+      `/capabilities/workers/${params.worker_id}`,
+    );
     return NextResponse.json(worker);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -16,14 +19,18 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { worker_id: string } }
+  props: { params: Promise<{ worker_id: string }> },
 ) {
+  const params = await props.params;
   try {
     const body = await req.json();
-    const worker = await orchestratorFetch(`/capabilities/workers/${params.worker_id}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
+    const worker = await orchestratorFetch(
+      `/capabilities/workers/${params.worker_id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      },
+    );
     return NextResponse.json(worker);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -33,8 +40,9 @@ export async function PUT(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { worker_id: string } }
+  props: { params: Promise<{ worker_id: string }> },
 ) {
+  const params = await props.params;
   try {
     await orchestratorFetch(`/capabilities/workers/${params.worker_id}`, {
       method: "DELETE",

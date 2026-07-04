@@ -14,29 +14,10 @@ from ._orch_client import orch_delete, orch_get, orch_post
 _ADMIN = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
 _EXEC = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
 
-# Compatibility fallback for isolated tests or local tool-service runs when the
-# orchestrator is not available.
-_REGISTRY: dict[str, dict[str, Any]] = {}
-
-
 def _role_value(role: Any) -> str | None:
     if role is None:
         return None
     return str(getattr(role, "value", role))
-
-
-def _fallback_search(name: str, role: Any = None) -> dict[str, Any]:
-    role_value = _role_value(role)
-    workers: list[dict[str, Any]] = []
-    for worker in _REGISTRY.values():
-        caps = worker.get("capabilities", [])
-        has_cap = any(str(c).lower() == name for c in caps) if name else True
-        if not has_cap:
-            continue
-        if role_value and _role_value(worker.get("role")) != role_value:
-            continue
-        workers.append(worker)
-    return {"query": {"name": name, "role": role_value}, "workers": workers, "count": len(workers)}
 
 
 def _is_uuid(value: str) -> bool:
@@ -75,24 +56,21 @@ class CapabilitySearchTool(BaseTool):
     group = ToolGroup.CAPABILITY
     description = "Search workers by capability name."
     allowed_roles = _ADMIN
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         name = str(kwargs.get("name", "")).strip().lower()
         role = _role_value(kwargs.get("role"))
-        try:
-            if name:
-                body: dict[str, Any] = {"name": name}
-                if role:
-                    body["role"] = role
-                workers = await orch_post("/capabilities/search", body)
-            else:
-                workers = await orch_get("/capabilities/workers")
-            if not isinstance(workers, list):
-                workers = []
-            return {"query": {"name": name, "role": role}, "workers": workers, "count": len(workers)}
-        except Exception:
-            return _fallback_search(name, role)
+        if name:
+            body: dict[str, Any] = {"name": name}
+            if role:
+                body["role"] = role
+            workers = await orch_post("/capabilities/search", body)
+        else:
+            workers = await orch_get("/capabilities/workers")
+        if not isinstance(workers, list):
+            raise RuntimeError("orchestrator capability search returned a non-list response")
+        return {"query": {"name": name, "role": role}, "workers": workers, "count": len(workers)}
 
 
 class CapabilityListWorkersTool(BaseTool):
@@ -100,22 +78,18 @@ class CapabilityListWorkersTool(BaseTool):
     group = ToolGroup.CAPABILITY
     description = "List all registered workers and their capabilities."
     allowed_roles = _ADMIN
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
-        try:
-            params: dict[str, Any] = {}
-            if kwargs.get("team_id"):
-                params["team_id"] = kwargs["team_id"]
-            if kwargs.get("status"):
-                params["status"] = kwargs["status"]
-            workers = await orch_get("/capabilities/workers", params=params or None)
-            if not isinstance(workers, list):
-                workers = []
-            return {"workers": workers, "count": len(workers)}
-        except Exception:
-            workers = list(_REGISTRY.values())
-            return {"workers": workers, "count": len(workers)}
+        params: dict[str, Any] = {}
+        if kwargs.get("team_id"):
+            params["team_id"] = kwargs["team_id"]
+        if kwargs.get("status"):
+            params["status"] = kwargs["status"]
+        workers = await orch_get("/capabilities/workers", params=params or None)
+        if not isinstance(workers, list):
+            raise RuntimeError("orchestrator worker listing returned a non-list response")
+        return {"workers": workers, "count": len(workers)}
 
 
 class CapabilityRegisterTool(BaseTool):
@@ -141,27 +115,23 @@ class CapabilityRegisterTool(BaseTool):
         adapter_config = dict(kwargs.get("adapter_config") or {})
         adapter_config.setdefault("worker_id", worker_id)
         role = _role_value(record["role"])
-        try:
-            worker = await orch_post(
-                "/capabilities/workers",
-                {
-                    "name": record["name"],
-                    "adapter_type": record["adapter_type"],
-                    "adapter_config": adapter_config,
-                    "sandbox_profile": record["sandbox_profile"],
-                    "role": role,
-                    "team_id": kwargs.get("team_id"),
-                    "source_repo": kwargs.get("source_repo"),
-                    "version_pin": kwargs.get("version_pin"),
-                    "update_policy": kwargs.get("update_policy") or "manual",
-                    "capability_names": record["capabilities"],
-                    "required_tools": list(kwargs.get("required_tools", [])),
-                },
-            )
-            return {"registered": True, "worker": worker}
-        except Exception:
-            _REGISTRY[worker_id] = record
-            return {"registered": True, "worker": record, "fallback": True}
+        worker = await orch_post(
+            "/capabilities/workers",
+            {
+                "name": record["name"],
+                "adapter_type": record["adapter_type"],
+                "adapter_config": adapter_config,
+                "sandbox_profile": record["sandbox_profile"],
+                "role": role,
+                "team_id": kwargs.get("team_id"),
+                "source_repo": kwargs.get("source_repo"),
+                "version_pin": kwargs.get("version_pin"),
+                "update_policy": kwargs.get("update_policy") or "manual",
+                "capability_names": record["capabilities"],
+                "required_tools": list(kwargs.get("required_tools", [])),
+            },
+        )
+        return {"registered": True, "worker": worker}
 
 
 class CapabilityDeregisterTool(BaseTool):
@@ -176,17 +146,13 @@ class CapabilityDeregisterTool(BaseTool):
         worker_id = str(kwargs.get("worker_id", "")).strip()
         if not worker_id:
             raise ValueError("worker_id is required")
-        try:
-            orchestrator_worker_id = await _resolve_orchestrator_worker_id(worker_id)
-            if orchestrator_worker_id:
-                result = await orch_delete(f"/capabilities/workers/{orchestrator_worker_id}")
-                return {
-                    "deregistered": True,
-                    "worker_id": worker_id,
-                    "orchestrator_worker_id": orchestrator_worker_id,
-                    "result": result,
-                }
-        except Exception:
-            pass
-        removed = _REGISTRY.pop(worker_id, None)
-        return {"deregistered": removed is not None, "worker_id": worker_id}
+        orchestrator_worker_id = await _resolve_orchestrator_worker_id(worker_id)
+        if orchestrator_worker_id is None:
+            return {"deregistered": False, "worker_id": worker_id, "reason": "worker_not_found"}
+        result = await orch_delete(f"/capabilities/workers/{orchestrator_worker_id}")
+        return {
+            "deregistered": True,
+            "worker_id": worker_id,
+            "orchestrator_worker_id": orchestrator_worker_id,
+            "result": result,
+        }

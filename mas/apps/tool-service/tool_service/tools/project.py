@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
@@ -60,7 +61,7 @@ class ProjectStatusTool(BaseTool):
     group = ToolGroup.WORKFLOW
     description = "Get the current project status and state."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -99,7 +100,7 @@ class ProjectListTool(BaseTool):
     group = ToolGroup.WORKFLOW
     description = "List projects with optional filters."
     allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         params = {}
@@ -162,19 +163,19 @@ class DocumentSubmitTool(BaseTool):
             "RR": "rr_submitted",
         }
         event = event_map.get(doc_type)
-        if event:
-            return await orch_post(
-                f"/projects/{project_id}/transition",
-                {
-                    "event": event,
-                    "actor_id": kwargs.get("actor_id", "agent"),
-                    "context": {
-                        "document_id": kwargs.get("document_id"),
-                        "doc_type": doc_type,
-                    },
+        if event is None:
+            raise ValueError("doc_type must be one of PDR, CDR, or RR")
+        return await orch_post(
+            f"/projects/{project_id}/transition",
+            {
+                "event": event,
+                "actor_id": kwargs.get("actor_id", "agent"),
+                "context": {
+                    "document_id": kwargs.get("document_id"),
+                    "doc_type": doc_type,
                 },
-            )
-        return {"status": "submitted", "doc_type": doc_type}
+            },
+        )
 
 
 class DocumentReviseTool(BaseTool):
@@ -213,7 +214,7 @@ class DocumentGetLatestTool(BaseTool):
         AgentRole.ADMIN,
         AgentRole.WORKER,
     ]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -238,7 +239,7 @@ class DocumentListTool(BaseTool):
         AgentRole.ADMIN,
         AgentRole.WORKER,
     ]
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")

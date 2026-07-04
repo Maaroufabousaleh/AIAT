@@ -1,9 +1,28 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { RefreshCw, Users, CheckCircle, AlertTriangle, XCircle, Package, Plus, ChevronDown, ChevronRight, ChevronUp, ExternalLink, Settings, Power, ClipboardCheck } from "lucide-react";
+import {
+  RefreshCw,
+  Users,
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
+  Package,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  ExternalLink,
+  Settings,
+  Power,
+  ClipboardCheck,
+} from "lucide-react";
 import { clsx } from "clsx";
-import { BulkActionBar, RowCheckbox, SelectAllCheckbox } from "@/components/ui/BulkActionBar";
+import {
+  BulkActionBar,
+  RowCheckbox,
+  SelectAllCheckbox,
+} from "@/components/ui/BulkActionBar";
 import { useBulkSelection } from "@/lib/use-bulk-selection";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -50,21 +69,72 @@ interface EvaluationReport {
   overall_score?: number;
   evaluated_at?: string;
   risk_tier?: string;
-  checks?: Record<string, { passed?: boolean; score?: number; status?: string; details?: string }>;
+  checks?: Record<
+    string,
+    { passed?: boolean; score?: number; status?: string; details?: string }
+  >;
   blocked_reasons?: string[];
   recommended_status?: string;
   requires_human_approval?: boolean;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; cls: string }> = {
-  ACTIVE: { label: "Active", icon: CheckCircle, cls: "text-emerald-400 bg-emerald-400/10 border-emerald-700" },
-  INACTIVE: { label: "Inactive", icon: XCircle, cls: "text-slate-400 bg-slate-400/10 border-slate-700" },
-  DRAINING: { label: "Draining", icon: AlertTriangle, cls: "text-cyan-400 bg-cyan-400/10 border-cyan-700" },
-  DEREGISTERED: { label: "Deregistered", icon: XCircle, cls: "text-rose-400 bg-rose-400/10 border-rose-700" },
-  PENDING: { label: "Pending", icon: AlertTriangle, cls: "text-amber-400 bg-amber-400/10 border-amber-700" },
-  PENDING_EVALUATION: { label: "Pending Eval", icon: AlertTriangle, cls: "text-amber-400 bg-amber-400/10 border-amber-700" },
-  REJECTED: { label: "Rejected", icon: XCircle, cls: "text-rose-400 bg-rose-400/10 border-rose-700" },
-  ERROR: { label: "Error", icon: AlertTriangle, cls: "text-rose-400 bg-rose-400/10 border-rose-700" },
+interface RuntimeStatus {
+  id: string;
+  name: string;
+  status: string;
+  tier?: string;
+  description?: string;
+  policy?: {
+    sandbox_required?: string;
+    requires_approval?: boolean;
+    read_only_by_default?: boolean;
+  };
+}
+
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; icon: typeof CheckCircle; cls: string }
+> = {
+  ACTIVE: {
+    label: "Active",
+    icon: CheckCircle,
+    cls: "text-emerald-400 bg-emerald-400/10 border-emerald-700",
+  },
+  INACTIVE: {
+    label: "Inactive",
+    icon: XCircle,
+    cls: "text-slate-400 bg-slate-400/10 border-slate-700",
+  },
+  DRAINING: {
+    label: "Draining",
+    icon: AlertTriangle,
+    cls: "text-cyan-400 bg-cyan-400/10 border-cyan-700",
+  },
+  DEREGISTERED: {
+    label: "Deregistered",
+    icon: XCircle,
+    cls: "text-rose-400 bg-rose-400/10 border-rose-700",
+  },
+  PENDING: {
+    label: "Pending",
+    icon: AlertTriangle,
+    cls: "text-amber-400 bg-amber-400/10 border-amber-700",
+  },
+  PENDING_EVALUATION: {
+    label: "Pending Eval",
+    icon: AlertTriangle,
+    cls: "text-amber-400 bg-amber-400/10 border-amber-700",
+  },
+  REJECTED: {
+    label: "Rejected",
+    icon: XCircle,
+    cls: "text-rose-400 bg-rose-400/10 border-rose-700",
+  },
+  ERROR: {
+    label: "Error",
+    icon: AlertTriangle,
+    cls: "text-rose-400 bg-rose-400/10 border-rose-700",
+  },
 };
 
 const EVAL_COLORS: Record<string, string> = {
@@ -79,7 +149,12 @@ function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.INACTIVE;
   const Icon = cfg.icon;
   return (
-    <span className={clsx("inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium", cfg.cls)}>
+    <span
+      className={clsx(
+        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs font-medium",
+        cfg.cls,
+      )}
+    >
       <Icon size={11} />
       {cfg.label}
     </span>
@@ -104,11 +179,14 @@ function WorkerRow({
   const [actionError, setActionError] = useState("");
   // Track which evaluation check details are expanded (per check name).
   // Default: all collapsed to keep the row dense.
-  const [expandedChecks, setExpandedChecks] = useState<Record<string, boolean>>({});
+  const [expandedChecks, setExpandedChecks] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const latestEvaluation = evaluations[0];
   const activationBlocked =
-    Boolean(worker.source_repo) && (worker.evaluation_status ?? "pending") !== "approved";
+    Boolean(worker.source_repo) &&
+    (worker.evaluation_status ?? "pending") !== "approved";
 
   function toggleCheck(name: string) {
     setExpandedChecks((prev) => ({ ...prev, [name]: !prev[name] }));
@@ -143,7 +221,9 @@ function WorkerRow({
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        setActionError(payload.error ?? payload.detail ?? "Status transition failed");
+        setActionError(
+          payload.error ?? payload.detail ?? "Status transition failed",
+        );
         return;
       }
       onStatusChange();
@@ -198,7 +278,7 @@ function WorkerRow({
       <tr
         className={clsx(
           "border-b border-slate-800 hover:bg-slate-800/35 cursor-pointer transition-colors",
-          selected && "bg-blue-950/30 hover:bg-blue-950/40"
+          selected && "bg-blue-950/30 hover:bg-blue-950/40",
         )}
         onClick={() => void toggleExpanded()}
       >
@@ -214,18 +294,29 @@ function WorkerRow({
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </td>
         <td className="px-4 py-3">
-          <div className="font-mono text-sm text-white font-medium">{worker.worker_id}</div>
+          <div className="font-mono text-sm text-white font-medium">
+            {worker.worker_id}
+          </div>
           {worker.description && (
-            <div className="text-xs text-slate-500 truncate max-w-xs">{worker.description}</div>
+            <div className="text-xs text-slate-500 truncate max-w-xs">
+              {worker.description}
+            </div>
           )}
         </td>
         <td className="px-4 py-3 text-xs text-slate-400">{worker.name}</td>
-        <td className="px-4 py-3 text-xs text-slate-400">{worker.team_id ?? "—"}</td>
+        <td className="px-4 py-3 text-xs text-slate-400">
+          {worker.team_id ?? "—"}
+        </td>
         <td className="px-4 py-3">
           <StatusBadge status={worker.status} />
         </td>
         <td className="px-4 py-3">
-          <span className={clsx("text-xs", EVAL_COLORS[worker.evaluation_status ?? "unknown"])}>
+          <span
+            className={clsx(
+              "text-xs",
+              EVAL_COLORS[worker.evaluation_status ?? "unknown"],
+            )}
+          >
             {worker.evaluation_status ?? "unknown"}
           </span>
         </td>
@@ -234,40 +325,44 @@ function WorkerRow({
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-          {worker.source_repo && (
-            <button
-              onClick={evaluateWorker}
-              disabled={evaluating}
-              title="Evaluate"
-              aria-label={`Evaluate ${worker.worker_id}`}
-              className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-40"
-            >
-              <ClipboardCheck size={14} />
-            </button>
-          )}
-          <button
-            onClick={toggleStatus}
-            disabled={transitioning}
-            title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
-            aria-label={worker.status === "ACTIVE" ? `Deactivate ${worker.worker_id}` : `Activate ${worker.worker_id}`}
-            className={clsx(
-              "p-1.5 rounded transition-colors disabled:opacity-40",
-              worker.status === "ACTIVE"
-                ? "text-emerald-400 hover:text-rose-400 hover:bg-rose-400/10"
-                : "text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10"
+            {worker.source_repo && (
+              <button
+                onClick={evaluateWorker}
+                disabled={evaluating}
+                title="Evaluate"
+                aria-label={`Evaluate ${worker.worker_id}`}
+                className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-40"
+              >
+                <ClipboardCheck size={14} />
+              </button>
             )}
-          >
-            <Power size={14} />
-          </button>
-          <button
-            onClick={drainWorker}
-            disabled={transitioning || worker.status !== "ACTIVE"}
-            title="Drain"
-            aria-label={`Drain ${worker.worker_id}`}
-            className="p-1.5 rounded text-slate-500 hover:text-cyan-400 hover:bg-cyan-400/10 transition-colors disabled:opacity-30"
-          >
-            <RefreshCw size={14} />
-          </button>
+            <button
+              onClick={toggleStatus}
+              disabled={transitioning}
+              title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
+              aria-label={
+                worker.status === "ACTIVE"
+                  ? `Deactivate ${worker.worker_id}`
+                  : `Activate ${worker.worker_id}`
+              }
+              className={clsx(
+                "p-1.5 rounded transition-colors disabled:opacity-40",
+                worker.status === "ACTIVE"
+                  ? "text-emerald-400 hover:text-rose-400 hover:bg-rose-400/10"
+                  : "text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10",
+              )}
+            >
+              <Power size={14} />
+            </button>
+            <button
+              onClick={drainWorker}
+              disabled={transitioning || worker.status !== "ACTIVE"}
+              title="Drain"
+              aria-label={`Drain ${worker.worker_id}`}
+              className="p-1.5 rounded text-slate-500 hover:text-cyan-400 hover:bg-cyan-400/10 transition-colors disabled:opacity-30"
+            >
+              <RefreshCw size={14} />
+            </button>
           </div>
         </td>
       </tr>
@@ -277,26 +372,38 @@ function WorkerRow({
           <td colSpan={9} className="px-6 py-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
               <div className="space-y-2">
-                <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Integration</h4>
+                <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+                  Integration
+                </h4>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Transport</span>
-                  <span className="text-white font-mono">{worker.transport_mode ?? "—"}</span>
+                  <span className="text-white font-mono">
+                    {worker.transport_mode ?? "—"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Adapter</span>
-                  <span className="text-white font-mono">{worker.adapter_entrypoint ?? "—"}</span>
+                  <span className="text-white font-mono">
+                    {worker.adapter_entrypoint ?? "—"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Sandbox</span>
-                  <span className="text-white font-mono">{worker.sandbox_profile ?? "—"}</span>
+                  <span className="text-white font-mono">
+                    {worker.sandbox_profile ?? "—"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Max Concurrent</span>
-                  <span className="text-white font-mono">{worker.max_concurrent_tasks ?? "—"}</span>
+                  <span className="text-white font-mono">
+                    {worker.max_concurrent_tasks ?? "—"}
+                  </span>
                 </div>
               </div>
               <div className="space-y-2">
-                <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Source</h4>
+                <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
+                  Source
+                </h4>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500">Repository</span>
                   {worker.source_repo && worker.source_repo !== "local" ? (
@@ -311,19 +418,26 @@ function WorkerRow({
                       <ExternalLink size={10} />
                     </a>
                   ) : (
-                    <span className="text-slate-400 font-mono">{worker.source_repo ?? "local"}</span>
+                    <span className="text-slate-400 font-mono">
+                      {worker.source_repo ?? "local"}
+                    </span>
                   )}
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Revision</span>
-                  <span className="text-white font-mono text-xs">{worker.source_revision ?? "—"}</span>
+                  <span className="text-white font-mono text-xs">
+                    {worker.source_revision ?? "—"}
+                  </span>
                 </div>
                 {worker.capability_ids && worker.capability_ids.length > 0 && (
                   <div className="mt-3">
                     <span className="text-slate-500 text-xs">Capabilities</span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {worker.capability_ids.map((cap) => (
-                        <span key={cap} className="px-1.5 py-0.5 bg-blue-900/30 text-blue-300 border border-blue-800 rounded text-xs font-mono">
+                        <span
+                          key={cap}
+                          className="px-1.5 py-0.5 bg-blue-900/30 text-blue-300 border border-blue-800 rounded text-xs font-mono"
+                        >
                           {cap}
                         </span>
                       ))}
@@ -335,105 +449,146 @@ function WorkerRow({
             {(activationBlocked || actionError || latestEvaluation) && (
               <div className="mt-4 border-t border-slate-800 pt-4 text-sm">
                 {activationBlocked && (
-                  <div className="mb-3 rounded border border-amber-700 bg-amber-400/10 px-3 py-2 text-amber-300" role="alert">
-                    Blocked until approval: this external worker needs an approved evaluation before activation.
+                  <div
+                    className="mb-3 rounded border border-amber-700 bg-amber-400/10 px-3 py-2 text-amber-300"
+                    role="alert"
+                  >
+                    Blocked until approval: this external worker needs an
+                    approved evaluation before activation.
                   </div>
                 )}
                 {actionError && (
-                  <div className="mb-3 rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-rose-300" role="alert">
+                  <div
+                    className="mb-3 rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-rose-300"
+                    role="alert"
+                  >
                     {actionError}
                   </div>
                 )}
                 {latestEvaluation && (
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider">Latest Evaluation</h4>
+                      <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Latest Evaluation
+                      </h4>
                       {latestEvaluation.evaluated_at && (
                         <span className="text-xxs text-slate-500">
-                          {new Date(latestEvaluation.evaluated_at).toLocaleString()}
+                          {new Date(
+                            latestEvaluation.evaluated_at,
+                          ).toLocaleString()}
                         </span>
                       )}
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                       <div>
                         <div className="text-slate-500 text-xs">Verdict</div>
-                        <div className="text-white font-mono">{latestEvaluation.verdict}</div>
+                        <div className="text-white font-mono">
+                          {latestEvaluation.verdict}
+                        </div>
                       </div>
                       <div>
                         <div className="text-slate-500 text-xs">Risk</div>
-                        <div className="text-white font-mono">{latestEvaluation.risk_tier ?? "unknown"}</div>
+                        <div className="text-white font-mono">
+                          {latestEvaluation.risk_tier ?? "unknown"}
+                        </div>
                       </div>
                       <div>
                         <div className="text-slate-500 text-xs">Score</div>
-                        <div className="text-white font-mono">{latestEvaluation.overall_score ?? "-"}</div>
+                        <div className="text-white font-mono">
+                          {latestEvaluation.overall_score ?? "-"}
+                        </div>
                       </div>
                       <div>
-                        <div className="text-slate-500 text-xs">Recommended</div>
-                        <div className="text-white font-mono">{latestEvaluation.recommended_status ?? "-"}</div>
+                        <div className="text-slate-500 text-xs">
+                          Recommended
+                        </div>
+                        <div className="text-white font-mono">
+                          {latestEvaluation.recommended_status ?? "-"}
+                        </div>
                       </div>
                     </div>
-                    {latestEvaluation.blocked_reasons && latestEvaluation.blocked_reasons.length > 0 && (
-                      <div className="mb-3 rounded border border-rose-800 bg-rose-500/5 px-3 py-2 text-xs text-rose-300">
-                        <span className="font-semibold">Blocked reasons: </span>
-                        {latestEvaluation.blocked_reasons.join("; ")}
-                      </div>
-                    )}
+                    {latestEvaluation.blocked_reasons &&
+                      latestEvaluation.blocked_reasons.length > 0 && (
+                        <div className="mb-3 rounded border border-rose-800 bg-rose-500/5 px-3 py-2 text-xs text-rose-300">
+                          <span className="font-semibold">
+                            Blocked reasons:{" "}
+                          </span>
+                          {latestEvaluation.blocked_reasons.join("; ")}
+                        </div>
+                      )}
                     <div className="space-y-2">
-                      {Object.entries(latestEvaluation.checks ?? {}).map(([name, check]) => {
-                        const isOpen = expandedChecks[name] ?? false;
-                        const hasDetails = Boolean(check.details);
-                        return (
-                          <div
-                            key={name}
-                            className="rounded border border-slate-800 bg-slate-950 px-3 py-2"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => hasDetails && toggleCheck(name)}
-                              disabled={!hasDetails}
-                              aria-expanded={isOpen}
-                              aria-label={`${name} evaluation check`}
-                              className={clsx(
-                                "w-full flex items-center justify-between gap-2 text-left",
-                                hasDetails && "cursor-pointer hover:text-white"
-                              )}
+                      {Object.entries(latestEvaluation.checks ?? {}).map(
+                        ([name, check]) => {
+                          const isOpen = expandedChecks[name] ?? false;
+                          const hasDetails = Boolean(check.details);
+                          return (
+                            <div
+                              key={name}
+                              className="rounded border border-slate-800 bg-slate-950 px-3 py-2"
                             >
-                              <div className="flex items-center gap-2 min-w-0">
-                                {hasDetails ? (
-                                  isOpen ? (
-                                    <ChevronDown size={12} className="text-slate-500 flex-shrink-0" />
-                                  ) : (
-                                    <ChevronRight size={12} className="text-slate-500 flex-shrink-0" />
-                                  )
-                                ) : (
-                                  <span className="w-3" />
-                                )}
-                                <span className="text-slate-300 font-mono text-xs truncate">{name}</span>
-                              </div>
-                              <span
+                              <button
+                                type="button"
+                                onClick={() => hasDetails && toggleCheck(name)}
+                                disabled={!hasDetails}
+                                aria-expanded={isOpen}
+                                aria-label={`${name} evaluation check`}
                                 className={clsx(
-                                  "text-xs flex-shrink-0",
-                                  check.passed ? "text-emerald-400" : "text-rose-400"
+                                  "w-full flex items-center justify-between gap-2 text-left",
+                                  hasDetails &&
+                                    "cursor-pointer hover:text-white",
                                 )}
                               >
-                                {check.status ?? (check.passed ? "PASSED" : "FAILED")}
-                                {typeof check.score === "number" && (
-                                  <span className="ml-1.5 text-slate-500">({check.score})</span>
-                                )}
-                              </span>
-                            </button>
-                            {isOpen && hasDetails && (
-                              <div className="text-xs text-slate-500 mt-2 pl-5 border-l border-slate-800">
-                                {check.details}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {hasDetails ? (
+                                    isOpen ? (
+                                      <ChevronDown
+                                        size={12}
+                                        className="text-slate-500 flex-shrink-0"
+                                      />
+                                    ) : (
+                                      <ChevronRight
+                                        size={12}
+                                        className="text-slate-500 flex-shrink-0"
+                                      />
+                                    )
+                                  ) : (
+                                    <span className="w-3" />
+                                  )}
+                                  <span className="text-slate-300 font-mono text-xs truncate">
+                                    {name}
+                                  </span>
+                                </div>
+                                <span
+                                  className={clsx(
+                                    "text-xs flex-shrink-0",
+                                    check.passed
+                                      ? "text-emerald-400"
+                                      : "text-rose-400",
+                                  )}
+                                >
+                                  {check.status ??
+                                    (check.passed ? "PASSED" : "FAILED")}
+                                  {typeof check.score === "number" && (
+                                    <span className="ml-1.5 text-slate-500">
+                                      ({check.score})
+                                    </span>
+                                  )}
+                                </span>
+                              </button>
+                              {isOpen && hasDetails && (
+                                <div className="text-xs text-slate-500 mt-2 pl-5 border-l border-slate-800">
+                                  {check.details}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        },
+                      )}
                     </div>
                     {latestEvaluation.requires_human_approval && (
                       <div className="mt-3 text-xxs text-amber-300/80">
-                        Note: this evaluation requires explicit human approval before activation.
+                        Note: this evaluation requires explicit human approval
+                        before activation.
                       </div>
                     )}
                   </div>
@@ -447,7 +602,13 @@ function WorkerRow({
   );
 }
 
-function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function RegisterWorkerModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [form, setForm] = useState({
     worker_id: "",
     name: "",
@@ -490,28 +651,46 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-labelledby="register-worker-title">
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="register-worker-title"
+    >
       <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-lg shadow-xl">
         <div className="p-5 border-b border-slate-700 flex items-center gap-3">
           <Package className="w-5 h-5 text-blue-400" />
-          <h2 id="register-worker-title" className="text-white font-semibold">Register Worker</h2>
+          <h2 id="register-worker-title" className="text-white font-semibold">
+            Register Worker
+          </h2>
         </div>
         <div className="p-5 space-y-4">
           {error && (
-            <div className="bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 text-rose-400 text-sm" role="alert">{error}</div>
+            <div
+              className="bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 text-rose-400 text-sm"
+              role="alert"
+            >
+              {error}
+            </div>
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Worker ID *</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Worker ID *
+              </label>
               <input
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.worker_id}
-                onChange={(e) => setForm({ ...form, worker_id: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, worker_id: e.target.value })
+                }
                 placeholder="my_worker_1"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Name *</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Name *
+              </label>
               <input
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.name}
@@ -521,17 +700,23 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Description</label>
+            <label className="block text-xs text-slate-400 mb-1">
+              Description
+            </label>
             <input
               className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
               placeholder="What this worker does"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Team ID</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Team ID
+              </label>
               <input
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.team_id}
@@ -540,56 +725,82 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Transport Mode</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Transport Mode
+              </label>
               <select
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.transport_mode}
-                onChange={(e) => setForm({ ...form, transport_mode: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, transport_mode: e.target.value })
+                }
               >
                 {["process", "http", "mcp", "oci", "human"].map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">GitHub Repository URL</label>
+            <label className="block text-xs text-slate-400 mb-1">
+              GitHub Repository URL
+            </label>
             <input
               className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.source_repo}
-              onChange={(e) => setForm({ ...form, source_repo: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, source_repo: e.target.value })
+              }
               placeholder="https://github.com/org/repo"
             />
             <p className="text-xs text-slate-500 mt-1">
-              Optional. Upstream repo will be evaluated for provenance, scans, sandbox policy, and compatibility before activation.
+              Optional. Upstream repo will be evaluated for provenance, scans,
+              sandbox policy, and compatibility before activation.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Adapter Entrypoint</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Adapter Entrypoint
+              </label>
               <input
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.adapter_entrypoint}
-                onChange={(e) => setForm({ ...form, adapter_entrypoint: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, adapter_entrypoint: e.target.value })
+                }
                 placeholder="WorkerAgent"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Sandbox Profile</label>
+              <label className="block text-xs text-slate-400 mb-1">
+                Sandbox Profile
+              </label>
               <select
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.sandbox_profile}
-                onChange={(e) => setForm({ ...form, sandbox_profile: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, sandbox_profile: e.target.value })
+                }
               >
-                {["restricted", "standard", "gvisor", "firecracker"].map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
+                {["restricted", "standard", "gvisor", "firecracker"].map(
+                  (p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ),
+                )}
               </select>
             </div>
           </div>
         </div>
         <div className="p-5 border-t border-slate-700 flex justify-end gap-3">
-          <button className="px-4 py-2 text-sm text-slate-300 hover:text-white" onClick={onClose}>
+          <button
+            className="px-4 py-2 text-sm text-slate-300 hover:text-white"
+            onClick={onClose}
+          >
             Cancel
           </button>
           <button
@@ -602,6 +813,130 @@ function RegisterWorkerModal({ onClose, onCreated }: { onClose: () => void; onCr
         </div>
       </div>
     </div>
+  );
+}
+
+function RuntimeStatusPanel() {
+  const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function loadRuntimes() {
+      try {
+        const res = await fetch("/api/runtimes");
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (active)
+          setRuntimes(Array.isArray(data.runtimes) ? data.runtimes : []);
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    void loadRuntimes();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <section className="space-y-3" aria-labelledby="advanced-runtimes-heading">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2
+            id="advanced-runtimes-heading"
+            className="text-sm font-semibold text-slate-100"
+          >
+            Advanced Runtimes
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Live runtime policy from the orchestrator control plane.
+          </p>
+        </div>
+      </div>
+      {error ? (
+        <ErrorBanner tone="warning" title="Runtime status unavailable">
+          {error}
+        </ErrorBanner>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {runtimes.map((runtime) => (
+            <div
+              key={runtime.id}
+              data-runtime={runtime.id}
+              className="rounded-lg border border-slate-800 bg-slate-900/70 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-100">
+                    {runtime.name}
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500 capitalize">
+                    {runtime.tier ?? "runtime"}
+                  </p>
+                </div>
+                <span
+                  className={clsx(
+                    "rounded border px-2 py-0.5 text-xxs font-medium uppercase",
+                    runtime.status === "available"
+                      ? "border-emerald-700 bg-emerald-400/10 text-emerald-300"
+                      : "border-amber-700 bg-amber-400/10 text-amber-300",
+                  )}
+                >
+                  {runtime.status}
+                </span>
+              </div>
+              <p className="mt-3 min-h-10 text-xs leading-5 text-slate-400">
+                {runtime.description}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {runtime.policy?.sandbox_required && (
+                  <span className="rounded border border-slate-700 px-2 py-0.5 text-xxs text-slate-300">
+                    {String(runtime.policy.sandbox_required)}
+                  </span>
+                )}
+                {runtime.policy?.requires_approval === true && (
+                  <span className="rounded border border-amber-700 px-2 py-0.5 text-xxs text-amber-300">
+                    approval
+                  </span>
+                )}
+                {runtime.policy?.read_only_by_default === true && (
+                  <span className="rounded border border-blue-700 px-2 py-0.5 text-xxs text-blue-300">
+                    read-only
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function IntegrationReadinessPanel() {
+  const checks = [
+    ["Delta Integration Readiness", "Default stack policy"],
+    ["Docling document ingestion", "Adapter certification"],
+    ["GitHub REST metadata and task API", "Repository intake"],
+    ["server-side named credentials", "Credential boundary"],
+    ["trufflehog", "Excluded default"],
+  ];
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex flex-wrap gap-2">
+        {checks.map(([name, status]) => (
+          <span
+            key={name}
+            className="inline-flex items-center gap-2 rounded border border-slate-700 bg-slate-950/50 px-2.5 py-1 text-xs text-slate-300"
+          >
+            <ClipboardCheck size={13} className="text-blue-300" />
+            <span>{name}</span>
+            <span className="text-slate-500">{status}</span>
+          </span>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -734,7 +1069,10 @@ export default function WorkersPage() {
     { id: "ERROR", label: "Error", tone: "amber" as const },
   ];
 
-  const workerIds = useMemo(() => filtered.map((w) => w.id).filter((id): id is string => Boolean(id)), [filtered]);
+  const workerIds = useMemo(
+    () => filtered.map((w) => w.id).filter((id): id is string => Boolean(id)),
+    [filtered],
+  );
   const selection = useBulkSelection(workerIds);
   // Drop selections when the filter or list changes.
   useEffect(() => {
@@ -744,7 +1082,9 @@ export default function WorkersPage() {
 
   async function handleBulkDelete() {
     if (selection.selectedCount === 0) return;
-    const targets = workers.filter((w) => w.id != null && selection.selected.has(w.id));
+    const targets = workers.filter(
+      (w) => w.id != null && selection.selected.has(w.id),
+    );
     setBulkDeleting(true);
     setBulkError("");
     let failed = 0;
@@ -752,14 +1092,17 @@ export default function WorkersPage() {
       const results = await Promise.allSettled(
         targets.map(async (w) => {
           // Workers use the worker_id (slug) on the API path, not the numeric id.
-          const res = await fetch(`/api/workers/${encodeURIComponent(w.worker_id)}`, { method: "DELETE" });
+          const res = await fetch(
+            `/api/workers/${encodeURIComponent(w.worker_id)}`,
+            { method: "DELETE" },
+          );
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        })
+        }),
       );
       for (const r of results) if (r.status === "rejected") failed++;
       if (failed > 0) {
         setBulkError(
-          `Deleted ${targets.length - failed} of ${targets.length} worker${targets.length === 1 ? "" : "s"} (${failed} failed).`
+          `Deleted ${targets.length - failed} of ${targets.length} worker${targets.length === 1 ? "" : "s"} (${failed} failed).`,
         );
       }
       await load();
@@ -773,7 +1116,9 @@ export default function WorkersPage() {
   const inactiveCount = workers.filter((w) => w.status === "INACTIVE").length;
   const errorCount = workers.filter((w) => w.status === "ERROR").length;
   const pendingCount = workers.filter(
-    (w) => w.evaluation_status === "pending" || w.evaluation_status === "conditional"
+    (w) =>
+      w.evaluation_status === "pending" ||
+      w.evaluation_status === "conditional",
   ).length;
 
   return (
@@ -790,7 +1135,9 @@ export default function WorkersPage() {
               aria-label="Refresh workers"
               className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors"
             >
-              <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
+              <RefreshCw
+                className={clsx("w-4 h-4", loading && "animate-spin")}
+              />
             </button>
             <button
               onClick={() => setShowRegister(true)}
@@ -808,26 +1155,43 @@ export default function WorkersPage() {
         <Settings className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
         <div className="text-sm text-blue-200/90 space-y-1">
           <p>
-            <strong className="text-blue-100">Adapter model:</strong> Workers integrate via thin
-            compatibility layers. Upstream repositories are ingested and evaluated for provenance,
-            security scans, sandbox policy, budget posture, and compatibility before activation.
+            <strong className="text-blue-100">Adapter model:</strong> Workers
+            integrate via thin compatibility layers. Upstream repositories are
+            ingested and evaluated for provenance, security scans, sandbox
+            policy, budget posture, and compatibility before activation.
           </p>
           <p className="text-blue-200/70">
-            Approved tools are provided centrally by the tool-service. Workers consume them
-            through a common interface, and activation stays blocked until the evaluation verdict
-            is approved.
+            Approved tools are provided centrally by the tool-service. Workers
+            consume them through a common interface, and activation stays
+            blocked until the evaluation verdict is approved.
           </p>
           <p className="text-blue-200/70 text-xs">
-            Shortcuts: <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">/</kbd> focus search
+            Shortcuts:{" "}
+            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">
+              /
+            </kbd>{" "}
+            focus search
             {" · "}
-            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">R</kbd> refresh
+            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">
+              R
+            </kbd>{" "}
+            refresh
             {" · "}
-            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">N</kbd> new worker
+            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">
+              N
+            </kbd>{" "}
+            new worker
             {" · "}
-            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">Esc</kbd> clear search
+            <kbd className="px-1.5 py-0.5 rounded border border-blue-400/30 bg-blue-500/10 text-blue-200 font-mono text-xxs">
+              Esc
+            </kbd>{" "}
+            clear search
           </p>
         </div>
       </div>
+
+      <IntegrationReadinessPanel />
+      <RuntimeStatusPanel />
 
       {/* Stats — use KpiCard for visual consistency with the rest of the dashboard */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -836,7 +1200,11 @@ export default function WorkersPage() {
           value={workers.length}
           icon="users"
           tone="info"
-          hint={pendingCount > 0 ? `${pendingCount} pending review` : `${filtered.length} visible`}
+          hint={
+            pendingCount > 0
+              ? `${pendingCount} pending review`
+              : `${filtered.length} visible`
+          }
         />
         <KpiCard
           label="Active"
@@ -944,13 +1312,18 @@ export default function WorkersPage() {
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-left px-4 py-3">Evaluation</th>
                 <th className="text-left px-4 py-3">Version</th>
-                <th className="w-12 px-4 py-3"><span className="sr-only">Actions</span></th>
+                <th className="w-12 px-4 py-3">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                  <td
+                    colSpan={9}
+                    className="px-4 py-10 text-center text-slate-500"
+                  >
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading workers…
                   </td>
@@ -981,7 +1354,10 @@ export default function WorkersPage() {
                         description="Try a broader status filter or clear the search."
                         action={
                           <button
-                            onClick={() => { setStatusFilter("ALL"); setSearch(""); }}
+                            onClick={() => {
+                              setStatusFilter("ALL");
+                              setSearch("");
+                            }}
                             className="text-xs text-blue-400 hover:text-blue-300"
                           >
                             Clear filters
@@ -999,7 +1375,9 @@ export default function WorkersPage() {
                     worker={w}
                     onStatusChange={load}
                     selected={w.id != null && selection.selected.has(w.id)}
-                    onSelectChange={() => w.id != null && selection.toggle(w.id)}
+                    onSelectChange={() =>
+                      w.id != null && selection.toggle(w.id)
+                    }
                   />
                 ))
               )}

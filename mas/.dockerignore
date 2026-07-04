@@ -12,6 +12,8 @@ build/
 .uv-cache/
 .pytest_cache/
 .pytest_tmp/
+.tmp-pytest/
+.tmp-delete-me/
 .coverage
 htmlcov/
 .ruff_cache/

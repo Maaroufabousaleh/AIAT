@@ -1,7 +1,23 @@
 # ── Dockerfile.tool-service ───────────────────────────────────────────────────
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+ARG OPENTOFU_VERSION=1.11.7
+ARG OPENTOFU_SHA256=2ae4434e08da9a17372c11509d11b07f1cb3730dea0bf7ff658bdb4b83b1cbab
+ARG MERMAID_CLI_VERSION=11.12.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git nodejs npm ripgrep unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSLo /tmp/tofu.zip \
+        "https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_amd64.zip" \
+    && echo "${OPENTOFU_SHA256}  /tmp/tofu.zip" | sha256sum -c - \
+    && unzip /tmp/tofu.zip -d /usr/local/bin \
+    && rm /tmp/tofu.zip \
+    && tofu version
+
+RUN PUPPETEER_SKIP_DOWNLOAD=true npm install --global \
+        "@mermaid-js/mermaid-cli@${MERMAID_CLI_VERSION}"
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
@@ -23,9 +39,21 @@ RUN pip install --no-deps /tmp/mas-core && \
         redis \
         structlog \
         psutil \
-        aiolimiter
+        aiolimiter \
+        "mcp==1.23.3" \
+        "pytest>=8,<9" \
+        "ruff>=0.12,<1" \
+        "semgrep==1.168.0" \
+        "docling==2.110.0"
+
+RUN python -m playwright install --with-deps chromium
+
+RUN chromium_path="$(find /root/.cache/ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \
+    && test -n "$chromium_path" \
+    && ln -s "$chromium_path" /usr/local/bin/chromium
 
 COPY apps/tool-service/tool_service/ /app/tool_service/
+COPY infra/docker/puppeteer-config.json /app/puppeteer-config.json
 
 WORKDIR /app
 

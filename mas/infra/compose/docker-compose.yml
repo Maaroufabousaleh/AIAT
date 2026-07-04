@@ -32,7 +32,7 @@ x-team-env: &team-env
   MAS_API_KEY: "${MAS_API_KEY}"
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
-  LLM_BACKEND: "${LLM_BACKEND:-legacy}"
+  LLM_BACKEND: "${LLM_BACKEND:-litellm}"
   LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
   LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -64,6 +64,17 @@ x-team-defaults: &team-defaults
   env_file:
     - path: ../../../.env
       format: raw
+  depends_on:
+    message-router:
+      condition: service_healthy
+    tool-service:
+      condition: service_healthy
+    orchestrator-api:
+      condition: service_healthy
+  volumes:
+    - ../../teams:/app/teams:ro
+    - ../../prompts:/app/prompts:ro
+    - ../../workers:/app/workers:ro
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
@@ -284,10 +295,26 @@ services:
       REDIS_USERNAME: "toolcache_user"
       REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
-      LLM_BACKEND: "${LLM_BACKEND:-legacy}"
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "mas_agent"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
+      MINIO_BUCKET: "mas-agents"
+      LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
+      TOOL_CODE_REVIEW_COMMAND: "${TOOL_CODE_REVIEW_COMMAND:-aiat-code-review --json-stdin}"
+      TOOL_INFRA_PROVISION_COMMAND: "${TOOL_INFRA_PROVISION_COMMAND:-aiat-devops-adapter infra --json-stdin}"
+      TOOL_MONITORING_SETUP_COMMAND: "${TOOL_MONITORING_SETUP_COMMAND:-aiat-devops-adapter monitoring --json-stdin}"
+      TOOL_SANDBOX_COMMAND: "${TOOL_SANDBOX_COMMAND:-aiat-sandbox-runner --json-stdin}"
+      AIAT_SANDBOX_IMAGE: "${AIAT_SANDBOX_IMAGE:-mas/tool-service:latest}"
+      TOOL_WORKSPACE_ROOT: "${TOOL_WORKSPACE_ROOT:-/mnt/c/projects/AIAT}"
+      AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
+      PYTHONPATH: "/app"
       LOG_LEVEL: "INFO"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /usr/bin/docker:/usr/local/bin/docker:ro
+      - ../../..:/mnt/c/projects/AIAT
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -403,7 +430,7 @@ services:
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
       MAS_API_KEY: "${MAS_API_KEY}"
-      LLM_BACKEND: "${LLM_BACKEND:-legacy}"
+      LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
       LLM_API_KEY: "${LLM_API_KEY:-}"

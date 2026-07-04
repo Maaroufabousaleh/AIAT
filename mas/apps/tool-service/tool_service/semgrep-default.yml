@@ -1,0 +1,14 @@
+rules:
+  - id: aiat-python-dangerous-eval
+    languages:
+      - python
+    severity: WARNING
+    message: Avoid eval on untrusted input.
+    pattern: eval(...)
+
+  - id: aiat-python-dangerous-exec
+    languages:
+      - python
+    severity: WARNING
+    message: Avoid exec on untrusted input.
+    pattern: exec(...)

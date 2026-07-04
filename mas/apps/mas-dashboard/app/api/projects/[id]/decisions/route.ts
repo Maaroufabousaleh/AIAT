@@ -1,19 +1,24 @@
 import { NextResponse } from "next/server";
 import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_: Request, { params }: Params) {
+export async function GET(_: Request, props: Params) {
+  const params = await props.params;
   try {
-    const data = await orchestratorFetch(`/projects/${params.id}/pending-decisions`);
+    const data = await orchestratorFetch(
+      `/projects/${params.id}/pending-decisions`,
+    );
     return NextResponse.json(data);
   } catch (e) {
-    if (e instanceof OrchestratorError) return NextResponse.json({ error: e.message }, { status: e.status });
+    if (e instanceof OrchestratorError)
+      return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
 
-export async function POST(req: Request, { params }: Params) {
+export async function POST(req: Request, props: Params) {
+  const params = await props.params;
   try {
     const body = await req.json();
     const data = await orchestratorFetch(`/projects/${params.id}/decisions`, {
@@ -22,7 +27,8 @@ export async function POST(req: Request, { params }: Params) {
     });
     return NextResponse.json(data);
   } catch (e) {
-    if (e instanceof OrchestratorError) return NextResponse.json({ error: e.message }, { status: e.status });
+    if (e instanceof OrchestratorError)
+      return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

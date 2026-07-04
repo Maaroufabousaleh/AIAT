@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
-from redis.asyncio import Redis
-from redis.exceptions import ResponseError, TimeoutError as RedisTimeoutError
+from redis.exceptions import ResponseError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from .config import settings
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,12 @@ async def connect_redis() -> Redis:
     )
     await client.ping()
     _redis_client = client
-    logger.info("Redis connected: %s", settings.redis_url)
+    redis_target = urlparse(settings.redis_url)
+    logger.info(
+        "Redis connected: %s/%s",
+        redis_target.hostname or "<unknown>",
+        redis_target.path.lstrip("/") or "0",
+    )
     return client
 
 

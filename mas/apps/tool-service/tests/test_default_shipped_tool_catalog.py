@@ -58,6 +58,30 @@ DOCUMENTED_DEFAULT_TOOLS = {
     "infra.ready_signal",
 }
 
+MUTABLE_READ_TOOLS = {
+    "blob.download",
+    "blob.list",
+    "capability.list_workers",
+    "capability.search",
+    "document.get_latest",
+    "document.ingest",
+    "document.list",
+    "file_read",
+    "flow.list",
+    "flow.recommend",
+    "flow.status",
+    "issue.list",
+    "kpi.compute",
+    "kpi.compute_project",
+    "kpi.query_history",
+    "project.list",
+    "project.status",
+    "repo.read",
+    "repo.search",
+    "shared_memory_read",
+    "velocity.report",
+}
+
 
 def test_documented_default_tools_are_in_static_manifest():
     missing = DOCUMENTED_DEFAULT_TOOLS - set(TOOL_MANIFEST)
@@ -68,6 +92,27 @@ def test_documented_default_tools_are_registered(make_registry):
     registry = make_registry()
     missing = DOCUMENTED_DEFAULT_TOOLS - set(registry.tool_names)
     assert missing == set()
+
+
+def test_mutable_reads_are_not_cached_without_invalidation(make_registry):
+    manifest = {entry["tool_name"]: entry for entry in make_registry().get_manifest()}
+    assert manifest.keys() >= MUTABLE_READ_TOOLS
+    assert {
+        name: manifest[name]["cache_ttl_seconds"]
+        for name in MUTABLE_READ_TOOLS
+        if manifest[name]["cache_ttl_seconds"] != 0
+    } == {}
+
+
+def test_manifest_reports_unconfigured_adapters_as_unavailable(make_registry, monkeypatch):
+    monkeypatch.delenv("TOOL_SANDBOX_COMMAND", raising=False)
+    monkeypatch.delenv("TOOL_CODE_REVIEW_COMMAND", raising=False)
+    manifest = {entry["tool_name"]: entry for entry in make_registry().get_manifest()}
+
+    assert manifest["security.scan"]["available"] is False
+    assert manifest["security.scan"]["configured"] is False
+    assert manifest["code.review"]["available"] is False
+    assert manifest["document.ingest"]["available"] is True
 
 
 @pytest.mark.anyio
@@ -299,7 +344,11 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
     )
 
     assert response.success is True
-    assert captured["argv"] == ["semgrep", "scan", "--json", "--config", "auto", "."]
+    assert captured["argv"][:2] == ["sh", "-lc"]
+    assert "cp -R . /tmp/aiat-semgrep-src/" in captured["argv"][2]
+    assert "semgrep scan --json --metrics=off --disable-version-check" in captured["argv"][2]
+    assert "--no-git-ignore --include=*.py --exclude=.git" in captured["argv"][2]
+    assert "/workspace/mas/apps/tool-service/tool_service/semgrep-default.yml" in captured["argv"][2]
     assert captured["cwd"] == tmp_path
     assert response.result["findings_count"] == 0
 
@@ -347,6 +396,140 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
 
 
 @pytest.mark.anyio
+async def test_document_ingest_uses_docling_runner_when_installed(
+    make_registry, tmp_path, monkeypatch
+):
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes", encoding="utf-8")
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/docling" if name == "docling" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        assert argv[1:3] == ["-m", "tool_service.docling_runner"]
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": json.dumps({"document": {"name": "notes"}, "text": "# Notes"}),
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="writer",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="document.ingest",
+            kwargs={"path": "notes.md"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "docling"
+    assert response.result["document"]["text"] == "# Notes"
+
+
+@pytest.mark.anyio
+async def test_cicd_configure_writes_real_github_actions_workflow(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="devops-pm",
+            caller_role=AgentRole.ADMIN,
+            caller_team="dept_devops",
+            tool_name="cicd.configure",
+            kwargs={
+                "pipeline": "ci",
+                "config": {
+                    "workflow": {
+                        "name": "CI",
+                        "on": ["push"],
+                        "jobs": {"test": {"runs-on": "ubuntu-latest", "steps": []}},
+                    }
+                },
+            },
+        )
+    )
+
+    workflow = tmp_path / ".github" / "workflows" / "ci.yml"
+    assert response.success is True
+    assert response.result["backend"] == "github_actions"
+    assert workflow.is_file()
+    assert "ubuntu-latest" in workflow.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_secrets_manage_uses_encrypted_credentials_boundary(make_registry, monkeypatch):
+    calls = []
+
+    async def fake_post(path, body=None):
+        calls.append(("post", path, body))
+        return {"name": body["name"], "secret_type": body["secret_type"]}
+
+    async def fake_patch(path, body=None):
+        calls.append(("patch", path, body))
+        return {"name": path.rsplit("/", 1)[-1]}
+
+    async def fake_delete(path):
+        calls.append(("delete", path, None))
+        return {}
+
+    monkeypatch.setattr("tool_service.tools.infra.orch_post", fake_post)
+    monkeypatch.setattr("tool_service.tools.infra.orch_patch", fake_patch)
+    monkeypatch.setattr("tool_service.tools.infra.orch_delete", fake_delete)
+    registry = make_registry()
+    base = {
+        "caller_id": "devops-pm",
+        "caller_role": AgentRole.ADMIN,
+        "caller_team": "dept_devops",
+        "tool_name": "secrets.manage",
+    }
+
+    for kwargs in (
+        {"action": "create", "name": "audit", "value": "one"},
+        {"action": "rotate", "name": "audit", "value": "two"},
+        {"action": "revoke", "name": "audit"},
+    ):
+        response = await registry.execute(ToolRequest(**base, kwargs=kwargs))
+        assert response.success is True
+
+    assert [call[:2] for call in calls] == [
+        ("post", "/credentials"),
+        ("patch", "/credentials/audit"),
+        ("delete", "/credentials/audit"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_infra_ready_signal_transitions_real_project(make_registry, monkeypatch):
+    captured = {}
+
+    async def fake_post(path, body=None):
+        captured.update(path=path, body=body)
+        return {"next_state": "IN_PROGRESS"}
+
+    monkeypatch.setattr("tool_service.tools.infra.orch_post", fake_post)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="devops-pm",
+            caller_role=AgentRole.ADMIN,
+            caller_team="dept_devops",
+            tool_name="infra.ready_signal",
+            kwargs={"project_id": "project-1", "sprint_id": "sprint-1"},
+        )
+    )
+
+    assert response.success is True
+    assert captured["path"] == "/projects/project-1/transition"
+    assert captured["body"]["event"] == "infra_ready"
+
+
+@pytest.mark.anyio
 async def test_privileged_infra_adapter_fails_closed_when_unconfigured(make_registry, monkeypatch):
     monkeypatch.delenv("TOOL_INFRA_PROVISION_COMMAND", raising=False)
     registry = make_registry()
@@ -366,4 +549,26 @@ async def test_privileged_infra_adapter_fails_closed_when_unconfigured(make_regi
         "available": False,
         "configured": False,
         "reason": "TOOL_INFRA_PROVISION_COMMAND_not_configured",
+    }
+
+
+@pytest.mark.anyio
+async def test_mcp_invoke_reports_unconfigured_transport_without_fabricating_success(
+    make_registry,
+):
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_qa",
+            tool_name="mcp.invoke",
+            kwargs={"server": "default", "tool": "ping", "arguments": {}},
+        )
+    )
+
+    assert response.success is True
+    assert response.result == {
+        "available": False,
+        "configured": False,
+        "reason": "MCP transport endpoint not configured for mcp.invoke",
     }

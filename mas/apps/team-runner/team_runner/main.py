@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import os
 import signal
-from collections.abc import Sequence
 from itertools import cycle
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,6 +41,8 @@ from mas_tools_sdk.client import ToolServiceClient
 from mas_tools_sdk.manifest import resolve_tool_name
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from mas_core.memory import AgentStorage, CheckpointStore
 
 log = structlog.get_logger(__name__)
@@ -86,7 +87,9 @@ class RunnerSettings(BaseModel):
     orchestrator_url: str = "http://orchestrator-api:8000"
     health_host: str = "0.0.0.0"
     health_port: int = 8080
-    llm_model: str = "gpt-4o"
+    llm_model: str = "auto"
+    tool_manifest_startup_attempts: int = 30
+    tool_manifest_retry_seconds: float = 1.0
 
     @classmethod
     def from_env(cls) -> RunnerSettings:
@@ -111,7 +114,13 @@ class RunnerSettings(BaseModel):
             orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
-            llm_model=os.environ.get("LLM_DEFAULT_MODEL", "gpt-4o"),
+            llm_model=os.environ.get("LLM_DEFAULT_MODEL", "auto"),
+            tool_manifest_startup_attempts=int(
+                os.environ.get("TOOL_MANIFEST_STARTUP_ATTEMPTS", "30")
+            ),
+            tool_manifest_retry_seconds=float(
+                os.environ.get("TOOL_MANIFEST_RETRY_SECONDS", "1")
+            ),
         )
 
 
@@ -290,6 +299,16 @@ class TeamRuntime:
             "worker_count": len(self.worker_agents),
             "has_storage": self.storage is not None,
             "has_tool_client": self.tool_client is not None,
+            "tool_manifest_loaded": self._runtime_tool_manifest is not None,
+            "runtime_tool_count": len(self._runtime_tool_manifest or []),
+            "runtime_available_tool_count": sum(
+                entry.get("available") is not False
+                for entry in (self._runtime_tool_manifest or [])
+            ),
+            "agent_tool_counts": {
+                agent_id: len(agent.available_tool_definitions())
+                for agent_id, agent in sorted(self.agents_by_id.items())
+            },
         }
 
     def _instantiate_agents(self) -> None:
@@ -360,15 +379,40 @@ class TeamRuntime:
     async def _load_runtime_tool_manifest(self) -> None:
         if self.tool_client is None:
             return
-        try:
-            self._runtime_tool_manifest = await self.tool_client.list_tools()
-            log.info(
-                "team_runner.loaded_runtime_tool_manifest",
-                tool_count=len(self._runtime_tool_manifest),
-            )
-        except Exception:
-            self._runtime_tool_manifest = None
-            log.warning("team_runner.runtime_tool_manifest_unavailable", exc_info=True)
+        attempts = max(1, self.settings.tool_manifest_startup_attempts)
+        retry_seconds = max(0.0, self.settings.tool_manifest_retry_seconds)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                manifest = await self.tool_client.list_tools()
+                if not manifest:
+                    raise RuntimeError("tool-service returned an empty runtime manifest")
+                self._runtime_tool_manifest = manifest
+                log.info(
+                    "team_runner.loaded_runtime_tool_manifest",
+                    tool_count=len(manifest),
+                    available_tool_count=sum(
+                        entry.get("available") is not False for entry in manifest
+                    ),
+                    attempt=attempt,
+                )
+                return
+            except Exception as exc:
+                last_error = exc
+                self._runtime_tool_manifest = None
+                if attempt < attempts:
+                    log.warning(
+                        "team_runner.runtime_tool_manifest_retry",
+                        attempt=attempt,
+                        attempts=attempts,
+                        retry_seconds=retry_seconds,
+                        error=str(exc),
+                    )
+                    await asyncio.sleep(retry_seconds)
+
+        raise RuntimeError(
+            f"tool-service runtime manifest unavailable after {attempts} attempt(s)"
+        ) from last_error
 
     def _load_prompt_text(self, prompt_file: str | None) -> str | None:
         if not prompt_file:
@@ -587,9 +631,12 @@ class TeamRuntime:
             return self.admin_agent
 
         same_team_sender = envelope.sender_team == self.team_config.team_id
-        if same_team_sender and envelope.sender_id == self.admin_agent.agent_id:
-            if envelope.msg_type in {MessageType.ADMIN_TASK, MessageType.ISSUE_ASSIGN}:
-                return next(self._worker_cycle) if self._worker_cycle else self.admin_agent
+        if (
+            same_team_sender
+            and envelope.sender_id == self.admin_agent.agent_id
+            and envelope.msg_type in {MessageType.ADMIN_TASK, MessageType.ISSUE_ASSIGN}
+        ):
+            return next(self._worker_cycle) if self._worker_cycle else self.admin_agent
 
         if envelope.msg_type in {
             MessageType.ADMIN_REPLY,

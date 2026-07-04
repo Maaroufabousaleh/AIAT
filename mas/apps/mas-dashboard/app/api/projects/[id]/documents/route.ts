@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_: Request, { params }: Params) {
+export async function GET(_: Request, props: Params) {
+  const params = await props.params;
   try {
     const [documents, feasibility, sprints] = await Promise.allSettled([
       orchestratorFetch(`/projects/${params.id}/documents`),
@@ -12,11 +13,13 @@ export async function GET(_: Request, { params }: Params) {
     ]);
     return NextResponse.json({
       documents: documents.status === "fulfilled" ? documents.value : null,
-      feasibility: feasibility.status === "fulfilled" ? feasibility.value : null,
+      feasibility:
+        feasibility.status === "fulfilled" ? feasibility.value : null,
       sprints: sprints.status === "fulfilled" ? sprints.value : null,
     });
   } catch (e) {
-    if (e instanceof OrchestratorError) return NextResponse.json({ error: e.message }, { status: e.status });
+    if (e instanceof OrchestratorError)
+      return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

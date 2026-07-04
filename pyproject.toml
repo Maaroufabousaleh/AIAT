@@ -20,12 +20,12 @@ dependencies = [
 
 [tool.uv.workspace]
 members = [
-    "packages/mas-core",
-    "packages/mas-tools-sdk",
-    "apps/orchestrator-api",
-    "apps/team-runner",
-    "apps/message-router",
-    "apps/tool-service",
+    "mas/packages/mas-core",
+    "mas/packages/mas-tools-sdk",
+    "mas/apps/orchestrator-api",
+    "mas/apps/team-runner",
+    "mas/apps/message-router",
+    "mas/apps/tool-service",
 ]
 
 # ── shared dev dependencies ────────────────────────────────────────────────────
@@ -74,12 +74,12 @@ ignore_missing_imports = true
 # ── pytest (shared) ───────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = [
-    "packages/mas-core/tests",
-    "packages/mas-tools-sdk/tests",
-    "apps/message-router/tests",
-    "apps/orchestrator-api/tests",
-    "apps/team-runner/tests",
-    "apps/tool-service/tests",
+    "mas/packages/mas-core/tests",
+    "mas/packages/mas-tools-sdk/tests",
+    "mas/apps/message-router/tests",
+    "mas/apps/orchestrator-api/tests",
+    "mas/apps/team-runner/tests",
+    "mas/apps/tool-service/tests",
 ]
 addopts = "--tb=short -q --import-mode=importlib -p no:cacheprovider"
 markers = [

@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ..protocols.enums import AgentRole
+from ..protocols.enums import AgentRole  # noqa: TC001 - Pydantic resolves this at runtime.
 from ..protocols.envelope import TaskBudget
 
 
@@ -83,8 +83,11 @@ class AgentConfig(BaseSettings):
 
     # --- LLM defaults for think() ---
     llm_model: str = Field(
-        default="gemma-3-27b-it",
-        description="Default model name passed to LLMGatewayClient.chat_completion().",
+        default="auto",
+        description=(
+            "Default LiteLLM/OmniRoute alias passed to "
+            "LLMGatewayClient.chat_completion()."
+        ),
     )
 
     @field_validator("llm_model", mode="before")
@@ -94,7 +97,7 @@ class AgentConfig(BaseSettings):
         env_model = os.environ.get("LLM_DEFAULT_MODEL", "").strip()
         # If an explicit MAS_AGENT_LLM_MODEL was set, honour it.
         # Otherwise use LLM_DEFAULT_MODEL if available.
-        if v == "gemma-3-27b-it" and env_model:
+        if v in {"auto", "gemini-2.5-flash"} and env_model:
             return env_model
         return v
 
@@ -115,11 +118,17 @@ class AgentConfig(BaseSettings):
     )
     llm_use_fallback: bool = Field(
         default=True,
-        description="If True, think() uses chat_completion_with_fallback for automatic model fallback on rate limits/errors.",
+        description=(
+            "If True, think() uses chat_completion_with_fallback for automatic model "
+            "fallback on rate limits/errors."
+        ),
     )
     llm_fallback_task: str | None = Field(
         default=None,
-        description="Optional task hint for fallback chain (e.g., 'reasoning', 'code-generation', 'tool-calling').",
+        description=(
+            "Optional task hint for fallback chain (e.g., 'reasoning', "
+            "'code-generation', 'tool-calling')."
+        ),
     )
     llm_fallback_chain_length: int = Field(
         default=4,

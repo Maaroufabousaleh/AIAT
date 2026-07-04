@@ -31,14 +31,15 @@ class LLMConfig(BaseSettings):
     )
 
     gateway_url: str = Field(
-        default="http://llm-gateway:8080",
+        default="http://litellm:4000",
         description=(
-            "Base URL of the OpenAI-compatible LLM provider, "
-            "e.g. 'https://api.openai.com' or your custom proxy."
+            "Base URL of AIAT's OpenAI-compatible gateway. The default "
+            "routes through LiteLLM, which forwards to OmniRoute for "
+            "provider selection, health, fallback, and analytics."
         ),
     )
     default_model: str = Field(
-        default="gemma-3-27b-it",
+        default="auto",
         description="Model to use when no model is specified in the call.",
     )
     api_key: str = Field(
@@ -50,11 +51,12 @@ class LLMConfig(BaseSettings):
         ),
     )
     backend: str = Field(
-        default="legacy",
+        default="litellm",
         description=(
-            "Gateway backend selector. 'legacy' uses AIAT's built-in provider "
-            "registry; 'litellm' sends normal chat-completions traffic to "
-            "LLM_GATEWAY_URL and reserves 'legacy:<model>' for rollback."
+            "Gateway backend selector. 'litellm' sends normal "
+            "chat-completions traffic to LLM_GATEWAY_URL, where LiteLLM "
+            "routes through OmniRoute. 'legacy:<model>' is reserved for "
+            "temporary direct-provider rollback."
         ),
     )
     timeout_s: float = Field(

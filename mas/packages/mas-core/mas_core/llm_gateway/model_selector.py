@@ -63,9 +63,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .client import LLMGatewayClient
-
-from .providers.base import ModelRegistry
-from .smart_router import ModelScore
+    from .providers.base import ModelRegistry
+    from .smart_router import ModelScore
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +79,10 @@ FREE_MODELS_GENERAL: list[str] = [
     "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
     "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
-    "gemma-3-27b-it",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+    "openrouter/google/gemma-4-31b-it:free",
     "groq/qwen/qwen3-32b",
     "big-pickle",
-    "gemma-3-12b-it",
     "gemma-pool",
 ]
 
@@ -95,14 +91,11 @@ FREE_MODELS_TOOLS: list[str] = [
     "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
     "groq/openai/gpt-oss-20b",
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
-    "gemma-3-27b-it",
     "openrouter/qwen/qwen3-coder:free",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
-    "openrouter/z-ai/glm-4.5-air:free",
-    "openrouter/arcee-ai/trinity-large-preview:free",
+    "openrouter/openai/gpt-oss-120b:free",
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/google/gemma-4-31b-it:free",
     "gemma-pool",
 ]
 
@@ -110,11 +103,8 @@ FREE_MODELS_TOOLS: list[str] = [
 FREE_MODELS_VISION: list[str] = [
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
-    "gemma-3-27b-it",
-    "openrouter/google/gemma-3-27b-it:free",
-    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
-    "gpt-5-nano",
+    "openrouter/google/gemma-4-31b-it:free",
+    "openrouter/nvidia/nemotron-nano-12b-v2-vl:free",
 ]
 
 #: Free models optimised for code / agentic tasks.
@@ -124,8 +114,6 @@ FREE_MODELS_CODE: list[str] = [
     "groq/llama-3.3-70b-versatile",
     "groq/qwen/qwen3-32b",
     "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
-    "gemma-3-27b-it",
     "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 
@@ -136,26 +124,21 @@ FREE_MODELS_REASONING: list[str] = [
     "openrouter/qwen/qwen3-coder:free",
     "groq/qwen/qwen3-32b",
     "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
     "big-pickle",
     "gemma-think",
-    "gemma-3-27b-it",
 ]
 
 #: Free models with search-grounding support.
 FREE_MODELS_GROUNDING: list[str] = [
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite",
 ]
 
 #: Fast / small models for quick classification, routing, and triage.
 FREE_MODELS_FAST: list[str] = [
     "groq/llama-3.1-8b-instant",
     "groq/openai/gpt-oss-20b",
-    "gemma-3n-e4b-it",
-    "gemma-3-4b-it",
-    "openrouter/qwen/qwen3-4b:free",
-    "gemma-3n-e2b-it",
+    "openrouter/liquid/lfm-2.5-1.2b-instruct:free",
 ]
 
 #: Task-category → shortlist mapping (searched first).
@@ -298,7 +281,7 @@ class ModelSelector:
             Model IDs to skip (e.g. models already tried that failed).
         fallback:
             Model ID to return if no candidate survives the filters.
-            Defaults to ``"gemma-3-27b-it"`` (reliable free Gemma model).
+            Defaults to ``"auto"``, the LiteLLM/OmniRoute router alias.
 
         Returns
         -------
@@ -324,7 +307,7 @@ class ModelSelector:
             )
             return chosen
 
-        fb = fallback or "gemma-3-27b-it"
+        fb = fallback or "auto"
         logger.warning(
             "ModelSelector: no qualifying candidates (task=%s, "
             "needs_tools=%s, needs_vision=%s). Using fallback '%s'.",
@@ -452,9 +435,13 @@ class ModelSelector:
             fb_bonus = self.free_bonus if is_free else 0.0
 
             # Also check best_for for task match
-            if task and entry is not None and not in_task_list:
-                if any(task in bf or bf in task for bf in entry.best_for):
-                    tb = self.task_bonus * 0.5  # half bonus for partial match
+            if (
+                task
+                and entry is not None
+                and not in_task_list
+                and any(task in bf or bf in task for bf in entry.best_for)
+            ):
+                tb = self.task_bonus * 0.5  # half bonus for partial match
 
             composite = min(1.0, rs + tb + fb_bonus)
             scored.append(

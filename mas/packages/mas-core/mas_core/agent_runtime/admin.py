@@ -13,12 +13,14 @@ intra-team: through its team's Redis stream subscription.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..protocols.enums import MessageType
 from ..protocols.envelope import MessageEnvelope
 from .base import AgentBase
-from .config import AgentConfig
+
+if TYPE_CHECKING:
+    from .config import AgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,9 @@ class AdminAgent(AgentBase):
         self._pending_delegations: dict[str, list[str]] = {}
         # Accumulate results keyed by correlation_id
         self._aggregated_results: dict[str, list[dict[str, Any]]] = {}
+        # Preserve the original upstream request so the final aggregate is
+        # routed back to the requesting team rather than the local worker team.
+        self._delegation_parents: dict[str, MessageEnvelope] = {}
 
     def _default_system_prompt(self) -> str:
         return (
@@ -157,7 +162,7 @@ class AdminAgent(AgentBase):
                     ),
                 },
             ]
-            result_messages = await self.think(
+            await self.think(
                 messages=messages,
                 tools=self.available_tool_definitions(),
             )
@@ -175,6 +180,7 @@ class AdminAgent(AgentBase):
         corr_id = str(parent_envelope.correlation_id)
         self._pending_delegations.setdefault(corr_id, [])
         self._aggregated_results.setdefault(corr_id, [])
+        self._delegation_parents[corr_id] = parent_envelope
 
         for subtask in subtasks:
             sub_envelope = MessageEnvelope(
@@ -213,6 +219,7 @@ class AdminAgent(AgentBase):
         corr_id = str(parent_envelope.correlation_id)
         self._pending_delegations.setdefault(corr_id, [])
         self._aggregated_results.setdefault(corr_id, [])
+        self._delegation_parents[corr_id] = parent_envelope
 
         sub_envelope = MessageEnvelope(
             msg_type=MessageType.ADMIN_TASK,
@@ -263,16 +270,19 @@ class AdminAgent(AgentBase):
         """Build and send an aggregated reply upstream."""
         results = self._aggregated_results.pop(corr_id, [])
         self._pending_delegations.pop(corr_id, None)
+        parent_envelope = self._delegation_parents.pop(corr_id, None)
+        if parent_envelope is None:
+            raise RuntimeError(f"Missing upstream envelope for delegated task {corr_id}")
 
         reply = MessageEnvelope(
             msg_type=MessageType.ADMIN_REPLY,
             sender_id=self.agent_id,
             sender_role=self.role,
             sender_team=self.team_id,
-            recipient_team=trigger_envelope.sender_team,
-            project_id=trigger_envelope.project_id,
-            correlation_id=trigger_envelope.correlation_id,
-            parent_id=trigger_envelope.parent_id,
+            recipient_team=parent_envelope.sender_team,
+            project_id=parent_envelope.project_id,
+            correlation_id=parent_envelope.correlation_id,
+            parent_id=parent_envelope.message_id,
             payload={
                 "results": results,
                 "aggregated_by": self.agent_id,

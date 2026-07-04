@@ -14,11 +14,20 @@ echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
 
 # Password configured in redis.conf via `user default on >redis_init_temp_pass`
 INIT_PASS="redis_init_temp_pass"
+ROUTER_PASS="${ROUTER_PASSWORD:-router_default_pass}"
+TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+ADMIN_AVAILABLE=0
 i=0
 while [ $i -lt $MAX_RETRIES ]; do
-    if redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping > /dev/null 2>&1; then
+    if [ "$(redis-cli --no-auth-warning --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ]; then
+        ADMIN_AVAILABLE=1
         echo "Redis is ready!"
         break
+    fi
+    if [ "$(redis-cli --no-auth-warning --user router_user -a "$ROUTER_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ] &&
+        [ "$(redis-cli --no-auth-warning --user toolcache_user -a "$TOOLCACHE_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ]; then
+        echo "Redis ACL users are already configured."
+        exit 0
     fi
     i=$((i + 1))
     echo "Waiting... ($i/$MAX_RETRIES)"
@@ -30,26 +39,41 @@ if [ $i -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-# Get passwords from environment (or use defaults for development)
-ROUTER_PASS="${ROUTER_PASSWORD:-router_default_pass}"
-TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+if [ "$ADMIN_AVAILABLE" != "1" ]; then
+    echo "ERROR: Redis admin user is unavailable and ACL users are not configured."
+    exit 1
+fi
 
 echo "Configuring Redis ACL users..."
 
+redis_admin() {
+    redis-cli --no-auth-warning --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
+}
+
+expect_ok() {
+    output="$("$@")"
+    if [ "$output" != "OK" ]; then
+        echo "ERROR: Redis ACL command failed." >&2
+        echo "$output" >&2
+        exit 1
+    fi
+}
+
 # Configure router_user - use ACL categories (@stream) instead of individual commands
 # which provides better compatibility with Redis 7 ACL changes
-redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" \
+expect_ok redis_admin \
     ACL SETUSER router_user on ">${ROUTER_PASS}" "~stream:*" "~dedupe:*" "~heartbeat:*" \
     +@stream +@write +@read +@slow +ping
 echo "  - router_user configured"
 
 # Configure toolcache_user
-redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" \
-    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" +@read +@write +@slow +ping +select
+expect_ok redis_admin \
+    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" "~shared:*" \
+    +@read +@write +@slow +ping +select
 echo "  - toolcache_user configured"
 
 # Disable default user
-redis-cli --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL SETUSER default off
+expect_ok redis_admin ACL SETUSER default off
 echo "  - default user disabled"
 
 # Persist ACL to disk when Redis is configured with an ACL file. The compose

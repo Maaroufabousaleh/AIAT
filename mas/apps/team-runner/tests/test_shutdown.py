@@ -4,9 +4,7 @@ Tests for team-runner shutdown handling, checkpoint saving, and NACK support.
 
 from __future__ import annotations
 
-import asyncio
 import textwrap
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -71,7 +69,6 @@ def temp_team_yaml(tmp_path):
 @pytest.fixture
 def runner_settings(temp_team_yaml):
     """Create RunnerSettings from a temp team YAML."""
-    import os
     from team_runner.main import RunnerSettings
 
     return RunnerSettings(
@@ -84,13 +81,74 @@ def runner_settings(temp_team_yaml):
     )
 
 
+@pytest.mark.anyio
+async def test_runtime_tool_manifest_retries_until_available(runner_settings):
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    runner_settings.tool_service_url = "http://tool-service:8002"
+    runner_settings.tool_manifest_startup_attempts = 3
+    runner_settings.tool_manifest_retry_seconds = 0
+    config = TeamConfig.model_validate(
+        {
+            "team_id": "test_team",
+            "admin": {
+                "agent_id": "admin-1",
+                "role": "admin",
+                "class": "AdminAgent",
+                "display_name": "Test Admin",
+            },
+        }
+    )
+    runtime = TeamRuntime(runner_settings, config)
+    runtime.tool_client = MagicMock()
+    runtime.tool_client.list_tools = AsyncMock(
+        side_effect=[OSError("dns unavailable"), [{"tool_name": "time_now"}]]
+    )
+
+    await runtime._load_runtime_tool_manifest()
+
+    assert runtime.tool_client.list_tools.await_count == 2
+    assert runtime.health_payload()["tool_manifest_loaded"] is True
+    assert runtime.health_payload()["runtime_tool_count"] == 1
+    assert runtime.health_payload()["runtime_available_tool_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_runtime_tool_manifest_fails_startup_after_retry_budget(runner_settings):
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    runner_settings.tool_service_url = "http://tool-service:8002"
+    runner_settings.tool_manifest_startup_attempts = 2
+    runner_settings.tool_manifest_retry_seconds = 0
+    config = TeamConfig.model_validate(
+        {
+            "team_id": "test_team",
+            "admin": {
+                "agent_id": "admin-1",
+                "role": "admin",
+                "class": "AdminAgent",
+                "display_name": "Test Admin",
+            },
+        }
+    )
+    runtime = TeamRuntime(runner_settings, config)
+    runtime.tool_client = MagicMock()
+    runtime.tool_client.list_tools = AsyncMock(side_effect=OSError("dns unavailable"))
+
+    with pytest.raises(RuntimeError, match="unavailable after 2 attempt"):
+        await runtime._load_runtime_tool_manifest()
+
+    assert runtime.health_payload()["tool_manifest_loaded"] is False
+    assert runtime.health_payload()["runtime_tool_count"] == 0
+
+
 # ── TeamRuntime.stop() saves checkpoints correctly ───────────────────────────
 
 
 @pytest.mark.anyio
 async def test_stop_saves_checkpoint_with_correct_data(runner_settings):
     """stop() should save checkpoint using correct attribute names."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
 
     config = TeamConfig.model_validate(
         {
@@ -136,7 +194,7 @@ async def test_stop_saves_checkpoint_with_correct_data(runner_settings):
 @pytest.mark.anyio
 async def test_stop_skips_agents_without_envelope(runner_settings):
     """stop() should skip agents that have no _current_envelope."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
 
     config = TeamConfig.model_validate(
         {
@@ -174,7 +232,7 @@ async def test_stop_skips_agents_without_envelope(runner_settings):
 @pytest.mark.anyio
 async def test_stop_handles_checkpoint_error_gracefully(runner_settings):
     """stop() should log warning but continue when checkpoint save fails."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
 
     config = TeamConfig.model_validate(
         {
@@ -217,9 +275,10 @@ async def test_stop_handles_checkpoint_error_gracefully(runner_settings):
 @pytest.mark.anyio
 async def test_shutdown_message_sends_ack_when_checkpoints_ok(runner_settings):
     """_handle_shutdown_message should POST /system/shutdown-ack when all checkpoints save."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    from mas_core.protocols import AgentRole, MessageEnvelope, MessageType
     from mas_core.protocols.ws import WSMessageFrame
-    from mas_core.protocols import MessageEnvelope, MessageType, AgentRole
 
     config = TeamConfig.model_validate(
         {
@@ -279,9 +338,10 @@ async def test_shutdown_message_sends_ack_when_checkpoints_ok(runner_settings):
 @pytest.mark.anyio
 async def test_shutdown_message_sends_nack_when_checkpoint_fails(runner_settings):
     """_handle_shutdown_message should POST /system/shutdown-nack when checkpoints fail."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    from mas_core.protocols import AgentRole, MessageEnvelope, MessageType
     from mas_core.protocols.ws import WSMessageFrame
-    from mas_core.protocols import MessageEnvelope, MessageType, AgentRole
 
     config = TeamConfig.model_validate(
         {
@@ -346,9 +406,10 @@ async def test_shutdown_message_sends_nack_when_checkpoint_fails(runner_settings
 @pytest.mark.anyio
 async def test_shutdown_message_sets_stop_event(runner_settings):
     """_handle_shutdown_message should set _stop_event to terminate subscription loop."""
-    from team_runner.main import TeamRuntime, TeamConfig
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    from mas_core.protocols import AgentRole, MessageEnvelope, MessageType
     from mas_core.protocols.ws import WSMessageFrame
-    from mas_core.protocols import MessageEnvelope, MessageType, AgentRole
 
     config = TeamConfig.model_validate(
         {

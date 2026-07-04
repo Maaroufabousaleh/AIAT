@@ -47,7 +47,7 @@ class FileReadTool(BaseTool):
         AgentRole.ADMIN,
         AgentRole.WORKER,
     ]
-    cache_ttl_seconds = 10
+    cache_ttl_seconds = 0
     idempotent = True
     max_concurrency = 10
 

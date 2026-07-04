@@ -1,4 +1,8 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
 
 from mas_core.workflow import (
     InvalidTransitionError,
@@ -47,6 +51,33 @@ def test_controller_rejects_invalid_transition() -> None:
         return
 
     raise AssertionError("Expected InvalidTransitionError")
+
+
+@pytest.mark.asyncio
+async def test_security_override_restores_persisted_blocked_from_state() -> None:
+    project_id = uuid4()
+    storage = AsyncMock()
+    storage.get_project.return_value = {
+        "id": project_id,
+        "state": "SECURITY_BLOCKED",
+        "failed_from_state": "FEASIBILITY_CHECK",
+    }
+    storage.transition_project.return_value = {
+        "id": project_id,
+        "state": "FEASIBILITY_CHECK",
+    }
+    controller = WorkflowController(storage=storage)
+
+    result = await controller.transition(
+        project_id=str(project_id),
+        current_state=ProjectState.SECURITY_BLOCKED,
+        event=WorkflowEvent.CEO_OVERRIDE,
+        actor_id="ceo",
+    )
+
+    assert result.next_state == ProjectState.FEASIBILITY_CHECK
+    assert result.context["failed_from_state"] == "FEASIBILITY_CHECK"
+    assert storage.transition_project.await_args.kwargs["new_state"] == "FEASIBILITY_CHECK"
 
 
 def test_watchdog_uses_boot_grace_and_downtime_aware_elapsed() -> None:

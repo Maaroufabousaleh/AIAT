@@ -85,12 +85,13 @@ services:
     ports:
       - "20128:20128"
 
-  # Hot-reload overrides for FastAPI services
+  # Dev overrides for FastAPI services. These intentionally avoid uvicorn's
+  # reload watcher because bind-mounted WSL workspaces can raise watchfiles
+  # IO errors and crash otherwise healthy services during live-stack tests.
   orchestrator-api:
     command: >
       uvicorn orchestrator_api.main:app
         --host 0.0.0.0 --port 8000
-        --reload --reload-dir /app
     volumes:
       - ../../apps/orchestrator-api/orchestrator_api:/app/orchestrator_api
       - ../../migrations:/app/migrations
@@ -99,12 +100,14 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
 
   message-router:
+    networks:
+      - internal
+      - public
     ports:
       - "8001:8001"
     command: >
       uvicorn message_router.main:app
         --host 0.0.0.0 --port 8001
-        --reload --reload-dir /app
     volumes:
       - ../../apps/message-router/message_router:/app/message_router
     environment:
@@ -117,7 +120,6 @@ services:
     command: >
       uvicorn tool_service.main:app
         --host 0.0.0.0 --port 8002
-        --reload --reload-dir /app
     volumes:
       - ../../apps/tool-service/tool_service:/app/tool_service
     environment:

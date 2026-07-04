@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from functools import lru_cache
@@ -49,13 +50,25 @@ class Settings(BaseSettings):
 
     http_transport_endpoints: dict[str, str] = Field(default_factory=dict)
     mcp_transport_endpoints: dict[str, str] = Field(default_factory=dict)
+    aiat_mcp_servers_json: str = "{}"
     process_transport_commands: dict[str, list[str]] = Field(default_factory=dict)
     transport_request_timeout_seconds: float = 15.0
+
+    @property
+    def mcp_servers(self) -> dict[str, dict]:
+        """Return the validated operator-configured MCP server registry."""
+        try:
+            value = json.loads(self.aiat_mcp_servers_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("AIAT_MCP_SERVERS_JSON must be valid JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError("AIAT_MCP_SERVERS_JSON must contain a JSON object")
+        return {str(name): dict(config) for name, config in value.items() if isinstance(config, dict)}
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 
     @model_validator(mode="after")
-    def _warn_default_credentials(self) -> "Settings":
+    def _warn_default_credentials(self) -> Settings:
         if os.environ.get("MAS_ENVIRONMENT") == "production":
             if self.redis_password == _DEFAULT_REDIS_PASSWORD:
                 raise ValueError(

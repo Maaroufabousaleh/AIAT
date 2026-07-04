@@ -2,9 +2,22 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { clsx } from "clsx";
-import { TEAM_STREAMS, MSG_TYPE_COLORS, type TeamStreamId } from "@/lib/constants";
+import {
+  TEAM_STREAMS,
+  MSG_TYPE_COLORS,
+  type TeamStreamId,
+} from "@/lib/constants";
 import { formatInTz } from "@/lib/datetime";
-import { Copy, Pause, Play, Radio, Search, Trash2, X, Check } from "lucide-react";
+import {
+  Copy,
+  Pause,
+  Play,
+  Radio,
+  Search,
+  Trash2,
+  X,
+  Check,
+} from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { FilterChip } from "@/components/ui/FilterChips";
@@ -47,11 +60,15 @@ function parseFirstTimestamp(...values: Array<string | undefined>): number {
 
 function entryFromRaw(raw: string): FeedEntry {
   let parsed: MessageEnvelope | null = null;
-  try { parsed = JSON.parse(raw); } catch { /* non-JSON */ }
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    /* non-JSON */
+  }
   const timestamp = parseFirstTimestamp(
     parsed?.timestamp,
     parsed?.sent_at,
-    parsed?.envelope?.timestamp
+    parsed?.envelope?.timestamp,
   );
   return { raw, parsed, ts: timestamp };
 }
@@ -59,7 +76,10 @@ function entryFromRaw(raw: string): FeedEntry {
 /** Strip a leading ISO timestamp prefix that some agents prepend to message_type. */
 function normalizeMessageType(rawType: string | undefined): string {
   if (!rawType) return "—";
-  return rawType.replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?\./, "");
+  return rawType.replace(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?\./,
+    "",
+  );
 }
 
 export default function StreamsPage() {
@@ -76,7 +96,9 @@ export default function StreamsPage() {
   const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
 
-  pausedRef.current = paused;
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     setEntries([]);
@@ -86,7 +108,7 @@ export default function StreamsPage() {
 
     let cancelled = false;
     fetch(`/api/streams/${teamId}?history=1&limit=50`)
-      .then((res) => res.ok ? res.json() : null)
+      .then((res) => (res.ok ? res.json() : null))
       .then((data: { entries?: RecentStreamEntry[] } | null) => {
         if (cancelled || !data?.entries) return;
         setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
@@ -126,7 +148,9 @@ export default function StreamsPage() {
   const availableTypes = useMemo(() => {
     const counts = new Map<string, number>();
     for (const entry of entries) {
-      const t = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      const t = normalizeMessageType(
+        entry.parsed?.message_type ?? entry.parsed?.msg_type,
+      );
       if (t === "—") continue;
       counts.set(t, (counts.get(t) ?? 0) + 1);
     }
@@ -139,7 +163,9 @@ export default function StreamsPage() {
   const filteredEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
     return entries.filter((entry) => {
-      const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      const type = normalizeMessageType(
+        entry.parsed?.message_type ?? entry.parsed?.msg_type,
+      );
       if (typeFilter !== "all" && type !== typeFilter) return false;
       if (!q) return true;
       // Match against the raw JSON, sender, project, trace, and type for power-search.
@@ -149,7 +175,9 @@ export default function StreamsPage() {
         entry.parsed?.project_id ?? "",
         entry.parsed?.trace_id ?? "",
         type,
-      ].join(" ").toLowerCase();
+      ]
+        .join(" ")
+        .toLowerCase();
       return haystack.includes(q);
     });
   }, [entries, query, typeFilter]);
@@ -157,14 +185,21 @@ export default function StreamsPage() {
   // Group filtered entries by message type (preserves chronological order within each group).
   const groupedEntries = useMemo(() => {
     if (!groupByType) return null;
-    const groups = new Map<string, Array<{ entry: FeedEntry; index: number }>>();
+    const groups = new Map<
+      string,
+      Array<{ entry: FeedEntry; index: number }>
+    >();
     filteredEntries.forEach((entry, index) => {
-      const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+      const type = normalizeMessageType(
+        entry.parsed?.message_type ?? entry.parsed?.msg_type,
+      );
       const bucket = groups.get(type) ?? [];
       bucket.push({ entry, index });
       groups.set(type, bucket);
     });
-    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    return Array.from(groups.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
   }, [filteredEntries, groupByType]);
 
   const activeTeam = TEAM_STREAMS.find((t) => t.id === teamId);
@@ -174,7 +209,8 @@ export default function StreamsPage() {
   }
 
   async function copyEntry(entry: FeedEntry, key: number) {
-    const text = entry.raw || (entry.parsed ? JSON.stringify(entry.parsed, null, 2) : "");
+    const text =
+      entry.raw || (entry.parsed ? JSON.stringify(entry.parsed, null, 2) : "");
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -191,14 +227,19 @@ export default function StreamsPage() {
         document.body.removeChild(ta);
       }
       setCopiedKey(key);
-      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+      window.setTimeout(
+        () => setCopiedKey((k) => (k === key ? null : k)),
+        1500,
+      );
     } catch {
       // Silent failure — clipboard rejection is non-critical here.
     }
   }
 
   function renderEntryRow(entry: FeedEntry, index: number) {
-    const type = normalizeMessageType(entry.parsed?.message_type ?? entry.parsed?.msg_type);
+    const type = normalizeMessageType(
+      entry.parsed?.message_type ?? entry.parsed?.msg_type,
+    );
     const isOpen = expanded === index;
     const justCopied = copiedKey === index;
 
@@ -208,7 +249,7 @@ export default function StreamsPage() {
           className={clsx(
             "border-b border-slate-800/70 transition-colors cursor-pointer",
             "hover:bg-slate-800/40 focus-within:bg-slate-800/40",
-            isOpen && "bg-slate-800/30"
+            isOpen && "bg-slate-800/30",
           )}
           onClick={() => setExpanded(isOpen ? null : index)}
           aria-expanded={isOpen}
@@ -221,7 +262,7 @@ export default function StreamsPage() {
               <span
                 className={clsx(
                   "inline-flex px-1.5 py-0.5 rounded text-xxs font-medium text-white",
-                  msgTypeColor(type)
+                  msgTypeColor(type),
                 )}
               >
                 {type}
@@ -259,14 +300,16 @@ export default function StreamsPage() {
                 e.stopPropagation();
                 copyEntry(entry, index);
               }}
-              aria-label={justCopied ? "Copied to clipboard" : "Copy message payload"}
+              aria-label={
+                justCopied ? "Copied to clipboard" : "Copy message payload"
+              }
               title={justCopied ? "Copied!" : "Copy payload"}
               className={clsx(
                 "inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 justCopied
                   ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                  : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800"
+                  : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800",
               )}
             >
               {justCopied ? <Check size={12} /> : <Copy size={12} />}
@@ -299,7 +342,7 @@ export default function StreamsPage() {
               <span
                 className={clsx(
                   "w-1.5 h-1.5 rounded-full",
-                  connected ? "bg-emerald-400" : "bg-slate-600"
+                  connected ? "bg-emerald-400" : "bg-slate-600",
                 )}
                 aria-hidden
               />
@@ -369,7 +412,7 @@ export default function StreamsPage() {
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
                 paused
                   ? "bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25"
-                  : "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white"
+                  : "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white",
               )}
             >
               {paused ? <Play size={12} /> : <Pause size={12} />}
@@ -429,7 +472,11 @@ export default function StreamsPage() {
           <div className="p-6">
             <EmptyState
               icon="radio"
-              title={connected ? `No recent messages on stream:${teamId}` : "Connecting to stream…"}
+              title={
+                connected
+                  ? `No recent messages on stream:${teamId}`
+                  : "Connecting to stream…"
+              }
               description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
             />
           </div>
@@ -457,12 +504,39 @@ export default function StreamsPage() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-slate-950/80 backdrop-blur border-b border-slate-800">
               <tr>
-                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-44" scope="col">Time</th>
-                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-32" scope="col">Type</th>
-                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-36 hidden md:table-cell" scope="col">Sender</th>
-                <th className="text-left px-3 py-2 text-slate-500 font-semibold w-28 hidden lg:table-cell" scope="col">Project</th>
-                <th className="text-left px-3 py-2 text-slate-500 font-semibold" scope="col">Payload</th>
-                <th className="px-2 py-2 w-12" scope="col"><span className="sr-only">Actions</span></th>
+                <th
+                  className="text-left px-3 py-2 text-slate-500 font-semibold w-44"
+                  scope="col"
+                >
+                  Time
+                </th>
+                <th
+                  className="text-left px-3 py-2 text-slate-500 font-semibold w-32"
+                  scope="col"
+                >
+                  Type
+                </th>
+                <th
+                  className="text-left px-3 py-2 text-slate-500 font-semibold w-36 hidden md:table-cell"
+                  scope="col"
+                >
+                  Sender
+                </th>
+                <th
+                  className="text-left px-3 py-2 text-slate-500 font-semibold w-28 hidden lg:table-cell"
+                  scope="col"
+                >
+                  Project
+                </th>
+                <th
+                  className="text-left px-3 py-2 text-slate-500 font-semibold"
+                  scope="col"
+                >
+                  Payload
+                </th>
+                <th className="px-2 py-2 w-12" scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -478,21 +552,26 @@ export default function StreamsPage() {
                             <span
                               className={clsx(
                                 "inline-block w-2 h-2 rounded-sm",
-                                msgTypeColor(type)
+                                msgTypeColor(type),
                               )}
                               aria-hidden
                             />
                             {type}
                             <span className="text-slate-600 font-normal normal-case">
-                              ({group.length} message{group.length === 1 ? "" : "s"})
+                              ({group.length} message
+                              {group.length === 1 ? "" : "s"})
                             </span>
                           </span>
                         </td>
                       </tr>
-                      {group.map(({ entry, index }) => renderEntryRow(entry, index))}
+                      {group.map(({ entry, index }) =>
+                        renderEntryRow(entry, index),
+                      )}
                     </React.Fragment>
                   ))
-                : filteredEntries.map((entry, index) => renderEntryRow(entry, index))}
+                : filteredEntries.map((entry, index) =>
+                    renderEntryRow(entry, index),
+                  )}
             </tbody>
           </table>
         )}

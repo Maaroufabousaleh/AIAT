@@ -295,7 +295,8 @@ class TestReplyHelper:
         )
         assert reply.parent_id == original.message_id
         assert reply.correlation_id == original.message_id
-        assert reply.recipient_id == original.sender_id
+        assert reply.recipient_id is None
+        assert reply.recipient_team == original.sender_team
         assert reply.project_id == original.project_id
 
     def test_reply_preserves_existing_correlation_id(self):

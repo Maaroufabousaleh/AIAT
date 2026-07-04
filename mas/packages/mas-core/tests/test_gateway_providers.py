@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from mas_core.llm_gateway import model_selector
 from mas_core.llm_gateway.client import (
     LLMGatewayClient,
     LLMGatewayError,
@@ -48,9 +49,10 @@ from mas_core.llm_gateway.providers.api.openrouter import (
 
 def _make_config(**overrides) -> LLMConfig:
     defaults = dict(
-        gateway_url="http://fake-llm:8080",
-        default_model="gemma-3-27b-it",
+        gateway_url="http://fake-litellm:4000",
+        default_model="auto",
         api_key="test-key",
+        backend="litellm",
         max_retries=1,
         retry_min_wait_s=0.001,
         retry_max_wait_s=0.005,
@@ -119,6 +121,10 @@ def _make_registry() -> ModelRegistry:
     return reg
 
 
+def _make_legacy_config(**overrides) -> LLMConfig:
+    return _make_config(backend="legacy", **overrides)
+
+
 def _ok_chat_response(content: str = "ok", model: str = "test-pickle") -> MagicMock:
     resp = MagicMock()
     resp.status_code = 200
@@ -164,9 +170,7 @@ class TestModelRegistry:
     def test_contains_and_len(self):
         reg = ModelRegistry()
         assert len(reg) == 0
-        reg.register(
-            ModelEntry(model_id="a", provider="p", endpoint="http://localhost/")
-        )
+        reg.register(ModelEntry(model_id="a", provider="p", endpoint="http://localhost/"))
         assert "a" in reg
         assert "b" not in reg
         assert len(reg) == 1
@@ -239,19 +243,34 @@ class TestProviderConfigAuth:
 
 
 class TestGlobalRegistry:
+    def test_curated_model_shortlists_only_reference_registered_models(self):
+        missing_by_list = {}
+        for name in dir(model_selector):
+            if not name.startswith("FREE_MODELS_"):
+                continue
+            missing = [
+                model_id
+                for model_id in getattr(model_selector, name)
+                if model_id not in MODEL_REGISTRY
+            ]
+            if missing:
+                missing_by_list[name] = missing
+        assert not missing_by_list, "\n".join(
+            f"{name}: {models}" for name, models in missing_by_list.items()
+        )
+
     def test_builtin_models_registered(self):
-        assert "gemma-3-27b-it" in MODEL_REGISTRY
-        assert "gemma-4-26b-a4b-it" in MODEL_REGISTRY
+        assert "gemini-2.5-flash" in MODEL_REGISTRY
         assert "gemma-4-31b-it" in MODEL_REGISTRY
         assert "big-pickle" in MODEL_REGISTRY
-        assert "minimax-m2.5-free" in MODEL_REGISTRY
-        assert "gpt-5-nano" in MODEL_REGISTRY
+        assert "deepseek-v4-flash-free" in MODEL_REGISTRY
+        assert "north-mini-code-free" in MODEL_REGISTRY
         assert "gpt-4o" not in MODEL_REGISTRY
         assert "minimax-2.7" not in MODEL_REGISTRY
         assert MODEL_REGISTRY.get_provider("minimax") is None
 
-    def test_gemma_27b_is_chat_completions(self):
-        entry = MODEL_REGISTRY.get("gemma-3-27b-it")
+    def test_gemini25_is_chat_completions(self):
+        entry = MODEL_REGISTRY.get("gemini-2.5-flash")
         assert entry is not None
         assert entry.api_style == ApiStyle.CHAT_COMPLETIONS
         assert entry.provider == "gemini"
@@ -262,16 +281,19 @@ class TestGlobalRegistry:
         assert entry.api_style == ApiStyle.CHAT_COMPLETIONS
         assert entry.provider == "gemini"
         assert entry.capabilities.supports_reasoning is True
-        assert entry.capabilities.supports_search_grounding is True
-        assert entry.supports_tools is True
-        assert entry.max_context_tokens == 262_144
+        assert entry.capabilities.supports_search_grounding is False
+        assert entry.supports_tools is False
+        assert entry.max_context_tokens is None
 
     @pytest.mark.asyncio
-    async def test_search_grounding_task_prefers_gemma4_models(self):
-        config = _make_config()
+    async def test_search_grounding_task_prefers_gemini_models(self):
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
         ranking = client.model_selector.rank(task="search-grounding", top_n=2)
-        assert [c.model for c in ranking] == ["gemma-4-31b-it", "gemma-4-26b-a4b-it"]
+        assert [c.model for c in ranking] == [
+            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
+        ]
 
     def test_zen_models_styles(self):
         pickle = MODEL_REGISTRY.get("big-pickle")
@@ -279,10 +301,10 @@ class TestGlobalRegistry:
         assert pickle.api_style == ApiStyle.CHAT_COMPLETIONS
         assert pickle.provider == "zen"
 
-        nano = MODEL_REGISTRY.get("gpt-5-nano")
-        assert nano is not None
-        assert nano.api_style == ApiStyle.RESPONSES
-        assert nano.provider == "zen"
+        free_model = MODEL_REGISTRY.get("north-mini-code-free")
+        assert free_model is not None
+        assert free_model.api_style == ApiStyle.CHAT_COMPLETIONS
+        assert free_model.provider == "zen"
 
     def test_zen_provider_headers(self):
         p = MODEL_REGISTRY.get_provider("zen")
@@ -301,7 +323,7 @@ class TestChatCompletions:
     async def test_registered_model_uses_provider_client(self):
         """A registered chat_completions model uses a provider-specific HTTP client."""
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -320,7 +342,7 @@ class TestChatCompletions:
     async def test_provider_client_reused(self):
         """Subsequent calls to the same provider reuse the HTTP client."""
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -378,7 +400,7 @@ class TestChatCompletions:
     async def test_chat_completions_retry_on_502(self):
         """Retries work for provider-routed chat_completions models."""
         reg = _make_registry()
-        config = _make_config(max_retries=2)
+        config = _make_legacy_config(max_retries=2)
         client = LLMGatewayClient(config, registry=reg)
 
         call_count = 0
@@ -404,7 +426,7 @@ class TestChatCompletions:
 
     @pytest.mark.asyncio
     async def test_gemini_search_grounding_uses_native_endpoint(self):
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
         captured: dict[str, Any] = {}
 
@@ -441,11 +463,11 @@ class TestChatCompletions:
             async with client:
                 resp = await client.chat_completion(
                     [{"role": "user", "content": "Who won Euro 2024?"}],
-                    model="gemma-4-31b-it",
+                    model="gemini-3.1-flash-lite-preview",
                     search_grounding=True,
                 )
 
-        assert captured["url"].endswith("/models/gemma-4-31b-it:generateContent")
+        assert captured["url"].endswith("/models/gemini-3.1-flash-lite-preview:generateContent")
         assert captured["json"]["tools"] == [{"google_search": {}}]
         assert captured["json"]["contents"][0]["role"] == "user"
         assert resp.text == "Spain won Euro 2024."
@@ -506,7 +528,7 @@ class TestLiteLLMBackend:
                     description="Already-safe internal tool name.",
                     parameters={"type": "object", "properties": {}},
                 )
-            )
+            ),
         ]
 
         async def mock_post(_self, url, **kwargs):
@@ -539,7 +561,7 @@ class TestLiteLLMBackend:
                                         "name": "human__notify_2",
                                         "arguments": '{"message":"safe"}',
                                     },
-                                }
+                                },
                             ],
                         },
                     }
@@ -651,11 +673,11 @@ class TestLiteLLMBackend:
             async with client:
                 resp = await client.chat_completion(
                     [{"role": "user", "content": "Find current context."}],
-                    model="gemma-4-31b-it",
+                    model="gemini-3.1-flash-lite-preview",
                     search_grounding=True,
                 )
 
-        assert captured["url"].endswith("/models/gemma-4-31b-it:generateContent")
+        assert captured["url"].endswith("/models/gemini-3.1-flash-lite-preview:generateContent")
         assert captured["url"] != "/v1/chat/completions"
         assert captured["json"]["tools"] == [{"google_search": {}}]
         assert resp.text == "Grounded answer."
@@ -672,7 +694,7 @@ class TestResponsesAPI:
     async def test_responses_api_success(self):
         """Responses API model returns normalised ChatResponse."""
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -694,7 +716,7 @@ class TestResponsesAPI:
     async def test_responses_api_payload_format(self):
         """The request payload sent to a responses model uses 'input' not 'messages'."""
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         captured_payload: dict[str, Any] = {}
@@ -764,7 +786,7 @@ class TestResponsesAPI:
     @pytest.mark.asyncio
     async def test_responses_api_retries_on_429(self):
         reg = _make_registry()
-        config = _make_config(max_retries=2)
+        config = _make_legacy_config(max_retries=2)
         client = LLMGatewayClient(config, registry=reg)
 
         call_count = 0
@@ -791,7 +813,7 @@ class TestResponsesAPI:
     @pytest.mark.asyncio
     async def test_responses_api_raises_after_max_retries(self):
         reg = _make_registry()
-        config = _make_config(max_retries=1)
+        config = _make_legacy_config(max_retries=1)
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -811,7 +833,7 @@ class TestResponsesAPI:
     @pytest.mark.asyncio
     async def test_responses_api_non_retryable_error(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -839,7 +861,7 @@ class TestCLIModel:
     @pytest.mark.asyncio
     async def test_cli_model_success(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         mock_proc = AsyncMock()
@@ -859,7 +881,7 @@ class TestCLIModel:
     @pytest.mark.asyncio
     async def test_cli_model_failure(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         mock_proc = AsyncMock()
@@ -877,7 +899,7 @@ class TestCLIModel:
     @pytest.mark.asyncio
     async def test_cli_builds_prompt_from_messages(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         captured_input: bytes = b""
@@ -937,7 +959,7 @@ class TestFallback:
     @pytest.mark.asyncio
     async def test_explicit_unknown_model_falls_back(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):
@@ -954,7 +976,7 @@ class TestFallback:
     @pytest.mark.asyncio
     async def test_raw_openrouter_paid_model_is_blocked(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         post = AsyncMock(side_effect=AssertionError("network call should not happen"))
@@ -969,7 +991,7 @@ class TestFallback:
 
     @pytest.mark.asyncio
     async def test_openrouter_free_router_alias_uses_registered_entry(self):
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=MODEL_REGISTRY)
         seen: dict[str, Any] = {}
 
@@ -1047,7 +1069,7 @@ class TestProviderClientCleanup:
     @pytest.mark.asyncio
     async def test_stop_closes_provider_clients(self):
         reg = _make_registry()
-        config = _make_config()
+        config = _make_legacy_config()
         client = LLMGatewayClient(config, registry=reg)
 
         async def mock_post(_self, url, **kwargs):

@@ -109,18 +109,15 @@ class LegacyCompletionRequest(BaseModel):
 
 # Models that can be selected by external agents
 _AVAILABLE_MODELS = [
-    "auto",  # platform picks best
-    "gpt-4o",
+    "auto",
+    "omniroute-auto",
+    "omniroute-free",
+    "omniroute-coding",
+    "omniroute-smart",
     "gpt-4o-mini",
-    "gpt-4.1",
-    "gpt-4.1-mini",
+    "gemma-3-27b-it",
     "gemini-2.0-flash",
-    "gemini-2.5-pro",
-    "mistral-medium",
     "llama-3.3-70b-versatile",
-    "cerebras/llama-3.3-70b",
-    "nvidia/meta/llama-3.1-70b-instruct",
-    "nvidia/nemotron-4-340b-instruct",
 ]
 
 

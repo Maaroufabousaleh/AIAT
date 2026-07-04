@@ -62,6 +62,8 @@ def _is_allowed_tool(
     name = str(entry.get("tool_name") or "")
     if not name:
         return False
+    if entry.get("available") is False:
+        return False
 
     result = can_use_tool_with_metadata(
         role=role,

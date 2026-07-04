@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback, useMemo, useState } from "react";
 import { clsx } from "clsx";
+import Link from "next/link";
 import {
   Network,
   Users,
@@ -22,7 +23,15 @@ import { useSystemVizStore } from "@/lib/system-viz-store";
 import { HierarchyViz } from "@/components/system-viz/HierarchyViz";
 import { PermissionsViz } from "@/components/system-viz/PermissionsViz";
 import { OrchestrationViz } from "@/components/system-viz/OrchestrationViz";
-import type { ViewMode, TeamInfo, WorkflowState, OrchestrationFlow, SystemData, PermissionData, OrchestrationData } from "@/lib/system-viz-types";
+import type {
+  ViewMode,
+  TeamInfo,
+  WorkflowState,
+  OrchestrationFlow,
+  SystemData,
+  PermissionData,
+  OrchestrationData,
+} from "@/lib/system-viz-types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -61,10 +70,7 @@ function SkeletonRow({ width = "w-full" }: { width?: string }) {
   return (
     <div
       role="presentation"
-      className={clsx(
-        "h-3 rounded bg-slate-800/70 animate-pulse",
-        width
-      )}
+      className={clsx("h-3 rounded bg-slate-800/70 animate-pulse", width)}
     />
   );
 }
@@ -167,7 +173,13 @@ export default function SystemVisualizationPage() {
 
     setLastRefreshed(new Date());
     setLoading(false);
-  }, [setSystemData, setPermissionData, setOrchestrationData, setLoading, setError]);
+  }, [
+    setSystemData,
+    setPermissionData,
+    setOrchestrationData,
+    setLoading,
+    setError,
+  ]);
 
   useEffect(() => {
     fetchData();
@@ -177,60 +189,75 @@ export default function SystemVisualizationPage() {
   // without us having to refetch.
   const [, setTick] = useState(0);
   useEffect(() => {
-    const iv = setInterval(() => setTick(t => t + 1), 30_000);
+    const iv = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(iv);
   }, []);
 
   const handleRefresh = useCallback(() => {
-    setRefetchKey(k => k + 1);
+    setRefetchKey((k) => k + 1);
     fetchData();
   }, [fetchData]);
 
-  const teams: TeamInfo[] = useMemo(() => systemData?.teams || [], [systemData]);
+  const teams: TeamInfo[] = useMemo(
+    () => systemData?.teams || [],
+    [systemData],
+  );
   const hierarchy = useMemo(() => systemData?.hierarchy || [], [systemData]);
-  const states: WorkflowState[] = useMemo(() => orchestrationData?.states || [], [orchestrationData]);
-  const flows: OrchestrationFlow[] = useMemo(() => orchestrationData?.flows || [], [orchestrationData]);
+  const states: WorkflowState[] = useMemo(
+    () => orchestrationData?.states || [],
+    [orchestrationData],
+  );
+  const flows: OrchestrationFlow[] = useMemo(
+    () => orchestrationData?.flows || [],
+    [orchestrationData],
+  );
 
-  const findPath = useCallback((start: string, end: string): string[] => {
-    const adjacency: Record<string, string[]> = {};
-    
-    flows.forEach(flow => {
-      flow.edges.forEach(edge => {
-        if (!adjacency[edge.source]) adjacency[edge.source] = [];
-        adjacency[edge.source].push(edge.target);
+  const findPath = useCallback(
+    (start: string, end: string): string[] => {
+      const adjacency: Record<string, string[]> = {};
+
+      flows.forEach((flow) => {
+        flow.edges.forEach((edge) => {
+          if (!adjacency[edge.source]) adjacency[edge.source] = [];
+          adjacency[edge.source].push(edge.target);
+        });
       });
-    });
 
-    const visited = new Set<string>();
-    const path: string[] = [];
+      const visited = new Set<string>();
+      const path: string[] = [];
 
-    function dfs(node: string): boolean {
-      if (node === end) {
-        path.push(node);
-        return true;
-      }
-      visited.add(node);
-      path.push(node);
-
-      const neighbors = adjacency[node] || [];
-      for (const neighbor of neighbors) {
-        if (!visited.has(neighbor) && dfs(neighbor)) {
+      function dfs(node: string): boolean {
+        if (node === end) {
+          path.push(node);
           return true;
         }
+        visited.add(node);
+        path.push(node);
+
+        const neighbors = adjacency[node] || [];
+        for (const neighbor of neighbors) {
+          if (!visited.has(neighbor) && dfs(neighbor)) {
+            return true;
+          }
+        }
+
+        path.pop();
+        return false;
       }
 
-      path.pop();
-      return false;
-    }
+      dfs(start);
+      return path;
+    },
+    [flows],
+  );
 
-    dfs(start);
-    return path;
-  }, [flows]);
-
-  const handleTracePath = useCallback((from: string, to: string) => {
-    const path = findPath(from, to);
-    setHighlightedPath(path);
-  }, [findPath, setHighlightedPath]);
+  const handleTracePath = useCallback(
+    (from: string, to: string) => {
+      const path = findPath(from, to);
+      setHighlightedPath(path);
+    },
+    [findPath, setHighlightedPath],
+  );
 
   const clearTrace = useCallback(() => {
     setTraceMode(false);
@@ -271,7 +298,7 @@ export default function SystemVisualizationPage() {
 
         {/* Skeleton KPI strip */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[0, 1, 2, 3].map(i => (
+          {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
               className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex items-start gap-3 animate-pulse"
@@ -293,7 +320,7 @@ export default function SystemVisualizationPage() {
             <SkeletonRow width="w-24" />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {[0, 1, 2].map(i => (
+            {[0, 1, 2].map((i) => (
               <div
                 key={i}
                 className="h-44 rounded-lg border border-slate-800/80 bg-slate-950/40 animate-pulse"
@@ -350,23 +377,29 @@ export default function SystemVisualizationPage() {
   return (
     <div className="dashboard-page">
       {/* Breadcrumbs — keep simple, semantic, keyboard-friendly */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-slate-500">
-        <a
+      <nav
+        aria-label="Breadcrumb"
+        className="flex items-center gap-1.5 text-xs text-slate-500"
+      >
+        <Link
           href="/"
           className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
         >
           <Home size={12} aria-hidden="true" />
           Dashboard
-        </a>
+        </Link>
         <ChevronRight size={12} aria-hidden="true" className="text-slate-700" />
-        <a
+        <Link
           href="/system"
           className="rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
         >
           System
-        </a>
+        </Link>
         <ChevronRight size={12} aria-hidden="true" className="text-slate-700" />
-        <span className="rounded px-1.5 py-0.5 text-slate-300 bg-slate-800/60" aria-current="page">
+        <span
+          className="rounded px-1.5 py-0.5 text-slate-300 bg-slate-800/60"
+          aria-current="page"
+        >
           Visualization
         </span>
       </nav>
@@ -376,7 +409,10 @@ export default function SystemVisualizationPage() {
         title="System Visualization"
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>Explore the agent team hierarchy, permissions, and orchestration flows.</span>
+            <span>
+              Explore the agent team hierarchy, permissions, and orchestration
+              flows.
+            </span>
             {lastRefreshed && (
               <span
                 className="inline-flex items-center gap-1 text-slate-500"
@@ -400,7 +436,7 @@ export default function SystemVisualizationPage() {
                   "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                   traceMode
                     ? "bg-amber-600 hover:bg-amber-500 text-white"
-                    : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/70"
+                    : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/70",
                 )}
               >
                 <Search size={14} aria-hidden="true" />
@@ -425,7 +461,7 @@ export default function SystemVisualizationPage() {
         aria-label="Visualization views"
         className="dashboard-toolbar inline-flex items-center gap-1 p-1"
       >
-        {VIEW_MODES.map(mode => {
+        {VIEW_MODES.map((mode) => {
           const Icon = mode.icon;
           const active = viewMode === mode.id;
           return (
@@ -445,7 +481,7 @@ export default function SystemVisualizationPage() {
                 "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 active
                   ? "bg-blue-600 text-white shadow-sm shadow-blue-950/40"
-                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/70"
+                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/70",
               )}
             >
               <Icon size={14} aria-hidden="true" />
@@ -462,20 +498,32 @@ export default function SystemVisualizationPage() {
           tone="info"
           label="Teams"
           value={teams.length}
-          hint={viewMode === "hierarchy" ? "Click a node for details" : "Across all teams"}
+          hint={
+            viewMode === "hierarchy"
+              ? "Click a node for details"
+              : "Across all teams"
+          }
         />
         <KpiCard
           icon="git-branch"
           tone="warning"
           label="Orchestration flows"
           value={flows.length}
-          hint={states.length > 0 ? `${states.length} workflow states` : "No states loaded"}
+          hint={
+            states.length > 0
+              ? `${states.length} workflow states`
+              : "No states loaded"
+          }
         />
         <KpiCard
           icon="shield"
           tone="positive"
           label="Policy matrix"
-          value={permissionData ? Object.keys(permissionData.communicationMatrix ?? {}).length : 0}
+          value={
+            permissionData
+              ? Object.keys(permissionData.communicationMatrix ?? {}).length
+              : 0
+          }
           hint="Sender roles tracked"
         />
         <KpiCard
@@ -483,21 +531,23 @@ export default function SystemVisualizationPage() {
           tone="neutral"
           label="Org graph"
           value={orgGraph ? (orgGraph.nodes ?? []).length : 0}
-          hint={orgGraph ? `${(orgGraph.edges ?? []).length} edges` : "Not loaded"}
+          hint={
+            orgGraph ? `${(orgGraph.edges ?? []).length} edges` : "Not loaded"
+          }
         />
       </div>
 
       {orgGraph?.mermaid && (
-        <section
-          aria-label="Mermaid export"
-          className="dashboard-surface p-4"
-        >
+        <section aria-label="Mermaid export" className="dashboard-surface p-4">
           <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-3 mb-2">
-                <div className="text-sm font-medium text-slate-100">Mermaid Export</div>
+                <div className="text-sm font-medium text-slate-100">
+                  Mermaid Export
+                </div>
                 <div className="text-xs text-slate-500">
-                  {(orgGraph.nodes ?? []).length} nodes / {(orgGraph.edges ?? []).length} edges /{" "}
+                  {(orgGraph.nodes ?? []).length} nodes /{" "}
+                  {(orgGraph.edges ?? []).length} edges /{" "}
                   {(orgGraph.capability_edges ?? []).length} capability links
                 </div>
               </div>
@@ -516,7 +566,7 @@ export default function SystemVisualizationPage() {
                 "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 mermaidCopied
                   ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-300"
-                  : "bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-500 hover:bg-slate-700"
+                  : "bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-500 hover:bg-slate-700",
               )}
             >
               <Copy size={14} aria-hidden="true" />
@@ -532,8 +582,12 @@ export default function SystemVisualizationPage() {
           role="region"
           aria-label="Path trace controls"
         >
-          <span className="text-sm font-medium text-amber-300">Path Trace:</span>
-          <label className="sr-only" htmlFor="trace-start">Start node</label>
+          <span className="text-sm font-medium text-amber-300">
+            Path Trace:
+          </span>
+          <label className="sr-only" htmlFor="trace-start">
+            Start node
+          </label>
           <select
             id="trace-start"
             value={traceStart || ""}
@@ -541,12 +595,18 @@ export default function SystemVisualizationPage() {
             className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <option value="">Select start node...</option>
-            {flows.find(f => f.id === selectedFlow)?.nodes.map(n => (
-              <option key={n.id} value={n.id}>{n.label}</option>
-            ))}
+            {flows
+              .find((f) => f.id === selectedFlow)
+              ?.nodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.label}
+                </option>
+              ))}
           </select>
           <ArrowRight size={16} className="text-slate-500" aria-hidden="true" />
-          <label className="sr-only" htmlFor="trace-end">End node</label>
+          <label className="sr-only" htmlFor="trace-end">
+            End node
+          </label>
           <select
             id="trace-end"
             value={traceEnd || ""}
@@ -554,12 +614,18 @@ export default function SystemVisualizationPage() {
             className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <option value="">Select end node...</option>
-            {flows.find(f => f.id === selectedFlow)?.nodes.map(n => (
-              <option key={n.id} value={n.id}>{n.label}</option>
-            ))}
+            {flows
+              .find((f) => f.id === selectedFlow)
+              ?.nodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.label}
+                </option>
+              ))}
           </select>
           <button
-            onClick={() => traceStart && traceEnd && handleTracePath(traceStart, traceEnd)}
+            onClick={() =>
+              traceStart && traceEnd && handleTracePath(traceStart, traceEnd)
+            }
             disabled={!traceStart || !traceEnd}
             aria-label="Find path between selected nodes"
             className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
@@ -576,7 +642,8 @@ export default function SystemVisualizationPage() {
           )}
           {highlightedPath && (
             <span className="text-xs text-amber-200/80">
-              {highlightedPath.length} step{highlightedPath.length === 1 ? "" : "s"}
+              {highlightedPath.length} step
+              {highlightedPath.length === 1 ? "" : "s"}
             </span>
           )}
         </div>
@@ -588,14 +655,16 @@ export default function SystemVisualizationPage() {
         <div
           id={`viz-panel-${viewMode}`}
           role="tabpanel"
-          aria-label={`${VIEW_MODES.find(m => m.id === viewMode)?.label ?? "Visualization"} view`}
+          aria-label={`${VIEW_MODES.find((m) => m.id === viewMode)?.label ?? "Visualization"} view`}
           className="flex-1 min-w-0 dashboard-surface overflow-hidden"
         >
           {viewMode === "hierarchy" && (
             <HierarchyViz
               key={`hierarchy-${refetchKey}`}
               hierarchy={hierarchy}
-              onNodeClick={(teamId) => setSelectedTeam(teamId === selectedTeam ? null : teamId)}
+              onNodeClick={(teamId) =>
+                setSelectedTeam(teamId === selectedTeam ? null : teamId)
+              }
               selectedTeam={selectedTeam}
               highlightedPath={highlightedPath}
             />
@@ -606,7 +675,9 @@ export default function SystemVisualizationPage() {
               permissions={permissionData}
               teams={teams}
               selectedTeam={selectedTeam}
-              onTeamSelect={(teamId) => setSelectedTeam(teamId === selectedTeam ? null : teamId)}
+              onTeamSelect={(teamId) =>
+                setSelectedTeam(teamId === selectedTeam ? null : teamId)
+              }
               onTracePath={(from, to) => handleTracePath(from, to)}
             />
           )}
@@ -662,7 +733,9 @@ export default function SystemVisualizationPage() {
           >
             <div className="sticky top-0 z-10 flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur">
               <h3 className="text-sm font-semibold text-slate-100">
-                {selectedFlow && viewMode === "orchestration" ? "Flow Details" : "Team Details"}
+                {selectedFlow && viewMode === "orchestration"
+                  ? "Flow Details"
+                  : "Team Details"}
               </h3>
               <button
                 onClick={() => {
@@ -676,167 +749,216 @@ export default function SystemVisualizationPage() {
               </button>
             </div>
 
-            {selectedTeam && viewMode === "hierarchy" && teams.find(t => t.teamId === selectedTeam) && (
-              <div className="p-4 space-y-4">
-                {(() => {
-                  const team = teams.find(t => t.teamId === selectedTeam)!;
-                  return (
-                    <>
-                      <DetailRow label="Team">
-                        <div className="text-slate-100 font-medium">{team.displayName}</div>
-                        <div className="text-xs text-slate-500 font-mono break-all">{team.teamId}</div>
-                      </DetailRow>
-                      <DetailRow label="Tier">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs text-slate-200 capitalize">
-                          <span
-                            className="w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: TIER_DOT[team.tier] ?? "#94a3b8" }}
-                            aria-hidden="true"
-                          />
-                          {team.tier.replace("_", " ")}
-                        </span>
-                      </DetailRow>
-                      <DetailRow label="Admin Agent">
-                        <div className="text-slate-100">{team.admin.displayName}</div>
-                        <div className="text-xs text-slate-500 font-mono break-all">{team.admin.agentId}</div>
-                      </DetailRow>
-                      {team.workers.length > 0 && (
+            {selectedTeam &&
+              viewMode === "hierarchy" &&
+              teams.find((t) => t.teamId === selectedTeam) && (
+                <div className="p-4 space-y-4">
+                  {(() => {
+                    const team = teams.find((t) => t.teamId === selectedTeam)!;
+                    return (
+                      <>
+                        <DetailRow label="Team">
+                          <div className="text-slate-100 font-medium">
+                            {team.displayName}
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono break-all">
+                            {team.teamId}
+                          </div>
+                        </DetailRow>
+                        <DetailRow label="Tier">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs text-slate-200 capitalize">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full"
+                              style={{
+                                backgroundColor:
+                                  TIER_DOT[team.tier] ?? "#94a3b8",
+                              }}
+                              aria-hidden="true"
+                            />
+                            {team.tier.replace("_", " ")}
+                          </span>
+                        </DetailRow>
+                        <DetailRow label="Admin Agent">
+                          <div className="text-slate-100">
+                            {team.admin.displayName}
+                          </div>
+                          <div className="text-xs text-slate-500 font-mono break-all">
+                            {team.admin.agentId}
+                          </div>
+                        </DetailRow>
+                        {team.workers.length > 0 && (
+                          <DetailSection
+                            label={`Workers (${team.workers.length})`}
+                            empty="No workers assigned"
+                          >
+                            <ul className="space-y-2">
+                              {team.workers.map((w) => (
+                                <li
+                                  key={w.agentId}
+                                  className="p-2 rounded-md bg-slate-800/70 border border-slate-700/70 hover:border-slate-600 transition-colors"
+                                >
+                                  <div className="text-slate-100 text-sm font-medium">
+                                    {w.displayName}
+                                  </div>
+                                  <div className="text-xs text-slate-500 font-mono break-all">
+                                    {w.agentId}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </DetailSection>
+                        )}
                         <DetailSection
-                          label={`Workers (${team.workers.length})`}
-                          empty="No workers assigned"
+                          label={`Allowed Tools (${team.admin.tools.length})`}
+                          empty="No tools registered"
                         >
-                          <ul className="space-y-2">
-                            {team.workers.map(w => (
-                              <li
-                                key={w.agentId}
-                                className="p-2 rounded-md bg-slate-800/70 border border-slate-700/70 hover:border-slate-600 transition-colors"
+                          <div className="flex flex-wrap gap-1">
+                            {team.admin.tools.map((tool) => (
+                              <span
+                                key={tool}
+                                className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs rounded-md font-mono"
                               >
-                                <div className="text-slate-100 text-sm font-medium">{w.displayName}</div>
-                                <div className="text-xs text-slate-500 font-mono break-all">{w.agentId}</div>
+                                {tool}
+                              </span>
+                            ))}
+                          </div>
+                        </DetailSection>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
+            {selectedTeam &&
+              viewMode === "permissions" &&
+              permissionData &&
+              teams.find((t) => t.teamId === selectedTeam) && (
+                <div className="p-4 space-y-4">
+                  <div className="text-sm font-semibold text-slate-100">
+                    Permissions for{" "}
+                    <span className="text-blue-300">
+                      {
+                        teams.find((t) => t.teamId === selectedTeam)
+                          ?.displayName
+                      }
+                    </span>
+                  </div>
+                  <DetailRow label="Team Tier">
+                    <div className="text-slate-100">
+                      {permissionData.teamTiers[selectedTeam] ?? "—"}
+                    </div>
+                  </DetailRow>
+                  <DetailSection
+                    label="Allowed Senders"
+                    empty="No inbound permissions"
+                  >
+                    <ul className="space-y-1">
+                      {Object.entries(permissionData.communicationMatrix).map(
+                        ([role, targets]) => {
+                          const allowed = targets[selectedTeam]?.allowed;
+                          if (!allowed) return null;
+                          const msgTypes =
+                            targets[selectedTeam]?.msgTypes ?? [];
+                          return (
+                            <li
+                              key={role}
+                              className="flex items-start gap-2 text-sm text-slate-200"
+                            >
+                              <ChevronRight
+                                size={12}
+                                className="text-emerald-400 mt-0.5"
+                                aria-hidden="true"
+                              />
+                              <div className="min-w-0">
+                                <div className="capitalize">{role}</div>
+                                {msgTypes.length > 0 && (
+                                  <div className="text-xs text-slate-500 truncate">
+                                    {msgTypes.join(", ")}
+                                  </div>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        },
+                      )}
+                    </ul>
+                  </DetailSection>
+                </div>
+              )}
+
+            {selectedFlow &&
+              viewMode === "orchestration" &&
+              flows.find((f) => f.id === selectedFlow) && (
+                <div className="p-4 space-y-4">
+                  {(() => {
+                    const flow = flows.find((f) => f.id === selectedFlow)!;
+                    return (
+                      <>
+                        <DetailRow label="Name">
+                          <div className="text-slate-100 font-medium">
+                            {flow.name}
+                          </div>
+                        </DetailRow>
+                        {flow.description && (
+                          <DetailRow label="Description">
+                            <div className="text-slate-300 text-sm leading-relaxed">
+                              {flow.description}
+                            </div>
+                          </DetailRow>
+                        )}
+                        <DetailSection
+                          label={`Nodes (${flow.nodes.length})`}
+                          empty="No nodes"
+                        >
+                          <ul className="max-h-48 overflow-auto space-y-1 pr-1">
+                            {flow.nodes.map((n) => (
+                              <li
+                                key={n.id}
+                                className="text-xs text-slate-300 flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-800/60 transition-colors"
+                              >
+                                <span className="font-mono text-slate-400">
+                                  {n.id}
+                                </span>
+                                <span className="truncate">{n.label}</span>
                               </li>
                             ))}
                           </ul>
                         </DetailSection>
-                      )}
-                      <DetailSection
-                        label={`Allowed Tools (${team.admin.tools.length})`}
-                        empty="No tools registered"
-                      >
-                        <div className="flex flex-wrap gap-1">
-                          {team.admin.tools.map(tool => (
-                            <span
-                              key={tool}
-                              className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/25 text-blue-300 text-xs rounded-md font-mono"
-                            >
-                              {tool}
-                            </span>
-                          ))}
-                        </div>
-                      </DetailSection>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-
-            {selectedTeam && viewMode === "permissions" && permissionData && teams.find(t => t.teamId === selectedTeam) && (
-              <div className="p-4 space-y-4">
-                <div className="text-sm font-semibold text-slate-100">
-                  Permissions for{" "}
-                  <span className="text-blue-300">
-                    {teams.find(t => t.teamId === selectedTeam)?.displayName}
-                  </span>
-                </div>
-                <DetailRow label="Team Tier">
-                  <div className="text-slate-100">
-                    {permissionData.teamTiers[selectedTeam] ?? "—"}
-                  </div>
-                </DetailRow>
-                <DetailSection label="Allowed Senders" empty="No inbound permissions">
-                  <ul className="space-y-1">
-                    {Object.entries(permissionData.communicationMatrix).map(([role, targets]) => {
-                      const allowed = targets[selectedTeam]?.allowed;
-                      if (!allowed) return null;
-                      const msgTypes = targets[selectedTeam]?.msgTypes ?? [];
-                      return (
-                        <li
-                          key={role}
-                          className="flex items-start gap-2 text-sm text-slate-200"
+                        <DetailSection
+                          label={`Edges (${flow.edges.length})`}
+                          empty="No edges"
                         >
-                          <ChevronRight size={12} className="text-emerald-400 mt-0.5" aria-hidden="true" />
-                          <div className="min-w-0">
-                            <div className="capitalize">{role}</div>
-                            {msgTypes.length > 0 && (
-                              <div className="text-xs text-slate-500 truncate">
-                                {msgTypes.join(", ")}
-                              </div>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </DetailSection>
-              </div>
-            )}
-
-            {selectedFlow && viewMode === "orchestration" && flows.find(f => f.id === selectedFlow) && (
-              <div className="p-4 space-y-4">
-                {(() => {
-                  const flow = flows.find(f => f.id === selectedFlow)!;
-                  return (
-                    <>
-                      <DetailRow label="Name">
-                        <div className="text-slate-100 font-medium">{flow.name}</div>
-                      </DetailRow>
-                      {flow.description && (
-                        <DetailRow label="Description">
-                          <div className="text-slate-300 text-sm leading-relaxed">
-                            {flow.description}
-                          </div>
-                        </DetailRow>
-                      )}
-                      <DetailSection
-                        label={`Nodes (${flow.nodes.length})`}
-                        empty="No nodes"
-                      >
-                        <ul className="max-h-48 overflow-auto space-y-1 pr-1">
-                          {flow.nodes.map(n => (
-                            <li
-                              key={n.id}
-                              className="text-xs text-slate-300 flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-800/60 transition-colors"
-                            >
-                              <span className="font-mono text-slate-400">{n.id}</span>
-                              <span className="truncate">{n.label}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </DetailSection>
-                      <DetailSection
-                        label={`Edges (${flow.edges.length})`}
-                        empty="No edges"
-                      >
-                        <ul className="max-h-48 overflow-auto space-y-1 pr-1">
-                          {flow.edges.map((e, i) => (
-                            <li
-                              key={i}
-                              className="text-xs text-slate-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-800/60 transition-colors"
-                            >
-                              <span className="font-mono text-slate-400">{e.source}</span>
-                              <ChevronRight size={10} className="text-slate-600" aria-hidden="true" />
-                              <span className="font-mono text-slate-400">{e.target}</span>
-                              {e.condition && (
-                                <span className="text-amber-300 font-mono">({e.condition})</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </DetailSection>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
+                          <ul className="max-h-48 overflow-auto space-y-1 pr-1">
+                            {flow.edges.map((e, i) => (
+                              <li
+                                key={i}
+                                className="text-xs text-slate-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-800/60 transition-colors"
+                              >
+                                <span className="font-mono text-slate-400">
+                                  {e.source}
+                                </span>
+                                <ChevronRight
+                                  size={10}
+                                  className="text-slate-600"
+                                  aria-hidden="true"
+                                />
+                                <span className="font-mono text-slate-400">
+                                  {e.target}
+                                </span>
+                                {e.condition && (
+                                  <span className="text-amber-300 font-mono">
+                                    ({e.condition})
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </DetailSection>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
           </aside>
         )}
       </div>
@@ -857,7 +979,13 @@ export default function SystemVisualizationPage() {
 
 // Inline presentational helpers used by the selection side panel. Kept inside
 // the file to avoid leaking micro-components into the global ui library.
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">

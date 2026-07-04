@@ -44,7 +44,16 @@ async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   await page.getByLabel("Activate flow on save").check();
 
   // Add nodes in order
-  for (const type of ["start", "task", "approval", "switch", "task", "task", "end", "end"]) {
+  for (const type of [
+    "start",
+    "task",
+    "approval",
+    "switch",
+    "task",
+    "task",
+    "end",
+    "end",
+  ]) {
     await page.getByTestId(`add-node-${type}`).click();
   }
   await expect(page.locator(".react-flow__node")).toHaveCount(8);
@@ -109,12 +118,15 @@ async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   const connectEdge = async (src: number, tgt: number) => {
     const sourceId = await nodes.nth(src).getAttribute("data-id");
     const targetId = await nodes.nth(tgt).getAttribute("data-id");
-    if (!sourceId || !targetId) throw new Error(`Cannot resolve node ids for edge ${src}→${tgt}`);
+    if (!sourceId || !targetId)
+      throw new Error(`Cannot resolve node ids for edge ${src}→${tgt}`);
     await page.evaluate(
       ({ source, target }) => {
-        window.dispatchEvent(new CustomEvent("flow-quick-connect", { detail: { source, target } }));
+        window.dispatchEvent(
+          new CustomEvent("flow-quick-connect", { detail: { source, target } }),
+        );
       },
-      { source: sourceId, target: targetId }
+      { source: sourceId, target: targetId },
     );
   };
 
@@ -127,16 +139,30 @@ async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   await connectEdge(4, 6); // branch_a → completed
   await connectEdge(5, 6); // branch_b → completed
 
+  const createFlowResponse = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/api/flows") && res.request().method() === "POST",
+  );
   await page.getByTestId("flow-save-button").click();
-  await expect(page).toHaveURL(/\/flows\/(?!new$)[^/]+$/);
+  expect((await createFlowResponse).status()).toBe(201);
+  await expect(page).toHaveURL(/\/flows\/(?!new$)[^/]+$/, { timeout: 30_000 });
 }
 
-async function createProjectWithFlow(page: Page, flowName: string, projectName: string): Promise<void> {
+async function createProjectWithFlow(
+  page: Page,
+  flowName: string,
+  projectName: string,
+): Promise<void> {
   await page.goto("/projects");
   await page.getByRole("button", { name: /new project/i }).click();
   await page.getByPlaceholder("my-project").fill(projectName);
-  await page.getByPlaceholder("What should the agents build?").fill("Test-2 branching project");
-  await page.locator("select").last().selectOption({ label: `${flowName} (v1)` });
+  await page
+    .getByPlaceholder("What should the agents build?")
+    .fill("Test-2 branching project");
+  await page
+    .locator("select")
+    .last()
+    .selectOption({ label: `${flowName} (v1)` });
   await page.getByRole("button", { name: /^create$/i }).click();
   await expect(page.getByText(projectName)).toBeVisible();
   const projectRow = page.getByRole("row", { name: new RegExp(projectName) });
@@ -179,7 +205,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await authenticate(page, "/projects");
   });
 
-  test("1. Create flow with all required nodes, reload, verify serialization survives", async ({ page }) => {
+  test("1. Create flow with all required nodes, reload, verify serialization survives", async ({
+    page,
+  }) => {
     const flowName = `Test2-Branching-${stamp}`;
 
     await buildTest2Flow(page, flowName);
@@ -199,7 +227,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText(flowName)).toBeVisible();
   });
 
-  test("2. Approval=approved → project transitions to Branch A (read back after refresh)", async ({ page }) => {
+  test("2. Approval=approved → project transitions to Branch A (read back after refresh)", async ({
+    page,
+  }) => {
     const flowName = `Test2-Approved-${stamp}`;
     const projectName = `test2-approved-project-${stamp}`;
 
@@ -224,7 +254,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText("Approval Gate").first()).toBeVisible();
   });
 
-  test("3. Approval=edit_requested → project transitions to Branch B (read back after refresh)", async ({ page }) => {
+  test("3. Approval=edit_requested → project transitions to Branch B (read back after refresh)", async ({
+    page,
+  }) => {
     const flowName = `Test2-EditReq-${stamp}`;
     const projectName = `test2-editreq-project-${stamp}`;
 
@@ -243,7 +275,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText("Branch B").first()).toBeVisible();
   });
 
-  test("4. Approval=rejected → project transitions to Failed state", async ({ page }) => {
+  test("4. Approval=rejected → project transitions to Failed state", async ({
+    page,
+  }) => {
     const flowName = `Test2-Rejected-${stamp}`;
     const projectName = `test2-rejected-project-${stamp}`;
 
@@ -261,7 +295,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText("FAILED").first()).toBeVisible();
   });
 
-  test("5. Retry from Failed → restores last safe state (visible after refresh)", async ({ page }) => {
+  test("5. Retry from Failed → restores last safe state (visible after refresh)", async ({
+    page,
+  }) => {
     const flowName = `Test2-Retry-${stamp}`;
     const projectName = `test2-retry-project-${stamp}`;
 
@@ -286,7 +322,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText(/retry.*1/i)).toBeVisible();
   });
 
-  test("6. Timeout on Analysis → escalation sent to CEO, visible in UI/history", async ({ page }) => {
+  test("6. Timeout on Analysis → escalation sent to CEO, visible in UI/history", async ({
+    page,
+  }) => {
     const flowName = `Test2-Timeout-${stamp}`;
     const projectName = `test2-timeout-project-${stamp}`;
 
@@ -315,7 +353,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await expect(page.getByText(/flow node escalated/i).first()).toBeVisible();
   });
 
-  test("7. Override by non-operator role is denied (negative security case)", async ({ page }) => {
+  test("7. Override by non-operator role is denied (negative security case)", async ({
+    page,
+  }) => {
     const flowName = `Test2-OverrideSec-${stamp}`;
     const projectName = `test2-override-sec-${stamp}`;
 
@@ -328,25 +368,32 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await page.getByTestId("project-tab-flow").click();
     const projectId = page.url().match(/\/projects\/([^/?#]+)/)?.[1];
     expect(projectId).toBeTruthy();
-    const instanceRes = await page.request.get(`/api/projects/${projectId}/flow-instance`);
+    const instanceRes = await page.request.get(
+      `/api/projects/${projectId}/flow-instance`,
+    );
     expect(instanceRes.status()).toBe(200);
     const instance = await instanceRes.json();
     const flowRes = await page.request.get(`/api/flows/${instance.flow_id}`);
     expect(flowRes.status()).toBe(200);
     const flow = await flowRes.json();
     const targetNodeId = flow.definition_json.nodes[1].id;
-    const overrideRes = await page.request.post(`/api/flows/instances/${instance.id}/override`, {
-      data: {
-        target_node_id: targetNodeId,
-        actor_id: "developer-agent",
-        actor_role: "developer",
-        reason: "negative security test",
+    const overrideRes = await page.request.post(
+      `/api/flows/instances/${instance.id}/override`,
+      {
+        data: {
+          target_node_id: targetNodeId,
+          actor_id: "developer-agent",
+          actor_role: "developer",
+          reason: "negative security test",
+        },
       },
-    });
+    );
     expect(overrideRes.status()).toBe(403);
   });
 
-  test("8. Approval without decision → flow stays in WAITING_APPROVAL (not routed)", async ({ page }) => {
+  test("8. Approval without decision → flow stays in WAITING_APPROVAL (not routed)", async ({
+    page,
+  }) => {
     const flowName = `Test2-WaitApproval-${stamp}`;
     const projectName = `test2-wait-approval-${stamp}`;
 
@@ -358,7 +405,9 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     // Submit without selecting a decision (if UI allows submitting without a decision)
     // The flow should remain in WAITING_APPROVAL, not advance to any branch
     await expect(page.getByTestId("approval-approve-button")).toBeVisible();
-    await expect(page.getByTestId("approval-edit-requested-button")).toBeVisible();
+    await expect(
+      page.getByTestId("approval-edit-requested-button"),
+    ).toBeVisible();
     await expect(page.getByTestId("approval-reject-button")).toBeVisible();
 
     // Still on Approval Gate

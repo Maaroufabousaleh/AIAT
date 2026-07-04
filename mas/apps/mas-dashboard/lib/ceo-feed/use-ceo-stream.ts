@@ -23,12 +23,19 @@ function entriesEqual(a: FeedEntry, b: FeedEntry): boolean {
   return aText && bText && aText === bText && Math.abs(a.ts - b.ts) < 5000;
 }
 
-export function useCeoStream(teamId: string, filter: FilterPredicate, limit = 50) {
+export function useCeoStream(
+  teamId: string,
+  filter: FilterPredicate,
+  limit = 50,
+) {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const cancelledRef = useRef(false);
   const filterRef = useRef(filter);
-  filterRef.current = filter;
+
+  useEffect(() => {
+    filterRef.current = filter;
+  }, [filter]);
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -41,7 +48,9 @@ export function useCeoStream(teamId: string, filter: FilterPredicate, limit = 50
       .then((data: { entries?: RecentStreamEntry[] } | null) => {
         if (cancelledRef.current || !data?.entries) return;
         const parsed = data.entries.map((e) => entryFromRaw(e.envelope));
-        const filtered = filterRef.current ? parsed.filter(filterRef.current) : parsed;
+        const filtered = filterRef.current
+          ? parsed.filter(filterRef.current)
+          : parsed;
         setEntries((prev) => {
           const merged = [...filtered];
           // History and SSE start concurrently. Preserve every live or optimistic

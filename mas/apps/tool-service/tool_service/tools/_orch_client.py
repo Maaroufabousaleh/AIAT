@@ -29,6 +29,14 @@ async def orch_post(path: str, body: dict | None = None) -> dict:
         return resp.json()
 
 
+async def orch_patch(path: str, body: dict | None = None) -> dict:
+    """PATCH request to orchestrator-api."""
+    async with httpx.AsyncClient(timeout=15, base_url=ORCHESTRATOR_URL) as client:
+        resp = await client.patch(path, json=body or {})
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def orch_delete(path: str) -> dict:
     """DELETE request to orchestrator-api."""
     async with httpx.AsyncClient(timeout=15, base_url=ORCHESTRATOR_URL) as client:

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from ..llm_gateway.models import ToolDefinition, ToolFunction
@@ -37,8 +37,10 @@ from ..protocols.enums import (
 )
 from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
-from .config import AgentConfig
 from .tool_catalog import tool_definitions_for_agent
+
+if TYPE_CHECKING:
+    from .config import AgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,42 @@ class ExecutiveAgent(AdminAgent):
             MessageType.SYSTEM_EVENT: self._handle_system_event,
         }
         return executive_handlers.get(msg_type) or super()._get_handler(msg_type)
+
+    async def _handle_admin_task(self, envelope: MessageEnvelope) -> None:
+        """Handle generic executive tasks directly.
+
+        The COO team intentionally has no local worker pool. Inheriting the
+        department-manager implementation would republish the task to
+        ``exec_coo`` where the same COO consumes it again. Execute one bounded
+        reasoning pass and return the result to the upstream team instead.
+        """
+        task = str(envelope.payload.get("task") or "")
+        context = str(envelope.payload.get("context") or "")
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {
+                "role": "user",
+                "content": f"## Executive Task\n{task}\n\n## Context\n{context}",
+            },
+        ]
+        result_messages = await self.think(
+            messages=messages,
+            tools=self.available_tool_definitions(),
+        )
+        result = ""
+        for message in reversed(result_messages):
+            if message.get("role") == "assistant" and message.get("content"):
+                result = str(message["content"])
+                break
+
+        reply = envelope.reply(
+            msg_type=MessageType.ADMIN_REPLY,
+            sender_id=self.agent_id,
+            sender_role=self.role,
+            sender_team=self.team_id,
+            payload={"result": result, "task": task, "executed_by": self.agent_id},
+        )
+        await self.publish(reply)
 
     # ------------------------------------------------------------------
     # Directive dispatch — action-driven think() loop
@@ -815,7 +853,7 @@ class ExecutiveAgent(AdminAgent):
                 "executive_review_circuit_open",
                 extra=self._log_extra(session_id=session_id),
             )
-            parent = self._review_parents.pop(session_id, None)
+            self._review_parents.pop(session_id, None)
             self._review_sessions.pop(session_id, None)
 
             await self._emit_event(

@@ -2,7 +2,17 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { clsx } from "clsx";
-import { Brain, Check, Copy, Pause, Play, Search, Send, Trash2, X } from "lucide-react";
+import {
+  Brain,
+  Check,
+  Copy,
+  Pause,
+  Play,
+  Search,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -40,12 +50,15 @@ export default function CeoPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
-  pausedRef.current = paused;
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/streams/exec_ceo?history=1&limit=50")
-      .then((res) => res.ok ? res.json() : null)
+      .then((res) => (res.ok ? res.json() : null))
       .then((data: { entries?: RecentStreamEntry[] } | null) => {
         if (cancelled || !data?.entries) return;
         setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
@@ -110,10 +123,15 @@ export default function CeoPage() {
       if (entry.raw.toLowerCase().includes(needle)) return true;
       const parsed = entry.parsed;
       if (!parsed) return false;
-      if ((parsed.message_type ?? "").toLowerCase().includes(needle)) return true;
+      if ((parsed.message_type ?? "").toLowerCase().includes(needle))
+        return true;
       if ((parsed.sender_id ?? "").toLowerCase().includes(needle)) return true;
       if ((parsed.project_id ?? "").toLowerCase().includes(needle)) return true;
-      if (parsed.payload && JSON.stringify(parsed.payload).toLowerCase().includes(needle)) return true;
+      if (
+        parsed.payload &&
+        JSON.stringify(parsed.payload).toLowerCase().includes(needle)
+      )
+        return true;
       return false;
     });
   }, [entries, activeType, search, getType]);
@@ -128,11 +146,13 @@ export default function CeoPage() {
   }
   const groups = useMemo<CycleGroup[]>(() => {
     if (!groupByCycle) {
-      return [{
-        cycleKey: "__flat__",
-        label: "Live feed",
-        indices: filteredEntries.map((e) => entries.indexOf(e)),
-      }];
+      return [
+        {
+          cycleKey: "__flat__",
+          label: "Live feed",
+          indices: filteredEntries.map((e) => entries.indexOf(e)),
+        },
+      ];
     }
     const order: string[] = [];
     const map = new Map<string, number[]>();
@@ -148,7 +168,8 @@ export default function CeoPage() {
     });
     return order.map((key) => ({
       cycleKey: key,
-      label: key === "__no_project__" ? "No project" : `Project ${key.slice(0, 8)}`,
+      label:
+        key === "__no_project__" ? "No project" : `Project ${key.slice(0, 8)}`,
       indices: map.get(key)!,
     }));
   }, [filteredEntries, entries, groupByCycle]);
@@ -202,7 +223,11 @@ export default function CeoPage() {
             payload: { instruction: text },
             timestamp: new Date().toISOString(),
           },
-          raw: JSON.stringify({ message_type: "OUTBOUND", sender_id: "you", payload: { instruction: text } }),
+          raw: JSON.stringify({
+            message_type: "OUTBOUND",
+            sender_id: "you",
+            payload: { instruction: text },
+          }),
           ts: now,
           outbound: true,
         };
@@ -217,12 +242,15 @@ export default function CeoPage() {
   }, [composerText, sending]);
 
   // Handle Enter+Shift for newlines, Enter alone to send.
-  const handleComposerKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  }, [handleSend]);
+  const handleComposerKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend],
+  );
 
   return (
     <div className="dashboard-page flex flex-col h-full">
@@ -236,7 +264,7 @@ export default function CeoPage() {
                 "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xxs font-semibold border",
                 connected
                   ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
-                  : "bg-slate-800/60 text-slate-400 border-slate-700"
+                  : "bg-slate-800/60 text-slate-400 border-slate-700",
               )}
               aria-live="polite"
               aria-label={connected ? "Stream connected" : "Stream connecting"}
@@ -244,7 +272,7 @@ export default function CeoPage() {
               <span
                 className={clsx(
                   "w-1.5 h-1.5 rounded-full",
-                  connected ? "bg-emerald-400 animate-pulse" : "bg-slate-500"
+                  connected ? "bg-emerald-400 animate-pulse" : "bg-slate-500",
                 )}
               />
               {connected ? "stream:exec_ceo connected" : "connecting..."}
@@ -266,7 +294,7 @@ export default function CeoPage() {
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 groupByCycle
                   ? "bg-indigo-500/15 text-indigo-200 border-indigo-500/40 hover:bg-indigo-500/25"
-                  : "bg-slate-900/60 text-slate-400 border-slate-700 hover:bg-slate-800 hover:text-slate-200"
+                  : "bg-slate-900/60 text-slate-400 border-slate-700 hover:bg-slate-800 hover:text-slate-200",
               )}
             >
               <Brain size={12} />
@@ -281,7 +309,7 @@ export default function CeoPage() {
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 paused
                   ? "bg-amber-500/15 text-amber-200 border-amber-500/40 hover:bg-amber-500/25"
-                  : "bg-slate-900/60 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-slate-100"
+                  : "bg-slate-900/60 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-slate-100",
               )}
             >
               {paused ? <Play size={12} /> : <Pause size={12} />}
@@ -304,7 +332,11 @@ export default function CeoPage() {
       <div className="mx-4 mt-3 mb-1">
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
           <div className="flex items-center gap-2">
-            <Send size={13} className="text-violet-400 flex-shrink-0" aria-hidden="true" />
+            <Send
+              size={13}
+              className="text-violet-400 flex-shrink-0"
+              aria-hidden="true"
+            />
             <span className="text-xs font-semibold text-violet-200">
               Message the CEO
             </span>
@@ -328,7 +360,7 @@ export default function CeoPage() {
                 "flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
                 composerText.trim() && !sending
                   ? "bg-violet-600 hover:bg-violet-500 text-white border-violet-500/60 hover:border-violet-400"
-                  : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed"
+                  : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed",
               )}
             >
               {sending ? (
@@ -410,7 +442,11 @@ export default function CeoPage() {
               </button>
             )}
           </div>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by message type">
+          <div
+            className="flex flex-wrap gap-1.5"
+            role="group"
+            aria-label="Filter by message type"
+          >
             {KNOWN_TYPES.map((type) => {
               if (type === "UNKNOWN" && typeCounts.UNKNOWN === 0) return null;
               return (
@@ -434,10 +470,14 @@ export default function CeoPage() {
           <div className="py-12">
             <EmptyState
               icon="radio"
-              title={connected ? "No recent CEO activity" : "Connecting to stream…"}
-              description={connected
-                ? "The live connection is open. CEO messages will appear here immediately, and retained Redis history is loaded when available."
-                : "The dashboard is establishing a Server-Sent Events connection to the orchestrator."}
+              title={
+                connected ? "No recent CEO activity" : "Connecting to stream…"
+              }
+              description={
+                connected
+                  ? "The live connection is open. CEO messages will appear here immediately, and retained Redis history is loaded when available."
+                  : "The dashboard is establishing a Server-Sent Events connection to the orchestrator."
+              }
             />
           </div>
         ) : filteredEntries.length === 0 ? (
@@ -455,21 +495,35 @@ export default function CeoPage() {
               aria-label={group.label}
               className={clsx(
                 "rounded-xl border border-slate-800/80 overflow-hidden",
-                groupByCycle && group.cycleKey !== "__flat__" && "bg-slate-950/30"
+                groupByCycle &&
+                  group.cycleKey !== "__flat__" &&
+                  "bg-slate-950/30",
               )}
             >
               {groupByCycle && group.cycleKey !== "__flat__" && (
                 <header className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/80 bg-slate-900/40">
-                  <Brain size={12} className="text-indigo-300" aria-hidden="true" />
+                  <Brain
+                    size={12}
+                    className="text-indigo-300"
+                    aria-hidden="true"
+                  />
                   <span className="text-xs font-semibold text-slate-200 tracking-wide">
                     {group.label}
                   </span>
                   <span className="text-xxs text-slate-500 font-mono">
-                    {group.indices.length} message{group.indices.length === 1 ? "" : "s"}
+                    {group.indices.length} message
+                    {group.indices.length === 1 ? "" : "s"}
                   </span>
                 </header>
               )}
-              <div className={clsx("p-2 space-y-1.5", groupByCycle && group.cycleKey !== "__flat__" && "bg-slate-950/15")}>
+              <div
+                className={clsx(
+                  "p-2 space-y-1.5",
+                  groupByCycle &&
+                    group.cycleKey !== "__flat__" &&
+                    "bg-slate-950/15",
+                )}
+              >
                 {group.indices.map((originalIndex) => {
                   const entry = entries[originalIndex];
                   if (!entry) return null;
@@ -481,9 +535,11 @@ export default function CeoPage() {
                       key={originalIndex}
                       className={clsx(
                         "group border rounded-lg p-3 transition-all cursor-pointer",
-                        getTypeClass(type, outbound)
+                        getTypeClass(type, outbound),
                       )}
-                      onClick={() => setExpanded(isExpanded ? null : originalIndex)}
+                      onClick={() =>
+                        setExpanded(isExpanded ? null : originalIndex)
+                      }
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
@@ -506,7 +562,12 @@ export default function CeoPage() {
                           </span>
                         )}
                         {entry.parsed?.sender_id && (
-                          <span className={clsx("text-xs font-medium", getTypeAccent(type, outbound))}>
+                          <span
+                            className={clsx(
+                              "text-xs font-medium",
+                              getTypeAccent(type, outbound),
+                            )}
+                          >
                             {outbound ? "→ you" : entry.parsed.sender_id}
                           </span>
                         )}
@@ -530,7 +591,7 @@ export default function CeoPage() {
                             "ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xxs font-medium border transition-colors",
                             copiedIndex === originalIndex
                               ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                              : "bg-slate-900/60 text-slate-400 border-slate-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-slate-800 hover:text-slate-100"
+                              : "bg-slate-900/60 text-slate-400 border-slate-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-slate-800 hover:text-slate-100",
                           )}
                         >
                           {copiedIndex === originalIndex ? (
@@ -551,25 +612,45 @@ export default function CeoPage() {
                       {type === "TOOL_CALL" && entry.parsed?.payload && (
                         <div className="mt-1.5 text-xs text-orange-200">
                           <span className="font-semibold">
-                            {(entry.parsed.payload as { tool_name?: string }).tool_name ?? "tool"}
+                            {(entry.parsed.payload as { tool_name?: string })
+                              .tool_name ?? "tool"}
                           </span>
-                          {(entry.parsed.payload as { kwargs?: Record<string, unknown> }).kwargs && (
+                          {(
+                            entry.parsed.payload as {
+                              kwargs?: Record<string, unknown>;
+                            }
+                          ).kwargs && (
                             <span className="text-slate-500 ml-2 font-mono">
-                              {JSON.stringify((entry.parsed.payload as { kwargs?: Record<string, unknown> }).kwargs).slice(0, 60)}
+                              {JSON.stringify(
+                                (
+                                  entry.parsed.payload as {
+                                    kwargs?: Record<string, unknown>;
+                                  }
+                                ).kwargs,
+                              ).slice(0, 60)}
                             </span>
                           )}
                         </div>
                       )}
                       {type === "TOOL_RESULT" && entry.parsed?.payload && (
                         <div className="mt-1.5 text-xs text-amber-200 truncate">
-                          {JSON.stringify((entry.parsed.payload as { result?: Record<string, unknown> }).result ?? entry.parsed.payload).slice(0, 100)}
+                          {JSON.stringify(
+                            (
+                              entry.parsed.payload as {
+                                result?: Record<string, unknown>;
+                              }
+                            ).result ?? entry.parsed.payload,
+                          ).slice(0, 100)}
                         </div>
                       )}
-                      {(type === "DIRECTIVE" || type === "REPORT" || type === "OUTBOUND") && entry.parsed?.payload && (
-                        <div className="mt-1.5 text-xs text-slate-400 truncate">
-                          {JSON.stringify(entry.parsed.payload).slice(0, 120)}
-                        </div>
-                      )}
+                      {(type === "DIRECTIVE" ||
+                        type === "REPORT" ||
+                        type === "OUTBOUND") &&
+                        entry.parsed?.payload && (
+                          <div className="mt-1.5 text-xs text-slate-400 truncate">
+                            {JSON.stringify(entry.parsed.payload).slice(0, 120)}
+                          </div>
+                        )}
 
                       {/* Expanded JSON view */}
                       {isExpanded && (
@@ -596,9 +677,13 @@ export default function CeoPage() {
       >
         <span>
           {filteredEntries.length}
-          {filteredEntries.length !== entries.length && ` of ${entries.length}`} message
+          {filteredEntries.length !== entries.length &&
+            ` of ${entries.length}`}{" "}
+          message
           {filteredEntries.length === 1 ? "" : "s"}
-          {groupByCycle && filteredEntries.length > 0 && " · grouped by think cycle"}
+          {groupByCycle &&
+            filteredEntries.length > 0 &&
+            " · grouped by think cycle"}
           {paused && " · PAUSED"}
         </span>
         {search && (

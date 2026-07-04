@@ -3,8 +3,9 @@ import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { worker_id: string } }
+  props: { params: Promise<{ worker_id: string }> },
 ) {
+  const params = await props.params;
   try {
     const body = await req.json();
     const result = await orchestratorFetch(
@@ -12,7 +13,7 @@ export async function PATCH(
       {
         method: "PATCH",
         body: JSON.stringify(body),
-      }
+      },
     );
     return NextResponse.json(result);
   } catch (e: unknown) {

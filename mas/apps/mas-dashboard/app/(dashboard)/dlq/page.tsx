@@ -1,17 +1,37 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
-  RefreshCw, Play, ChevronDown, ChevronRight, AlertTriangle, CheckSquare, Square,
-  Inbox, ServerCrash, Sparkles, AlertCircle, Info, Clock, ArrowUpDown, X, Flame
-} from 'lucide-react';
-import { PageHeader } from '@/components/ui/PageHeader';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { KpiCard } from '@/components/ui/KpiCard';
-import { FilterChip } from '@/components/ui/FilterChips';
-import { formatDistanceToNow } from 'date-fns';
-import clsx from 'clsx';
+  RefreshCw,
+  Play,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  CheckSquare,
+  Square,
+  Inbox,
+  ServerCrash,
+  Sparkles,
+  AlertCircle,
+  Info,
+  Clock,
+  ArrowUpDown,
+  X,
+  Flame,
+} from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { FilterChip } from "@/components/ui/FilterChips";
+import { formatDistanceToNow } from "date-fns";
+import clsx from "clsx";
 
 interface DeadLetter {
   id: string;
@@ -35,9 +55,9 @@ interface DLQResponse {
  *  - medium:   failures with some retries
  *  - low:      no retries yet (just failed once)
  */
-type Severity = 'critical' | 'high' | 'medium' | 'low';
+type Severity = "critical" | "high" | "medium" | "low";
 
-type SortMode = 'severity' | 'age-desc' | 'age-asc' | 'retries-desc';
+type SortMode = "severity" | "age-desc" | "age-asc" | "retries-desc";
 
 const SEVERITY_RANK: Record<Severity, number> = {
   critical: 0,
@@ -51,28 +71,28 @@ const SEVERITY_RANK: Record<Severity, number> = {
  * sort order (critical first) and the colored left-border on each card.
  */
 function severityFor(letter: DeadLetter): Severity {
-  if (letter.retry_count >= 3) return 'critical';
-  if (letter.retry_count >= 2) return 'high';
-  if (letter.retry_count >= 1) return 'medium';
-  return 'low';
+  if (letter.retry_count >= 3) return "critical";
+  if (letter.retry_count >= 2) return "high";
+  if (letter.retry_count >= 1) return "medium";
+  return "low";
 }
 
 const SEVERITY_STYLES: Record<Severity, { border: string; pill: string }> = {
   critical: {
-    border: 'border-l-rose-500/80',
-    pill: 'bg-rose-500/15 text-rose-200 border-rose-400/40',
+    border: "border-l-rose-500/80",
+    pill: "bg-rose-500/15 text-rose-200 border-rose-400/40",
   },
   high: {
-    border: 'border-l-orange-500/70',
-    pill: 'bg-orange-500/15 text-orange-200 border-orange-400/40',
+    border: "border-l-orange-500/70",
+    pill: "bg-orange-500/15 text-orange-200 border-orange-400/40",
   },
   medium: {
-    border: 'border-l-amber-500/70',
-    pill: 'bg-amber-500/15 text-amber-200 border-amber-400/40',
+    border: "border-l-amber-500/70",
+    pill: "bg-amber-500/15 text-amber-200 border-amber-400/40",
   },
   low: {
-    border: 'border-l-slate-500/60',
-    pill: 'bg-slate-700/40 text-slate-300 border-slate-600/50',
+    border: "border-l-slate-500/60",
+    pill: "bg-slate-700/40 text-slate-300 border-slate-600/50",
   },
 };
 
@@ -83,22 +103,26 @@ export default function DLQPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [replaying, setReplaying] = useState<Set<string>>(new Set());
-  const [replayResults, setReplayResults] = useState<Record<string, 'ok' | 'err'>>({});
+  const [replayResults, setReplayResults] = useState<
+    Record<string, "ok" | "err">
+  >({});
   /** Optional severity filter chip — when set, only entries in that bucket render. */
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
   /** Active sort mode. Defaults to severity (critical first). */
-  const [sortMode, setSortMode] = useState<SortMode>('severity');
+  const [sortMode, setSortMode] = useState<SortMode>("severity");
+  const [lastFetchedAt, setLastFetchedAt] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchDLQ = useCallback(async () => {
     try {
-      const res = await fetch('/api/dlq');
+      const res = await fetch("/api/dlq");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: DLQResponse = await res.json();
       setData(json);
+      setLastFetchedAt(Date.now());
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch DLQ');
+      setError(e instanceof Error ? e.message : "Failed to fetch DLQ");
     } finally {
       setLoading(false);
     }
@@ -113,7 +137,7 @@ export default function DLQPage() {
   }, [fetchDLQ]);
 
   const toggleExpand = (id: string) => {
-    setExpanded(prev => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -121,7 +145,7 @@ export default function DLQPage() {
   };
 
   const toggleSelect = (id: string) => {
-    setSelected(prev => {
+    setSelected((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -133,22 +157,22 @@ export default function DLQPage() {
     if (selected.size === data.dead_letters.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(data.dead_letters.map(d => d.id)));
+      setSelected(new Set(data.dead_letters.map((d) => d.id)));
     }
   };
 
   const replayOne = async (id: string) => {
-    setReplaying(prev => new Set(prev).add(id));
+    setReplaying((prev) => new Set(prev).add(id));
     try {
-      const res = await fetch(`/api/dlq/${id}/replay`, { method: 'POST' });
-      setReplayResults(prev => ({ ...prev, [id]: res.ok ? 'ok' : 'err' }));
+      const res = await fetch(`/api/dlq/${id}/replay`, { method: "POST" });
+      setReplayResults((prev) => ({ ...prev, [id]: res.ok ? "ok" : "err" }));
       if (res.ok) {
         setTimeout(() => fetchDLQ(), 1000);
       }
     } catch {
-      setReplayResults(prev => ({ ...prev, [id]: 'err' }));
+      setReplayResults((prev) => ({ ...prev, [id]: "err" }));
     } finally {
-      setReplaying(prev => {
+      setReplaying((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
@@ -158,15 +182,20 @@ export default function DLQPage() {
 
   const replaySelected = async () => {
     const ids = Array.from(selected);
-    await Promise.all(ids.map(id => replayOne(id)));
+    await Promise.all(ids.map((id) => replayOne(id)));
     setSelected(new Set());
   };
 
-  const letters = data?.dead_letters ?? [];
+  const letters = useMemo(() => data?.dead_letters ?? [], [data?.dead_letters]);
 
   // Counts per severity bucket — surfaced as KPI cards and filter chip badges.
   const severityCounts = useMemo(() => {
-    const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    const counts: Record<Severity, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    };
     for (const l of letters) counts[severityFor(l)]++;
     return counts;
   }, [letters]);
@@ -174,22 +203,22 @@ export default function DLQPage() {
   // Apply the optional severity filter and the active sort mode.
   const visibleLetters = useMemo(() => {
     const filtered = severityFilter
-      ? letters.filter(l => severityFor(l) === severityFilter)
+      ? letters.filter((l) => severityFor(l) === severityFilter)
       : letters;
     const ts = (l: DeadLetter) => new Date(l.created_at).getTime();
     const sorted = [...filtered].sort((a, b) => {
       switch (sortMode) {
-        case 'severity': {
+        case "severity": {
           const ra = SEVERITY_RANK[severityFor(a)];
           const rb = SEVERITY_RANK[severityFor(b)];
           if (ra !== rb) return ra - rb;
           return ts(b) - ts(a);
         }
-        case 'age-desc':
+        case "age-desc":
           return ts(b) - ts(a);
-        case 'age-asc':
+        case "age-asc":
           return ts(a) - ts(b);
-        case 'retries-desc':
+        case "retries-desc":
           return b.retry_count - a.retry_count;
       }
     });
@@ -198,7 +227,11 @@ export default function DLQPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64" role="status" aria-live="polite">
+      <div
+        className="flex items-center justify-center h-64"
+        role="status"
+        aria-live="polite"
+      >
         <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
         <span className="sr-only">Loading dead letter queue…</span>
       </div>
@@ -206,14 +239,16 @@ export default function DLQPage() {
   }
 
   const allSelected = letters.length > 0 && selected.size === letters.length;
-  const visibleSelectedCount = visibleLetters.filter(l => selected.has(l.id)).length;
+  const visibleSelectedCount = visibleLetters.filter((l) =>
+    selected.has(l.id),
+  ).length;
 
   return (
     <div className="dashboard-page">
       <PageHeader
         icon="inbox"
         title="Dead Letter Queue"
-        description={`${data?.total ?? 0} message${data?.total !== 1 ? 's' : ''} in queue · auto-refresh every 30s`}
+        description={`${data?.total ?? 0} message${data?.total !== 1 ? "s" : ""} in queue · auto-refresh every 30s`}
         actions={
           <>
             {selected.size > 0 && (
@@ -229,7 +264,10 @@ export default function DLQPage() {
             )}
             <button
               type="button"
-              onClick={() => { setLoading(true); fetchDLQ(); }}
+              onClick={() => {
+                setLoading(true);
+                fetchDLQ();
+              }}
               aria-label="Refresh dead letter queue"
               className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-800/80 text-slate-200 rounded-lg text-sm transition-colors border border-slate-700/80 focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             >
@@ -251,7 +289,7 @@ export default function DLQPage() {
             value={letters.length}
             icon="inbox"
             tone="info"
-            hint={`Across ${new Set(letters.map(l => l.stream)).size} stream${new Set(letters.map(l => l.stream)).size === 1 ? '' : 's'}`}
+            hint={`Across ${new Set(letters.map((l) => l.stream)).size} stream${new Set(letters.map((l) => l.stream)).size === 1 ? "" : "s"}`}
           />
           <KpiCard
             label="Critical"
@@ -262,14 +300,22 @@ export default function DLQPage() {
           />
           <KpiCard
             label="Recently failed"
-            value={letters.filter(l => Date.now() - new Date(l.created_at).getTime() < 60 * 60 * 1000).length}
+            value={
+              letters.filter(
+                (l) =>
+                  lastFetchedAt - new Date(l.created_at).getTime() <
+                  60 * 60 * 1000,
+              ).length
+            }
             icon="clock"
             tone="warning"
             hint="Last hour"
           />
           <KpiCard
             label="Replayed"
-            value={Object.values(replayResults).filter(r => r === 'ok').length}
+            value={
+              Object.values(replayResults).filter((r) => r === "ok").length
+            }
             icon="check-circle"
             tone="positive"
             hint="Since you opened this view"
@@ -279,8 +325,16 @@ export default function DLQPage() {
 
       {/* Toolbar — severity filter chips and sort selector. */}
       {letters.length > 0 && (
-        <div className="dashboard-toolbar flex flex-wrap items-center gap-3" role="toolbar" aria-label="Queue filters and sorting">
-          <div className="flex items-center gap-2" role="group" aria-label="Filter by severity">
+        <div
+          className="dashboard-toolbar flex flex-wrap items-center gap-3"
+          role="toolbar"
+          aria-label="Queue filters and sorting"
+        >
+          <div
+            className="flex items-center gap-2"
+            role="group"
+            aria-label="Filter by severity"
+          >
             <span className="text-xxs font-semibold uppercase tracking-wider text-slate-500">
               Severity
             </span>
@@ -292,12 +346,14 @@ export default function DLQPage() {
             >
               All
             </FilterChip>
-            {(Object.keys(SEVERITY_RANK) as Severity[]).map(sev => (
+            {(Object.keys(SEVERITY_RANK) as Severity[]).map((sev) => (
               <FilterChip
                 key={sev}
                 active={severityFilter === sev}
-                onClick={() => setSeverityFilter(sev === severityFilter ? null : sev)}
-                activeTone={sev === 'critical' ? 'amber' : 'gray'}
+                onClick={() =>
+                  setSeverityFilter(sev === severityFilter ? null : sev)
+                }
+                activeTone={sev === "critical" ? "amber" : "gray"}
                 count={severityCounts[sev]}
               >
                 {sev}
@@ -306,8 +362,14 @@ export default function DLQPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-            <label htmlFor="dlq-sort" className="text-xxs font-semibold uppercase tracking-wider text-slate-500">
+            <ArrowUpDown
+              className="w-3.5 h-3.5 text-slate-500"
+              aria-hidden="true"
+            />
+            <label
+              htmlFor="dlq-sort"
+              className="text-xxs font-semibold uppercase tracking-wider text-slate-500"
+            >
               Sort
             </label>
             <select
@@ -321,10 +383,13 @@ export default function DLQPage() {
               <option value="age-desc">Newest first</option>
               <option value="age-asc">Oldest first</option>
             </select>
-            {(severityFilter || sortMode !== 'severity') && (
+            {(severityFilter || sortMode !== "severity") && (
               <button
                 type="button"
-                onClick={() => { setSeverityFilter(null); setSortMode('severity'); }}
+                onClick={() => {
+                  setSeverityFilter(null);
+                  setSortMode("severity");
+                }}
                 className="inline-flex items-center gap-1 px-2 py-1 text-xxs text-slate-400 hover:text-slate-200 transition-colors"
                 aria-label="Reset filters and sort"
               >
@@ -337,7 +402,10 @@ export default function DLQPage() {
       )}
 
       {error && (
-        <ErrorBanner tone="warning" title="Could not reach the dead-letter queue">
+        <ErrorBanner
+          tone="warning"
+          title="Could not reach the dead-letter queue"
+        >
           {error}
         </ErrorBanner>
       )}
@@ -383,7 +451,7 @@ export default function DLQPage() {
                   onClick={toggleSelectAll}
                   className="px-2.5 py-1 text-xs text-slate-300 hover:text-white rounded transition-colors"
                 >
-                  {allSelected ? 'Deselect all' : 'Select all'}
+                  {allSelected ? "Deselect all" : "Select all"}
                 </button>
               </div>
             </div>
@@ -409,8 +477,12 @@ export default function DLQPage() {
               />
             </div>
           ) : (
-            <div className="space-y-2" role="list" aria-label="Dead letter queue entries">
-              {visibleLetters.map(letter => {
+            <div
+              className="space-y-2"
+              role="list"
+              aria-label="Dead letter queue entries"
+            >
+              {visibleLetters.map((letter) => {
                 const sev = severityFor(letter);
                 const sevStyle = SEVERITY_STYLES[sev];
                 const isExpanded = expanded.has(letter.id);
@@ -424,10 +496,10 @@ export default function DLQPage() {
                     role="listitem"
                     aria-labelledby={`dlq-${letter.id}-title`}
                     className={clsx(
-                      'dashboard-surface overflow-hidden border-l-4 transition-colors',
+                      "dashboard-surface overflow-hidden border-l-4 transition-colors",
                       sevStyle.border,
-                      isSelected && 'ring-1 ring-blue-500/60',
-                      'hover:border-slate-700'
+                      isSelected && "ring-1 ring-blue-500/60",
+                      "hover:border-slate-700",
                     )}
                   >
                     {/* Card header — selector, severity, identity, age, replay action. */}
@@ -440,58 +512,93 @@ export default function DLQPage() {
                         aria-label={`Select dead letter ${letter.id}`}
                         className="text-slate-400 hover:text-white transition-colors"
                       >
-                        {isSelected
-                          ? <CheckSquare className="w-4 h-4 text-blue-400" />
-                          : <Square className="w-4 h-4" />
-                        }
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-blue-400" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
                       </button>
 
                       <span
                         className={clsx(
-                          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xxs font-semibold uppercase tracking-wider border',
-                          sevStyle.pill
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xxs font-semibold uppercase tracking-wider border",
+                          sevStyle.pill,
                         )}
                         aria-label={`Severity: ${sev}`}
                       >
-                        {sev === 'critical' && <Flame className="w-3 h-3" aria-hidden="true" />}
-                        {sev === 'critical' ? 'critical' : sev}
+                        {sev === "critical" && (
+                          <Flame className="w-3 h-3" aria-hidden="true" />
+                        )}
+                        {sev === "critical" ? "critical" : sev}
                       </span>
 
                       <div className="min-w-0 flex-1">
-                        <div id={`dlq-${letter.id}-title`} className="flex items-center gap-2 min-w-0">
-                          <span className="font-mono text-xs text-blue-300 truncate">{letter.stream}</span>
-                          <span className="text-slate-600" aria-hidden="true">/</span>
-                          <span className="font-mono text-xs text-slate-200 truncate">{letter.message_type}</span>
+                        <div
+                          id={`dlq-${letter.id}-title`}
+                          className="flex items-center gap-2 min-w-0"
+                        >
+                          <span className="font-mono text-xs text-blue-300 truncate">
+                            {letter.stream}
+                          </span>
+                          <span className="text-slate-600" aria-hidden="true">
+                            /
+                          </span>
+                          <span className="font-mono text-xs text-slate-200 truncate">
+                            {letter.message_type}
+                          </span>
                         </div>
                         <div className="flex items-center gap-3 mt-0.5 text-xxs text-slate-500">
                           <span className="inline-flex items-center gap-1">
                             <Clock className="w-3 h-3" aria-hidden="true" />
-                            <time dateTime={letter.created_at} title={new Date(letter.created_at).toLocaleString()}>
-                              {formatDistanceToNow(new Date(letter.created_at), { addSuffix: true })}
+                            <time
+                              dateTime={letter.created_at}
+                              title={new Date(
+                                letter.created_at,
+                              ).toLocaleString()}
+                            >
+                              {formatDistanceToNow(
+                                new Date(letter.created_at),
+                                { addSuffix: true },
+                              )}
                             </time>
                           </span>
                           <span aria-hidden="true">·</span>
-                          <span className="font-mono text-slate-600">{letter.id.slice(0, 8)}</span>
+                          <span className="font-mono text-slate-600">
+                            {letter.id.slice(0, 8)}
+                          </span>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 ml-auto">
                         <span
                           className={clsx(
-                            'px-2 py-0.5 rounded-full text-xs font-medium',
-                            letter.retry_count >= 3 ? 'bg-rose-500/15 text-rose-300 border border-rose-400/30' :
-                            letter.retry_count >= 1 ? 'bg-amber-500/15 text-amber-300 border border-amber-400/30' :
-                            'bg-slate-700/40 text-slate-300 border border-slate-600/50'
+                            "px-2 py-0.5 rounded-full text-xs font-medium",
+                            letter.retry_count >= 3
+                              ? "bg-rose-500/15 text-rose-300 border border-rose-400/30"
+                              : letter.retry_count >= 1
+                                ? "bg-amber-500/15 text-amber-300 border border-amber-400/30"
+                                : "bg-slate-700/40 text-slate-300 border border-slate-600/50",
                           )}
                           aria-label={`${letter.retry_count} retries`}
                         >
-                          {letter.retry_count} {letter.retry_count === 1 ? 'retry' : 'retries'}
+                          {letter.retry_count}{" "}
+                          {letter.retry_count === 1 ? "retry" : "retries"}
                         </span>
 
-                        {result === 'ok' ? (
-                          <span className="text-xs text-emerald-400 font-medium" role="status">Replayed</span>
-                        ) : result === 'err' ? (
-                          <span className="text-xs text-rose-400 font-medium" role="status">Replay failed</span>
+                        {result === "ok" ? (
+                          <span
+                            className="text-xs text-emerald-400 font-medium"
+                            role="status"
+                          >
+                            Replayed
+                          </span>
+                        ) : result === "err" ? (
+                          <span
+                            className="text-xs text-rose-400 font-medium"
+                            role="status"
+                          >
+                            Replay failed
+                          </span>
                         ) : (
                           <button
                             type="button"
@@ -500,11 +607,15 @@ export default function DLQPage() {
                             aria-label={`Replay dead letter ${letter.id}`}
                             className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-blue-600 active:bg-blue-700 text-slate-200 hover:text-white border border-slate-700 hover:border-blue-500 rounded text-xs font-medium transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                           >
-                            {isReplaying
-                              ? <RefreshCw className="w-3 h-3 animate-spin" aria-hidden="true" />
-                              : <Play className="w-3 h-3" aria-hidden="true" />
-                            }
-                            {isReplaying ? 'Replaying…' : 'Replay'}
+                            {isReplaying ? (
+                              <RefreshCw
+                                className="w-3 h-3 animate-spin"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <Play className="w-3 h-3" aria-hidden="true" />
+                            )}
+                            {isReplaying ? "Replaying…" : "Replay"}
                           </button>
                         )}
                       </div>
@@ -515,18 +626,25 @@ export default function DLQPage() {
                         the entire reason and the JSON envelope for debugging. */}
                     <div className="px-4 pb-3">
                       <div className="flex items-start gap-2 rounded-lg bg-slate-950/55 border border-slate-800/80 px-3 py-2">
-                        {sev === 'critical'
-                          ? <AlertCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                          : <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                        }
+                        {sev === "critical" ? (
+                          <AlertCircle
+                            className="w-3.5 h-3.5 text-rose-400 flex-shrink-0 mt-0.5"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <AlertTriangle
+                            className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5"
+                            aria-hidden="true"
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
                           <div className="text-xxs font-semibold uppercase tracking-wider text-slate-500 mb-0.5">
                             Failure reason
                           </div>
                           <p
                             className={clsx(
-                              'text-xs font-mono text-rose-200/90 break-words',
-                              !isExpanded && 'line-clamp-2'
+                              "text-xs font-mono text-rose-200/90 break-words",
+                              !isExpanded && "line-clamp-2",
                             )}
                             title={letter.failure_reason}
                           >
@@ -545,11 +663,18 @@ export default function DLQPage() {
                         aria-controls={`dlq-${letter.id}-envelope`}
                         className="inline-flex items-center gap-1.5 text-xxs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-200 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded px-1 py-0.5"
                       >
-                        {isExpanded
-                          ? <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
-                          : <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
-                        }
-                        {isExpanded ? 'Hide envelope' : 'Inspect envelope'}
+                        {isExpanded ? (
+                          <ChevronDown
+                            className="w-3.5 h-3.5"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <ChevronRight
+                            className="w-3.5 h-3.5"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {isExpanded ? "Hide envelope" : "Inspect envelope"}
                       </button>
                       <span className="ml-auto text-xxs text-slate-500 inline-flex items-center gap-1">
                         <Info className="w-3 h-3" aria-hidden="true" />
@@ -563,7 +688,10 @@ export default function DLQPage() {
                         className="border-t border-slate-800/80 bg-slate-950/65"
                       >
                         <div className="px-4 py-2 border-b border-slate-800/60 flex items-center gap-2">
-                          <ServerCrash className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                          <ServerCrash
+                            className="w-3.5 h-3.5 text-slate-500"
+                            aria-hidden="true"
+                          />
                           <span className="text-xxs font-semibold uppercase tracking-wider text-slate-500">
                             Envelope JSON
                           </span>

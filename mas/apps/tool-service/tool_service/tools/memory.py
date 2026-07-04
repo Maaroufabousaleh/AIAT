@@ -11,6 +11,7 @@ import redis.asyncio as aioredis
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ class SharedMemoryReadTool(BaseTool):
         AgentRole.ADMIN,
         AgentRole.WORKER,
     ]
-    cache_ttl_seconds = 5
+    cache_ttl_seconds = 0
     idempotent = True
     max_concurrency = 10
 
@@ -82,7 +83,7 @@ class SharedMemoryReadTool(BaseTool):
             logger.error(
                 "shared_memory_read_error", extra={"key": key, "error": str(e)}, exc_info=True
             )
-            raise RuntimeError(f"Failed to read from shared memory: {e}")
+            raise RuntimeError(f"Failed to read from shared memory: {e}") from e
 
 
 class SharedMemoryWriteTool(BaseTool):
@@ -113,10 +114,7 @@ class SharedMemoryWriteTool(BaseTool):
 
         full_key = f"shared:{namespace}:{key}"
 
-        if isinstance(value, (dict, list)):
-            serialized = json.dumps(value)
-        else:
-            serialized = str(value)
+        serialized = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
 
         redis_client = await get_shared_memory_redis()
 
@@ -131,4 +129,4 @@ class SharedMemoryWriteTool(BaseTool):
             logger.error(
                 "shared_memory_write_error", extra={"key": key, "error": str(e)}, exc_info=True
             )
-            raise RuntimeError(f"Failed to write to shared memory: {e}")
+            raise RuntimeError(f"Failed to write to shared memory: {e}") from e

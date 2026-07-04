@@ -1,596 +1,180 @@
-"""Google Gemma provider — free open-weight models via the OpenAI-compatible endpoint.
+"""Google AI Studio provider and live model discovery.
 
-The Google AI Studio exposes an **OpenAI-compatible** layer at
-``generativelanguage.googleapis.com/v1beta/openai/``.  Gemma models
-registered here use the standard ``CHAT_COMPLETIONS`` API style with no
-changes to the gateway client.
-
-Authentication uses a Google AI Studio API key sent as ``Bearer`` token.
-Get a free key at: https://aistudio.google.com/apikey
-
-Free-tier rate limits per pooled Gemma 3 model (AI Studio, as of 2026):
-- gemma-3-27b-it:   30 RPM / 15 k TPM / 14 000 RPD
-- gemma-3-12b-it:   30 RPM / 15 k TPM / 14 000 RPD
-- gemma-3-4b-it:    30 RPM / 15 k TPM / 14 000 RPD
-- gemma-3-1b-it:    30 RPM / 15 k TPM / 14 000 RPD
-- gemma-3n-e4b-it:  30 RPM / 15 k TPM / 14 000 RPD
-- gemma-3n-e2b-it:  30 RPM / 15 k TPM / 14 000 RPD
-
-All six Gemma 3 models are pooled under ``gemma-pool`` for automatic load
-balancing (aggregate ~84 k RPD / 90 k TPM).
-
-Newer Gemma 4 models are registered individually:
-- gemma-4-26b-a4b-it
-- gemma-4-31b-it
-
-They are intentionally excluded from ``gemma-pool`` because their AI Studio
-quotas differ from the pooled Gemma 3 family.
+The checked-in entries are a small, verified fallback catalog.  Google retires
+preview and open-weight model IDs regularly, so callers that need current
+availability should use :class:`GeminiModelScanner` rather than treating the
+fallback catalog as provider truth.
 """
 
 from __future__ import annotations
 
-# Deferred import — MODEL_REGISTRY is created in the parent __init__.py
-# before sub-packages are imported.
-from .. import MODEL_REGISTRY
-from ..base import ApiStyle, ModelCapabilities, ModelEntry, ModelPool, ProviderConfig
+import logging
+from typing import TYPE_CHECKING
 
-# ---------------------------------------------------------------------------
-# Provider
-# ---------------------------------------------------------------------------
+import httpx
+
+from .. import MODEL_REGISTRY
+from ..base import ApiStyle, ModelCapabilities, ModelEntry, ModelPool, ModelRegistry, ProviderConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+logger = logging.getLogger(__name__)
 
 GEMINI_PROVIDER = ProviderConfig(
     provider_id="gemini",
     base_url="https://generativelanguage.googleapis.com/v1beta/openai",
     api_key_env_vars=["GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "GOOGLE_API_KEY"],
-    description=(
-        "Google AI Studio — Gemma open-weight models via the OpenAI-compatible "
-        "endpoint. Free tier available (rate-limited). Supports vision, "
-        "tool-calling, and streaming."
-    ),
+    description="Google AI Studio via its OpenAI-compatible API.",
 )
 MODEL_REGISTRY.register_provider(GEMINI_PROVIDER)
 
-# ---------------------------------------------------------------------------
-# Endpoint constant (all models share the same chat/completions path)
-# ---------------------------------------------------------------------------
+_CC = f"{GEMINI_PROVIDER.base_url}/chat/completions"
+_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-_CC = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
-# ---------------------------------------------------------------------------
-# Free-tier models (verified working Feb 2026)
-# ---------------------------------------------------------------------------
-
-# ---- Gemini 3.1 Flash-Lite Preview ---------------------------------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemini-3.1-flash-lite-preview",
+def _build_entry(model_id: str) -> ModelEntry:
+    """Build a conservative catalog entry for a discovered Gemini model."""
+    is_gemma = model_id.startswith("gemma-")
+    is_flash = "flash" in model_id
+    return ModelEntry(
+        model_id=model_id,
         provider="gemini",
         api_style=ApiStyle.CHAT_COMPLETIONS,
         endpoint=_CC,
-        description=(
-            "Google Gemini 3.1 Flash-Lite Preview - low-cost, high-throughput "
-            "multimodal preview model on AI Studio. Free-tier limits: "
-            "15 RPM / 250k TPM / 500 RPD."
-        ),
-        max_context_tokens=1_048_576,
-        supports_tools=True,
+        description=f"Google AI Studio model discovered as {model_id}.",
+        max_context_tokens=None,
+        supports_tools=not is_gemma,
         supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
+        cost_per_1m_input=None,
+        cost_per_1m_output=None,
         default_temperature=0.7,
         capabilities=ModelCapabilities(
             supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
+            supports_reasoning=is_gemma or not is_flash,
+            supports_search_grounding=not is_gemma,
+            supports_url_context=not is_gemma,
             image_how="image_url in content array (base64 data-URL or HTTPS URL)",
             pdf_how="extract text and send as message content",
         ),
-        best_for=[
-            "general-purpose",
-            "fast-classification",
-            "summarisation",
-            "high-volume",
-            "cost-sensitive",
-        ],
-        limits=[
-            "preview-model",
-            "free-tier (15 RPM / 250k TPM / 500 RPD on AI Studio)",
-            "text-out model",
-            "1M context",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "preview-model",
-            "data-used-for-improvement (free tier)",
-        ],
+        best_for=(
+            ["reasoning", "code-generation", "long-context"]
+            if is_gemma
+            else ["general-purpose", "tool-calling", "search-grounding"]
+        ),
+        limits=["availability-and-pricing-must-be-discovered-at-runtime"],
+        compliance=["google-ai-studio-tos", "api-key-required", "dynamic-catalog"],
+        extra={"api_model_name": model_id, "discovered_via": "/v1beta/models"},
     )
+
+
+# Verified against ListModels and a real generateContent request on 2026-07-03.
+VERIFIED_GEMINI_MODEL_IDS = (
+    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite",
+    "gemma-4-31b-it",
 )
 
-# ---- Gemma 3 27B (open-weight, free on AI Studio) -----------------------
+for _model_id in VERIFIED_GEMINI_MODEL_IDS:
+    MODEL_REGISTRY.register(_build_entry(_model_id))
 
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3-27b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3 27B Instruct — open-weight model hosted free on "
-            "AI Studio. 14 000 RPD. Strong multilingual, code, and reasoning."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "general-purpose",
-            "code-generation",
-            "multilingual",
-            "tool-calling",
-            "structured-output",
-        ],
-        limits=[
-            "free-tier (14k RPD on AI Studio)",
-            "131k context (vs 1M for Gemini)",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
 
-# ---- Gemma 3 4B (tiny open-weight, free on AI Studio) -------------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3-4b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3 4B Instruct — tiny open-weight model hosted free "
-            "on AI Studio. Excellent for routing, classification, simple tasks."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "fast-classification",
-            "routing-decisions",
-            "simple-qa",
-            "edge-deployment",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "small-model (4B, less reasoning depth)",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 3 12B (mid-size open-weight, free on AI Studio) --------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3-12b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3 12B Instruct — mid-size open-weight model hosted "
-            "free on AI Studio. Good balance of quality and speed. "
-            "Note: may be slow on AI Studio (long first-token latency)."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "general-purpose",
-            "code-generation",
-            "multilingual",
-            "summarisation",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "slow-cold-start (may timeout on first call)",
-            "131k context",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 3 1B (ultra-tiny open-weight, free on AI Studio) -------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3-1b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3 1B Instruct — ultra-tiny open-weight model. "
-            "Fastest inference, minimal resource use. Ideal for simple "
-            "routing, classification, and lightweight tasks."
-        ),
-        max_context_tokens=32_768,
-        supports_tools=False,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=False,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-        ),
-        best_for=[
-            "fast-classification",
-            "routing-decisions",
-            "simple-qa",
-            "edge-deployment",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "very-small-model (1B, limited reasoning)",
-            "32k context",
-            "no-vision",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 4 26B A4B (reasoning-capable, long-context) -------------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-4-26b-a4b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 4 26B A4B IT - reasoning-capable open-weight model "
-            "on AI Studio with 262k context and 32k output. Registered "
-            "standalone because its quota differs from gemma-pool."
-        ),
-        max_context_tokens=262_144,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=True,
-            supports_search_grounding=True,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "reasoning",
-            "code-generation",
-            "tool-calling",
-            "search-grounding",
-            "structured-output",
-            "long-context",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "standalone-quota (not included in gemma-pool)",
-            "262k context",
-            "32k output",
-            "search-grounding",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 4 31B (reasoning-capable flagship) ----------------------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-4-31b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 4 31B IT - flagship reasoning-capable open-weight "
-            "model on AI Studio with 262k context and 32k output. Registered "
-            "standalone because its quota differs from gemma-pool."
-        ),
-        max_context_tokens=262_144,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=True,
-            supports_search_grounding=True,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "general-purpose",
-            "reasoning",
-            "code-generation",
-            "tool-calling",
-            "search-grounding",
-            "structured-output",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "standalone-quota (not included in gemma-pool)",
-            "262k context",
-            "32k output",
-            "search-grounding",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 3n E4B (nano, efficient 4B, free on AI Studio) ---------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3n-e4b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3n E4B Instruct — nano-architecture efficient 4B "
-            "model. Optimised for on-device / edge deployment with strong "
-            "quality-per-parameter ratio."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "edge-deployment",
-            "fast-classification",
-            "routing-decisions",
-            "on-device-inference",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "nano-model (optimised for efficiency)",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---- Gemma 3n E2B (nano, efficient 2B, free on AI Studio) ---------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="gemma-3n-e2b-it",
-        provider="gemini",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Google Gemma 3n E2B Instruct — nano-architecture efficient 2B "
-            "model. Smallest nano variant, ultra-fast inference."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=True,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="image_url in content array (base64 data-URL or HTTPS URL)",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "edge-deployment",
-            "fast-classification",
-            "simple-qa",
-            "on-device-inference",
-        ],
-        limits=[
-            "free-tier on AI Studio",
-            "nano-model (2B, limited reasoning)",
-        ],
-        compliance=[
-            "google-ai-studio-tos",
-            "free-tier",
-            "api-key-required",
-            "gemma-open-weight",
-            "data-used-for-improvement (free tier)",
-        ],
-    )
-)
-
-# ---------------------------------------------------------------------------
-# Gemma model pool — load-balanced rotation across all Gemma models
-# ---------------------------------------------------------------------------
-#
-# Each Gemma model on AI Studio has **independent** rate limits:
-#   - 14 000 requests/day   (RPD)
-#   - 15 000 tokens/minute   (TPM)
-#   - ~30 requests/minute    (RPM, varies by model size)
-#
-# With 6 models that gives us aggregate capacity of:
-#   - 84 000 RPD   (6 × 14k)
-#   - 90 000 TPM   (6 × 15k)
-#
-# CRITICAL: if ANY single model exceeds its limit, Google returns 429 for
-# ALL Gemma models on the account.  The pool keeps a 15 % safety margin
-# on every model to avoid this.
-#
-# Agents should request model="gemma-pool" to benefit from automatic
-# load balancing.  They can still request a specific model directly.
-# ---------------------------------------------------------------------------
-
-_GEMMA_POOL_MODELS = [
-    "gemma-3-27b-it",
-    "gemma-3-12b-it",
-    "gemma-3-4b-it",
-    "gemma-3-1b-it",
-    "gemma-3n-e4b-it",
-    "gemma-3n-e2b-it",
-]
-
+# Compatibility alias for callers that request the historical Gemma pool.  Only
+# models that pass a real generation request belong here; ListModels alone is
+# insufficient because Google currently lists a 26B model that returns 500.
 GEMMA_POOL = ModelPool(
     pool_id="gemma-pool",
-    model_ids=_GEMMA_POOL_MODELS,
-    rpm_per_model=30,
-    rpd_per_model=14_000,
-    tpm_per_model=15_000,
+    model_ids=["gemma-4-31b-it"],
+    rpm_per_model=15,
+    rpd_per_model=500,
+    tpm_per_model=250_000,
     safety_margin=0.15,
-    description=(
-        "Load-balanced pool across all 6 Gemma models on Google AI Studio. "
-        "Aggregate capacity: ~84k RPD, ~90k TPM. Round-robin with per-model "
-        "tracking to avoid triggering the global 429 kill-switch."
-    ),
+    description="Compatibility alias for the currently working Gemma model.",
 )
 MODEL_REGISTRY.register_pool(GEMMA_POOL)
 
-# ---------------------------------------------------------------------------
-# Thinking chain — multi-model reasoning virtual model
-# ---------------------------------------------------------------------------
-#
-# "gemma-think" is a *virtual* model that triggers a multi-stage reasoning
-# pipeline (see ``mas_core.llm_gateway.thinking``).  The client detects the
-# "gemma-think" prefix and delegates to ``ThinkingChain``, so no real
-# endpoint call is needed.  We register a placeholder ``ModelEntry`` here
-# so the model appears in listings and registry queries.
-#
-# Depth variants: gemma-think (standard), gemma-think/light, gemma-think/deep.
-# ---------------------------------------------------------------------------
 
+# Virtual reasoning pipeline.  The client dispatches this to ThinkingChain.
 MODEL_REGISTRY.register(
     ModelEntry(
         model_id="gemma-think",
         provider="gemini",
         api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=GEMINI_PROVIDER.base_url + "/chat/completions",
+        endpoint=_CC,
         supports_tools=False,
         supports_streaming=False,
-        max_context_tokens=8_192,
-        cost_per_1m_input=0.0,
-        cost_per_1m_output=0.0,
-        capabilities=ModelCapabilities(
-            supports_reasoning=True,
-        ),
-        best_for=[
-            "complex-reasoning",
-            "multi-step-analysis",
-            "structured-synthesis",
-        ],
-        limits=[
-            "virtual-model (multi-model pipeline, not a single-call model)",
-            "no tool-calling or streaming",
-            "higher latency (sequential stages)",
-        ],
-        compliance=[
-            "free-tier",
-            "gemma-open-weight",
-        ],
-        extra={
-            "virtual": True,
-            "description": (
-                "Multi-model reasoning pipeline: chains Gemma 4B → 12B → 27B "
-                "through decompose → analyse → synthesise stages. "
-                "Depths: light (2 stages), standard (3 stages), deep (3 + self-critique). "
-                "Use model='gemma-think' or 'gemma-think/light|standard|deep'."
-            ),
-        },
+        max_context_tokens=None,
+        cost_per_1m_input=None,
+        cost_per_1m_output=None,
+        capabilities=ModelCapabilities(supports_reasoning=True),
+        best_for=["complex-reasoning", "multi-step-analysis", "structured-synthesis"],
+        limits=["virtual-model", "sequential-provider-calls", "no-tool-calling"],
+        compliance=["google-ai-studio-tos", "api-key-required"],
+        extra={"virtual": True},
     )
 )
+
+
+class GeminiModelScanner:
+    """Discover models that currently support ``generateContent``."""
+
+    def __init__(
+        self,
+        *,
+        registry: ModelRegistry | None = None,
+        models_url: str = _MODELS_URL,
+        timeout_s: float = 20.0,
+    ) -> None:
+        self._registry = registry if registry is not None else MODEL_REGISTRY
+        self._models_url = models_url
+        self._timeout_s = timeout_s
+
+    def _api_key(self) -> str:
+        provider = self._registry.get_provider("gemini") or GEMINI_PROVIDER
+        key = provider.resolve_api_key()
+        return "" if key == "public" else key
+
+    def discover_models(self) -> list[str]:
+        """Return current model IDs accepted by ``generateContent``."""
+        key = self._api_key()
+        if not key:
+            logger.warning("GEMINI_API_KEY not set - skipping Gemini model scan")
+            return []
+        try:
+            with httpx.Client(timeout=self._timeout_s) as client:
+                response = client.get(self._models_url, headers={"x-goog-api-key": key})
+                response.raise_for_status()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Failed to fetch Gemini /models: %s", exc)
+            return []
+
+        discovered: list[str] = []
+        for item in response.json().get("models", []):
+            if "generateContent" not in item.get("supportedGenerationMethods", []):
+                continue
+            name = str(item.get("name", ""))
+            model_id = name.removeprefix("models/")
+            if model_id and model_id not in discovered:
+                discovered.append(model_id)
+        return discovered
+
+    def available_registered_models(self) -> list[str]:
+        """Return concrete AIAT Gemini entries still exposed by Google."""
+        discovered = set(self.discover_models())
+        return [
+            entry.model_id
+            for entry in self._registry.list_models("gemini")
+            if not entry.extra.get("virtual") and entry.model_id in discovered
+        ]
+
+    def scan_and_register(self, *, include: Iterable[str] | None = None) -> list[ModelEntry]:
+        """Register discovered models, optionally restricted to an allowlist."""
+        model_ids = self.discover_models()
+        if include is not None:
+            allowed = set(include)
+            model_ids = [model_id for model_id in model_ids if model_id in allowed]
+        entries = [_build_entry(model_id) for model_id in model_ids]
+        for entry in entries:
+            self._registry.register(entry)
+        return entries

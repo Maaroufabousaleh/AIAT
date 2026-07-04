@@ -15,10 +15,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from mas_core.workflow.events import WorkflowEvent
 from mas_core.workflow.states import ProjectState
 from mas_core.workflow.transitions import (
     RESTORE_LAST_SAFE_STATE,
@@ -26,6 +25,9 @@ from mas_core.workflow.transitions import (
     TransitionTarget,
     resolve_transition,
 )
+
+if TYPE_CHECKING:
+    from mas_core.workflow.events import WorkflowEvent
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +147,15 @@ class WorkflowController:
               AgentStorage.transition_project() (uses SELECT ... FOR UPDATE).
             - Publishes a SYSTEM_EVENT if event_publisher is set.
         """
-        ctx = context or {}
+        ctx = dict(context or {})
 
         # 1. Validate and resolve the target state.
         raw_target = self.next_state(current_state, event)
+        if raw_target in {RESTORE_PRIOR_STATE, RESTORE_LAST_SAFE_STATE} and self._storage is not None:
+            pid = UUID(project_id) if isinstance(project_id, str) else project_id
+            project = await self._storage.get_project(pid)
+            if project is not None and project.get("failed_from_state"):
+                ctx.setdefault("failed_from_state", project["failed_from_state"])
         concrete_target = self._resolve_special_target(
             raw_target,
             prior_state=current_state,
@@ -164,6 +171,7 @@ class WorkflowController:
             failed_from_state: str | None = None
             if concrete_target == ProjectState.FAILED:
                 failure_reason = ctx.get("failure_reason", event.value)
+            if concrete_target in {ProjectState.FAILED, ProjectState.SECURITY_BLOCKED}:
                 failed_from_state = str(current_state)
 
             updated = await self._storage.transition_project(

@@ -120,6 +120,7 @@ issues, and be accurate, clear, and directly useful."""
 # Stage presets per depth
 # ---------------------------------------------------------------------------
 
+
 def _stages_for_depth(
     depth: Depth,
     caller_max_tokens: int | None,
@@ -132,14 +133,14 @@ def _stages_for_depth(
         return [
             StageConfig(
                 name="decompose",
-                model="gemma-3n-e4b-it",
+                model="gemini-3.1-flash-lite-preview",
                 system_prompt=_DECOMPOSE_SYSTEM,
                 max_tokens=300,
                 temperature=0.3,
             ),
             StageConfig(
                 name="synthesise",
-                model="gemma-3-27b-it",
+                model="gemma-4-31b-it",
                 system_prompt=_SYNTHESISE_SYSTEM,
                 max_tokens=synth_tokens,
                 temperature=0.5,
@@ -150,21 +151,21 @@ def _stages_for_depth(
         return [
             StageConfig(
                 name="decompose",
-                model="gemma-3n-e4b-it",
+                model="gemini-3.1-flash-lite-preview",
                 system_prompt=_DECOMPOSE_SYSTEM,
                 max_tokens=400,
                 temperature=0.3,
             ),
             StageConfig(
                 name="analyse",
-                model="gemma-3-12b-it",
+                model="gemini-3.1-flash-lite-preview",
                 system_prompt=_ANALYSE_SYSTEM,
                 max_tokens=1000,
                 temperature=0.4,
             ),
             StageConfig(
                 name="synthesise",
-                model="gemma-3-27b-it",
+                model="gemma-4-31b-it",
                 system_prompt=_SYNTHESISE_SYSTEM,
                 max_tokens=synth_tokens,
                 temperature=0.5,
@@ -175,21 +176,21 @@ def _stages_for_depth(
     return [
         StageConfig(
             name="decompose",
-            model="gemma-3-4b-it",
+            model="gemini-3.1-flash-lite-preview",
             system_prompt=_DECOMPOSE_SYSTEM,
             max_tokens=500,
             temperature=0.3,
         ),
         StageConfig(
             name="analyse",
-            model="gemma-3-12b-it",
+            model="gemma-4-31b-it",
             system_prompt=_ANALYSE_SYSTEM,
             max_tokens=1500,
             temperature=0.4,
         ),
         StageConfig(
             name="synthesise",
-            model="gemma-3-27b-it",
+            model="gemma-4-31b-it",
             system_prompt=_SYNTHESISE_DEEP_SYSTEM,
             max_tokens=synth_tokens,
             temperature=0.5,
@@ -201,19 +202,17 @@ def _stages_for_depth(
 # For these, the system prompt is prepended to the first user message.
 # NOTE: ALL Gemma models on AI Studio's OpenAI-compat endpoint reject
 # system messages with "Developer instruction is not enabled".
-_NO_SYSTEM_ROLE_MODELS = frozenset({
-    "gemma-3-27b-it",
-    "gemma-3-12b-it",
-    "gemma-3-4b-it",
-    "gemma-3-1b-it",
-    "gemma-3n-e4b-it",
-    "gemma-3n-e2b-it",
-})
+_NO_SYSTEM_ROLE_MODELS = frozenset(
+    {
+        "gemma-4-31b-it",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # ThinkingChain
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class StageResult:
@@ -323,7 +322,10 @@ class ThinkingChain:
                 elapsed = time.monotonic() - t0
                 logger.error(
                     "Thinking stage '%s' (%s) failed after %.1fs: %s",
-                    stage.name, stage.model, elapsed, exc,
+                    stage.name,
+                    stage.model,
+                    elapsed,
+                    exc,
                 )
                 # If this is the first stage, re-raise — nothing to salvage.
                 # If a later stage fails, synthesise from what we have so far.
@@ -345,9 +347,7 @@ class ThinkingChain:
                 elapsed_s=round(elapsed, 2),
             )
             stage_results.append(sr)
-            accumulated_reasoning.append(
-                f"[{stage.name.upper()} — {stage.model}]\n{content}"
-            )
+            accumulated_reasoning.append(f"[{stage.name.upper()} — {stage.model}]\n{content}")
 
             logger.info(
                 "Thinking stage '%s' (%s): %d tokens in %.1fs",

@@ -170,7 +170,7 @@ class IssueListTool(BaseTool):
     group = ToolGroup.SPRINT_ISSUE
     description = "List issues for a project or sprint."
     allowed_roles = _ADMIN
-    cache_ttl_seconds = 15
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -193,7 +193,7 @@ class KPIComputeSprintTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Compute KPI snapshot for a sprint."
     allowed_roles = _CSUITE
-    cache_ttl_seconds = 30
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -241,7 +241,7 @@ class KPIComputeProjectTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Compute project-level KPIs across all sprints."
     allowed_roles = _CSUITE
-    cache_ttl_seconds = 30
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -276,7 +276,7 @@ class KPIQueryHistoryTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Query historical KPI data with filters."
     allowed_roles = _EXEC
-    cache_ttl_seconds = 30
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
@@ -319,7 +319,7 @@ class VelocityReportTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Generate a velocity report for a project."
     allowed_roles = _CSUITE
-    cache_ttl_seconds = 60
+    cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")

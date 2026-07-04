@@ -1,7 +1,8 @@
-const MESSAGE_ROUTER_URL = process.env.MESSAGE_ROUTER_URL ?? "http://localhost:8001";
+const MESSAGE_ROUTER_URL =
+  process.env.MESSAGE_ROUTER_URL ?? "http://localhost:8001";
 const ROUTER_SECRET = process.env.ROUTER_SECRET ?? "";
 
-type Params = { params: { team_id: string } };
+type Params = { params: Promise<{ team_id: string }> };
 type RecentEntry = { entry_id: string; envelope: string };
 type RecentResponse = { entries?: RecentEntry[] };
 
@@ -21,7 +22,12 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function fetchRecentEntries(teamId: string, limit: string, token: string, after?: string) {
+async function fetchRecentEntries(
+  teamId: string,
+  limit: string,
+  token: string,
+  after?: string,
+) {
   const query = new URLSearchParams({ limit });
   if (after) query.set("after", after);
   const res = await fetch(
@@ -29,12 +35,13 @@ async function fetchRecentEntries(teamId: string, limit: string, token: string, 
     {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
-    }
+    },
   );
   return res;
 }
 
-export async function GET(req: Request, { params }: Params) {
+export async function GET(req: Request, props: Params) {
+  const params = await props.params;
   const { team_id } = params;
   const { searchParams } = new URL(req.url);
   const token = `dashboard:${ROUTER_SECRET}`;
@@ -45,7 +52,9 @@ export async function GET(req: Request, { params }: Params) {
     const body = await res.text();
     return new Response(body, {
       status: res.status,
-      headers: { "Content-Type": res.headers.get("content-type") ?? "application/json" },
+      headers: {
+        "Content-Type": res.headers.get("content-type") ?? "application/json",
+      },
     });
   }
 
@@ -58,7 +67,11 @@ export async function GET(req: Request, { params }: Params) {
 
       const close = () => {
         closed = true;
-        try { controller.close(); } catch { /* already closed */ }
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       };
 
       req.signal.addEventListener("abort", close, { once: true });
@@ -69,8 +82,8 @@ export async function GET(req: Request, { params }: Params) {
           const body = await initial.text();
           controller.enqueue(
             encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${initial.status}` })}\n\n`
-            )
+              `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${initial.status}` })}\n\n`,
+            ),
           );
           close();
           return;
@@ -79,10 +92,14 @@ export async function GET(req: Request, { params }: Params) {
         if (!req.headers.get("last-event-id")) {
           lastEntryId = data.entries?.at(-1)?.entry_id ?? "0-0";
         }
-        controller.enqueue(encoder.encode(`event: connected\ndata: {"team":"${team_id}"}\n\n`));
+        controller.enqueue(
+          encoder.encode(`event: connected\ndata: {"team":"${team_id}"}\n\n`),
+        );
       } catch (err) {
         controller.enqueue(
-          encoder.encode(`event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`)
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`,
+          ),
         );
         close();
         return;
@@ -96,13 +113,18 @@ export async function GET(req: Request, { params }: Params) {
           const pageSize = 500;
           while (!closed && !req.signal.aborted) {
             const cursor = lastEntryId;
-            const res = await fetchRecentEntries(team_id, String(pageSize), token, cursor);
+            const res = await fetchRecentEntries(
+              team_id,
+              String(pageSize),
+              token,
+              cursor,
+            );
             if (!res.ok) {
               const body = await res.text();
               controller.enqueue(
                 encoder.encode(
-                  `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${res.status}` })}\n\n`
-                )
+                  `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${res.status}` })}\n\n`,
+                ),
               );
               break;
             }
@@ -111,7 +133,9 @@ export async function GET(req: Request, { params }: Params) {
             for (const entry of entries) {
               if (!entry.envelope) continue;
               controller.enqueue(
-                encoder.encode(`id: ${entry.entry_id}\ndata: ${entry.envelope}\n\n`)
+                encoder.encode(
+                  `id: ${entry.entry_id}\ndata: ${entry.envelope}\n\n`,
+                ),
               );
             }
             if (entries.length === 0) break;
@@ -120,7 +144,9 @@ export async function GET(req: Request, { params }: Params) {
           }
         } catch (err) {
           controller.enqueue(
-            encoder.encode(`event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`)
+            encoder.encode(
+              `event: error\ndata: ${JSON.stringify({ error: String(err) })}\n\n`,
+            ),
           );
         }
       }
@@ -131,7 +157,7 @@ export async function GET(req: Request, { params }: Params) {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
+      Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     },
   });
