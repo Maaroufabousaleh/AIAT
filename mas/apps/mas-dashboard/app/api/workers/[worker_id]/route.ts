@@ -39,12 +39,14 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   props: { params: Promise<{ worker_id: string }> },
 ) {
   const params = await props.params;
   try {
-    await orchestratorFetch(`/capabilities/workers/${params.worker_id}`, {
+    const permanent = req.nextUrl.searchParams.get("permanent");
+    const suffix = permanent === "true" ? "?permanent=true" : "";
+    await orchestratorFetch(`/capabilities/workers/${params.worker_id}${suffix}`, {
       method: "DELETE",
     });
     return NextResponse.json({ success: true });

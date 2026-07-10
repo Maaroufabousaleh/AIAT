@@ -3252,10 +3252,43 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
 
 
 @app.delete("/capabilities/workers/{worker_id}")
-async def deregister_worker(worker_id: UUID) -> dict[str, str]:
-    """Deregister a worker."""
+async def deregister_worker(
+    worker_id: str,
+    permanent: bool = Query(default=False),
+) -> dict[str, str]:
+    """Deregister a worker, or permanently remove it when explicitly requested.
+
+    The default behavior remains a soft deregistration for compatibility with
+    existing lifecycle callers. E2E cleanup uses ``permanent=true`` for
+    timestamped test workers so the hiring board does not accumulate debris.
+    """
     storage = _storage()
-    await storage.update_worker_status(worker_id, status="DEREGISTERED")
+    parsed_worker_id: UUID | None = None
+    try:
+        parsed_worker_id = UUID(worker_id)
+    except ValueError:
+        parsed_worker_id = None
+
+    if not permanent and parsed_worker_id is not None:
+        await storage.update_worker_status(parsed_worker_id, status="DEREGISTERED")
+        return {"status": "deregistered"}
+
+    worker: dict[str, Any] | None = None
+    if parsed_worker_id is not None:
+        worker = await storage.get_worker(parsed_worker_id)
+    else:
+        worker = await storage.get_worker_by_name(worker_id)
+
+    if permanent:
+        if worker is None:
+            raise HTTPException(404, f"Worker {worker_id} not found")
+        deleted = await storage.delete_worker(worker["id"])
+        if not deleted:
+            raise HTTPException(404, f"Worker {worker_id} not found")
+        return {"status": "deleted"}
+
+    if worker is not None:
+        await storage.update_worker_status(worker["id"], status="DEREGISTERED")
     return {"status": "deregistered"}
 
 

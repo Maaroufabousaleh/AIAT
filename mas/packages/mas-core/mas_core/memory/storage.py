@@ -1752,6 +1752,14 @@ class AgentStorage:
             )
         return dict(row) if row else None
 
+    async def delete_worker(self, worker_id: UUID) -> bool:
+        """Permanently delete a worker registry row and owned evaluation reports."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.worker_registry.delete().where(t.worker_registry.c.id == worker_id)
+            )
+            return bool(result.rowcount)
+
     async def list_workers(
         self,
         *,

@@ -56,6 +56,62 @@ success() { echo -e "${GREEN}[OK]${NC}  $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERR]${NC} $*" >&2; }
 
+# BuildKit on Docker Desktop may inspect extended attributes before applying
+# .dockerignore. Pytest temp trees with restrictive modes can therefore break
+# context transfer even though they are ignored. Remove only known disposable
+# test artifacts after verifying that every target stays inside mas/.
+prepare_build_context() {
+    local context_root target resolved cleanup_failed=0 stage_root
+    if [ -n "${MAS_BUILD_CONTEXT:-}" ]; then
+        info "Using operator-provided Docker build context: $MAS_BUILD_CONTEXT"
+        return 0
+    fi
+    context_root="$(cd "$PROJECT_ROOT/mas" && pwd -P)"
+    for target in "$context_root/.tmp-pytest" "$context_root/.tmp-delete-me"; do
+        [ -e "$target" ] || continue
+        resolved="$(realpath -m -- "$target")"
+        case "$resolved" in
+            "$context_root"/.tmp-pytest|"$context_root"/.tmp-delete-me) ;;
+            *) error "Refusing to clean unexpected build-context path: $resolved"; return 1 ;;
+        esac
+        warn "Removing disposable test artifact before Docker build: $resolved"
+        chmod -R u+rwX -- "$resolved" 2>/dev/null || cleanup_failed=1
+        rm -rf -- "$resolved" 2>/dev/null || cleanup_failed=1
+        [ ! -e "$resolved" ] || cleanup_failed=1
+    done
+    if [ "$cleanup_failed" -eq 0 ]; then
+        unset MAS_BUILD_CONTEXT
+        return 0
+    fi
+
+    # DrvFS ACL corruption can make a directory unreadable even to WSL root.
+    # Build from a clean Linux-filesystem snapshot instead of weakening ACLs or
+    # allowing BuildKit to traverse the damaged path.
+    stage_root="${AIAT_BUILD_CONTEXT_DIR:-/tmp/aiat-mas-build-context-${UID}}"
+    case "$stage_root" in
+        /tmp/aiat-mas-build-context-*) ;;
+        *) error "Unsafe AIAT_BUILD_CONTEXT_DIR: $stage_root"; return 1 ;;
+    esac
+    warn "Using clean staged Docker context because repo temp ACLs are unreadable: $stage_root"
+    rm -rf -- "$stage_root"
+    mkdir -p -- "$stage_root"
+    tar -C "$context_root" \
+        --exclude='./.tmp-pytest' \
+        --exclude='./.tmp-delete-me' \
+        --exclude='./.venv*' \
+        --exclude='./.uv-cache' \
+        --exclude='./node_modules' \
+        --exclude='*/node_modules' \
+        --exclude='*/.next' \
+        --exclude='*/test-results' \
+        --exclude='*/playwright-report' \
+        --exclude='*/__pycache__' \
+        --exclude='*/.pytest_cache' \
+        --exclude='*/.ruff_cache' \
+        -cf - . | tar -C "$stage_root" -xf -
+    export MAS_BUILD_CONTEXT="$stage_root"
+}
+
 # ── Validate environment before destructive commands ──────────────────────────
 validate_env() {
     local missing=0
@@ -84,6 +140,9 @@ case "$CMD" in
     # ── Lifecycle ──────────────────────────────────────────────────────────────
     up)
         info "Starting all MAS containers..."
+        if [[ " $* " == *" --build "* ]]; then
+            prepare_build_context
+        fi
         docker compose $COMPOSE_FILES up -d "${@:2}"
         if [ "${AIAT_OMNIROUTE_BOOTSTRAP:-true}" != "false" ]; then
             info "Configuring OmniRoute providers and embedded services..."
@@ -142,6 +201,7 @@ case "$CMD" in
 
     # ── Build ──────────────────────────────────────────────────────────────────
     build)
+        prepare_build_context
         SERVICE="${2:-}"
         if [ -n "$SERVICE" ]; then
             info "Building image for: $SERVICE"
@@ -154,6 +214,7 @@ case "$CMD" in
         ;;
 
     rebuild)
+        prepare_build_context
         SERVICE="${2:-}"
         if [ -n "$SERVICE" ]; then
             info "Rebuilding (no cache): $SERVICE"

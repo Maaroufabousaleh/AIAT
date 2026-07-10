@@ -53,7 +53,7 @@ x-team-env: &team-env
 x-team-defaults: &team-defaults
   image: mas/team-runner:latest
   build:
-    context: ../..
+    context: ${MAS_BUILD_CONTEXT:-../..}
     dockerfile: infra/docker/Dockerfile.team-runner
   restart: unless-stopped
   networks:
@@ -241,7 +241,7 @@ services:
   message-router:
     image: mas/message-router:latest
     build:
-      context: ../..
+      context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.message-router
     restart: unless-stopped
     env_file:
@@ -273,7 +273,7 @@ services:
   tool-service:
     image: mas/tool-service:latest
     build:
-      context: ../..
+      context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.tool-service
     restart: unless-stopped
     env_file:
@@ -403,7 +403,7 @@ services:
   orchestrator-api:
     image: mas/orchestrator-api:latest
     build:
-      context: ../..
+      context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.orchestrator-api
     restart: unless-stopped
     env_file:
@@ -464,7 +464,7 @@ services:
   dashboard:
     image: mas/dashboard:latest
     build:
-      context: ../..
+      context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.dashboard
     container_name: mas-dashboard
     restart: unless-stopped

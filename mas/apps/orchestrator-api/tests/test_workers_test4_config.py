@@ -375,6 +375,40 @@ async def test_deregister_worker_returns_deregistered_status(client):
     storage.update_worker_status.assert_awaited_once_with(WORKER_ID, status="DEREGISTERED")
 
 
+@pytest.mark.anyio
+async def test_delete_worker_permanent_removes_registry_row(client):
+    """DELETE /capabilities/workers/{id}?permanent=true hard-deletes test workers."""
+    row = _worker_row()
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=row)
+    storage.delete_worker = AsyncMock(return_value=True)
+    _patch(storage)
+
+    resp = await client.delete(f"/capabilities/workers/{WORKER_ID}?permanent=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    storage.get_worker.assert_awaited_once_with(WORKER_ID)
+    storage.delete_worker.assert_awaited_once_with(WORKER_ID)
+
+
+@pytest.mark.anyio
+async def test_delete_worker_by_name_permanent_removes_registry_row(client):
+    """Permanent cleanup accepts worker registry names for dashboard cleanup."""
+    row = _worker_row(name="e2e_worker_123")
+    storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=row)
+    storage.delete_worker = AsyncMock(return_value=True)
+    _patch(storage)
+
+    resp = await client.delete("/capabilities/workers/e2e_worker_123?permanent=true")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    storage.get_worker_by_name.assert_awaited_once_with("e2e_worker_123")
+    storage.delete_worker.assert_awaited_once_with(WORKER_ID)
+
+
 # ── 9. Health check endpoint ──────────────────────────────────────────────────
 
 
