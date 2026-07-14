@@ -1,53 +1,71 @@
 #!/bin/bash
-# MAS Control Script for systemd integration
-# Usage: masctl <service_name> <command>
-# Commands: start, stop, restart, status, logs
+# Control one AIAT MAS Compose service from systemd or an operator shell.
+# Usage: masctl <service_name> <start|stop|restart|status|logs>
 
-set -e
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE_DIR="${SCRIPT_DIR}/../compose"
-
-if [ ! -f "${COMPOSE_DIR}/docker-compose.yml" ]; then
-    echo "Error: docker-compose.yml not found in ${COMPOSE_DIR}"
-    exit 1
-fi
-
-SERVICE_NAME="$1"
-COMMAND="$2"
-
+SERVICE_NAME="${1:-}"
+COMMAND="${2:-}"
 if [ -z "$SERVICE_NAME" ] || [ -z "$COMMAND" ]; then
-    echo "Usage: $0 <service_name> <command>"
-    echo "Commands: start, stop, restart, status, logs"
+    echo "Usage: $0 <service_name> <start|stop|restart|status|logs>" >&2
+    exit 2
+fi
+
+MAS_ROOT="${MAS_ROOT:-/opt/mas}"
+COMPOSE_DIR="${MAS_COMPOSE_DIR:-$MAS_ROOT/infra/compose}"
+ENV_FILE="${MAS_ENV_FILE:-$MAS_ROOT/.env}"
+if [ ! -f "$COMPOSE_DIR/docker-compose.yml" ]; then
+    echo "Error: docker-compose.yml not found in $COMPOSE_DIR" >&2
+    exit 1
+fi
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: environment file not found at $ENV_FILE" >&2
     exit 1
 fi
 
-cd "${COMPOSE_DIR}"
+load_env_file() {
+    local line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        export "$key=$value"
+    done < "$ENV_FILE"
+}
+
+load_env_file
+export COMPOSE_DISABLE_ENV_FILE=1
+compose=(docker compose -f "$COMPOSE_DIR/docker-compose.yml")
+if [ "${MAS_COMPOSE_MODE:-production}" = "dev" ]; then
+    if [ ! -f "$COMPOSE_DIR/docker-compose.dev.yml" ]; then
+        echo "Error: development Compose overlay not found in $COMPOSE_DIR" >&2
+        exit 1
+    fi
+    compose+=( -f "$COMPOSE_DIR/docker-compose.dev.yml" )
+fi
 
 case "$COMMAND" in
     start)
-        echo "Starting $SERVICE_NAME..."
-        docker compose up -d "$SERVICE_NAME"
+        "${compose[@]}" up -d "$SERVICE_NAME"
         ;;
     stop)
-        echo "Stopping $SERVICE_NAME..."
-        docker compose stop "$SERVICE_NAME"
+        "${compose[@]}" stop "$SERVICE_NAME"
         ;;
     restart)
-        echo "Restarting $SERVICE_NAME..."
-        docker compose restart "$SERVICE_NAME"
+        "${compose[@]}" restart "$SERVICE_NAME"
         ;;
     status)
-        echo "Status of $SERVICE_NAME:"
-        docker compose ps "$SERVICE_NAME"
+        "${compose[@]}" ps "$SERVICE_NAME"
         ;;
     logs)
-        echo "Showing logs for $SERVICE_NAME (press Ctrl+C to exit)..."
-        docker compose logs -f "$SERVICE_NAME"
+        "${compose[@]}" logs -f "$SERVICE_NAME"
         ;;
     *)
-        echo "Unknown command: $COMMAND"
-        echo "Valid commands: start, stop, restart, status, logs"
-        exit 1
+        echo "Unknown command: $COMMAND" >&2
+        echo "Valid commands: start, stop, restart, status, logs" >&2
+        exit 2
         ;;
 esac

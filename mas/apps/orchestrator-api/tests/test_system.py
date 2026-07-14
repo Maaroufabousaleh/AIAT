@@ -113,6 +113,8 @@ async def test_seed_default_company_is_idempotent(client, monkeypatch):
     assert data["status"] == "already_seeded"
     assert data["first_run"] == "seeded"
     assert data["ceo"]["id"] == "ceo_agent"
+    assert data["sample_project_template"]["id"] == "aiat_sample_software_project"
+    assert data["sample_project_template"]["config"]["template"] is True
     assert data["workers_imported"]["total"] == 0
     assert storage.set_config.await_count >= 5
 

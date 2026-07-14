@@ -18,7 +18,7 @@ def test_orchestrator_tool_catalog_is_manifest_driven_and_not_yaml_limited():
     assert "time_now" in names
 
 
-def test_tool_catalog_does_not_advertise_team_policy_denials():
+def test_tool_catalog_advertises_cfo_kpi_read_tools_but_not_cto_mutations():
     tools = tool_definitions_for_agent(
         role=AgentRole.C_SUITE,
         team_id="office_cfo",
@@ -26,7 +26,9 @@ def test_tool_catalog_does_not_advertise_team_policy_denials():
     names = {tool.function.name for tool in tools}
 
     assert "sprint.create" not in names
-    assert "kpi.compute" not in names
+    assert "kpi.compute" in names
+    assert "kpi.query_history" in names
+    assert "kpi.update_agent_profile" not in names
 
 
 def test_tool_catalog_advertises_manifest_allowed_tools_not_in_static_policy():

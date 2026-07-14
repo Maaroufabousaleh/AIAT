@@ -170,6 +170,7 @@ class RouterClient:
         team_id: str,
         handler: MessageHandler,
         *,
+        project_id: str | None = None,
         stop_event: asyncio.Event | None = None,
     ) -> None:
         """Run a WebSocket read loop against ``/ws/subscribe/{team_id}``.
@@ -192,10 +193,17 @@ class RouterClient:
         stop_event:
             Optional event; when set, the loop exits cleanly after the current
             message completes.
+        project_id:
+            Optional project scope. When supplied, the router suppresses
+            messages for other projects without acknowledging them.
         """
         auth_header = f"Bearer {self._agent_id}:{self._agent_secret}"
         ws_url = self._router_url.replace("http://", "ws://").replace("https://", "wss://")
         ws_url = f"{ws_url}/ws/subscribe/{team_id}"
+        if project_id is not None:
+            from urllib.parse import quote
+
+            ws_url = f"{ws_url}?project_id={quote(project_id, safe='')}"
 
         while True:
             if stop_event and stop_event.is_set():

@@ -36,6 +36,9 @@ from . import models as t
 
 logger = logging.getLogger(__name__)
 
+_AGENT_PROFILE_NUMERIC_MIN = Decimal("-9.9999")
+_AGENT_PROFILE_NUMERIC_MAX = Decimal("9.9999")
+
 
 class AgentStorage:
     """Async Postgres storage layer using SQLAlchemy Core.
@@ -302,6 +305,7 @@ class AgentStorage:
         values = {
             "id": did,
             "project_id": project_id,
+            "lineage_id": did,
             "doc_type": doc_type,
             "version": 1,
             "status": "DRAFT",
@@ -313,6 +317,79 @@ class AgentStorage:
             "updated_at": now,
         }
         async with self.engine.begin() as conn:
+            await conn.execute(t.documents.insert().values(**values))
+        return values
+
+    async def create_document_revision(
+        self,
+        document_id: UUID,
+        *,
+        created_by: str,
+        blob_bucket: str | None = None,
+        blob_key: str | None = None,
+        blob_sha256: str | None = None,
+        revision_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Create the next immutable document version.
+
+        Document rows are append-only versions.  The previous latest version
+        is marked ``SUPERSEDED`` in the same transaction as the new draft so a
+        reader can never observe two current versions for one project/type.
+        """
+        rid = revision_id or uuid4()
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            source = (
+                (
+                    await conn.execute(
+                        t.documents.select()
+                        .where(t.documents.c.id == document_id)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if source is None:
+                raise ValueError(f"Document {document_id} not found")
+
+            lineage_id = source.get("lineage_id") or source["id"]
+            latest = (
+                (
+                    await conn.execute(
+                        t.documents.select()
+                        .where(t.documents.c.lineage_id == lineage_id)
+                        .order_by(t.documents.c.version.desc())
+                        .limit(1)
+                        .with_for_update()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if latest is None:
+                raise ValueError(f"No current version for document {document_id}")
+
+            version = int(latest["version"]) + 1
+            await conn.execute(
+                t.documents.update()
+                .where(t.documents.c.id == latest["id"])
+                .values(status="SUPERSEDED", updated_at=now)
+            )
+            values = {
+                "id": rid,
+                "project_id": source["project_id"],
+                "lineage_id": lineage_id,
+                "doc_type": source["doc_type"],
+                "version": version,
+                "status": "DRAFT",
+                "blob_bucket": blob_bucket,
+                "blob_key": blob_key,
+                "blob_sha256": blob_sha256,
+                "created_by": created_by,
+                "created_at": now,
+                "updated_at": now,
+            }
             await conn.execute(t.documents.insert().values(**values))
         return values
 
@@ -1751,6 +1828,115 @@ class AgentStorage:
                 .first()
             )
         return dict(row) if row else None
+
+    async def observe_agent_profile(
+        self,
+        *,
+        agent_id: str,
+        team_id: str | None = None,
+        role: str | None = None,
+        estimated_hours: Decimal | float | int | None = None,
+        actual_hours: Decimal | float | int | None = None,
+        tasks_completed: int = 1,
+        alpha: Decimal | float | int = Decimal("0.5"),
+    ) -> dict[str, Any]:
+        """Apply one completed-work observation to an agent's profile.
+
+        The profile uses a deliberately small, deterministic EMA rather than a
+        hidden model: ``observed_ratio = actual / estimate`` and
+        ``new_factor = alpha * observed_ratio + (1-alpha) * old_factor``.
+        The additive estimation bias is updated with the same EMA.  This keeps
+        the learning signal explainable and lets a later estimate use the
+        durable profile without consulting process memory.
+        """
+        if not agent_id:
+            raise ValueError("agent_id is required")
+        if tasks_completed < 0:
+            raise ValueError("tasks_completed must be non-negative")
+        a = Decimal(str(alpha))
+        if a <= 0 or a > 1:
+            raise ValueError("alpha must be > 0 and <= 1")
+
+        estimate = Decimal(str(estimated_hours if estimated_hours is not None else 0))
+        actual = Decimal(str(actual_hours if actual_hours is not None else 0))
+        if estimate < 0 or actual < 0:
+            raise ValueError("estimated_hours and actual_hours must be non-negative")
+
+        existing = await self.get_agent_profile(agent_id)
+        old_factor = Decimal(str((existing or {}).get("correction_factor", "1.0")))
+        old_bias = Decimal(str((existing or {}).get("estimation_bias", "0.0")))
+        old_confidence = Decimal(str((existing or {}).get("confidence", "0.5")))
+        prior_tasks = int((existing or {}).get("total_tasks_completed") or 0)
+        prior_estimated = Decimal(str((existing or {}).get("total_estimated_hours", "0") or 0))
+        prior_actual = Decimal(str((existing or {}).get("total_actual_hours", "0") or 0))
+
+        if estimate > 0:
+            observed_ratio = actual / estimate
+            observed_bias = actual - estimate
+            factor = (a * observed_ratio) + ((Decimal("1") - a) * old_factor)
+            bias = (a * observed_bias) + ((Decimal("1") - a) * old_bias)
+        else:
+            observed_ratio = old_factor
+            observed_bias = Decimal("0")
+            factor = old_factor
+            bias = old_bias
+
+        # Keep values inside the AgentProfile contract and the database
+        # numeric bounds while retaining four decimal places of evidence.
+        factor = min(_AGENT_PROFILE_NUMERIC_MAX, max(Decimal("0.1"), factor)).quantize(
+            Decimal("0.0001")
+        )
+        bias = min(_AGENT_PROFILE_NUMERIC_MAX, max(_AGENT_PROFILE_NUMERIC_MIN, bias)).quantize(
+            Decimal("0.0001")
+        )
+        confidence = min(
+            Decimal("1"),
+            old_confidence + ((Decimal("1") - old_confidence) * a if tasks_completed else Decimal("0")),
+        ).quantize(Decimal("0.0001"))
+        completed = prior_tasks + tasks_completed
+        profile = await self.upsert_agent_profile(
+            agent_id=agent_id,
+            team_id=team_id or (existing or {}).get("team_id") or "unassigned",
+            role=role or (existing or {}).get("role") or "worker",
+            correction_factor=factor,
+            estimation_bias=bias,
+            confidence=confidence,
+            total_tasks_completed=completed,
+            total_estimated_hours=prior_estimated + estimate,
+            total_actual_hours=prior_actual + actual,
+        )
+        profile.update(
+            {
+                "observed_ratio": observed_ratio,
+                "observed_bias": observed_bias,
+                "alpha": a,
+                "previous_correction_factor": old_factor,
+                "previous_estimation_bias": old_bias,
+            }
+        )
+        return profile
+
+    async def list_review_sessions(
+        self,
+        project_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List review sessions for a project, newest first."""
+        async with self.engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        t.review_sessions.select()
+                        .where(t.review_sessions.c.project_id == project_id)
+                        .order_by(t.review_sessions.c.created_at.desc())
+                        .limit(limit)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
 
     async def delete_worker(self, worker_id: UUID) -> bool:
         """Permanently delete a worker registry row and owned evaluation reports."""

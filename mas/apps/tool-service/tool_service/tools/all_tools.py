@@ -89,6 +89,7 @@ from .sprint_kpi import (
     KPIComputeSprintTool,
     KPIQueryHistoryTool,
     KPIUpdateAgentProfileTool,
+    RetrospectiveGenerateTool,
     SprintActivateTool,
     SprintCloseTool,
     SprintCreateTool,
@@ -167,6 +168,7 @@ def get_all_tools() -> list[BaseTool]:
         KPIComputeProjectTool(),
         KPIQueryHistoryTool(),
         KPIUpdateAgentProfileTool(),
+        RetrospectiveGenerateTool(),
         VelocityReportTool(),
         EstimationAdjustTool(),
         # CAPABILITY

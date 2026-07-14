@@ -71,6 +71,7 @@ class ExecutiveAgent(AdminAgent):
         review_timeout_secs: float = 120.0,
         max_revisions: int = 3,
         event_emitter: Any | None = None,
+        review_storage: Any | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -84,6 +85,10 @@ class ExecutiveAgent(AdminAgent):
         self._review_timeout_secs = review_timeout_secs
         self._max_revisions = max_revisions
         self._event_emitter = event_emitter
+        # ``storage`` is the checkpoint adapter supplied to AgentBase.  The
+        # team runner passes the shared AgentStorage separately so review
+        # sessions/comments can be durable without changing checkpoint APIs.
+        self._review_storage = review_storage
 
         # Active review sessions: session_id → ReviewSummary
         self._review_sessions: dict[str, ReviewSummary] = {}
@@ -91,6 +96,93 @@ class ExecutiveAgent(AdminAgent):
         self._review_parents: dict[str, MessageEnvelope] = {}
         # Track revision counts per document: document_id → count
         self._revision_counts: dict[str, int] = {}
+
+    async def _persist_review_session(self, summary: ReviewSummary) -> bool:
+        if self._review_storage is None:
+            return True
+        try:
+            project_id = UUID(summary.project_id)
+            document = await self._review_storage.get_document(summary.document_id)
+            if document is None:
+                # DOCUMENT_SUBMIT may arrive before the document metadata call
+                # (for example after a worker restart).  Materialize a minimal
+                # DRAFT row so the review session remains durable and its FK is
+                # valid instead of silently losing the whole review.
+                try:
+                    await self._review_storage.create_document(
+                        project_id=project_id,
+                        doc_type=getattr(summary.doc_type, "value", str(summary.doc_type)),
+                        created_by=self.agent_id,
+                        document_id=summary.document_id,
+                    )
+                except Exception:
+                    # Another worker may have materialized the same document
+                    # concurrently.  Re-read it before treating persistence as
+                    # failed; a row for a different project is still rejected.
+                    document = await self._review_storage.get_document(summary.document_id)
+                    if document is None:
+                        raise
+            if document is not None and str(document.get("project_id")) != str(project_id):
+                raise ValueError(
+                    f"Document {summary.document_id} belongs to project "
+                    f"{document.get('project_id')}, not {project_id}"
+                )
+            await self._review_storage.create_review_session(
+                project_id=project_id,
+                document_id=summary.document_id,
+                session_type=getattr(summary.doc_type, "value", str(summary.doc_type)),
+                reviewer_ids=list(self._reviewer_teams),
+                review_timeout_seconds=max(1, int(self._review_timeout_secs)),
+                session_id=summary.session_id,
+            )
+            return True
+        except Exception:
+            logger.warning("executive_review_session_persist_failed", exc_info=True)
+            return False
+
+    async def _persist_review_comment(self, summary: ReviewSummary, response: ReviewResponse) -> None:
+        if self._review_storage is None:
+            return
+        try:
+            severities = [comment.severity.value for comment in response.comments]
+            await self._review_storage.add_review_comment(
+                session_id=summary.session_id,
+                project_id=UUID(summary.project_id),
+                reviewer_id=response.reviewer_id,
+                reviewer_role=response.reviewer_role,
+                verdict=response.verdict.value,
+                veto=response.veto,
+                severity=severities[0] if severities else None,
+                comments=[comment.model_dump(mode="json") for comment in response.comments],
+            )
+        except Exception:
+            logger.warning("executive_review_comment_persist_failed", exc_info=True)
+
+    async def _persist_review_status(
+        self,
+        summary: ReviewSummary,
+        status: str,
+        *,
+        completed_at: datetime | None = None,
+    ) -> None:
+        if self._review_storage is None:
+            return
+        try:
+            updates: dict[str, Any] = {"status": status}
+            if completed_at is None and status in {
+                "COMPLETED",
+                "NEEDS_REVISION",
+                "REJECTED",
+                "VETOED",
+                "CIRCUIT_OPEN",
+                "TIMED_OUT",
+            }:
+                completed_at = datetime.now(tz=UTC)
+            if completed_at is not None:
+                updates["completed_at"] = completed_at
+            await self._review_storage.update_review_session(summary.session_id, **updates)
+        except Exception:
+            logger.warning("executive_review_status_persist_failed", exc_info=True)
 
     def _default_system_prompt(self) -> str:
         return (
@@ -451,6 +543,17 @@ class ExecutiveAgent(AdminAgent):
         )
         self._review_sessions[session_id] = summary
         self._review_parents[session_id] = parent_envelope
+        if not await self._persist_review_session(summary):
+            # Do not publish review requests when the durable parent session
+            # could not be created.  Otherwise valid responses would arrive
+            # with no database row to attach to after a restart.
+            self._review_sessions.pop(session_id, None)
+            self._review_parents.pop(session_id, None)
+            logger.error(
+                "executive_review_fanout_aborted_persistence_failure",
+                extra=self._log_extra(session_id=session_id, document_id=document_id),
+            )
+            return
 
         for team_id in self._reviewer_teams:
             review_env = MessageEnvelope(
@@ -537,6 +640,7 @@ class ExecutiveAgent(AdminAgent):
         summary.responses[reviewer_id] = response
         summary.comments.extend(comments)
         summary.responses_received += 1
+        await self._persist_review_comment(summary, response)
 
         logger.info(
             "executive_review_response_received",
@@ -590,6 +694,13 @@ class ExecutiveAgent(AdminAgent):
         )
 
         # Clean up session
+        if summary is not None:
+            summary.completed_at = datetime.now(tz=UTC)
+            await self._persist_review_status(
+                summary,
+                "VETOED",
+                completed_at=summary.completed_at,
+            )
         self._review_sessions.pop(session_id, None)
         self._review_parents.pop(session_id, None)
 
@@ -613,6 +724,18 @@ class ExecutiveAgent(AdminAgent):
 
         summary.overall_verdict = overall
         summary.completed_at = datetime.now(tz=UTC)
+
+        status_by_verdict = {
+            ReviewVerdict.APPROVED: "COMPLETED",
+            ReviewVerdict.APPROVED_WITH_COMMENTS: "COMPLETED",
+            ReviewVerdict.NEEDS_REVISION: "NEEDS_REVISION",
+            ReviewVerdict.REJECTED: "REJECTED",
+        }
+        await self._persist_review_status(
+            summary,
+            status_by_verdict[overall],
+            completed_at=summary.completed_at,
+        )
 
         document_id = str(summary.document_id)
         project_id = summary.project_id
@@ -839,6 +962,14 @@ class ExecutiveAgent(AdminAgent):
             return
 
         summary.timeout_count += 1
+        if self._review_storage is not None:
+            try:
+                await self._review_storage.update_review_session(
+                    summary.session_id,
+                    timeout_count=summary.timeout_count,
+                )
+            except Exception:
+                logger.warning("executive_review_timeout_persist_failed", exc_info=True)
         logger.warning(
             "executive_review_timeout",
             extra=self._log_extra(
@@ -855,6 +986,13 @@ class ExecutiveAgent(AdminAgent):
             )
             self._review_parents.pop(session_id, None)
             self._review_sessions.pop(session_id, None)
+
+            summary.completed_at = datetime.now(tz=UTC)
+            await self._persist_review_status(
+                summary,
+                "CIRCUIT_OPEN",
+                completed_at=summary.completed_at,
+            )
 
             await self._emit_event(
                 "review_circuit_open",

@@ -184,7 +184,7 @@ async def test_custom_hiring_evaluation_cannot_bypass_mandatory_gates(tmp_path, 
         storage=storage,
         checks=["semgrep"],
         mirror_path=tmp_path,
-        worker={"sandbox_profile": "gvisor"},
+        worker={"sandbox_profile": "gvisor", "version_pin": "a" * 40},
     )
 
     assert {"provenance", "licensing", "semgrep"} <= set(report["checks"])

@@ -384,6 +384,19 @@ class TestToolCache:
         await cache.set("file_write", {}, {"ok": True}, ttl=0)
         mock_redis.setex.assert_not_called()
 
+    def test_registry_cache_can_be_recovered_after_startup(self):
+        from unittest.mock import Mock
+
+        from tool_service.config import Settings
+        from tool_service.registry import ToolRegistry
+
+        registry = ToolRegistry(Settings(), cache=None)
+        recovered_cache = Mock()
+
+        registry.set_cache(recovered_cache)
+
+        assert registry._cache is recovered_cache
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Manifest (SDK)

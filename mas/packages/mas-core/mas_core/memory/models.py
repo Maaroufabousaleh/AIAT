@@ -67,6 +67,12 @@ documents = sa.Table(
     sa.Column(
         "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     ),
+    sa.Column(
+        "lineage_id",
+        sa.UUID(),
+        nullable=False,
+        comment="Stable root identifier shared by all immutable document revisions",
+    ),
     sa.Column("doc_type", sa.Text(), nullable=False),
     sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
     sa.Column("status", sa.Text(), nullable=False, server_default="DRAFT"),

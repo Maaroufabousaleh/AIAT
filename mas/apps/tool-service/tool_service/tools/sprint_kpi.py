@@ -7,6 +7,7 @@ KPI tools compute metrics from orchestrator-api data.
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from mas_core.protocols.enums import AgentRole
@@ -14,12 +15,20 @@ from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
 from ._orch_client import orch_get, orch_post
+from .infra import get_blob_client
 
 logger = logging.getLogger(__name__)
 
 _CSUITE = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE]
 _ADMIN = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.C_SUITE, AgentRole.ADMIN]
 _EXEC = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE]
+_KPI = [
+    AgentRole.ORCHESTRATOR,
+    AgentRole.EXECUTIVE,
+    AgentRole.C_SUITE,
+    AgentRole.ADMIN,
+    AgentRole.WORKER,
+]
 
 
 # ── Sprint ─────────────────────────────────────────────────────────────────
@@ -158,6 +167,7 @@ class IssueUpdateStatusTool(BaseTool):
             "payload": {
                 "action": "UPDATE_ISSUE_STATUS",
                 "issue_id": kwargs.get("issue_id", ""),
+                "project_id": kwargs.get("project_id", ""),
                 "status": kwargs.get("status", "IN_PROGRESS"),
                 "actual_hours": kwargs.get("actual_hours"),
             },
@@ -192,7 +202,8 @@ class KPIComputeSprintTool(BaseTool):
     name = "kpi.compute"
     group = ToolGroup.KPI_UTILITY
     description = "Compute KPI snapshot for a sprint."
-    allowed_roles = _CSUITE
+    allowed_roles = _KPI
+    blocked_roles = [AgentRole.SUB_AGENT]
     cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -224,7 +235,7 @@ class KPIComputeSprintTool(BaseTool):
             )
         task_completion_rate = completed_points / planned_points if planned_points > 0 else 0.0
 
-        return {
+        result = {
             "scope": "sprint",
             "project_id": project_id,
             "sprint_id": sprint.get("id"),
@@ -234,13 +245,27 @@ class KPIComputeSprintTool(BaseTool):
             "planned_points": planned_points,
             "completed_points": completed_points,
         }
+        persisted = await orch_post(
+            f"/projects/{project_id}/kpi",
+            {
+                "scope": "sprint",
+                "sprint_id": sprint.get("id"),
+                "estimation_accuracy": result["estimation_accuracy"],
+                "task_completion_rate": result["task_completion_rate"],
+                "velocity": result["velocity"],
+                "raw_data": result,
+            },
+        )
+        result["snapshot_id"] = persisted.get("id")
+        return result
 
 
 class KPIComputeProjectTool(BaseTool):
     name = "kpi.compute_project"
     group = ToolGroup.KPI_UTILITY
     description = "Compute project-level KPIs across all sprints."
-    allowed_roles = _CSUITE
+    allowed_roles = _KPI
+    blocked_roles = [AgentRole.SUB_AGENT]
     cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -259,7 +284,7 @@ class KPIComputeProjectTool(BaseTool):
         if total_estimated > 0:
             budget_adherence = min(1.0, total_estimated / total_actual) if total_actual > 0 else 1.0
 
-        return {
+        result = {
             "project_id": project_id,
             "total_velocity": total_velocity,
             "sprints_completed": completed_sprints,
@@ -269,13 +294,119 @@ class KPIComputeProjectTool(BaseTool):
             "total_actual_hours": round(total_actual, 2),
             "budget_adherence": round(budget_adherence, 4),
         }
+        persisted = await orch_post(
+            f"/projects/{project_id}/kpi",
+            {
+                "scope": "project",
+                "estimation_accuracy": round(
+                    min(1.0, total_actual / total_estimated) if total_estimated and total_actual else 0.0,
+                    4,
+                ),
+                "velocity": total_velocity,
+                "budget_adherence": round(budget_adherence, 4),
+                "raw_data": result,
+            },
+        )
+        result["snapshot_id"] = persisted.get("id")
+        return result
+
+
+class RetrospectiveGenerateTool(BaseTool):
+    name = "retrospective.generate"
+    group = ToolGroup.KPI_UTILITY
+    description = "Aggregate a closed sprint retrospective and persist its report artifact."
+    allowed_roles = _CSUITE
+    cache_ttl_seconds = 0
+    idempotent = False
+
+    async def execute(self, **kwargs: Any) -> Any:
+        project_id = str(kwargs.get("project_id") or "")
+        sprint_id = str(kwargs.get("sprint_id") or "")
+        if not project_id or not sprint_id:
+            raise ValueError("project_id and sprint_id are required")
+
+        sprints = await orch_get(f"/projects/{project_id}/sprints")
+        sprint = next((row for row in sprints if str(row.get("id")) == sprint_id), None)
+        if sprint is None:
+            raise ValueError(f"Sprint {sprint_id} not found")
+        issues = await orch_get(
+            f"/projects/{project_id}/issues",
+            params={"sprint_id": sprint_id},
+        )
+        snapshots = await orch_get(f"/projects/{project_id}/kpi")
+        completed = [
+            issue
+            for issue in issues
+            if str(issue.get("status") or "").upper() in {"DONE", "COMPLETED", "CLOSED"}
+        ]
+        blockers = [
+            issue
+            for issue in issues
+            if str(issue.get("status") or "").lower() in {"blocked", "blocker"}
+        ]
+        planned_points = int(sprint.get("planned_story_points") or 0)
+        completed_points = int(sprint.get("completed_story_points") or 0)
+        report = {
+            "report_type": "SPRINT_RETROSPECTIVE",
+            "project_id": project_id,
+            "sprint_id": sprint_id,
+            "sprint_number": sprint.get("sprint_number"),
+            "status": sprint.get("status"),
+            "goal": sprint.get("goal"),
+            "metrics": {
+                "planned_story_points": planned_points,
+                "completed_story_points": completed_points,
+                "velocity": completed_points,
+                "task_completion_rate": round(completed_points / planned_points, 4)
+                if planned_points
+                else 0.0,
+                "issue_count": len(issues),
+                "completed_issue_count": len(completed),
+                "blocked_issue_count": len(blockers),
+                "kpi_snapshot_count": len(snapshots) if isinstance(snapshots, list) else 0,
+            },
+            "completed_issue_ids": [str(issue.get("id")) for issue in completed],
+            "blocked_issue_ids": [str(issue.get("id")) for issue in blockers],
+        }
+        body = json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        key = f"retrospectives/sprint_{sprint.get('sprint_number')}.json"
+        blob = await get_blob_client()
+        ref = await blob.upload(
+            project_id=project_id,
+            key=key,
+            data=body,
+            content_type="application/json",
+        )
+        artifact = await orch_post(
+            f"/projects/{project_id}/artifacts",
+            {
+                "agent_id": str(kwargs.get("agent_id") or "exec_coo"),
+                "path": ref.key,
+                "metadata": {
+                    "project_id": project_id,
+                    "sprint_id": sprint_id,
+                    "report_type": "SPRINT_RETROSPECTIVE",
+                    "content_type": "application/json",
+                },
+                "sha256": ref.sha256,
+                "size_bytes": ref.size_bytes,
+            },
+        )
+        return {
+            "project_id": project_id,
+            "sprint_id": sprint_id,
+            "report": report,
+            "blob": ref.to_dict(),
+            "artifact": artifact,
+        }
 
 
 class KPIQueryHistoryTool(BaseTool):
     name = "kpi.query_history"
     group = ToolGroup.KPI_UTILITY
     description = "Query historical KPI data with filters."
-    allowed_roles = _EXEC
+    allowed_roles = _KPI
+    blocked_roles = [AgentRole.SUB_AGENT]
     cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
@@ -303,9 +434,14 @@ class KPIUpdateAgentProfileTool(BaseTool):
             "payload": {
                 "action": "UPDATE_AGENT_PROFILE",
                 "agent_id": kwargs.get("agent_id", ""),
-                "correction_factor": kwargs.get("correction_factor"),
-                "estimation_bias": kwargs.get("estimation_bias"),
-                "total_tasks_completed": kwargs.get("total_tasks_completed"),
+                "team_id": kwargs.get("team_id"),
+                "role": kwargs.get("role"),
+                "estimated_hours": kwargs.get("estimated_hours"),
+                "actual_hours": kwargs.get("actual_hours"),
+                "tasks_completed": kwargs.get(
+                    "tasks_completed", kwargs.get("total_tasks_completed", 1)
+                ),
+                "alpha": kwargs.get("alpha", 0.5),
             },
         }
         return await orch_post("/tasks", body)
@@ -359,6 +495,12 @@ class EstimationAdjustTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        agent_id = kwargs.get("agent_id")
+        if agent_id and kwargs.get("raw_estimate_hours") is not None:
+            return await orch_post(
+                f"/agent-profiles/{agent_id}/estimate",
+                {"raw_estimate_hours": kwargs.get("raw_estimate_hours")},
+            )
         body = {
             "team_id": "office_cfo",
             "payload": {

@@ -13,14 +13,38 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from mas_core.memory.storage import AgentStorage
 
 logger = logging.getLogger(__name__)
 
 MIRROR_BASE = Path(os.environ.get("WORKER_MIRROR_DIR", "workers/mirror"))
+
+
+def _safe_mirror_path(worker_key: str) -> Path:
+    """Resolve a worker mirror path without allowing root escape.
+
+    Worker names originate in manifests and are not trusted filesystem paths.
+    Resolve the candidate before every filesystem operation so absolute paths,
+    ``..`` traversal, and symlinked directories cannot redirect cleanup or git
+    operations outside the managed mirror root.
+    """
+    key = Path(str(worker_key))
+    if not key.parts or key == Path(".") or key.is_absolute() or ".." in key.parts:
+        raise ValueError("worker mirror key must be a relative, traversal-free name")
+
+    root = MIRROR_BASE.expanduser().resolve()
+    candidate = (root / key).resolve()
+    if candidate == root:
+        raise ValueError("worker mirror key must identify a child of the managed mirror root")
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("worker mirror path escapes the managed mirror root") from exc
+    return candidate
 
 
 async def ingest_repository(
@@ -44,7 +68,7 @@ async def ingest_repository(
     Path
         Path to the cloned mirror directory.
     """
-    mirror_path = MIRROR_BASE / worker_id
+    mirror_path = _safe_mirror_path(worker_id)
 
     if (mirror_path / ".git").exists():
         logger.info("Mirror already exists for %s, fetching updates", worker_id)
@@ -95,11 +119,14 @@ async def pull_upstream(
     if worker is None:
         raise ValueError(f"Worker {worker_id} not found")
 
-    wid = worker["name"]
-    mirror_path = MIRROR_BASE / wid
+    # Ingestion/evaluation use the immutable registry UUID as the mirror key;
+    # keep upgrades on that same key so deregistration can remove exactly one
+    # managed directory without consulting a user-controlled name.
+    mirror_key = str(worker_id)
+    mirror_path = _safe_mirror_path(mirror_key)
 
     if not (mirror_path / ".git").exists():
-        await ingest_repository(wid, source_repo, target_revision or worker.get("source_revision"))
+        await ingest_repository(mirror_key, source_repo, target_revision or worker.get("source_revision"))
     else:
         await _run_git("fetch", "origin", cwd=mirror_path)
         revision = target_revision or worker.get("source_revision") or "main"
@@ -131,7 +158,7 @@ async def pull_upstream(
         upstream_commit_sha=commit_sha,
     )
 
-    logger.info("Upstream pulled for %s: %s", wid, commit_sha)
+    logger.info("Upstream pulled for %s: %s", mirror_key, commit_sha)
     return commit_sha
 
 
@@ -166,15 +193,20 @@ async def check_for_updates(
 
 async def get_mirror_path(worker_id: str) -> Path | None:
     """Get the mirror path for a worker if it exists."""
-    mirror_path = MIRROR_BASE / worker_id
+    mirror_path = _safe_mirror_path(worker_id)
     if (mirror_path / ".git").exists():
         return mirror_path
     return None
 
 
+async def get_head_commit(mirror_path: Path) -> str:
+    """Return the immutable commit currently checked out in a managed mirror."""
+    return await _get_head_commit(mirror_path)
+
+
 async def remove_mirror(worker_id: str) -> None:
     """Remove a worker's mirror directory."""
-    mirror_path = MIRROR_BASE / worker_id
+    mirror_path = _safe_mirror_path(worker_id)
     if mirror_path.exists():
         shutil.rmtree(mirror_path)
         logger.info("Removed mirror for %s", worker_id)

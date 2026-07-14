@@ -544,8 +544,102 @@ class TestReclaimLogic:
 
 
 # ---------------------------------------------------------------------------
-# Consumer group helpers (unit tests with fakeredis or mocks)
+# Stream trimming and consumer group helpers
 # ---------------------------------------------------------------------------
+
+
+class TestStreamTrimming:
+    @pytest.mark.asyncio
+    async def test_empty_pel_uses_configured_maxlen(self):
+        from message_router.config import settings
+        from message_router.redis_client import trim_all_streams
+
+        redis = MagicMock()
+        redis.xpending_range = AsyncMock(return_value=[])
+        redis.xtrim = AsyncMock()
+        await trim_all_streams(redis)
+        assert redis.xtrim.await_count == len(settings.known_teams)
+        redis.xtrim.assert_any_await(
+            "stream:dept_production", maxlen=settings.stream_max_len, approximate=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_pending_entry_is_used_as_safe_minid_boundary(self):
+        from message_router.config import settings
+        from message_router.redis_client import trim_all_streams
+
+        redis = MagicMock()
+        redis.xpending_range = AsyncMock(
+            return_value=[{"message_id": "1700000000000-0", "consumer": "worker"}]
+        )
+        redis.xtrim = AsyncMock()
+        await trim_all_streams(redis)
+        assert redis.xtrim.await_count == len(settings.known_teams)
+        redis.xtrim.assert_any_await(
+            "stream:dept_production", minid="1700000000000-0", approximate=False
+        )
+
+
+class TestProjectScopedDelivery:
+    @pytest.mark.asyncio
+    async def test_mismatched_project_transfers_pending_entry_and_is_not_sent(self):
+        from collections import OrderedDict
+
+        from message_router.routes_ws import _deliver_entry
+
+        envelope = make_envelope(project_id="project-a")
+        ws = MagicMock()
+        ws.send_text = AsyncMock()
+        redis = MagicMock()
+        redis.xack = AsyncMock()
+        redis.xclaim = AsyncMock()
+        result = await _deliver_entry(
+            ws,
+            "dept_production",
+            "1-0",
+            {"envelope": envelope.model_dump_json()},
+            "project-scoped",
+            redis,
+            {},
+            OrderedDict(),
+            1000,
+            "project-b",
+        )
+        assert result is True
+        ws.send_text.assert_not_awaited()
+        redis.xack.assert_not_awaited()
+        redis.xclaim.assert_awaited_once_with(
+            "stream:dept_production",
+            "group:dept_production",
+            "project-scope:project-a",
+            0,
+            ["1-0"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_matching_project_is_sent(self):
+        from collections import OrderedDict
+
+        from message_router.routes_ws import _deliver_entry
+
+        envelope = make_envelope(project_id="project-a")
+        ws = MagicMock()
+        ws.send_text = AsyncMock()
+        redis = MagicMock()
+        result = await _deliver_entry(
+            ws,
+            "dept_production",
+            "1-0",
+            {"envelope": envelope.model_dump_json()},
+            "project-scoped",
+            redis,
+            {},
+            OrderedDict(),
+            1000,
+            "project-a",
+        )
+        assert result is True
+        ws.send_text.assert_awaited_once()
 
 
 class TestConsumerGroupHelpers:
@@ -643,6 +737,39 @@ class TestDLQSystemEvent:
         assert env.payload["event"] == "DLQ_ENTRY"
         assert env.payload["dlq_id"] == "dlq-123"
         assert env.payload["team_id"] == "dept_production"
+
+
+class TestDLQWriterSchema:
+    @pytest.mark.asyncio
+    async def test_write_dead_letter_matches_migrated_table(self, monkeypatch):
+        from message_router import dlq
+
+        project_id = uuid.uuid4()
+        env = make_envelope(project_id=str(project_id))
+        pool = MagicMock()
+        pool.fetchval = AsyncMock(return_value=42)
+        monkeypatch.setattr(dlq, "get_pool", AsyncMock(return_value=pool))
+
+        result = await dlq.write_dead_letter(
+            message_id=str(env.message_id),
+            team_id="dept_production",
+            entry_id="1-0",
+            envelope_json=env.model_dump_json(),
+            reason="max_attempts_exceeded",
+            retry_count=3,
+        )
+
+        assert result == "42"
+        sql, *args = pool.fetchval.await_args.args
+        assert "recipient_team" in sql
+        assert "failure_reason" in sql
+        assert "envelope_json" in sql
+        assert "RETURNING id" in sql
+        assert args[0] == str(env.message_id)
+        assert args[1] == "dept_production"
+        assert args[4] == project_id
+        assert args[5] == 3
+        assert args[6] == "max_attempts_exceeded"
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ C_SUITE_TEAMS: frozenset[str] = frozenset(
     {"office_cfo", "office_cio", "office_chrm", "office_cso", "office_cto"}
 )
 CTO_TEAM: str = "office_cto"
+CSO_TEAM: str = "office_cso"
 
 DEPT_TEAMS: frozenset[str] = frozenset(
     {"dept_production", "dept_system", "dept_qa", "dept_devops"}
@@ -173,6 +174,11 @@ C_SUITE_BASE_TOOLS: tuple[str, ...] = (
     "test.run",
     "review.submit",
     "review.submit_veto",
+    # KPI snapshots/history are advisory inputs for every chief and their
+    # delegated analysts.  CTO-only mutations remain in CTO_EXTRA_TOOLS.
+    "kpi.compute",
+    "kpi.compute_project",
+    "kpi.query_history",
     "approval.override_cso",
     "capability.search",
     "capability.list_workers",
@@ -182,9 +188,6 @@ C_SUITE_BASE_TOOLS: tuple[str, ...] = (
 CTO_EXTRA_TOOLS: tuple[str, ...] = (
     "sprint.*",
     "issue.*",
-    "kpi.compute",
-    "kpi.compute_project",
-    "kpi.query_history",
     "kpi.update_agent_profile",
     "velocity.report",
     "estimation.adjust",

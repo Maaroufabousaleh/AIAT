@@ -88,6 +88,10 @@ class ToolRegistry:
         for t in tools:
             self.register(t)
 
+    def set_cache(self, cache: ToolCache | None) -> None:
+        """Replace the cache backend after Redis reconnects or disconnects."""
+        self._cache = cache
+
     # ------------------------------------------------------------------
     # Per-worker tool grants
     # ------------------------------------------------------------------

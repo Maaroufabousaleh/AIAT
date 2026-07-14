@@ -272,11 +272,24 @@ async def evaluate_repository(
     dict
         Evaluation report with per-check results and overall verdict.
     """
-    from mas_core.worker_registry.ingestion import ingest_repository
+    from mas_core.worker_registry.ingestion import get_head_commit, ingest_repository
 
     if mirror_path is None:
         logger.info("No mirror_path provided; ingesting repository for evaluation")
         mirror_path = await ingest_repository(str(worker_id), source_repo)
+
+    worker = worker or {}
+    if not (
+        worker.get("version_pin")
+        or worker.get("source_revision")
+        or worker.get("upstream_commit_sha")
+    ):
+        commit_sha = await get_head_commit(mirror_path)
+        await storage.update_worker_upstream(
+            worker_id=worker_id,
+            upstream_commit_sha=commit_sha,
+        )
+        worker["upstream_commit_sha"] = commit_sha
 
     check_funcs = {
         "provenance": _check_provenance,
@@ -317,7 +330,9 @@ async def evaluate_repository(
                 "budget_latency",
                 "approval",
             }:
-                results[check_name] = await func(source_repo, mirror_path, worker or {})
+                results[check_name] = await func(source_repo, mirror_path, worker)
+            elif check_name == "manifest_validation":
+                results[check_name] = await func(source_repo, mirror_path, worker)
             else:
                 results[check_name] = await func(source_repo, mirror_path)
         except Exception as exc:
@@ -400,8 +415,9 @@ async def _check_version_pin(
 async def _check_manifest_validation(
     source_repo: str,
     mirror_path: Path | None,
+    worker: dict[str, Any] | None = None,
 ) -> dict:
-    """Validate the first recognized worker manifest in the repository."""
+    """Validate an upstream manifest or AIAT-owned wrapper adoption manifest."""
     if mirror_path is None:
         return {"passed": False, "score": 0.0, "details": "No mirror path provided"}
 
@@ -439,6 +455,42 @@ async def _check_manifest_validation(
                 "score": 0.0,
                 "details": f"Manifest {candidate.name} failed validation: {exc}",
             }
+
+    worker = worker or {}
+    wrapper_config = worker.get("wrapper_config")
+    adoption_manifest = (
+        wrapper_config.get("aiat_manifest") if isinstance(wrapper_config, dict) else None
+    )
+    if adoption_manifest is not None:
+        if worker.get("isolation_mode") != "wrapper":
+            return {
+                "passed": False,
+                "score": 0.0,
+                "details": "AIAT adoption manifest requires wrapper isolation mode",
+            }
+        try:
+            manifest = WorkerManifest.model_validate(adoption_manifest)
+        except Exception as exc:
+            return {
+                "passed": False,
+                "score": 0.0,
+                "details": f"AIAT adoption manifest failed validation: {exc}",
+            }
+        if manifest.metadata.source_repo and manifest.metadata.source_repo != source_repo:
+            return {
+                "passed": False,
+                "score": 0.0,
+                "details": "AIAT adoption manifest source does not match evaluated repository",
+            }
+        return {
+            "passed": True,
+            "score": 100.0,
+            "details": "Validated AIAT-owned wrapper adoption manifest",
+            "manifest_id": manifest.metadata.id,
+            "transport": manifest.runtime.transport,
+            "sandbox_profile": manifest.sandbox.profile,
+            "manifest_source": "worker_registry.wrapper_config",
+        }
 
     return {"passed": False, "score": 0.0, "details": "No AIAT worker manifest found"}
 

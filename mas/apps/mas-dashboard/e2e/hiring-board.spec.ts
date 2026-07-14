@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { authenticate } from "./auth";
 
-test("hiring board runs the live register, evaluate, approval, and status lifecycle", async ({
+test("hiring board blocks an external candidate until mandatory evaluation gates pass", async ({
   page,
 }) => {
   const candidateId = `e2e_candidate_${Date.now()}`;
@@ -57,21 +57,16 @@ test("hiring board runs the live register, evaluate, approval, and status lifecy
   });
   expect(approval.ok()).toBeTruthy();
   const approvalBody = await approval.json();
-  expect(approvalBody.action?.status).toBe("approved");
+  expect(approvalBody.action?.status).toBe("blocked");
+  expect(approvalBody.action?.response).toContain("cannot approve");
 
   await page.reload();
   await search.fill(candidateId);
   row = page.getByRole("row", { name: new RegExp(candidateId) });
-  await expect(row.getByText("approved", { exact: true })).toBeVisible();
-
-  await row.getByRole("button", { name: `Activate ${candidateId}` }).click();
-  await expect(row.getByText("Active", { exact: true })).toBeVisible();
-
-  await row.getByRole("button", { name: `Deactivate ${candidateId}` }).click();
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
-
   await row.getByRole("button", { name: `Activate ${candidateId}` }).click();
-  await expect(row.getByText("Active", { exact: true })).toBeVisible();
-  await row.getByRole("button", { name: `Drain ${candidateId}` }).click();
-  await expect(row.getByText("Draining", { exact: true })).toBeVisible();
+  await page.reload();
+  await search.fill(candidateId);
+  row = page.getByRole("row", { name: new RegExp(candidateId) });
+  await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
 });

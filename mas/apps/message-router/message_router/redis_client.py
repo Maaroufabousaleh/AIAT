@@ -247,11 +247,21 @@ async def reclaim_idle_messages(
 
 
 async def trim_all_streams(redis: Redis | None = None) -> None:
-    """Run ``XTRIM … MAXLEN ~ <max_len>`` on every known team stream."""
+    """Bound retained history without deleting entries still present in a PEL.
+
+    Redis ``XTRIM MAXLEN`` does not protect consumer-group pending entries.  If
+    a stream has pending work, trim only entries older than its oldest pending
+    ID.  Once the PEL is empty, use the configured approximate MAXLEN policy.
+    """
     r = redis or get_redis()
     for team_id in settings.known_teams:
         key = stream_key(team_id)
-        await r.xtrim(key, maxlen=settings.stream_max_len, approximate=True)
+        pending = await r.xpending_range(key, group_name(team_id), "-", "+", 1)
+        if pending:
+            oldest_pending = pending[0]["message_id"]
+            await r.xtrim(key, minid=oldest_pending, approximate=False)
+        else:
+            await r.xtrim(key, maxlen=settings.stream_max_len, approximate=True)
     logger.debug("Stream trim complete (maxlen~%d).", settings.stream_max_len)
 
 
@@ -264,6 +274,29 @@ async def xack(team_id: str, entry_id: str, redis: Redis | None = None) -> None:
     """Acknowledge a message — removes it from the PEL."""
     r = redis or get_redis()
     await r.xack(stream_key(team_id), group_name(team_id), entry_id)
+
+
+async def xclaim(
+    team_id: str,
+    consumer_id: str,
+    entry_id: str,
+    redis: Redis | None = None,
+) -> None:
+    """Transfer a pending entry to another consumer in the team group.
+
+    A project-scoped WebSocket can claim a different project's entry before
+    it has inspected the envelope.  Moving that entry to its deterministic
+    project-scope consumer keeps it pending without making it invisible to the
+    subscriber that owns the matching project.
+    """
+    r = redis or get_redis()
+    await r.xclaim(
+        stream_key(team_id),
+        group_name(team_id),
+        consumer_id,
+        0,
+        [entry_id],
+    )
 
 
 async def xdel(team_id: str, entry_id: str, redis: Redis | None = None) -> None:

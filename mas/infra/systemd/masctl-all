@@ -65,7 +65,7 @@ case "$COMMAND" in
         echo "MAS Services Status:"
         echo "===================="
         for service in "${SERVICES[@]}"; do
-            status=$(systemctl is-active mas-$service.service 2>/dev/null || echo "inactive")
+            status=$(systemctl is-active "mas-$service.service" 2>/dev/null) || status="inactive"
             printf "%-25s %s\n" "mas-$service.service" "$status"
         done
         ;;

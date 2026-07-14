@@ -2,7 +2,7 @@
  * Test 2 — Flow runtime: branching, approval, retry, escalation (UI / e2e)
  *
  * Prerequisites (set via env vars or defaults):
- *   PLAYWRIGHT_BASE_URL   — dashboard base URL (default: http://127.0.0.1:3000)
+ *   PLAYWRIGHT_BASE_URL   — dashboard base URL (default: http://127.0.0.1:4000)
  *   E2E_DASHBOARD_USERNAME — login username   (default: admin)
  *   E2E_DASHBOARD_PASSWORD — login password   (default: admin)
  *

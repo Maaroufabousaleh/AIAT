@@ -28,6 +28,7 @@ _WORKER = [
     AgentRole.ADMIN,
     AgentRole.WORKER,
 ]
+_KPI = list(_WORKER)
 
 
 def _entry(
@@ -443,27 +444,35 @@ _register(
         name="kpi.compute",
         group=ToolGroup.KPI_UTILITY,
         description="Compute KPI snapshot.",
-        allowed_roles=_CSUITE,
+        allowed_roles=_KPI,
         cache_ttl=30,
     ),
     _entry(
         name="kpi.compute_project",
         group=ToolGroup.KPI_UTILITY,
         description="Compute project-level KPIs across all sprints.",
-        allowed_roles=_CSUITE,
+        allowed_roles=_KPI,
         cache_ttl=30,
     ),
     _entry(
         name="kpi.query_history",
         group=ToolGroup.KPI_UTILITY,
         description="Query KPI history.",
-        allowed_roles=_EXEC,
+        allowed_roles=_KPI,
         cache_ttl=30,
     ),
     _entry(
         name="kpi.update_agent_profile",
         group=ToolGroup.KPI_UTILITY,
         description="Update agent profile from KPI data.",
+        allowed_roles=_CSUITE,
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="retrospective.generate",
+        group=ToolGroup.KPI_UTILITY,
+        description="Aggregate a closed sprint retrospective and persist its report artifact.",
         allowed_roles=_CSUITE,
         cache_ttl=0,
         idempotent=False,

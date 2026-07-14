@@ -4,18 +4,18 @@ After=network.target local-fs.target network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=oneshot
 WorkingDirectory=/opt/mas
 EnvironmentFile=-/opt/mas/.env
 ExecStart=/usr/local/bin/masctl team-dept-qa start
 ExecStop=/usr/local/bin/masctl team-dept-qa stop
 ExecReload=/usr/local/bin/masctl team-dept-qa restart
-Restart=unless-stopped
+RemainAfterExit=yes
 RestartSec=10
 TimeoutStartSec=60
 TimeoutStopSec=30
 
-MemoryLimit=512M
+MemoryMax=512M
 CPUQuota=50%
 
 [Install]

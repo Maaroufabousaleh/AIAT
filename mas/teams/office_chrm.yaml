@@ -21,6 +21,7 @@ admin:
     - document.get_latest
     - document.list
     - review.submit
+    - kpi.query_history
     - web_search
 
 workers:

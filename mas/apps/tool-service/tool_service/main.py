@@ -25,8 +25,9 @@ GET  /metrics                 Prometheus metrics.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import prometheus_client
 import redis.asyncio as aioredis
@@ -36,13 +37,63 @@ from mas_core.observability import configure_logging
 from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_TOTAL
 
 from .cache import ToolCache
-from .config import get_settings
+from .config import Settings, get_settings
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
 from .routes import router
 from .tools.all_tools import get_all_tools
 
 logger = logging.getLogger(__name__)
+
+_CACHE_RECONNECT_INTERVAL_SECONDS = 5.0
+
+
+async def _connect_cache(settings: Settings) -> tuple[aioredis.Redis, ToolCache]:
+    """Create and verify the Redis client used by the tool-result cache."""
+    redis_client = aioredis.from_url(
+        settings.redis_url,
+        username=settings.redis_username,
+        password=settings.redis_password,
+        decode_responses=True,
+    )
+    try:
+        await redis_client.ping()
+    except Exception:
+        await redis_client.aclose()
+        raise
+    return redis_client, ToolCache(redis_client)
+
+
+async def _recover_cache(
+    app: FastAPI,
+    registry: ToolRegistry,
+    settings: Settings,
+) -> None:
+    """Keep retrying a failed cache connection without restarting the service."""
+    while True:
+        await asyncio.sleep(_CACHE_RECONNECT_INTERVAL_SECONDS)
+        cache = getattr(app.state, "cache", None)
+        if cache is not None and await cache.healthcheck():
+            continue
+
+        stale_redis = getattr(app.state, "redis", None)
+        if stale_redis is not None:
+            await stale_redis.aclose()
+
+        app.state.cache = None
+        app.state.redis = None
+        registry.set_cache(None)
+
+        try:
+            redis_client, cache = await _connect_cache(settings)
+        except Exception:
+            logger.warning("Redis cache reconnect failed", exc_info=True)
+            continue
+
+        app.state.redis = redis_client
+        app.state.cache = cache
+        registry.set_cache(cache)
+        logger.info("Redis cache connection recovered")
 
 
 @asynccontextmanager
@@ -55,14 +106,7 @@ async def lifespan(app: FastAPI):
     cache: ToolCache | None = None
 
     try:
-        redis_client = aioredis.from_url(
-            settings.redis_url,
-            username=settings.redis_username,
-            password=settings.redis_password,
-            decode_responses=True,
-        )
-        await redis_client.ping()
-        cache = ToolCache(redis_client)
+        redis_client, cache = await _connect_cache(settings)
         logger.info("Redis connected (tool-cache DB 1)")
     except Exception:
         logger.warning("Redis unavailable — cache disabled", exc_info=True)
@@ -92,14 +136,24 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.redis = redis_client
 
+    cache_recovery_task = asyncio.create_task(
+        _recover_cache(app, registry, settings),
+        name="tool-cache-recovery",
+    )
+
     yield
+
+    cache_recovery_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await cache_recovery_task
 
     await close_browser_pool()
     await close_blob_client()
     await close_shared_memory_redis()
 
-    if redis_client:
-        await redis_client.aclose()
+    active_redis = getattr(app.state, "redis", None)
+    if active_redis:
+        await active_redis.aclose()
         logger.info("Redis connection closed")
 
 

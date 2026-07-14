@@ -11,17 +11,19 @@ This directory contains systemd service files and control scripts for managing t
 
 ## Installation
 
-1. Copy the systemd service files to the systemd directory:
+1. Install the AIAT `mas/` workspace at `/opt/mas`, then copy the systemd
+   service files and control scripts:
    ```bash
-   sudo cp mas-infra/systemd/mas-*.service /etc/systemd/system/
-   sudo cp mas-infra/systemd/masctl /usr/local/bin/
-   sudo cp mas-infra/systemd/masctl-all /usr/local/bin/
+   sudo mkdir -p /opt/mas
+   sudo cp -a . /opt/mas/
+   sudo cp infra/systemd/mas-*.service /etc/systemd/system/
+   sudo cp infra/systemd/masctl /usr/local/bin/
+   sudo cp infra/systemd/masctl-all /usr/local/bin/
    sudo chmod +x /usr/local/bin/masctl /usr/local/bin/masctl-all
    ```
 
 2. Copy the .env file to the mas directory:
    ```bash
-   sudo mkdir -p /opt/mas
    sudo cp .env /opt/mas/
    ```
 
@@ -96,15 +98,21 @@ The service files are designed to respect Docker Compose dependencies:
 
 ## Notes
 
-1. The `masctl` script acts as a bridge between systemd and docker-compose, allowing systemd to manage MAS services defined in docker-compose.yml.
+1. The `masctl` script uses the production Compose file by default. Set
+   `MAS_COMPOSE_MODE=dev` in the environment when the development overlay is
+   explicitly required. Set `MAS_ROOT` only when the workspace is installed
+   somewhere other than `/opt/mas`.
 
-2. Resource limits (MemoryLimit=512M, CPUQuota=50%) in the template service match the Docker Compose defaults. Adjust these values in individual service files if needed for specific services.
+2. Resource limits (`MemoryMax=512M`, `CPUQuota=50%`) constrain the short-lived
+   Compose controller process; container limits and restart behavior remain
+   owned by Docker Compose.
 
 3. For development or debugging, you may want to modify the WorkingDirectory and EnvironmentFile paths to match your local setup.
 
 4. The `redis-acl-init` service is configured with `Restart=no` as it's meant to run only once during initial setup.
 
-5. All services use `Restart=unless-stopped` to match the Docker Compose restart policy.
+5. Docker Compose owns container restart behavior. The systemd units remain
+   active after the short-lived Compose control command completes.
 
 ## Troubleshooting
 

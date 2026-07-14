@@ -48,6 +48,7 @@ from .redis_client import (
     get_redis,
     stream_key,
     xack,
+    xclaim,
     xreadgroup_new,
     xreadgroup_pending,
 )
@@ -55,6 +56,11 @@ from .redis_client import (
 logger = structlog.stdlib.get_logger(__name__)
 
 router = APIRouter()
+
+
+def _project_scope_consumer(project_id: str | None) -> str:
+    """Return the deterministic PEL consumer used for transferred scope work."""
+    return f"project-scope:{project_id or '__unscoped__'}"
 
 
 def _authenticate_token(auth_header: str | None) -> str | None:
@@ -115,8 +121,12 @@ async def recent_stream_entries(
 
 
 @router.websocket("/ws/subscribe/{team_id}")
-async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
-    """Agent WebSocket subscription — stream messages from ``stream:{team_id}``."""
+async def ws_subscribe(
+    ws: WebSocket,
+    team_id: str,
+    project_id: str | None = Query(default=None),
+) -> None:
+    """Subscribe to a team stream, optionally scoped to one project."""
     agent_id = _authenticate(ws)
     if agent_id is None:
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -138,6 +148,8 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
 
     redis = get_redis()
     consumer_id = agent_id
+    scope_consumer_id = _project_scope_consumer(project_id) if project_id else None
+    unscoped_consumer_id = _project_scope_consumer(None) if project_id is None else None
 
     pending_pings: dict[str, asyncio.Task[None]] = {}
 
@@ -145,21 +157,28 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
     max_delivered_ids = 1000
 
     try:
-        pending_entries = await xreadgroup_pending(team_id, consumer_id, redis)
-        for entry_id, fields in pending_entries:
-            delivered = await _deliver_entry(
-                ws,
-                team_id,
-                entry_id,
-                fields,
-                consumer_id,
-                redis,
-                pending_pings,
-                delivered_ids,
-                max_delivered_ids,
-            )
-            if not delivered:
-                break
+        pending_consumers = [consumer_id]
+        if scope_consumer_id and scope_consumer_id != consumer_id:
+            pending_consumers.append(scope_consumer_id)
+        elif unscoped_consumer_id and unscoped_consumer_id != consumer_id:
+            pending_consumers.append(unscoped_consumer_id)
+        for pending_consumer in pending_consumers:
+            pending_entries = await xreadgroup_pending(team_id, pending_consumer, redis)
+            for entry_id, fields in pending_entries:
+                delivered = await _deliver_entry(
+                    ws,
+                    team_id,
+                    entry_id,
+                    fields,
+                    pending_consumer,
+                    redis,
+                    pending_pings,
+                    delivered_ids,
+                    max_delivered_ids,
+                    project_id,
+                )
+                if not delivered:
+                    break
     except Exception:
         logger.exception("Error delivering PEL entries: agent=%s team=%s", agent_id, team_id)
 
@@ -173,6 +192,31 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
         )
 
         while ws.client_state == WebSocketState.CONNECTED:
+            # A scoped subscriber may have inherited entries transferred to
+            # its deterministic project consumer by another subscriber.  Read
+            # that PEL before claiming new work so transferred messages are
+            # delivered even when the subscriber connected later.
+            transferred_consumer = scope_consumer_id or unscoped_consumer_id
+            if transferred_consumer:
+                scoped_pending = await xreadgroup_pending(team_id, transferred_consumer, redis)
+                for entry_id, fields in scoped_pending:
+                    if ws.client_state != WebSocketState.CONNECTED:
+                        break
+                    delivered = await _deliver_entry(
+                        ws,
+                        team_id,
+                        entry_id,
+                        fields,
+                        transferred_consumer,
+                        redis,
+                        pending_pings,
+                        delivered_ids,
+                        max_delivered_ids,
+                        project_id,
+                    )
+                    if not delivered:
+                        break
+
             try:
                 entries = await xreadgroup_new(
                     team_id, consumer_id, block_ms=settings.read_block_ms, redis=redis
@@ -194,6 +238,7 @@ async def ws_subscribe(ws: WebSocket, team_id: str) -> None:
                     pending_pings,
                     delivered_ids,
                     max_delivered_ids,
+                    project_id,
                 )
                 if not delivered:
                     break
@@ -215,6 +260,7 @@ async def ws_subscribe_compat(
     ws: WebSocket,
     agent_id: str | None = None,
     team_id: str | None = None,
+    project_id: str | None = None,
 ) -> None:
     """Compatibility alias for the query-param subscribe route from the plan."""
     if team_id is None:
@@ -227,7 +273,7 @@ async def ws_subscribe_compat(
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-    await ws_subscribe(ws, team_id)
+    await ws_subscribe(ws, team_id, project_id)
 
 
 async def _deliver_entry(
@@ -240,6 +286,7 @@ async def _deliver_entry(
     pending_pings: dict[str, asyncio.Task[None]],
     delivered_ids: OrderedDict[str, None],
     max_delivered_ids: int,
+    project_id: str | None = None,
 ) -> bool:
     """Parse and send one stream entry to the agent.
 
@@ -271,6 +318,39 @@ async def _deliver_entry(
         return True
 
     msg_id = envelope.message_id
+    if project_id is not None and str(envelope.project_id) != project_id:
+        logger.debug(
+            "Project-scoped subscription suppressed entry: team=%s project=%s entry_project=%s entry_id=%s",
+            team_id,
+            project_id,
+            envelope.project_id,
+            entry_id,
+        )
+        # XREADGROUP has already placed the entry in this consumer's PEL.  Do
+        # not merely return: that would strand the entry until reclaim/DLQ and
+        # could prevent the matching project subscriber from ever seeing it.
+        # Transfer ownership to the deterministic consumer that matching
+        # project-scoped subscribers drain on connect and in their live loop.
+        target_consumer = _project_scope_consumer(envelope.project_id)
+        if target_consumer == consumer_id:
+            logger.error(
+                "Project scope consumer received a mismatched entry: team=%s consumer=%s entry_id=%s",
+                team_id,
+                consumer_id,
+                entry_id,
+            )
+            return False
+        try:
+            await xclaim(team_id, target_consumer, entry_id, redis)
+        except Exception:
+            logger.exception(
+                "Failed to transfer out-of-scope entry: team=%s entry_id=%s target=%s",
+                team_id,
+                entry_id,
+                target_consumer,
+            )
+            return False
+        return True
     if msg_id in delivered_ids:
         logger.debug(
             "Duplicate message_id suppressed (LRU): team=%s msg_id=%s entry_id=%s",

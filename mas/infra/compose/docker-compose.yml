@@ -9,8 +9,9 @@
 #
 # Environment:
 #   All env vars are sourced from the project root .env (c:\projects\AIAT\.env).
-#   Service env_file paths resolve from this Compose file, so every service
-#   reads the repository-root .env directly on a clean checkout.
+#   Platform service env_file paths resolve from this Compose file; team
+#   runners receive only the explicitly allowlisted gateway/runtime variables
+#   below so provider keys never enter agent containers.
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
@@ -36,18 +37,6 @@ x-team-env: &team-env
   LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
   LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
-  # ── Provider API keys (read by mas-core provider modules at runtime) ──────
-  GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
-  OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-  GROQ_API_KEY: "${GROQ_API_KEY:-}"
-  CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
-  MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
-  CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
-  CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
-  MINIMAX_API_KEY: "${MINIMAX_API_KEY:-}"
-  NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
-  OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-  OPENCODE_API_KEY: "${OPENCODE_API_KEY:-public}"
 
 # ── Shared team defaults ───────────────────────────────────────────────────
 x-team-defaults: &team-defaults
@@ -61,9 +50,6 @@ x-team-defaults: &team-defaults
     - public
   mem_limit: 512m
   cpus: "0.5"
-  env_file:
-    - path: ../../../.env
-      format: raw
   depends_on:
     message-router:
       condition: service_healthy
@@ -120,7 +106,10 @@ services:
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
-    command: redis-server /etc/redis/redis.conf
+    command: >-
+      sh -c 'if [ ! -f /data/users.acl ]; then
+      printf "%s\n" "user default on >redis_init_temp_pass ~* +@all" > /data/users.acl;
+      fi; exec redis-server /etc/redis/redis.conf'
     env_file:
       - path: ../../../.env
         format: raw
@@ -258,6 +247,7 @@ services:
       REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       REDIS_USERNAME: "router_user"
       REDIS_PASSWORD: "${ROUTER_PASSWORD}"
+      POSTGRES_DSN: "postgresql://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
     mem_limit: 512m

@@ -59,33 +59,34 @@ expect_ok() {
     fi
 }
 
-# Configure router_user - use ACL categories (@stream) instead of individual commands
-# which provides better compatibility with Redis 7 ACL changes
+# Configure router_user with only the commands used by message-router.
 expect_ok redis_admin \
-    ACL SETUSER router_user on ">${ROUTER_PASS}" "~stream:*" "~dedupe:*" "~heartbeat:*" \
-    +@stream +@write +@read +@slow +ping
+    ACL SETUSER router_user on ">${ROUTER_PASS}" resetkeys -@all \
+    "~stream:*" "~dedupe:*" "~heartbeat:*" \
+    +ping +get +set +del +xgroup +xadd +xautoclaim +xclaim +xtrim +xack +xdel \
+    +xreadgroup +xrange +xrevrange +xpending
 echo "  - router_user configured"
 
-# Configure toolcache_user
+# Configure toolcache_user with only cache CRUD commands.
 expect_ok redis_admin \
-    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" "~tool_cache:*" "~shared:*" \
-    +@read +@write +@slow +ping +select
+    ACL SETUSER toolcache_user on ">${TOOLCACHE_PASS}" resetkeys -@all \
+    "~tool_cache:*" "~shared:*" +ping +select +get +set +setex +del
 echo "  - toolcache_user configured"
 
-# Disable default user
+# Persist ACL to disk while the temporary admin identity is still available;
+# the restricted router user must never receive ACL administration commands.
+if redis_admin ACL SAVE > /dev/null 2>&1; then
+    echo "  - ACL persisted to disk (ACL SAVE)"
+else
+    echo "  - ACL SAVE failed" >&2
+    exit 1
+fi
+
+# Disable default user only after users.acl has been written.
 expect_ok redis_admin ACL SETUSER default off
 echo "  - default user disabled"
 
-# Persist ACL to disk when Redis is configured with an ACL file. The compose
-# config defines users inline at startup, so ACL SAVE can be unavailable.
-if redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL SAVE > /dev/null 2>&1; then
-    echo "  - ACL persisted to disk (ACL SAVE)"
-else
-    echo "  - ACL SAVE skipped; Redis is not configured with an ACL file"
-fi
-
 echo ""
-echo "ACL configuration complete. Current users:"
-redis-cli -u "redis://router_user:${ROUTER_PASS}@${REDIS_HOST}:${REDIS_PORT}" ACL LIST | head -20
+echo "ACL configuration complete. Restricted-user PING checks passed during startup."
 
 exit 0

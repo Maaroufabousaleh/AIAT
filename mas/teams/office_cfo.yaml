@@ -19,6 +19,8 @@ admin:
     - document.get_latest
     - document.list
     - review.submit
+    - kpi.compute
+    - kpi.query_history
     - web_search
     - web_fetch
 

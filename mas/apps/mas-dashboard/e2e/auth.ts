@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 import { SignJWT } from "jose";
 
 export async function authenticate(page: Page, targetPath = "/"): Promise<void> {
-  const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+  const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:4000";
   const url = new URL(baseURL);
   const secret = new TextEncoder().encode(
     process.env.JWT_SECRET ?? "bX0wVUKd4M214L8laNitaXJWdBgoCavZ9o0Xr/MhLnw="

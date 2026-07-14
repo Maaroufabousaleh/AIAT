@@ -284,26 +284,91 @@ def _parse_github_repo(repo_url: str) -> tuple[str, str]:
     return match.group("owner"), match.group("repo")
 
 
+def _same_github_repo(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return tuple(part.lower() for part in _parse_github_repo(left)) == tuple(
+            part.lower() for part in _parse_github_repo(right)
+        )
+    except HTTPException:
+        return left.rstrip("/").removesuffix(".git").lower() == right.rstrip("/").removesuffix(".git").lower()
+
+
 def _slugify_worker_name(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug or "hired_worker"
 
 
 def _department_for_hiring_text(text: str) -> str:
+    return _department_from_text(text) or "office_chrm"
+
+
+DEPARTMENT_ALIASES: dict[str, tuple[str, ...]] = {
+    "dept_qa": ("dept_qa", "qa", "quality", "test", "testing", "tester"),
+    "office_cso": ("office_cso", "cso", "security", "secure", "security office"),
+    "dept_devops": ("dept_devops", "devops", "infra", "infrastructure", "sre", "platform"),
+    "dept_production": (
+        "dept_production",
+        "production",
+        "software",
+        "engineering",
+        "engineer",
+        "developer",
+        "coding",
+        "implementation",
+    ),
+    "office_cfo": ("office_cfo", "cfo", "budget", "cost", "finance", "financial"),
+    "office_chrm": ("office_chrm", "chrm", "hr", "hiring", "people", "resource", "resources"),
+}
+
+
+def _department_from_text(text: str) -> str | None:
     lowered = text.lower()
-    if any(token in lowered for token in ("qa", "quality", "test", "tester")):
-        return "dept_qa"
-    if any(token in lowered for token in ("security", "cso", "secure")):
-        return "office_cso"
-    if any(token in lowered for token in ("devops", "infra", "sre", "platform")):
-        return "dept_devops"
-    if any(token in lowered for token in ("software", "engineer", "developer", "coding", "code")):
-        return "dept_production"
-    if any(token in lowered for token in ("budget", "cost", "finance", "financial")):
-        return "office_cfo"
-    if any(token in lowered for token in ("hr", "hiring", "people", "resource")):
-        return "office_chrm"
-    return "office_chrm"
+    for team_id, aliases in DEPARTMENT_ALIASES.items():
+        if team_id in lowered:
+            return team_id
+        for alias in aliases:
+            if re.search(rf"(?<![a-z0-9_-]){re.escape(alias)}(?![a-z0-9_-])", lowered):
+                return team_id
+    return None
+
+
+def _target_department_for_reclassification_text(text: str) -> str | None:
+    lowered = text.lower()
+    directional = re.search(
+        r"\b(?:to|into|under|as|for)\s+(?:the\s+)?(?P<target>[a-z0-9_ -]{2,80})",
+        lowered,
+    )
+    if directional:
+        target = re.split(r"[.;,?]|\b(?:because|after|before|once|and then)\b", directional.group("target"), maxsplit=1)[0]
+        department = _department_from_text(target)
+        if department:
+            return department
+
+    explicit = re.search(
+        r"\b(?:team|department|dept|office)\s+(?P<target>[a-z0-9_ -]{2,80})",
+        lowered,
+    )
+    if explicit:
+        target = re.split(r"[.;,?]|\b(?:because|after|before|once|and then)\b", explicit.group("target"), maxsplit=1)[0]
+        department = _department_from_text(target)
+        if department:
+            return department
+
+    return _department_from_text(text)
+
+
+def _department_hiring_reason(team_id: str) -> str:
+    reasons = {
+        "dept_qa": "QA owns test automation, quality gates, regression checks, and test-worker capacity.",
+        "office_cso": "CSO owns defensive security analysis, sandbox risk, scanner results, and security approval.",
+        "dept_devops": "DevOps owns infrastructure, SRE, deployment, platform, and operational automation workers.",
+        "dept_production": "Production owns implementation workers: software engineering, coding, feature build, and product delivery.",
+        "office_cfo": "CFO owns budget, cost, financial analysis, and KPI/cost-estimation workers.",
+        "office_chrm": "CHRM owns hiring intake, staffing, resource planning, and general worker onboarding.",
+    }
+    return reasons.get(team_id, "CHRM owns general hiring intake when the target department is ambiguous.")
 
 
 def _transport_for_hiring_text(text: str) -> str:
@@ -334,16 +399,67 @@ def _version_pin_for_hiring_text(text: str) -> str | None:
 def _worker_name_from_hiring_text(text: str, repo_url: str) -> str:
     _, repo_name = _parse_github_repo(repo_url)
     without_url = GITHUB_REPO_IN_TEXT_RE.sub("", text)
-    match = re.search(
-        r"\bhire\s+(?:an?\s+)?(?:agent|worker|engineer|developer|specialist)?\s*(?:named|called)?\s*([A-Za-z][A-Za-z0-9 _.-]{1,48}?)(?:\s+(?:from|as|for|in|into|to|with)\b|$)",
+    explicit = re.search(
+        r"\b(?:named|called)\s+['\"]?([A-Za-z][A-Za-z0-9 _.-]{1,48}?)['\"]?(?:[.;]|$|\s+(?:from|as|for|in|into|to|with)\b)",
         without_url,
         flags=re.IGNORECASE,
     )
-    if match:
-        candidate = match.group(1).strip(" ._-")
-        if candidate and candidate.lower() not in {"agent", "worker", "engineer", "developer"}:
+    if explicit:
+        candidate = explicit.group(1).strip(" ._-")
+        if candidate:
+            return _slugify_worker_name(candidate)
+
+    pre_source = re.search(
+        r"\bhire\s+(?:an?\s+)?([A-Za-z][A-Za-z0-9 _.-]{1,48}?)\s+(?:from|for)\b",
+        without_url,
+        flags=re.IGNORECASE,
+    )
+    if pre_source:
+        candidate = pre_source.group(1).strip(" ._-")
+        generic = {"agent", "worker", "engineer", "developer", "specialist"}
+        if candidate and candidate.lower() not in generic:
             return _slugify_worker_name(candidate)
     return _slugify_worker_name(repo_name.removesuffix(".git"))
+
+
+def _wrapper_manifest_for_hiring(
+    *,
+    worker_name: str,
+    repo_url: str,
+    team_id: str,
+    adapter_type: str,
+    sandbox_profile: str,
+    version_pin: str | None,
+) -> dict[str, Any]:
+    """Build the AIAT-owned adapter contract for an external OSS candidate."""
+    return {
+        "protocol_version": "aiat.v1",
+        "metadata": {
+            "id": worker_name,
+            "name": worker_name.replace("_", " ").title(),
+            "version": "1.0",
+            "source_repo": repo_url,
+            "version_pin": version_pin,
+            "update_policy": "manual",
+            "evaluation_status": "pending",
+            "tags": ["worker", team_id, "ceo_chat_hiring"],
+        },
+        "runtime": {
+            "transport": adapter_type,
+            "adapter_config": {"entrypoint": "WorkerAgent"},
+        },
+        "integration": {
+            "adapter_entrypoint": "WorkerAgent",
+            "wrapper_config": {},
+            "isolation_mode": "wrapper",
+        },
+        "sandbox": {
+            "profile": sandbox_profile,
+            "network_mode": "egress-allowlist",
+            "egress_allowlist": ["api.github.com:443", "github.com:443"],
+        },
+        "runtime_tier": "external",
+    }
 
 
 def _extract_uuid_from_text(text: str, *, skip: str | None = None) -> str | None:
@@ -697,6 +813,65 @@ class DecisionRequest(BaseModel):
     comments: str | None = None
     edits: dict[str, Any] | None = None
     decided_by: str = "human"
+
+
+class CreateDocumentRequest(BaseModel):
+    """Metadata for a project document body stored in object storage."""
+
+    doc_type: str = Field(..., min_length=1, max_length=100)
+    created_by: str = "human"
+    blob_bucket: str | None = None
+    blob_key: str | None = None
+    blob_sha256: str | None = None
+
+
+class DocumentStatusRequest(BaseModel):
+    status: str = Field(..., min_length=1, max_length=40)
+
+
+class CreateDocumentRevisionRequest(BaseModel):
+    created_by: str = "human"
+    blob_bucket: str | None = None
+    blob_key: str | None = None
+    blob_sha256: str | None = None
+
+
+class KpiSnapshotRequest(BaseModel):
+    scope: str = Field(..., min_length=1, max_length=40)
+    sprint_id: UUID | None = None
+    estimation_accuracy: float | None = None
+    task_completion_rate: float | None = None
+    review_pass_rate: float | None = None
+    velocity: float | None = None
+    defect_rate: float | None = None
+    rework_rate: float | None = None
+    budget_adherence: float | None = None
+    resource_utilization: float | None = None
+    infra_lead_time_seconds: int | None = None
+    raw_data: dict[str, Any] | None = None
+
+
+class AgentProfileObservationRequest(BaseModel):
+    """One completed-work observation used to update a durable agent profile."""
+
+    team_id: str | None = None
+    role: str | None = None
+    estimated_hours: float = Field(default=0, ge=0)
+    actual_hours: float = Field(default=0, ge=0)
+    tasks_completed: int = Field(default=1, ge=0)
+    alpha: float = Field(default=0.5, gt=0, le=1)
+
+
+class AgentEstimateRequest(BaseModel):
+    raw_estimate_hours: float = Field(..., ge=0)
+
+
+class CreateArtifactRequest(BaseModel):
+    agent_id: str = "orchestrator"
+    path: str = Field(..., min_length=1, max_length=1000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    sha256: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
 
 
 class ScheduleRequest(BaseModel):
@@ -1189,6 +1364,40 @@ def _controller() -> WorkflowController:
     return app.state.controller
 
 
+async def _ensure_workflow_approval_gate(
+    storage: AgentStorage,
+    project_id: UUID,
+    next_state: ProjectState,
+) -> None:
+    """Create the human gate exposed by the canonical project workflow.
+
+    Flow instances create gates when an approval node is activated.  The
+    built-in project state machine has two equivalent human checkpoints but
+    historically only changed ``projects.state``.  Keep the gate creation at
+    the API's sole transition boundary so both direct workflow events and flow
+    integrations expose the same operator decision surface.  The coroutine
+    check keeps lightweight route-test doubles (plain ``MagicMock`` storage)
+    from being mistaken for a live database.
+    """
+    gate_type_by_state = {
+        ProjectState.FEASIBILITY_REPORT: "feasibility",
+        ProjectState.HUMAN_APPROVAL: "human_approval",
+    }
+    gate_type = gate_type_by_state.get(next_state)
+    if gate_type is None:
+        return
+
+    list_gates = getattr(storage, "list_approval_gates", None)
+    create_gate = getattr(storage, "create_approval_gate", None)
+    if not inspect.iscoroutinefunction(list_gates) or not inspect.iscoroutinefunction(create_gate):
+        return
+
+    pending = await list_gates(project_id=project_id, status="PENDING", limit=100)
+    if pending:
+        return
+    await create_gate(project_id=project_id, gate_type=gate_type)
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
@@ -1239,6 +1448,12 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         )
     except InvalidTransitionError:
         logger.warning("Could not auto-transition new project %s", pid)
+
+    # Return the authoritative post-transition row rather than the INSERT
+    # snapshot, so callers never observe a stale INIT state.
+    refreshed_project = await storage.get_project(UUID(pid))
+    if refreshed_project is not None:
+        project = refreshed_project
 
     # Publish a DIRECTIVE to CEO to start feasibility
     envelope = {
@@ -1396,6 +1611,48 @@ async def list_project_artifacts(
     if await storage.get_project(project_id) is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.post("/projects/{project_id}/artifacts", status_code=201)
+async def create_project_artifact(
+    project_id: UUID,
+    req: CreateArtifactRequest,
+) -> dict[str, Any]:
+    """Register project-scoped artifact metadata after a blob upload."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    metadata = dict(req.metadata)
+    # The route is the authority for ownership.  Do not let caller-supplied
+    # metadata attribute an artifact to another project.
+    metadata["project_id"] = str(project_id)
+    artifact = await storage.create_artifact(
+        agent_id=req.agent_id,
+        path=req.path,
+        metadata=metadata,
+        sha256=req.sha256,
+        size_bytes=req.size_bytes,
+    )
+    return _serialize(artifact)
+
+
+@app.delete("/projects/{project_id}/artifacts/{artifact_id}")
+async def delete_project_artifact(project_id: UUID, artifact_id: int) -> dict[str, str]:
+    """Delete one project-scoped artifact metadata row after blob cleanup."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    artifact = await storage.get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(404, f"Artifact {artifact_id} not found")
+    metadata = artifact.get("metadata") or {}
+    path = str(artifact.get("path") or "")
+    if str(metadata.get("project_id") or "") != str(project_id) and not path.startswith(
+        f"{project_id}/"
+    ):
+        raise HTTPException(404, f"Artifact {artifact_id} not found for project {project_id}")
+    await storage.delete_artifact(artifact_id)
+    return {"status": "deleted"}
 
 
 @app.get("/projects/{project_id}/issues")
@@ -1565,6 +1822,16 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
             f"Stale state conflict: {e}. Re-read the project and retry.",
         )
 
+    # Surface the two built-in human checkpoints through the same approval-gate
+    # API used by flow instances.  This is deliberately after the atomic state
+    # transition so a pending gate can never point at a state the project did
+    # not actually reach.
+    await _ensure_workflow_approval_gate(
+        storage,
+        project_id,
+        ProjectState(result.next_state),
+    )
+
     # Update Prometheus project-state gauge and transition counter
     try:
         MAS_PROJECT_STATE.labels(
@@ -1659,6 +1926,7 @@ async def get_pending_decisions(project_id: UUID) -> list[dict[str, Any]]:
 async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, Any]:
     """Human submits a decision (approve/reject/edit)."""
     storage = _storage()
+    decision = req.decision.upper()
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
@@ -1689,7 +1957,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
     # Record decision
     await storage.decide_approval_gate(
         gate_id,
-        status=req.decision,
+        status=decision,
         decided_by=req.decided_by,
         justification=req.comments,
         human_input=req.edits,
@@ -1702,7 +1970,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
         "EDITS": WorkflowEvent.HUMAN_EDITS,
         "CANCELLED": WorkflowEvent.HUMAN_CANCELLED,
     }
-    event = decision_to_event.get(req.decision.upper())
+    event = decision_to_event.get(decision)
     if event is None:
         return {"status": "decision_recorded", "gate_id": str(gate_id)}
 
@@ -1767,6 +2035,37 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+DOCUMENT_STATUSES = {
+    "DRAFT",
+    "IN_REVIEW",
+    "APPROVED",
+    "REJECTED",
+    "NEEDS_REVISION",
+    "SUPERSEDED",
+    "ARCHIVED",
+}
+
+
+@app.post("/projects/{project_id}/documents", status_code=201)
+async def create_project_document(
+    project_id: UUID,
+    req: CreateDocumentRequest,
+) -> dict[str, Any]:
+    """Create a version-one document metadata row."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    document = await storage.create_document(
+        project_id=project_id,
+        doc_type=req.doc_type,
+        created_by=req.created_by,
+        blob_bucket=req.blob_bucket,
+        blob_key=req.blob_key,
+        blob_sha256=req.blob_sha256,
+    )
+    return _serialize(document)
+
+
 @app.get("/projects/{project_id}/documents")
 async def list_documents(
     project_id: UUID,
@@ -1778,6 +2077,51 @@ async def list_documents(
     return [_serialize(d) for d in docs]
 
 
+@app.post("/projects/{project_id}/documents/{doc_id}/revisions", status_code=201)
+async def create_project_document_revision(
+    project_id: UUID,
+    doc_id: UUID,
+    req: CreateDocumentRevisionRequest,
+) -> dict[str, Any]:
+    """Append the next immutable version of a project document."""
+    storage = _storage()
+    source = await storage.get_document(doc_id)
+    if source is None or source.get("project_id") != project_id:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    try:
+        revision = await storage.create_document_revision(
+            doc_id,
+            created_by=req.created_by,
+            blob_bucket=req.blob_bucket,
+            blob_key=req.blob_key,
+            blob_sha256=req.blob_sha256,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _serialize(revision)
+
+
+@app.patch("/projects/{project_id}/documents/{doc_id}/status")
+async def update_project_document_status(
+    project_id: UUID,
+    doc_id: UUID,
+    req: DocumentStatusRequest,
+) -> dict[str, Any]:
+    """Move a document through its review lifecycle."""
+    storage = _storage()
+    document = await storage.get_document(doc_id)
+    if document is None or document.get("project_id") != project_id:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    status = req.status.upper()
+    if status not in DOCUMENT_STATUSES:
+        raise HTTPException(400, f"Unsupported document status: {req.status}")
+    await storage.update_document_status(doc_id, status=status)
+    updated = await storage.get_document(doc_id)
+    if updated is None:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    return _serialize(updated)
+
+
 @app.get("/projects/{project_id}/documents/{doc_id}")
 async def get_document(project_id: UUID, doc_id: UUID) -> dict[str, Any]:
     """Get document details including blob reference for download."""
@@ -1786,6 +2130,32 @@ async def get_document(project_id: UUID, doc_id: UUID) -> dict[str, Any]:
     if doc is None or doc.get("project_id") != project_id:
         raise HTTPException(404, f"Document {doc_id} not found")
     return _serialize(doc)
+
+
+@app.get("/projects/{project_id}/review-sessions")
+async def list_project_review_sessions(
+    project_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    """Return durable COO review sessions for a project."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    sessions = await storage.list_review_sessions(project_id, limit=limit)
+    for session in sessions:
+        session["comments"] = await storage.get_review_comments(session["id"])
+    return [_serialize(session) for session in sessions]
+
+
+@app.get("/projects/{project_id}/review-sessions/{session_id}")
+async def get_project_review_session(project_id: UUID, session_id: UUID) -> dict[str, Any]:
+    """Return one durable review session with reviewer comments."""
+    storage = _storage()
+    session = await storage.get_review_session(session_id)
+    if session is None or session.get("project_id") != project_id:
+        raise HTTPException(404, f"Review session {session_id} not found")
+    session["comments"] = await storage.get_review_comments(session_id)
+    return _serialize(session)
 
 
 @app.get("/projects/{project_id}/feasibility")
@@ -1805,6 +2175,105 @@ async def get_sprints(project_id: UUID) -> list[dict[str, Any]]:
     storage = _storage()
     sprints = await storage.list_sprints(project_id)
     return [_serialize(s) for s in sprints]
+
+
+@app.get("/projects/{project_id}/kpi")
+async def list_project_kpi(
+    project_id: UUID,
+    scope: str | None = None,
+) -> list[dict[str, Any]]:
+    """List persisted KPI snapshots for a project."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    snapshots = await storage.list_kpi_snapshots(project_id, scope=scope)
+    return [_serialize(snapshot) for snapshot in snapshots]
+
+
+@app.post("/projects/{project_id}/kpi", status_code=201)
+async def save_project_kpi(
+    project_id: UUID,
+    req: KpiSnapshotRequest,
+) -> dict[str, Any]:
+    """Persist one computed KPI snapshot."""
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if req.sprint_id is not None:
+        sprint = await storage.get_sprint(req.sprint_id)
+        if sprint is None or str(sprint.get("project_id")) != str(project_id):
+            raise HTTPException(404, f"Sprint {req.sprint_id} not found for project {project_id}")
+    snapshot = await storage.save_kpi_snapshot(
+        project_id=project_id,
+        scope=req.scope,
+        sprint_id=req.sprint_id,
+        estimation_accuracy=req.estimation_accuracy,
+        task_completion_rate=req.task_completion_rate,
+        review_pass_rate=req.review_pass_rate,
+        velocity=req.velocity,
+        defect_rate=req.defect_rate,
+        rework_rate=req.rework_rate,
+        budget_adherence=req.budget_adherence,
+        resource_utilization=req.resource_utilization,
+        infra_lead_time_seconds=req.infra_lead_time_seconds,
+        raw_data=req.raw_data,
+    )
+    return _serialize(snapshot)
+
+
+@app.get("/agent-profiles/{agent_id}")
+async def get_agent_profile(agent_id: str) -> dict[str, Any]:
+    """Read one durable estimation-learning profile."""
+    storage = _storage()
+    profile = await storage.get_agent_profile(agent_id)
+    if profile is None:
+        raise HTTPException(404, f"Agent profile {agent_id} not found")
+    return _serialize(profile)
+
+
+@app.post("/agent-profiles/{agent_id}/observations", status_code=201)
+async def observe_agent_profile(
+    agent_id: str,
+    req: AgentProfileObservationRequest,
+) -> dict[str, Any]:
+    """Persist a completed-work observation using the documented EMA."""
+    storage = _storage()
+    try:
+        profile = await storage.observe_agent_profile(
+            agent_id=agent_id,
+            team_id=req.team_id,
+            role=req.role,
+            estimated_hours=req.estimated_hours,
+            actual_hours=req.actual_hours,
+            tasks_completed=req.tasks_completed,
+            alpha=req.alpha,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _serialize(profile)
+
+
+@app.post("/agent-profiles/{agent_id}/estimate")
+async def estimate_with_agent_profile(
+    agent_id: str,
+    req: AgentEstimateRequest,
+) -> dict[str, Any]:
+    """Apply a learned correction factor and additive bias to a raw estimate."""
+    storage = _storage()
+    profile = await storage.get_agent_profile(agent_id)
+    if profile is None:
+        raise HTTPException(404, f"Agent profile {agent_id} not found")
+    factor = float(profile.get("correction_factor") or 1)
+    bias = float(profile.get("estimation_bias") or 0)
+    adjusted = max(0.0, (req.raw_estimate_hours * factor) + bias)
+    return {
+        "agent_id": agent_id,
+        "raw_estimate_hours": req.raw_estimate_hours,
+        "correction_factor": factor,
+        "estimation_bias": bias,
+        "adjusted_estimate_hours": round(adjusted, 4),
+        "profile": _serialize(profile),
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2207,22 +2676,50 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
     if row is None:
         raise HTTPException(404, f"Dead letter {letter_id} not found")
 
-    envelope = row["envelope_json"]
-    if not isinstance(envelope, dict):
+    stored_envelope = row["envelope_json"]
+    if not isinstance(stored_envelope, dict):
         raise HTTPException(400, "Dead letter has invalid envelope")
 
-    # Re-assign a new message_id for idempotency
+    # Replay is a new delivery attempt: preserve forensic source data while
+    # resetting the fields that caused the original entry to expire/exhaust.
+    envelope = dict(stored_envelope)
     envelope["message_id"] = str(uuid4())
+    envelope["retry_count"] = 0
+    envelope["timestamp"] = datetime.now(tz=UTC).isoformat()
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if resp.status_code not in (200, 201):
                 raise HTTPException(502, f"Router returned {resp.status_code}")
+            router_result = resp.json()
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Failed to replay: {e}")
 
-    return {"status": "replayed", "new_message_id": envelope["message_id"]}
+    await storage.create_task_log(
+        task_id=UUID(envelope["message_id"]),
+        agent_id="human_operator",
+        team_id=row["recipient_team"],
+        status="DLQ_REPLAYED",
+        input_data={
+            "dead_letter_id": letter_id,
+            "original_message_id": row["message_id"],
+            "failure_reason": row["failure_reason"],
+        },
+        output_data={
+            "new_message_id": envelope["message_id"],
+            "router_entry_id": router_result.get("entry_id"),
+            "retry_count": 0,
+        },
+        trace_id=envelope["message_id"],
+    )
+
+    return {
+        "status": "replayed",
+        "new_message_id": envelope["message_id"],
+        "entry_id": router_result.get("entry_id"),
+        "audit_task_id": envelope["message_id"],
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2237,6 +2734,142 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
     bind_trace_id(tid)
 
     team_id = body.get("team_id", "exec_ceo")
+    task_payload = dict(body.get("payload") or {})
+    action = str(task_payload.get("action") or "").upper()
+    project_id = body.get("project_id") or task_payload.get("project_id")
+
+    # Sprint/issue tools use this endpoint as their central persistence
+    # boundary.  Handle the small deterministic CRUD actions here so a tool
+    # call cannot appear successful merely because an ADMIN_TASK was queued to
+    # a team with no action handler.  Unknown actions retain the normal routed
+    # task behavior used by agent conversations.
+    if action in {
+        "CREATE_SPRINT",
+        "ACTIVATE_SPRINT",
+        "CLOSE_SPRINT",
+        "CREATE_ISSUE",
+        "DECOMPOSE_ISSUE",
+        "UPDATE_ISSUE_STATUS",
+        "UPDATE_AGENT_PROFILE",
+    }:
+        storage = _storage()
+        pid: UUID | None = None
+        if project_id:
+            try:
+                pid = UUID(str(project_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(422, "project_id must be a UUID") from exc
+            if await storage.get_project(pid) is None:
+                raise HTTPException(404, f"Project {pid} not found")
+        elif action != "UPDATE_AGENT_PROFILE":
+            raise HTTPException(400, f"{action} requires project_id")
+
+        try:
+            if action == "CREATE_SPRINT":
+                result = await storage.create_sprint(
+                    project_id=pid,
+                    sprint_number=int(task_payload.get("sprint_number", 1)),
+                    milestone=task_payload.get("milestone"),
+                    goal=task_payload.get("goal"),
+                    planned_story_points=task_payload.get("planned_story_points"),
+                    estimated_hours=task_payload.get("estimated_hours"),
+                )
+            elif action in {"ACTIVATE_SPRINT", "CLOSE_SPRINT"}:
+                sprint_id = UUID(str(task_payload.get("sprint_id")))
+                sprint = await storage.get_sprint(sprint_id)
+                if sprint is None or sprint.get("project_id") != pid:
+                    raise HTTPException(404, f"Sprint {sprint_id} not found for project {pid}")
+                status = "IN_PROGRESS" if action == "ACTIVATE_SPRINT" else "CLOSED"
+                await storage.update_sprint(sprint_id, status=status)
+                result = await storage.get_sprint(sprint_id)
+            elif action == "CREATE_ISSUE":
+                sprint_id = task_payload.get("sprint_id")
+                parsed_sprint_id = None
+                if sprint_id:
+                    parsed_sprint_id = UUID(str(sprint_id))
+                    sprint = await storage.get_sprint(parsed_sprint_id)
+                    if sprint is None or str(sprint.get("project_id")) != str(pid):
+                        raise HTTPException(
+                            404,
+                            f"Sprint {parsed_sprint_id} not found for project {pid}",
+                        )
+                result = await storage.create_issue(
+                    project_id=pid,
+                    sprint_id=parsed_sprint_id,
+                    title=str(task_payload.get("title") or "Untitled issue"),
+                    description=task_payload.get("description"),
+                    issue_type=str(task_payload.get("issue_type") or "TASK"),
+                    priority=str(task_payload.get("priority") or "medium"),
+                    assigned_team=task_payload.get("assigned_team"),
+                    estimated_hours=task_payload.get("estimated_hours"),
+                    story_points=task_payload.get("story_points"),
+                )
+            elif action == "DECOMPOSE_ISSUE":
+                issue_id = UUID(str(task_payload.get("issue_id")))
+                parent = await storage.get_issue(issue_id)
+                if parent is None or parent.get("project_id") != pid:
+                    raise HTTPException(404, f"Issue {issue_id} not found for project {pid}")
+                children = []
+                for item in task_payload.get("sub_tasks") or []:
+                    child = item if isinstance(item, dict) else {"title": str(item)}
+                    children.append(
+                        await storage.create_issue(
+                            project_id=pid,
+                            sprint_id=parent.get("sprint_id"),
+                            parent_issue_id=issue_id,
+                            title=str(child.get("title") or "Sub-task"),
+                            description=child.get("description"),
+                            issue_type=str(child.get("issue_type") or "TASK"),
+                            priority=str(child.get("priority") or parent.get("priority") or "medium"),
+                            assigned_team=child.get("assigned_team") or parent.get("assigned_team"),
+                            estimated_hours=child.get("estimated_hours"),
+                            story_points=child.get("story_points"),
+                        )
+                    )
+                result = {"parent_issue_id": issue_id, "children": children}
+            elif action == "UPDATE_AGENT_PROFILE":
+                profile_agent_id = str(task_payload.get("agent_id") or "")
+                if not profile_agent_id:
+                    raise HTTPException(400, "UPDATE_AGENT_PROFILE requires agent_id")
+                result = await storage.observe_agent_profile(
+                    agent_id=profile_agent_id,
+                    team_id=task_payload.get("team_id"),
+                    role=task_payload.get("role"),
+                    estimated_hours=task_payload.get("estimated_hours"),
+                    actual_hours=task_payload.get("actual_hours"),
+                    tasks_completed=int(task_payload.get("tasks_completed", task_payload.get("total_tasks_completed", 1))),
+                    alpha=task_payload.get("alpha", 0.5),
+                )
+            else:  # UPDATE_ISSUE_STATUS
+                issue_id = UUID(str(task_payload.get("issue_id")))
+                issue = await storage.get_issue(issue_id)
+                if issue is None or issue.get("project_id") != pid:
+                    raise HTTPException(404, f"Issue {issue_id} not found for project {pid}")
+                values: dict[str, Any] = {"status": str(task_payload.get("status") or "IN_PROGRESS")}
+                if task_payload.get("actual_hours") is not None:
+                    values["actual_hours"] = task_payload["actual_hours"]
+                await storage.update_issue(issue_id, **values)
+                result = await storage.get_issue(issue_id)
+                if result and str(values["status"]).upper() in {"DONE", "COMPLETED", "CLOSED"}:
+                    sprint_id = result.get("sprint_id")
+                    if sprint_id:
+                        sprint_issues = await storage.list_issues(sprint_id=sprint_id)
+                        completed = [
+                            item
+                            for item in sprint_issues
+                            if str(item.get("status") or "").upper() in {"DONE", "COMPLETED", "CLOSED"}
+                        ]
+                        await storage.update_sprint(
+                            sprint_id,
+                            completed_story_points=sum(item.get("story_points") or 0 for item in completed),
+                            actual_hours=sum(float(item.get("actual_hours") or 0) for item in sprint_issues),
+                        )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, f"Invalid {action} payload: {exc}") from exc
+        return {"status": "completed", "action": action, "result": _serialize(result)}
+
     envelope = {
         "message_id": str(uuid4()),
         "correlation_id": tid,
@@ -2245,8 +2878,8 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
         "sender_team": "orchestrator",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": team_id,
-        "project_id": body.get("project_id"),
-        "payload": body.get("payload", {}),
+        "project_id": project_id,
+        "payload": task_payload,
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
@@ -2492,7 +3125,20 @@ async def seed_default_company() -> dict[str, Any]:
         {"id": "dept_qa", "name": "Quality Assurance"},
         {"id": "dept_devops", "name": "DevOps"},
     ]
-    sample_project_template = None
+    sample_project_template = {
+        "id": "aiat_sample_software_project",
+        "name": "AIAT Sample Software Project",
+        "description": (
+            "Walk through requirements, architecture, implementation, QA, and deployment "
+            "using AIAT's governed project workflow."
+        ),
+        "human_requester": "operator",
+        "config": {
+            "template": True,
+            "objective": "Build and verify a small governed software change.",
+            "expected_outputs": ["requirements", "design", "tests", "release_evidence"],
+        },
+    }
 
     worker_summary = {"total": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
     workers_dir = Path(os.environ.get("WORKERS_DIR", "workers"))
@@ -3285,6 +3931,16 @@ async def deregister_worker(
         deleted = await storage.delete_worker(worker["id"])
         if not deleted:
             raise HTTPException(404, f"Worker {worker_id} not found")
+        from mas_core.worker_registry.ingestion import remove_mirror
+
+        # Mirrors are keyed by the immutable registry UUID.  Never pass the
+        # user-controlled worker name to filesystem cleanup: names may contain
+        # traversal or absolute-path components and must not select a directory.
+        mirror_key = str(worker["id"])
+        try:
+            await remove_mirror(mirror_key)
+        except Exception:
+            logger.exception("worker_mirror_cleanup_failed", extra={"mirror_key": mirror_key})
         return {"status": "deleted"}
 
     if worker is not None:
@@ -4648,6 +5304,7 @@ async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
 
 class OperatorToCeoRequest(BaseModel):
     message: str
+    context_worker_id: UUID | None = None
 
     @field_validator("message")
     @classmethod
@@ -4685,7 +5342,22 @@ async def _publish_ceo_chat_response(
     response_text: str,
     correlation_id: str,
     parent_id: str,
+    action: dict[str, Any] | None = None,
 ) -> None:
+    payload: dict[str, Any] = {
+        "response": response_text,
+        "source": "ceo_chat",
+    }
+    if action is not None:
+        worker = action.get("worker")
+        worker_id = worker.get("id") if isinstance(worker, dict) else None
+        payload["action"] = {
+            "type": action.get("type"),
+            "status": action.get("status"),
+        }
+        if worker_id:
+            payload["context"] = {"worker_id": str(worker_id)}
+
     envelope = {
         "message_id": str(uuid4()),
         "correlation_id": correlation_id,
@@ -4696,10 +5368,7 @@ async def _publish_ceo_chat_response(
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": "exec_ceo",
         "project_id": "operator-direct",
-        "payload": {
-            "response": response_text,
-            "source": "ceo_chat",
-        },
+        "payload": payload,
         "created_at": datetime.now(tz=UTC).isoformat(),
         "ack_required": False,
     }
@@ -4785,8 +5454,58 @@ async def _handle_ceo_hiring_intent(instruction: str) -> dict[str, Any] | None:
     adapter_type = _transport_for_hiring_text(instruction)
     sandbox_profile = _sandbox_for_hiring_text(instruction)
     version_pin = _version_pin_for_hiring_text(instruction)
+    wrapper_manifest = _wrapper_manifest_for_hiring(
+        worker_name=worker_name,
+        repo_url=repo_url,
+        team_id=team_id,
+        adapter_type=adapter_type,
+        sandbox_profile=sandbox_profile,
+        version_pin=version_pin,
+    )
 
     storage = _storage()
+    existing_worker = await storage.get_worker_by_name(worker_name)
+    if existing_worker is not None:
+        existing_repo = existing_worker.get("source_repo")
+        if _same_github_repo(str(existing_repo) if existing_repo else None, repo_url):
+            response = (
+                f"I found an existing Hiring Board ticket for `{worker_name}` from {existing_repo or repo_url}. "
+                f"It is currently `{existing_worker.get('status')}` with evaluation "
+                f"`{existing_worker.get('evaluation_status') or 'none'}` and team "
+                f"`{existing_worker.get('team_id') or 'unassigned'}`. I did not create or reset a duplicate. "
+                "Use `status of worker <name>`, `evaluate worker <name>`, `approve worker <name>`, "
+                "or `activate worker <name>` to continue the existing candidate."
+            )
+            return {
+                "type": "worker_hiring",
+                "status": "existing_candidate",
+                "worker": _serialize(existing_worker),
+                "response": response,
+                "trace": [
+                    "parsed_hiring_intent",
+                    "validated_github_source",
+                    "found_existing_candidate",
+                    "skipped_duplicate_registration",
+                ],
+            }
+
+        response = (
+            f"`{worker_name}` is already registered for source `{existing_repo or 'unknown'}`. "
+            f"I will not overwrite it with {repo_url}. Give the new candidate an explicit unique name, "
+            "for example `hire a worker named <unique_name> from <repo>`."
+        )
+        return {
+            "type": "worker_hiring",
+            "status": "name_conflict",
+            "worker": _serialize(existing_worker),
+            "response": response,
+            "trace": [
+                "parsed_hiring_intent",
+                "validated_github_source",
+                "blocked_name_conflict",
+            ],
+        }
+
     worker = await storage.register_worker(
         name=worker_name,
         adapter_type=adapter_type,
@@ -4804,12 +5523,15 @@ async def _handle_ceo_hiring_intent(instruction: str) -> dict[str, Any] | None:
         update_policy="manual",
         evaluation_status="pending",
         adapter_entrypoint="WorkerAgent",
+        wrapper_config={"aiat_manifest": wrapper_manifest},
+        isolation_mode="wrapper",
     )
     serialized = _serialize(worker)
     response = (
         f"I opened a Hiring Board ticket for `{worker_name}` from {repo_url}. "
         f"It is assigned to `{team_id}` as an inactive candidate with `{sandbox_profile}` sandboxing "
-        "and pending evaluation. The hiring team is CEO, HR/hiring, department chief, security "
+        f"and pending evaluation. Routing reason: {_department_hiring_reason(team_id)} "
+        "The hiring team is CEO, HR/hiring, department chief, security "
         "evaluator, interface auditor, budget evaluator, test evaluator, and human approver. "
         "Next: run the worker evaluation from the Hiring Board, review skipped scanner states if "
         "tools are unavailable, then activate only after approval."
@@ -4835,16 +5557,28 @@ async def _find_worker_for_ceo_text(storage: AgentStorage, text: str) -> dict[st
 
     lowered = text.lower()
     workers = await storage.list_workers()
-    candidates = []
+    exact_candidates = []
+    substring_candidates = []
     for worker in workers:
         names = [
             str(worker.get("name") or "").strip().lower(),
             str(worker.get("display_name") or "").strip().lower(),
         ]
-        if any(name and name in lowered for name in names):
-            candidates.append(worker)
-    if len(candidates) == 1:
-        return candidates[0]
+        for name in names:
+            if not name:
+                continue
+            if re.search(rf"(?<![a-z0-9_-]){re.escape(name)}(?![a-z0-9_-])", lowered):
+                exact_candidates.append(worker)
+                break
+            if name in lowered:
+                substring_candidates.append(worker)
+                break
+    unique_exact = {str(worker.get("id")): worker for worker in exact_candidates}
+    if len(unique_exact) == 1:
+        return next(iter(unique_exact.values()))
+    unique_substring = {str(worker.get("id")): worker for worker in substring_candidates}
+    if len(unique_substring) == 1:
+        return next(iter(unique_substring.values()))
     return None
 
 
@@ -4867,6 +5601,92 @@ def _summarize_workers_for_ceo(workers: list[dict[str, Any]]) -> str:
             f"team={worker.get('team_id') or 'unassigned'}, sandbox={worker.get('sandbox_profile')}"
         )
     return "Hiring Board snapshot:\n" + "\n".join(rows)
+
+
+def _summarize_worker_for_ceo(worker: dict[str, Any], *, latest_report: dict[str, Any] | None = None) -> str:
+    name = worker.get("name") or worker.get("id")
+    parts = [
+        f"Worker `{name}`",
+        f"id `{worker.get('id')}`",
+        f"status `{worker.get('status')}`",
+        f"evaluation `{worker.get('evaluation_status') or 'none'}`",
+        f"team `{worker.get('team_id') or 'unassigned'}`",
+        f"sandbox `{worker.get('sandbox_profile') or 'unknown'}`",
+    ]
+    if worker.get("source_repo"):
+        parts.append(f"source {worker.get('source_repo')}")
+    response = ", ".join(parts) + "."
+    if worker.get("team_id"):
+        response += f" Department routing: {_department_hiring_reason(str(worker.get('team_id')))}"
+    if latest_report:
+        blocked = latest_report.get("blocked_reasons") or []
+        if blocked:
+            response += " Latest blocked reasons: " + "; ".join(str(reason) for reason in blocked[:5]) + "."
+        verdict = latest_report.get("verdict")
+        score = latest_report.get("overall_score")
+        if verdict:
+            response += f" Latest verdict `{verdict}`"
+            if score is not None:
+                response += f" with score `{score}`"
+            response += "."
+    return response
+
+
+async def _latest_worker_report(storage: AgentStorage, worker_id: UUID) -> dict[str, Any] | None:
+    try:
+        reports = await storage.get_evaluation_reports(worker_id, limit=1)
+    except Exception:
+        logger.exception("ceo_worker_latest_evaluation_read_failed")
+        return None
+    return reports[0] if reports else None
+
+
+async def _handle_ceo_hiring_followup_intent(
+    instruction: str,
+    context_worker_id: UUID | None = None,
+) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("production dep", "production dept", "dept_production", "department")):
+        return None
+    if not any(token in lowered for token in ("why", "reason", "route", "assigned", "routing")):
+        return None
+
+    storage = _storage()
+    worker = await storage.get_worker(context_worker_id) if context_worker_id else None
+    if worker is None:
+        workers = await storage.list_workers()
+        production_candidates = [
+            candidate
+            for candidate in workers
+            if candidate.get("team_id") == "dept_production" and candidate.get("source_repo")
+        ]
+        worker = production_candidates[0] if len(production_candidates) == 1 else None
+    response = _department_hiring_reason("dept_production")
+    if worker:
+        assigned_team = str(worker.get("team_id") or "unassigned")
+        response = (
+            f"`{worker.get('name')}` was routed to `{assigned_team}` because "
+            f"{_department_hiring_reason(assigned_team)} If this repo is actually QA, security, DevOps, or architecture work, tell me the target department "
+            "and I will reclassify the candidate before activation."
+        )
+    elif context_worker_id:
+        response = (
+            "I no longer find the candidate from the previous chat action. Give me its current worker name "
+            "or UUID so I can explain the stored department assignment."
+        )
+    else:
+        response = (
+            "More than one hiring candidate may fit that question, so I will not guess which one you mean. "
+            "Ask `why is worker <name> assigned to its department?` to inspect the exact stored assignment. "
+            f"As a general rule, {response}"
+        )
+    return {
+        "type": "hiring_department_explanation",
+        "status": "explained",
+        "worker": _serialize(worker) if worker else None,
+        "response": response,
+        "trace": ["parsed_hiring_department_followup", "explained_department_routing"],
+    }
 
 
 async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
@@ -5024,15 +5844,39 @@ async def _handle_ceo_company_intent(instruction: str) -> dict[str, Any] | None:
     }
 
 
-async def _handle_ceo_worker_intent(instruction: str) -> dict[str, Any] | None:
+async def _handle_ceo_worker_intent(
+    instruction: str,
+    context_worker_id: UUID | None = None,
+) -> dict[str, Any] | None:
     lowered = instruction.lower()
-    if not any(token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")):
+    lifecycle_requested = re.search(
+        r"\b(?:status|state|why|explain|blocked|reject|rejected|deny|decline|details|evaluate|audit|scan|approve|activate|deactivate|drain)\b",
+        lowered,
+    ) is not None
+    reclassify_requested = (
+        re.search(r"\b(?:reclassify|reroute|route|move|assign|transfer)\b", lowered) is not None
+        and re.search(r"\b(?:team|department|dept|office|to|into|under|as)\b", lowered) is not None
+    )
+    has_worker_target = any(
+        token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")
+    )
+    if not (
+        has_worker_target
+        or reclassify_requested
+        or (context_worker_id is not None and lifecycle_requested)
+    ):
         return None
     if "hire" in lowered:
         return None
 
     storage = _storage()
-    if any(word in lowered for word in ("list", "show", "board", "status", "candidates")) and not _extract_uuid_from_text(instruction):
+    board_requested = (
+        "hiring board" in lowered
+        or "candidates" in lowered
+        or re.search(r"\b(?:list|show)\s+(?:all\s+)?workers\b", lowered) is not None
+        or re.search(r"\b(?:list|show)\s+(?:all\s+)?agents\b", lowered) is not None
+    )
+    if board_requested and not _extract_uuid_from_text(instruction):
         workers = await storage.list_workers()
         return {
             "type": "hiring_board",
@@ -5043,6 +5887,8 @@ async def _handle_ceo_worker_intent(instruction: str) -> dict[str, Any] | None:
         }
 
     worker = await _find_worker_for_ceo_text(storage, instruction)
+    if worker is None and context_worker_id is not None:
+        worker = await storage.get_worker(context_worker_id)
     if worker is None:
         return {
             "type": "worker_action",
@@ -5053,7 +5899,105 @@ async def _handle_ceo_worker_intent(instruction: str) -> dict[str, Any] | None:
 
     worker_id = UUID(str(worker["id"]))
 
-    if "evaluate" in lowered or "audit" in lowered or "scan" in lowered:
+    if reclassify_requested:
+        target_team = _target_department_for_reclassification_text(instruction)
+        if target_team is None:
+            return {
+                "type": "worker_reclassification",
+                "status": "needs_department",
+                "worker": _serialize(worker),
+                "response": (
+                    f"I found `{worker.get('name')}`, but I need a known target department: "
+                    "`dept_qa`, `office_cso`, `dept_devops`, `dept_production`, `office_cfo`, or `office_chrm`."
+                ),
+                "trace": ["parsed_worker_reclassification_intent", "target_department_not_identified"],
+            }
+
+        previous_team = str(worker.get("team_id") or "unassigned")
+        if str(worker.get("status") or "").upper() == "ACTIVE":
+            return {
+                "type": "worker_reclassification",
+                "status": "needs_deactivation",
+                "worker": _serialize(worker),
+                "previous_team_id": previous_team,
+                "team_id": target_team,
+                "response": (
+                    f"`{worker.get('name')}` is ACTIVE. I will not reclassify an active worker in-place. "
+                    "Drain or deactivate it first, then reclassify so evaluation and approval can restart "
+                    "for the target department."
+                ),
+                "trace": ["parsed_worker_reclassification_intent", "blocked_active_worker_reclassification"],
+            }
+        if previous_team == target_team:
+            return {
+                "type": "worker_reclassification",
+                "status": "unchanged",
+                "worker": _serialize(worker),
+                "previous_team_id": previous_team,
+                "team_id": target_team,
+                "response": (
+                    f"`{worker.get('name')}` is already assigned to `{target_team}`. "
+                    f"Routing reason: {_department_hiring_reason(target_team)}"
+                ),
+                "trace": ["parsed_worker_reclassification_intent", "target_department_already_assigned"],
+            }
+
+        await storage.update_worker_config(worker_id, team_id=target_team, evaluation_status="pending")
+        updated = await storage.get_worker(worker_id)
+        return {
+            "type": "worker_reclassification",
+            "status": "reclassified",
+            "worker": _serialize(updated or {**worker, "team_id": target_team, "evaluation_status": "pending"}),
+            "previous_team_id": previous_team,
+            "team_id": target_team,
+            "response": (
+                f"I reclassified `{worker.get('name')}` from `{previous_team}` to `{target_team}`. "
+                f"Routing reason: {_department_hiring_reason(target_team)} I reset evaluation status to "
+                "`pending`; keep it inactive until evaluation and approval are clean for the new department."
+            ),
+            "trace": ["parsed_worker_reclassification_intent", "updated_worker_department"],
+        }
+
+    if re.search(r"\b(?:reject|deny|decline)\b", lowered):
+        if str(worker.get("status") or "").upper() == "ACTIVE":
+            return {
+                "type": "worker_rejection",
+                "status": "needs_deactivation",
+                "worker": _serialize(worker),
+                "response": (
+                    f"`{worker.get('name')}` is ACTIVE. I will not reject an active worker in-place. "
+                    "Drain or deactivate it first, then reject the candidate record."
+                ),
+                "trace": ["parsed_worker_rejection_intent", "blocked_active_worker_rejection"],
+            }
+
+        await storage.update_worker_config(worker_id, evaluation_status="rejected")
+        if str(worker.get("status") or "").upper() != "INACTIVE":
+            await storage.update_worker_status(worker_id, status="INACTIVE")
+        updated = await storage.get_worker(worker_id)
+        return {
+            "type": "worker_rejection",
+            "status": "rejected",
+            "worker": _serialize(updated or {**worker, "evaluation_status": "rejected", "status": "INACTIVE"}),
+            "response": (
+                f"I rejected `{worker.get('name')}` for hiring/activation. The worker is kept inactive "
+                "and remains on the Hiring Board for audit history; use permanent cleanup only for test debris."
+            ),
+            "trace": ["parsed_worker_rejection_intent", "recorded_rejection_status"],
+        }
+
+    if any(word in lowered for word in ("status", "state", "why", "explain", "blocked", "rejected", "details")):
+        latest_report = await _latest_worker_report(storage, worker_id)
+        return {
+            "type": "worker_status",
+            "status": "read",
+            "worker": _serialize(worker),
+            "evaluation": _serialize(latest_report) if latest_report else None,
+            "response": _summarize_worker_for_ceo(worker, latest_report=latest_report),
+            "trace": ["parsed_worker_status_intent", "read_worker_registry", "read_latest_evaluation"],
+        }
+
+    if re.search(r"\b(?:evaluate|audit|scan)\b", lowered):
         report = await evaluate_worker(worker_id, WorkerEvaluateRequest())
         return {
             "type": "worker_evaluate",
@@ -5062,28 +6006,93 @@ async def _handle_ceo_worker_intent(instruction: str) -> dict[str, Any] | None:
             "evaluation": report,
             "response": (
                 f"Evaluation completed for `{worker.get('name')}`: verdict "
-                f"`{report.get('verdict')}`, recommended status `{report.get('recommended_status')}`."
+                f"`{report.get('verdict')}`, recommended status `{report.get('recommended_status')}`. "
+                "If approved, the next CEO-chat command is `approve worker <name>`, then `activate worker <name>`."
             ),
             "trace": ["parsed_worker_evaluation_intent", "ran_guarded_evaluator", "stored_evaluation_status"],
         }
 
-    if any(word in lowered for word in ("approve", "approved")):
+    if re.search(r"\b(?:approve|approved)\b", lowered):
+        latest_report = await _latest_worker_report(storage, worker_id)
+        if worker.get("source_repo"):
+            if latest_report is None:
+                return {
+                    "type": "worker_approval",
+                    "status": "needs_evaluation",
+                    "worker": _serialize(worker),
+                    "evaluation": None,
+                    "response": (
+                        f"I cannot approve `{worker.get('name')}` yet. External candidates must have "
+                        "a stored evaluation report first. Run `evaluate worker <name>` from CEO chat "
+                        "or the Hiring Board, then review the report."
+                    ),
+                    "trace": ["parsed_worker_approval_intent", "blocked_missing_evaluation_report"],
+                }
+
+            verdict = str(latest_report.get("verdict") or "").upper()
+            blocked_reasons = latest_report.get("blocked_reasons") or []
+            requires_human_approval = bool(latest_report.get("requires_human_approval"))
+            if blocked_reasons or verdict == "REJECTED":
+                reasons = "; ".join(str(reason) for reason in blocked_reasons[:5]) or "latest verdict is REJECTED"
+                return {
+                    "type": "worker_approval",
+                    "status": "blocked",
+                    "worker": _serialize(worker),
+                    "evaluation": _serialize(latest_report),
+                    "response": (
+                        f"I cannot approve `{worker.get('name')}`. The latest evaluation is `{verdict}` "
+                        f"and blocks activation: {reasons}."
+                    ),
+                    "trace": ["parsed_worker_approval_intent", "blocked_by_latest_evaluation"],
+                }
+
+            if verdict == "CONDITIONAL" and not requires_human_approval:
+                return {
+                    "type": "worker_approval",
+                    "status": "blocked",
+                    "worker": _serialize(worker),
+                    "evaluation": _serialize(latest_report),
+                    "response": (
+                        f"I cannot approve `{worker.get('name')}` from a conditional evaluation unless "
+                        "the report explicitly requires human approval and has no blocking reasons."
+                    ),
+                    "trace": ["parsed_worker_approval_intent", "blocked_by_conditional_evaluation"],
+                }
+
+            if verdict not in {"APPROVED", "CONDITIONAL"}:
+                return {
+                    "type": "worker_approval",
+                    "status": "needs_evaluation",
+                    "worker": _serialize(worker),
+                    "evaluation": _serialize(latest_report),
+                    "response": (
+                        f"I cannot approve `{worker.get('name')}` yet. The latest evaluation verdict is "
+                        f"`{verdict or 'UNKNOWN'}`; run evaluation again until the result is approved "
+                        "or explicitly pending human approval."
+                    ),
+                    "trace": ["parsed_worker_approval_intent", "blocked_by_unready_evaluation"],
+                }
+
         await storage.update_worker_config(worker_id, evaluation_status="approved")
         updated = await storage.get_worker(worker_id)
         return {
             "type": "worker_approval",
             "status": "approved",
+            "evaluation": _serialize(latest_report) if latest_report else None,
             "worker": _serialize(updated or worker),
-            "response": f"I marked `{worker.get('name')}` evaluation status as approved for activation gating.",
+            "response": (
+                f"I marked `{worker.get('name')}` evaluation status as approved for activation gating. "
+                f"The worker remains `{(updated or worker).get('status')}` until you explicitly activate it."
+            ),
             "trace": ["parsed_worker_approval_intent", "recorded_human_approval_status"],
         }
 
     action = None
-    if "deactivate" in lowered:
+    if re.search(r"\bdeactivate\b", lowered):
         action = "DEACTIVATE"
-    elif "drain" in lowered:
+    elif re.search(r"\bdrain\b", lowered):
         action = "DRAIN"
-    elif "activate" in lowered:
+    elif re.search(r"\bactivate\b", lowered):
         action = "ACTIVATE"
     if action:
         updated = await transition_worker_status(worker_id, WorkerStatusTransition(action=action))
@@ -5147,7 +6156,7 @@ def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
                 _extract_uuid_from_text(instruction) is not None
                 or _extract_project_status_query(instruction) is not None
             )
-    if any(token in lowered for token in ("company", "org", "organization", "department", "departments", "graph")):
+    if any(token in lowered for token in ("company", "org", "organization", "department", "departments", "dept", "dep", "graph")):
         return True
     if "hire" not in lowered and any(
         token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")
@@ -5173,15 +6182,24 @@ def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
     return False
 
 
-async def _handle_ceo_operator_intent(instruction: str) -> dict[str, Any] | None:
-    for handler in (
-        _handle_ceo_hiring_intent,
-        _handle_ceo_project_intent,
-        _handle_ceo_readiness_intent,
-        _handle_ceo_company_intent,
-        _handle_ceo_worker_intent,
-    ):
-        action = await handler(instruction)
+async def _handle_ceo_operator_intent(
+    instruction: str,
+    context_worker_id: UUID | None = None,
+) -> dict[str, Any] | None:
+    handlers = (
+        (_handle_ceo_hiring_intent, False),
+        (_handle_ceo_hiring_followup_intent, True),
+        (_handle_ceo_project_intent, False),
+        (_handle_ceo_readiness_intent, False),
+        (_handle_ceo_company_intent, False),
+        (_handle_ceo_worker_intent, True),
+    )
+    for handler, accepts_worker_context in handlers:
+        action = (
+            await handler(instruction, context_worker_id)
+            if accepts_worker_context
+            else await handler(instruction)
+        )
         if action is not None:
             return action
     return None
@@ -5226,13 +6244,14 @@ async def operator_send_to_ceo(
         if not resp.is_success:
             raise HTTPException(502, f"Router error {resp.status_code}: {resp.text}")
         result = resp.json()
-    action = await _handle_ceo_operator_intent(instruction)
+    action = await _handle_ceo_operator_intent(instruction, req.context_worker_id)
     if action is not None:
         background_tasks.add_task(
             _publish_ceo_chat_response,
             response_text=action["response"],
             correlation_id=message_id,
             parent_id=message_id,
+            action=action,
         )
         return {"ok": True, "entry_id": result.get("entry_id"), "action": action}
     background_tasks.add_task(

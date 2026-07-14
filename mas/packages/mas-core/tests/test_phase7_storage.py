@@ -184,6 +184,7 @@ class TestModelsMetadata:
         expected = {
             "id",
             "project_id",
+            "lineage_id",
             "doc_type",
             "version",
             "status",
@@ -391,6 +392,41 @@ class TestAgentStorageCRUD:
         assert doc["doc_type"] == "PDR"
         assert doc["version"] == 1
         assert doc["status"] == "DRAFT"
+
+    @pytest.mark.asyncio
+    async def test_document_revision_uses_source_lineage(self):
+        """A revision cannot supersede another document of the same type."""
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        source_id = uuid4()
+        lineage_id = uuid4()
+        latest_id = uuid4()
+        source_result = MagicMock()
+        source_result.mappings.return_value.first.return_value = {
+            "id": source_id,
+            "project_id": uuid4(),
+            "lineage_id": lineage_id,
+            "doc_type": "PDR",
+            "version": 1,
+        }
+        latest_result = MagicMock()
+        latest_result.mappings.return_value.first.return_value = {
+            "id": latest_id,
+            "project_id": source_result.mappings.return_value.first.return_value["project_id"],
+            "lineage_id": lineage_id,
+            "doc_type": "PDR",
+            "version": 2,
+        }
+        conn.execute = AsyncMock(side_effect=[source_result, latest_result, None, None])
+
+        revision = await storage.create_document_revision(
+            source_id,
+            created_by="cto_agent",
+        )
+
+        assert revision["lineage_id"] == lineage_id
+        latest_query = str(conn.execute.await_args_list[1].args[0])
+        assert "lineage_id" in latest_query
 
     @pytest.mark.asyncio
     async def test_get_document_not_found(self):
@@ -649,6 +685,24 @@ class TestAgentStorageCRUD:
             _ = storage.engine
 
 
+@pytest.mark.asyncio
+async def test_observe_agent_profile_clamps_database_numeric_bounds():
+    storage = AgentStorage(dsn="postgresql+asyncpg://x:x@localhost/x")
+    storage.get_agent_profile = AsyncMock(return_value=None)
+    storage.upsert_agent_profile = AsyncMock(return_value={})
+
+    await storage.observe_agent_profile(
+        agent_id="worker-1",
+        estimated_hours=1,
+        actual_hours=100,
+        alpha=1,
+    )
+
+    values = storage.upsert_agent_profile.await_args.kwargs
+    assert values["correction_factor"] == Decimal("9.9999")
+    assert values["estimation_bias"] == Decimal("9.9999")
+
+
 # ===========================================================================
 # TestCheckpointStore
 # ===========================================================================
@@ -758,6 +812,24 @@ class TestCheckpointStore:
 
         cps = await store.load_all_for_team("dept_unknown")
         assert cps == []
+
+    @pytest.mark.asyncio
+    async def test_load_latest_for_team_agents_uses_distinct_agent_query(self):
+        from sqlalchemy.dialects import postgresql
+
+        store, engine = self._make_store()
+        conn = engine._mock_conn
+        result_mock = MagicMock()
+        result_mock.mappings.return_value = _mock_mappings([])
+        conn.execute = AsyncMock(return_value=result_mock)
+
+        cps = await store.load_latest_for_team_agents("dept_qa")
+
+        assert cps == []
+        query = conn.execute.await_args.args[0]
+        sql = str(query.compile(dialect=postgresql.dialect()))
+        assert "DISTINCT ON (agent_checkpoints.agent_id)" in sql
+        assert "agent_checkpoints.saved_at DESC" in sql
 
     @pytest.mark.asyncio
     async def test_delete_returns_true_on_success(self):

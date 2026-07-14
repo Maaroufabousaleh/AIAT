@@ -278,6 +278,11 @@ class MessageEnvelope(BaseModel):
         """Require project context for all project-bound message types."""
         exempt = {
             MessageType.SHUTDOWN,
+            # Shutdown handshakes are system-scoped and deliberately carry no
+            # project context.  The team-runner replies to a SHUTDOWN with
+            # these messages before it has a project-bound envelope.
+            MessageType.SHUTDOWN_ACK,
+            MessageType.SHUTDOWN_NACK,
             MessageType.HEARTBEAT,
             MessageType.ACK,
             MessageType.SYSTEM_EVENT,

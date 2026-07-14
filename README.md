@@ -4,11 +4,11 @@ AIAT MAS is a self-hosted multi-agent system for software-project orchestration.
 The active workspace is `mas/`; run service, test, migration, and dashboard
 commands from there.
 
-Status on 2026-05-18: the core MAS stack, configurable flows, project context
-layer, worker registry, credentials manager, privileged-operation policy,
-dashboard, and compose/systemd deployment files are implemented in code. The next
-work is validation and production hardening, tracked in
-`.github/prompts/AIAT_PLAN.md`.
+The core MAS stack, configurable flows, project context layer, worker registry,
+credentials manager, privileged-operation policy, dashboard, and compose/systemd
+deployment files are implemented in code. Current implementation truth and
+remaining validation work are tracked by the phased plans under
+`.github/prompts/` and by `Docs/AIAT_LIVE_TEST_LEDGER.md`.
 
 ## What Is Included
 
@@ -100,7 +100,7 @@ mas/infra/compose/mas.sh up --build
 Run migrations:
 
 ```bash
-uv run alembic upgrade head
+uv --directory mas run alembic upgrade head
 ```
 
 Check health:
@@ -193,17 +193,16 @@ Next.js API routes, and those routes hold service credentials server-side.
 
 ## Planning
 
-The merged plan is `.github/prompts/AIAT_PLAN.md`. It includes:
+Implementation truth is split across the active phased plans:
 
-- current implementation baseline
-- priority roadmap
-- worker integration policy
-- next features from `next.txt`
-- validation checklist
-- known technical debt
+- `.github/prompts/PLAN_alpha_beta.md`
+- `.github/prompts/PLAN_gamma.md`
+- `.github/prompts/PLAN_delta.md`
+- `.github/prompts/PLAN_epsilon.md`
 
-Do not add new scattered plan files under `.github/prompts/`; update the merged
-plan instead.
+Use `Docs/AIAT_LIVE_TEST_LEDGER.md` for current live-test evidence, defects,
+fixes, enhancement opportunities, and remaining work. The old merged plan under
+`.github/prompts/obsolete/AIAT_PLAN.md` is historical context only.
 
 ## License
 

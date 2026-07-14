@@ -16,6 +16,12 @@ sys.path.insert(0, str(ROOT / "packages" / "mas-core"))
 sys.path.insert(0, str(ROOT / "packages" / "mas-tools-sdk"))
 
 
+@pytest.fixture(params=["asyncio"])
+def anyio_backend(request):
+    """TeamRunner is asyncio-native and uses asyncio task primitives directly."""
+    return request.param
+
+
 @pytest.fixture
 def sample_team_yaml():
     """Write a minimal team YAML to a temp file and set TEAM_CONFIG env var."""

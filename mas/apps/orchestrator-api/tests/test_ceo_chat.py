@@ -7,7 +7,12 @@ from uuid import UUID
 import httpx
 import pytest
 
-from orchestrator_api.main import _department_for_hiring_text
+from orchestrator_api.main import (
+    _department_for_hiring_text,
+    _handle_ceo_worker_intent,
+    _target_department_for_reclassification_text,
+    _worker_name_from_hiring_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -15,10 +20,40 @@ from orchestrator_api.main import _department_for_hiring_text
     [
         ("Hire a security agent.", "office_cso"),
         ("Hire an infra specialist.", "dept_devops"),
+        ("Hire a production engineer.", "dept_production"),
     ],
 )
 def test_hiring_department_mapping_uses_existing_team_ids(instruction: str, team_id: str):
     assert _department_for_hiring_text(instruction) == team_id
+
+
+def test_reclassification_department_prefers_target_phrase():
+    instruction = "reclassify worker qa_bot to devops"
+
+    assert _target_department_for_reclassification_text(instruction) == "dept_devops"
+
+
+def test_hiring_worker_name_uses_repo_when_role_follows_url():
+    instruction = "hire https://github.com/OpenHands/openhands as a software engineer"
+
+    assert (
+        _worker_name_from_hiring_text(instruction, "https://github.com/OpenHands/openhands")
+        == "openhands"
+    )
+
+
+def test_hiring_worker_name_uses_explicit_name_when_provided():
+    instruction = "hire a worker named coding specialist from https://github.com/example/opencode"
+
+    assert (
+        _worker_name_from_hiring_text(instruction, "https://github.com/example/opencode")
+        == "coding_specialist"
+    )
+
+
+@pytest.mark.anyio
+async def test_generic_status_does_not_enter_worker_intent_handler():
+    assert await _handle_ceo_worker_intent("what is the status?") is None
 
 
 @pytest.mark.anyio
@@ -108,6 +143,7 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
 
     worker_id = UUID("00000000-0000-4000-a000-0000000000ce")
     storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=None)
     storage.register_worker = AsyncMock(
         return_value={
             "id": worker_id,
@@ -155,12 +191,982 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
     assert kwargs["status"] == "INACTIVE"
     assert kwargs["evaluation_status"] == "pending"
     assert kwargs["sandbox_profile"] == "restricted"
+    assert kwargs["isolation_mode"] == "wrapper"
+    manifest = kwargs["wrapper_config"]["aiat_manifest"]
+    assert manifest["metadata"]["id"] == "opencode"
+    assert manifest["metadata"]["source_repo"] == "https://github.com/example/opencode"
+    assert manifest["metadata"]["tags"] == [
+        "worker",
+        "dept_production",
+        "ceo_chat_hiring",
+    ]
+    assert manifest["integration"]["isolation_mode"] == "wrapper"
 
     assert len(published) == 2
     assert published[0]["envelope"]["payload"]["action"] == "HUMAN_DIRECTIVE"
     assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
     assert published[1]["envelope"]["msg_type"] == "RESPONSE"
     assert "Hiring Board ticket" in published[1]["envelope"]["payload"]["response"]
+    assert "Routing reason:" in published[1]["envelope"]["payload"]["response"]
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_hiring_url_then_role_uses_repo_name(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d0")
+    storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=None)
+    storage.register_worker = AsyncMock(
+        return_value={
+            "id": worker_id,
+            "name": "openhands",
+            "status": "INACTIVE",
+            "adapter_type": "process",
+            "adapter_config": {"entrypoint": "WorkerAgent"},
+            "sandbox_profile": "restricted",
+            "capability_ids": [],
+            "team_id": "dept_production",
+            "source_repo": "https://github.com/OpenHands/openhands",
+            "version_pin": None,
+            "update_policy": "manual",
+            "evaluation_status": "pending",
+            "adapter_entrypoint": "WorkerAgent",
+        }
+    )
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
+    )
+
+    assert response.status_code == 200
+    _, kwargs = storage.register_worker.await_args
+    assert kwargs["name"] == "openhands"
+    assert kwargs["team_id"] == "dept_production"
+    assert "software engineering" in response.json()["action"]["response"]
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_hiring_same_repo_reuses_existing_candidate(
+    client, monkeypatch
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    existing_worker = {
+        "id": UUID("00000000-0000-4000-a000-0000000000f4"),
+        "name": "openhands",
+        "status": "INACTIVE",
+        "adapter_type": "process",
+        "adapter_config": {"entrypoint": "WorkerAgent"},
+        "sandbox_profile": "restricted",
+        "capability_ids": [],
+        "team_id": "dept_production",
+        "source_repo": "https://github.com/OpenHands/openhands",
+        "version_pin": None,
+        "update_policy": "manual",
+        "evaluation_status": "pending",
+        "adapter_entrypoint": "WorkerAgent",
+    }
+    storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=existing_worker)
+    storage.register_worker = AsyncMock(return_value={})
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_hiring"
+    assert action["status"] == "existing_candidate"
+    assert action["worker"]["id"] == str(existing_worker["id"])
+    assert "did not create or reset a duplicate" in action["response"]
+    storage.register_worker.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_hiring_name_conflict_blocks_overwrite(
+    client, monkeypatch
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    existing_worker = {
+        "id": UUID("00000000-0000-4000-a000-0000000000f5"),
+        "name": "coding_specialist",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/example/original-worker",
+        "team_id": "dept_production",
+    }
+    storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=existing_worker)
+    storage.register_worker = AsyncMock(return_value={})
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={
+            "message": (
+                "hire a worker named coding specialist from "
+                "https://github.com/example/different-worker"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_hiring"
+    assert action["status"] == "name_conflict"
+    assert "will not overwrite" in action["response"]
+    assert "explicit unique name" in action["response"]
+    storage.register_worker.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_explains_production_department_routing(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d1")
+    storage = MagicMock()
+    worker = {
+        "id": worker_id,
+        "name": "openhands",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/OpenHands/openhands",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+        "updated_at": "2026-07-05T20:00:00+00:00",
+    }
+    storage.get_worker = AsyncMock(return_value=worker)
+    storage.list_workers = AsyncMock(
+        return_value=[
+            worker,
+            {
+                **worker,
+                "id": UUID("00000000-0000-4000-a000-0000000000d0"),
+                "name": "another_engineer",
+                "source_repo": "https://github.com/example/another-engineer",
+            },
+        ]
+    )
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "why production dep?", "context_worker_id": str(worker_id)},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "hiring_department_explanation"
+    assert action["status"] == "explained"
+    assert "`openhands` was routed to `dept_production`" in action["response"]
+    assert "implementation workers" in action["response"]
+    storage.get_worker.assert_awaited_once_with(worker_id)
+    assert published[-1]["envelope"]["payload"]["context"]["worker_id"] == str(worker_id)
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_does_not_guess_ambiguous_hiring_followup(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+        is_success = True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": "stream-entry"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            return FakeResponse()
+
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(
+        return_value=[
+            {
+                "id": UUID("00000000-0000-4000-a000-0000000000d7"),
+                "name": "candidate_one",
+                "source_repo": "https://github.com/example/one",
+                "team_id": "dept_production",
+            },
+            {
+                "id": UUID("00000000-0000-4000-a000-0000000000d8"),
+                "name": "candidate_two",
+                "source_repo": "https://github.com/example/two",
+                "team_id": "dept_production",
+            },
+        ]
+    )
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "why production dep?"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["worker"] is None
+    assert "will not guess" in action["response"]
+    assert "worker <name>" in action["response"]
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_uses_context_for_worker_pronoun(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+        is_success = True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": "stream-entry"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d9")
+    worker = {
+        "id": worker_id,
+        "name": "context_candidate",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/example/context-candidate",
+        "team_id": "dept_qa",
+        "sandbox_profile": "restricted",
+    }
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[])
+    storage.get_worker = AsyncMock(return_value=worker)
+    storage.get_evaluation_reports = AsyncMock(return_value=[])
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "what is its status?", "context_worker_id": str(worker_id)},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_status"
+    assert action["worker"]["id"] == str(worker_id)
+    assert "context_candidate" in action["response"]
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_controls_named_worker_lifecycle(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d2")
+    worker = {
+        "id": worker_id,
+        "name": "openhands",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/OpenHands/openhands",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+        "capability_ids": [],
+    }
+    approved_worker = {**worker, "evaluation_status": "approved"}
+    active_worker = {**approved_worker, "status": "ACTIVE"}
+
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.get_evaluation_reports = AsyncMock(
+        return_value=[
+            {
+                "id": UUID("00000000-0000-4000-a000-0000000000e2"),
+                "worker_id": worker_id,
+                "verdict": "APPROVED",
+                "overall_score": 87.2,
+                "blocked_reasons": [],
+                "recommended_status": "ACTIVE",
+                "requires_human_approval": False,
+            }
+        ]
+    )
+    storage.update_worker_config = AsyncMock(return_value=None)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.get_worker = AsyncMock(side_effect=[approved_worker, approved_worker, active_worker])
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    status_response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "status of worker openhands"},
+    )
+    approve_response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "approve worker openhands"},
+    )
+    activate_response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "activate worker openhands"},
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["action"]["type"] == "worker_status"
+    assert "Latest verdict `APPROVED`" in status_response.json()["action"]["response"]
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["action"]["type"] == "worker_approval"
+    assert approve_response.json()["action"]["status"] == "approved"
+    storage.update_worker_config.assert_awaited_once_with(worker_id, evaluation_status="approved")
+
+    assert activate_response.status_code == 200
+    assert activate_response.json()["action"]["type"] == "worker_status_transition"
+    storage.update_worker_status.assert_awaited_once_with(worker_id, status="ACTIVE")
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_blocks_approval_when_latest_evaluation_rejected(
+    client, monkeypatch
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d3")
+    worker = {
+        "id": worker_id,
+        "name": "openhands",
+        "status": "INACTIVE",
+        "evaluation_status": "rejected",
+        "source_repo": "https://github.com/OpenHands/openhands",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+        "capability_ids": [],
+    }
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.get_evaluation_reports = AsyncMock(
+        return_value=[
+            {
+                "id": UUID("00000000-0000-4000-a000-0000000000e3"),
+                "worker_id": worker_id,
+                "verdict": "REJECTED",
+                "overall_score": 72.7,
+                "blocked_reasons": ["manifest_validation: No AIAT worker manifest found"],
+                "recommended_status": "REJECTED",
+                "requires_human_approval": False,
+            }
+        ]
+    )
+    storage.update_worker_config = AsyncMock(return_value=None)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "approve worker openhands"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_approval"
+    assert action["status"] == "blocked"
+    assert "No AIAT worker manifest found" in action["response"]
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_requires_evaluation_before_approving_external_worker(
+    client, monkeypatch
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d4")
+    worker = {
+        "id": worker_id,
+        "name": "unevaluated_worker",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/example/unevaluated-worker",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+    }
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.get_evaluation_reports = AsyncMock(return_value=[])
+    storage.update_worker_config = AsyncMock(return_value=None)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "approve unevaluated_worker"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_approval"
+    assert action["status"] == "needs_evaluation"
+    assert "must have a stored evaluation report" in action["response"]
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_rejects_inactive_candidate(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d5")
+    worker = {
+        "id": worker_id,
+        "name": "rejected_candidate",
+        "status": "INACTIVE",
+        "evaluation_status": "pending",
+        "source_repo": "https://github.com/example/rejected-candidate",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+    }
+    rejected_worker = {**worker, "evaluation_status": "rejected"}
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.update_worker_config = AsyncMock(return_value=None)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.get_worker = AsyncMock(return_value=rejected_worker)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "reject worker rejected_candidate"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_rejection"
+    assert action["status"] == "rejected"
+    assert action["worker"]["evaluation_status"] == "rejected"
+    assert "kept inactive" in action["response"]
+    storage.update_worker_config.assert_awaited_once_with(worker_id, evaluation_status="rejected")
+    storage.update_worker_status.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_blocks_rejecting_active_worker(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000d6")
+    worker = {
+        "id": worker_id,
+        "name": "active_worker",
+        "status": "ACTIVE",
+        "evaluation_status": "approved",
+        "source_repo": "https://github.com/example/active-worker",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+    }
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.update_worker_config = AsyncMock(return_value=None)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "deny worker active_worker"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_rejection"
+    assert action["status"] == "needs_deactivation"
+    assert "Drain or deactivate it first" in action["response"]
+    storage.update_worker_config.assert_not_awaited()
+    storage.update_worker_status.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_prefers_exact_worker_name_over_substring(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    target_id = UUID("00000000-0000-4000-a000-0000000000f2")
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(
+        return_value=[
+            {
+                "id": UUID("00000000-0000-4000-a000-0000000000f1"),
+                "name": "ceo",
+                "status": "ACTIVE",
+                "evaluation_status": "approved",
+                "team_id": "exec_ceo",
+            },
+            {
+                "id": target_id,
+                "name": "ceo_chat_smoke_1783282647840",
+                "status": "INACTIVE",
+                "evaluation_status": "pending",
+                "source_repo": "https://github.com/example/ceo-chat-smoke-1783282647840",
+                "team_id": "dept_production",
+                "sandbox_profile": "restricted",
+            },
+        ]
+    )
+    storage.get_evaluation_reports = AsyncMock(return_value=[])
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "status of worker ceo_chat_smoke_1783282647840"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_status"
+    assert action["worker"]["id"] == str(target_id)
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_reclassifies_candidate_department(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000f3")
+    worker = {
+        "id": worker_id,
+        "name": "openhands",
+        "status": "INACTIVE",
+        "evaluation_status": "approved",
+        "source_repo": "https://github.com/OpenHands/openhands",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+    }
+    updated_worker = {**worker, "team_id": "dept_qa", "evaluation_status": "pending"}
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.update_worker_config = AsyncMock(return_value=None)
+    storage.get_worker = AsyncMock(return_value=updated_worker)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "reclassify openhands to QA"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_reclassification"
+    assert action["status"] == "reclassified"
+    assert action["previous_team_id"] == "dept_production"
+    assert action["team_id"] == "dept_qa"
+    assert action["worker"]["team_id"] == "dept_qa"
+    assert action["worker"]["evaluation_status"] == "pending"
+    assert "QA owns test automation" in action["response"]
+    assert "reset evaluation status to `pending`" in action["response"]
+    storage.update_worker_config.assert_awaited_once_with(
+        worker_id, team_id="dept_qa", evaluation_status="pending"
+    )
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_blocks_reclassifying_active_worker(client, monkeypatch):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000f6")
+    worker = {
+        "id": worker_id,
+        "name": "active_opencode",
+        "status": "ACTIVE",
+        "evaluation_status": "approved",
+        "source_repo": "https://github.com/example/active-opencode",
+        "team_id": "dept_production",
+        "sandbox_profile": "restricted",
+    }
+    storage = MagicMock()
+    storage.list_workers = AsyncMock(return_value=[worker])
+    storage.update_worker_config = AsyncMock(return_value=None)
+    storage.get_worker = AsyncMock(return_value=worker)
+    app.state.storage = storage
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={"message": "reclassify active_opencode to QA"},
+    )
+
+    assert response.status_code == 200
+    action = response.json()["action"]
+    assert action["type"] == "worker_reclassification"
+    assert action["status"] == "needs_deactivation"
+    assert action["previous_team_id"] == "dept_production"
+    assert action["team_id"] == "dept_qa"
+    assert "Drain or deactivate it first" in action["response"]
+    storage.update_worker_config.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -196,6 +1202,7 @@ async def test_operator_send_to_ceo_hiring_request_uses_existing_team_ids(client
 
     worker_id = UUID("00000000-0000-4000-a000-0000000000cf")
     storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock(return_value=None)
     storage.register_worker = AsyncMock(
         return_value={
             "id": worker_id,
@@ -320,6 +1327,7 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
             "created_by": "human_operator",
         }
     )
+    storage.get_project = AsyncMock(return_value=None)
     app.state.storage = storage
     app.state.controller = FakeController()
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)

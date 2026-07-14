@@ -14,7 +14,7 @@ import signal
 from itertools import cycle
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
 import structlog
@@ -27,6 +27,8 @@ from mas_core.agent_runtime import (
     AdminAgent,
     AgentBase,
     AgentConfig,
+    BudgetExhausted,
+    BudgetTracker,
     CSuiteAgent,
     ExecutiveAgent,
     RouterClient,
@@ -367,6 +369,19 @@ class TeamRuntime:
         if class_name == "SubAgent":
             return SubAgent(config, **kwargs)
         if class_name == "ExecutiveAgent":
+            # Feasibility review is a four-way C-suite fan-out. Keep the
+            # reviewer set explicit at the execution boundary so a default
+            # ExecutiveAgent cannot silently run with an empty fan-out list.
+            if self.team_config.team_id == "exec_coo":
+                kwargs["reviewer_teams"] = [
+                    "office_cfo",
+                    "office_cio",
+                    "office_chrm",
+                    "office_cso",
+                ]
+                # Persist review sessions/comments in the shared authority DB;
+                # the normal ``storage`` kwarg remains the checkpoint adapter.
+                kwargs["review_storage"] = self.storage
             return ExecutiveAgent(config, **kwargs)
         if class_name == "CSuiteAgent":
             return CSuiteAgent(
@@ -676,19 +691,49 @@ class TeamRuntime:
     async def _schedule_checkpoint_resumes(self) -> None:
         if self.checkpoint_store is None:
             return
-        checkpoints = await self.checkpoint_store.load_all_for_team(self.team_config.team_id)
+        checkpoints = await self.checkpoint_store.load_latest_for_team_agents(
+            self.team_config.team_id
+        )
+        scheduled_agents: set[str] = set()
         for checkpoint in checkpoints:
             agent = self.agents_by_id.get(checkpoint["agent_id"])
-            if agent is None:
+            if (
+                agent is None
+                or agent.agent_id in scheduled_agents
+                or not self._checkpoint_can_resume(checkpoint)
+            ):
                 continue
+            scheduled_agents.add(agent.agent_id)
             task = asyncio.create_task(
                 self._resume_agent(agent, checkpoint),
                 name=f"resume:{checkpoint['agent_id']}:{checkpoint['task_message_id']}",
             )
             self._resume_tasks.append(task)
 
+    @staticmethod
+    def _checkpoint_can_resume(checkpoint: dict[str, Any]) -> bool:
+        snapshot = checkpoint.get("budget_state_json")
+        if not isinstance(snapshot, dict):
+            return True
+        try:
+            BudgetTracker.restore_snapshot(snapshot).check_before_llm_call()
+        except (BudgetExhausted, TypeError, ValueError):
+            log.warning(
+                "team_runner.checkpoint_not_resumable",
+                agent_id=checkpoint.get("agent_id"),
+                task_message_id=checkpoint.get("task_message_id"),
+                reason="budget_or_deadline_exhausted",
+            )
+            return False
+        return True
+
     async def _resume_agent(self, agent: AgentBase, checkpoint: dict[str, Any]) -> None:
         task_json = checkpoint.get("task_envelope_json") or {}
+        task_message_id = str(checkpoint["task_message_id"])
+        try:
+            resume_message_id = UUID(task_message_id)
+        except ValueError:
+            resume_message_id = uuid5(NAMESPACE_URL, f"aiat-checkpoint:{task_message_id}")
         agent.restore_from_checkpoint(
             {
                 "messages": checkpoint.get("messages_json", []),
@@ -699,6 +744,7 @@ class TeamRuntime:
             }
         )
         envelope = MessageEnvelope(
+            message_id=resume_message_id,
             msg_type=MessageType.DIRECTIVE,
             sender_id="team-runner",
             sender_role=AgentRole.ADMIN,
@@ -707,11 +753,11 @@ class TeamRuntime:
             project_id=str(checkpoint.get("project_id") or task_json.get("project_id") or "resume"),
             payload={
                 "action": "RESUME",
-                "task_message_id": checkpoint["task_message_id"],
+                "task_message_id": task_message_id,
             },
         )
         frame = WSMessageFrame(
-            entry_id=f"resume-{checkpoint['task_message_id']}",
+            entry_id=f"resume-{task_message_id}",
             envelope=envelope,
             stream=f"stream:{self.team_config.team_id}",
             retry_count=0,

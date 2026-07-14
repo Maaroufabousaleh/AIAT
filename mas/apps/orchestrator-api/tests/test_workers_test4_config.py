@@ -376,9 +376,13 @@ async def test_deregister_worker_returns_deregistered_status(client):
 
 
 @pytest.mark.anyio
-async def test_delete_worker_permanent_removes_registry_row(client):
+async def test_delete_worker_permanent_removes_registry_row(client, monkeypatch):
     """DELETE /capabilities/workers/{id}?permanent=true hard-deletes test workers."""
+    import mas_core.worker_registry.ingestion as ingestion
+
     row = _worker_row()
+    remove_mirror = AsyncMock(return_value=None)
+    monkeypatch.setattr(ingestion, "remove_mirror", remove_mirror)
     storage = MagicMock()
     storage.get_worker = AsyncMock(return_value=row)
     storage.delete_worker = AsyncMock(return_value=True)
@@ -390,6 +394,7 @@ async def test_delete_worker_permanent_removes_registry_row(client):
     assert resp.json()["status"] == "deleted"
     storage.get_worker.assert_awaited_once_with(WORKER_ID)
     storage.delete_worker.assert_awaited_once_with(WORKER_ID)
+    remove_mirror.assert_awaited_once_with(str(WORKER_ID))
 
 
 @pytest.mark.anyio
@@ -407,6 +412,26 @@ async def test_delete_worker_by_name_permanent_removes_registry_row(client):
     assert resp.json()["status"] == "deleted"
     storage.get_worker_by_name.assert_awaited_once_with("e2e_worker_123")
     storage.delete_worker.assert_awaited_once_with(WORKER_ID)
+
+
+@pytest.mark.anyio
+async def test_mirror_cleanup_rejects_path_traversal(tmp_path, monkeypatch):
+    """Managed mirror deletion cannot escape its configured root."""
+    from mas_core.worker_registry import ingestion
+
+    mirror_root = tmp_path / "mirror"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sentinel.txt").write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(ingestion, "MIRROR_BASE", mirror_root)
+
+    with pytest.raises(ValueError):
+        await ingestion.remove_mirror("../outside")
+    with pytest.raises(ValueError):
+        await ingestion.remove_mirror(str(outside))
+    with pytest.raises(ValueError):
+        await ingestion.remove_mirror("")
+    assert (outside / "sentinel.txt").exists()
 
 
 # ── 9. Health check endpoint ──────────────────────────────────────────────────

@@ -10,17 +10,21 @@ const ORCHESTRATOR_URL =
   "http://127.0.0.1:8000";
 
 const PROJECT_PATTERNS = [
+  /^aiat_smoke_[a-z0-9_]+$/i,
   /^gamma-workspace-\d+$/,
   /^flow-ui-project-\d+$/,
   /^test2-[a-z0-9-]+-\d+$/i,
   /^Test Project \d+$/,
   /^proj-\d+$/,
+  /^live_probe_\d+_[a-f0-9]+$/,
   /^Live infra-ready audit \d+$/,
 ];
 
 const WORKER_PATTERNS = [
+  /^aiat_smoke_[a-z0-9_]+$/i,
   /^e2e_worker_\d+$/,
   /^e2e_candidate_\d+$/,
+  /^test_evaluation_worker$/,
   /^test-worker-\d+$/,
   /^live_probe_\d+_[a-f0-9]+_worker$/,
   /^live-audit-worker-[a-f0-9]+$/,

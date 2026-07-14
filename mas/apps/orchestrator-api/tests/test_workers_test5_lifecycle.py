@@ -907,6 +907,109 @@ async def test_compat_capability_contract_passes_when_all_caps_valid():
 
 
 @pytest.mark.anyio
+async def test_repository_evaluator_accepts_aiat_owned_wrapper_manifest(tmp_path):
+    from orchestrator_api.main import _wrapper_manifest_for_hiring
+    from mas_core.worker_registry.evaluator import _check_manifest_validation
+
+    manifest = _wrapper_manifest_for_hiring(
+        worker_name="external_reviewer",
+        repo_url=SOURCE_REPO,
+        team_id="dept_qa",
+        adapter_type="process",
+        sandbox_profile="restricted",
+        version_pin=None,
+    )
+    result = await _check_manifest_validation(
+        SOURCE_REPO,
+        tmp_path,
+        {
+            "isolation_mode": "wrapper",
+            "wrapper_config": {"aiat_manifest": manifest},
+        },
+    )
+
+    assert result["passed"] is True
+    assert result["manifest_source"] == "worker_registry.wrapper_config"
+    assert result["manifest_id"] == "external_reviewer"
+
+
+@pytest.mark.anyio
+async def test_repository_evaluator_rejects_wrapper_manifest_for_other_source(tmp_path):
+    from orchestrator_api.main import _wrapper_manifest_for_hiring
+    from mas_core.worker_registry.evaluator import _check_manifest_validation
+
+    manifest = _wrapper_manifest_for_hiring(
+        worker_name="external_reviewer",
+        repo_url="https://github.com/example/different-repo",
+        team_id="dept_qa",
+        adapter_type="process",
+        sandbox_profile="restricted",
+        version_pin=None,
+    )
+    result = await _check_manifest_validation(
+        SOURCE_REPO,
+        tmp_path,
+        {
+            "isolation_mode": "wrapper",
+            "wrapper_config": {"aiat_manifest": manifest},
+        },
+    )
+
+    assert result["passed"] is False
+    assert "source does not match" in result["details"]
+
+
+@pytest.mark.anyio
+async def test_repository_evaluation_records_cloned_commit_as_version_pin(
+    tmp_path, monkeypatch
+):
+    import mas_core.worker_registry.evaluator as evaluator
+    import mas_core.worker_registry.ingestion as ingestion
+
+    monkeypatch.setattr(
+        evaluator,
+        "_check_provenance",
+        AsyncMock(return_value={"passed": True, "score": 100.0, "details": "ok"}),
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "_check_licensing",
+        AsyncMock(return_value={"passed": True, "score": 100.0, "details": "MIT"}),
+    )
+    monkeypatch.setattr(ingestion, "get_head_commit", AsyncMock(return_value=COMMIT_SHA_NEW))
+
+    storage = MagicMock()
+    storage.update_worker_upstream = AsyncMock(return_value=None)
+    storage.create_evaluation_report = AsyncMock(return_value={"verdict": "APPROVED"})
+    worker = {
+        "id": WORKER_ID,
+        "name": "external_reviewer",
+        "source_repo": SOURCE_REPO,
+        "version_pin": None,
+        "source_revision": None,
+        "upstream_commit_sha": None,
+    }
+
+    await evaluator.evaluate_repository(
+        worker_id=WORKER_ID,
+        source_repo=SOURCE_REPO,
+        storage=storage,
+        checks=["version_pin"],
+        mirror_path=tmp_path,
+        worker=worker,
+    )
+
+    storage.update_worker_upstream.assert_awaited_once_with(
+        worker_id=WORKER_ID,
+        upstream_commit_sha=COMMIT_SHA_NEW,
+    )
+    assert worker["upstream_commit_sha"] == COMMIT_SHA_NEW
+    report_kwargs = storage.create_evaluation_report.await_args.kwargs
+    assert report_kwargs["checks"]["version_pin"]["passed"] is True
+    assert report_kwargs["checks"]["version_pin"]["version_pin"] == COMMIT_SHA_NEW
+
+
+@pytest.mark.anyio
 async def test_run_compatibility_tests_all_pass_for_well_formed_worker():
     """run_compatibility_tests returns passed=True for a well-formed worker."""
     from mas_core.worker_registry.compat_tests import run_compatibility_tests

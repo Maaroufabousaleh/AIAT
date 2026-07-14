@@ -9,6 +9,7 @@ from mas_core.protocols.enums import AgentRole
 
 from .engine import CommunicationPolicy
 from .rules import (
+    CSO_TEAM,
     CTO_EXTRA_TOOLS,
     CTO_TEAM,
     DEVOPS_PM_EXTRA_TOOLS,
@@ -58,6 +59,15 @@ def has_authoritative_tool_denial(
     otherwise allow the tool.
     """
     if role == AgentRole.WORKER and _matches_any(tool_name, WORKER_BLOCKED_TOOLS):
+        return True
+
+    if tool_name == "approval.override_cso" and role != AgentRole.ORCHESTRATOR:
+        return True
+    if (
+        tool_name == "review.submit_veto"
+        and role == AgentRole.C_SUITE
+        and sender_team != CSO_TEAM
+    ):
         return True
 
     if role != AgentRole.C_SUITE and _matches_any(tool_name, CTO_EXTRA_TOOLS):

@@ -32,6 +32,7 @@ from .rules import (
     C_SUITE_BASE_TOOLS,
     C_SUITE_CROSS_TEAM_TYPES,
     C_SUITE_MSG_TYPES,
+    CSO_TEAM,
     CTO_EXTRA_TOOLS,
     CTO_TEAM,
     DEVOPS_TEAM,
@@ -187,6 +188,9 @@ class CommunicationPolicy:
         if sender_role == AgentRole.ORCHESTRATOR:
             return True  # CEO has full tool access
 
+        if tool_name == "approval.override_cso":
+            return "only the orchestrator (CEO) may use tool 'approval.override_cso'"
+
         if sender_role == AgentRole.EXECUTIVE:
             if _matches_any(tool_name, EXECUTIVE_TOOLS):
                 return True
@@ -195,6 +199,13 @@ class CommunicationPolicy:
             )
 
         if sender_role == AgentRole.C_SUITE:
+            # Veto authority is deliberately scoped to the CSO office.  The
+            # manifest role list is broad enough for CEO/COO orchestration,
+            # but a peer chief must not be able to impersonate the CSO.
+            if tool_name == "review.submit_veto" and sender_team != CSO_TEAM:
+                return (
+                    f"only CSO team {CSO_TEAM!r} may use tool 'review.submit_veto'"
+                )
             allowed = C_SUITE_BASE_TOOLS
             if sender_team == CTO_TEAM:
                 allowed = C_SUITE_BASE_TOOLS + CTO_EXTRA_TOOLS

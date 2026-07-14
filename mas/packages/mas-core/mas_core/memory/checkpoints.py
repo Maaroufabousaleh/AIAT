@@ -130,6 +130,26 @@ class CheckpointStore:
             ).mappings().all()
         return [dict(r) for r in rows]
 
+    async def load_latest_for_team_agents(self, team_id: str) -> list[dict[str, Any]]:
+        """Load only the newest checkpoint for each agent in a team.
+
+        A single agent cannot safely resume multiple tasks concurrently. Older
+        rows remain durable for audit/DLQ handling, but startup recovery must
+        not materialize and dispatch the entire checkpoint history.
+        """
+        q = (
+            t.agent_checkpoints.select()
+            .where(t.agent_checkpoints.c.team_id == team_id)
+            .distinct(t.agent_checkpoints.c.agent_id)
+            .order_by(
+                t.agent_checkpoints.c.agent_id,
+                t.agent_checkpoints.c.saved_at.desc(),
+            )
+        )
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(r) for r in rows]
+
     async def delete(
         self,
         agent_id: str,

@@ -13,6 +13,7 @@ or has expired (``ttl_seconds`` elapsed), the router:
 from __future__ import annotations
 
 import logging
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -67,29 +68,39 @@ async def write_dead_letter(
     reason:        Human-readable DLQ reason (e.g. "max_attempts_exceeded").
     retry_count:   Delivery attempt count at time of DLQ.
 
-    Returns the new ``dead_letters.id`` (UUID string).
+    Returns the new auto-incremented ``dead_letters.id`` as a string.
     """
     pool = await get_pool()
-    dlq_id = str(uuid.uuid4())
+    envelope = json.loads(envelope_json)
+    project_id: uuid.UUID | None = None
+    if envelope.get("project_id"):
+        try:
+            project_id = uuid.UUID(str(envelope["project_id"]))
+        except ValueError:
+            logger.warning("DLQ envelope has non-UUID project_id; storing NULL")
     now = datetime.now(tz=UTC)
 
     try:
-        await pool.execute(
+        dlq_id = await pool.fetchval(
             """
             INSERT INTO dead_letters
-                (id, message_id, team_id, stream_entry_id, envelope, reason,
-                 retry_count, created_at)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+                (message_id, recipient_team, sender_id, msg_type, project_id,
+                 retry_count, failure_reason, envelope_json, dead_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+            RETURNING id
             """,
-            dlq_id,
             message_id,
             team_id,
-            entry_id,
-            envelope_json,
-            reason,
+            envelope.get("sender_id"),
+            envelope.get("msg_type"),
+            project_id,
             retry_count,
+            reason,
+            envelope_json,
             now,
         )
+        if dlq_id is None:
+            raise RuntimeError("dead-letter INSERT returned no id")
         logger.warning(
             "DLQ entry written: message_id=%s team=%s reason=%s retries=%d",
             message_id,
@@ -101,7 +112,7 @@ async def write_dead_letter(
         logger.exception("Failed to write DLQ entry for message_id=%s", message_id)
         raise
 
-    return dlq_id
+    return str(dlq_id)
 
 
 def make_dlq_system_event_fields(

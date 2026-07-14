@@ -559,6 +559,113 @@ class TestExecutiveAgent:
         assert any(e[0] == "document_submitted" for e in events)
 
     @pytest.mark.asyncio
+    async def test_review_persists_unregistered_document_and_completion_time(self):
+        """A document submission creates missing metadata and durable completion."""
+        config = _make_config(
+            agent_id="coo-persist", team_id="exec_coo", agent_role=AgentRole.EXECUTIVE
+        )
+        storage = MagicMock()
+        storage.get_document = AsyncMock(return_value=None)
+        storage.create_document = AsyncMock()
+        storage.create_review_session = AsyncMock()
+        storage.add_review_comment = AsyncMock()
+        storage.update_review_session = AsyncMock()
+        agent = ExecutiveAgent(
+            config,
+            reviewer_teams=["office_cfo"],
+            review_storage=storage,
+        )
+        _patch_router(agent)
+        project_id = uuid4()
+        document_id = uuid4()
+        parent = _make_envelope(
+            msg_type=MessageType.DOCUMENT_SUBMIT,
+            project_id=str(project_id),
+            payload={"document_id": str(document_id), "doc_type": "PDR"},
+        )
+        session_id = str(uuid4())
+
+        await agent._start_review_fanout(
+            session_id=session_id,
+            document_id=str(document_id),
+            doc_type="PDR",
+            parent_envelope=parent,
+        )
+        storage.create_document.assert_awaited_once_with(
+            project_id=project_id,
+            doc_type="PDR",
+            created_by="coo-persist",
+            document_id=document_id,
+        )
+        storage.create_review_session.assert_awaited_once()
+
+        response = _make_envelope(
+            msg_type=MessageType.REVIEW_RESPONSE,
+            project_id=str(project_id),
+            sender_id="cfo-persist",
+            sender_team="office_cfo",
+            payload={"session_id": session_id, "verdict": "APPROVED", "comments": []},
+        )
+        await agent._handle_review_response(response)
+
+        update_kwargs = storage.update_review_session.await_args.kwargs
+        assert update_kwargs["status"] == "COMPLETED"
+        assert update_kwargs["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_veto_and_circuit_open_persist_completion_time(self):
+        """Every terminal review outcome carries a durable completion time."""
+        from mas_core.protocols.domain import ReviewResponse, ReviewSummary
+        from mas_core.protocols.enums import ReviewVerdict
+
+        for terminal_status in ("VETOED", "CIRCUIT_OPEN"):
+            storage = MagicMock()
+            storage.update_review_session = AsyncMock()
+            events: list = []
+            agent = ExecutiveAgent(
+                _make_config(
+                    agent_id=f"coo-{terminal_status.lower()}",
+                    team_id="exec_coo",
+                    agent_role=AgentRole.EXECUTIVE,
+                ),
+                reviewer_teams=["office_cso", "office_cfo"],
+                review_storage=storage,
+                event_emitter=lambda event, **kwargs: events.append((event, kwargs)),
+            )
+            project_id = str(uuid4())
+            session_id = str(uuid4())
+            summary = ReviewSummary(
+                session_id=session_id,
+                project_id=project_id,
+                document_id=uuid4(),
+                doc_type="PDR",
+                reviewer_count=2,
+            )
+            agent._review_sessions[session_id] = summary
+            agent._review_parents[session_id] = _make_envelope(
+                msg_type=MessageType.DOCUMENT_SUBMIT,
+                project_id=project_id,
+                payload={"document_id": str(summary.document_id), "doc_type": "PDR"},
+            )
+
+            if terminal_status == "VETOED":
+                response = ReviewResponse(
+                    reviewer_id="cso-terminal",
+                    reviewer_role="c_suite",
+                    reviewer_team="office_cso",
+                    verdict=ReviewVerdict.REJECTED,
+                    veto=True,
+                )
+                await agent._handle_cso_veto(session_id, response, agent._review_parents[session_id])
+            else:
+                await agent.record_review_timeout(session_id, "cfo-terminal")
+                await agent.record_review_timeout(session_id, "cso-terminal")
+
+            update_kwargs = storage.update_review_session.await_args.kwargs
+            assert update_kwargs["status"] == terminal_status
+            assert update_kwargs["completed_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_review_approved_emits_event(self):
         """All reviewers approve → review_approved event."""
         config = _make_config(

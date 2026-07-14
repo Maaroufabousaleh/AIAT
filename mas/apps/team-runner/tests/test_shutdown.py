@@ -230,6 +230,117 @@ async def test_stop_skips_agents_without_envelope(runner_settings):
 
 
 @pytest.mark.anyio
+async def test_startup_schedules_at_most_one_checkpoint_resume_per_agent(runner_settings):
+    """Stale checkpoint history must not fan out concurrent work for one agent."""
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    config = TeamConfig.model_validate(
+        {
+            "team_id": "dept_qa",
+            "admin": {
+                "agent_id": "qa_lead",
+                "role": "admin",
+                "class": "AdminAgent",
+                "display_name": "QA Lead",
+                "tools": [],
+            },
+        }
+    )
+    runtime = TeamRuntime(runner_settings, config)
+    agent = _make_agent("qa_lead")
+    runtime.agents_by_id = {"qa_lead": agent}
+    runtime.checkpoint_store = MagicMock()
+    runtime.checkpoint_store.load_latest_for_team_agents = AsyncMock(
+        return_value=[
+            {"agent_id": "qa_lead", "task_message_id": f"stale-{index}"}
+            for index in range(1024)
+        ]
+    )
+    runtime._resume_agent = AsyncMock()
+
+    await runtime._schedule_checkpoint_resumes()
+    await __import__("asyncio").gather(*runtime._resume_tasks)
+
+    assert len(runtime._resume_tasks) == 1
+    runtime._resume_agent.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_startup_does_not_resume_exhausted_checkpoint(runner_settings):
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    config = TeamConfig.model_validate(
+        {
+            "team_id": "dept_qa",
+            "admin": {
+                "agent_id": "qa_lead",
+                "role": "admin",
+                "class": "AdminAgent",
+                "display_name": "QA Lead",
+                "tools": [],
+            },
+        }
+    )
+    runtime = TeamRuntime(runner_settings, config)
+    runtime.agents_by_id = {"qa_lead": _make_agent("qa_lead")}
+    runtime.checkpoint_store = MagicMock()
+    runtime.checkpoint_store.load_latest_for_team_agents = AsyncMock(
+        return_value=[
+            {
+                "agent_id": "qa_lead",
+                "task_message_id": "exhausted-task",
+                "budget_state_json": {
+                    "max_llm_calls": 4,
+                    "llm_calls_used": 4,
+                },
+            }
+        ]
+    )
+    runtime._resume_agent = AsyncMock()
+
+    await runtime._schedule_checkpoint_resumes()
+
+    assert runtime._resume_tasks == []
+    runtime._resume_agent.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_resume_reuses_original_task_message_identity(runner_settings):
+    from team_runner.main import TeamConfig, TeamRuntime
+
+    config = TeamConfig.model_validate(
+        {
+            "team_id": "dept_qa",
+            "admin": {
+                "agent_id": "qa_lead",
+                "role": "admin",
+                "class": "AdminAgent",
+                "display_name": "QA Lead",
+                "tools": [],
+            },
+        }
+    )
+    runtime = TeamRuntime(runner_settings, config)
+    agent = _make_agent("qa_lead")
+    agent.restore_from_checkpoint = MagicMock()
+    agent._dispatch = AsyncMock()
+    task_id = uuid4()
+
+    await runtime._resume_agent(
+        agent,
+        {
+            "agent_id": "qa_lead",
+            "task_message_id": str(task_id),
+            "messages_json": [],
+            "iteration": 1,
+        },
+    )
+
+    frame = agent._dispatch.await_args.args[0]
+    assert frame.envelope.message_id == task_id
+
+
+@pytest.mark.anyio
 async def test_stop_handles_checkpoint_error_gracefully(runner_settings):
     """stop() should log warning but continue when checkpoint save fails."""
     from team_runner.main import TeamConfig, TeamRuntime

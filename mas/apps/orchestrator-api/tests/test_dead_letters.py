@@ -19,12 +19,16 @@ NOW_ISO = "2026-01-01T00:00:00+00:00"
 
 
 def _fake_dead_letter(letter_id: int = 1) -> dict:
+    message_id = str(uuid.uuid4())
     return {
         "id": letter_id,
+        "message_id": message_id,
         "project_id": PROJECT_ID,
         "recipient_team": "exec_ceo",
         "envelope_json": {
-            "message_id": str(uuid.uuid4()),
+            "message_id": message_id,
+            "retry_count": 3,
+            "timestamp": "2025-12-31T00:00:00+00:00",
             "msg_type": "DIRECTIVE",
             "sender_id": "orchestrator",
             "recipient_team": "exec_ceo",
@@ -32,7 +36,7 @@ def _fake_dead_letter(letter_id: int = 1) -> dict:
             "payload": {"action": "RESUME"},
         },
         "created_at": NOW_ISO,
-        "reason": "Connection refused",
+        "failure_reason": "max_attempts_exceeded",
     }
 
 
@@ -58,6 +62,7 @@ def _make_storage_with_conn(row=None):
 
     storage.engine = MagicMock()
     storage.engine.connect = MagicMock(return_value=mock_connect_cm)
+    storage.create_task_log = AsyncMock()
 
     return storage
 
@@ -180,10 +185,12 @@ async def test_get_dead_letter_no_storage_returns_503(client):
 async def test_replay_dead_letter_happy_path(client):
     """POST /dead-letters/{id}/replay successfully replays to router."""
     row = _fake_dead_letter(1)
-    _patch_state(_make_storage_with_conn(row=row))
+    storage = _make_storage_with_conn(row=row)
+    _patch_state(storage)
 
     with patch("httpx.AsyncClient") as mock_http:
         mock_response = MagicMock(status_code=201)
+        mock_response.json.return_value = {"entry_id": "123-0", "deduplicated": False}
         mock_client_instance = MagicMock(post=AsyncMock(return_value=mock_response))
         mock_http.return_value.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -194,6 +201,11 @@ async def test_replay_dead_letter_happy_path(client):
     data = resp.json()
     assert data["status"] == "replayed"
     assert "new_message_id" in data
+    assert data["entry_id"] == "123-0"
+    storage.create_task_log.assert_awaited_once()
+    published = mock_client_instance.post.await_args.kwargs["json"]
+    assert published["retry_count"] == 0
+    assert published["timestamp"] != "2025-12-31T00:00:00+00:00"
 
 
 @pytest.mark.anyio

@@ -61,7 +61,7 @@ async function getOverviewData() {
         evaluation_warnings: number;
       };
     }>("/system/company"),
-    orchestratorFetch<{ dead_letters: unknown[] }>("/dead-letters"),
+    orchestratorFetch<unknown[]>("/dead-letters"),
     timedPromQuery("sum(rate(mas_llm_calls_total[5m]))"),
     timedPromQuery("sum(mas_dlq_depth)"),
   ]);
@@ -82,7 +82,7 @@ async function getOverviewData() {
     : null;
 
   const dlqCount = dlq.status === "fulfilled"
-    ? ((dlq.value as { dead_letters?: unknown[] })?.dead_letters?.length ?? 0)
+    ? (Array.isArray(dlq.value) ? dlq.value.length : 0)
     : 0;
 
   // Roll prometheus timings into a single summary used by the system health card.

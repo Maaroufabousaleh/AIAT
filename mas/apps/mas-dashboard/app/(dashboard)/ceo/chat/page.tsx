@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { clsx } from "clsx";
 import { Send } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -84,6 +84,8 @@ export default function CeoChatPage() {
   const [activeType, setActiveType] = useState<KnownType>("ALL");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const contextWorkerIdRef = useRef<string | null>(null);
+  const contextHydratedRef = useRef(false);
 
   const { entries, connected: streamConnected, clear, append } = useCeoStream(
     "exec_ceo",
@@ -92,6 +94,21 @@ export default function CeoChatPage() {
   );
 
   const connected = streamConnected;
+
+  useEffect(() => {
+    if (contextHydratedRef.current) return;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const context = entries[index].parsed?.payload?.context;
+      if (context && typeof context === "object" && "worker_id" in context) {
+        const workerId = (context as Record<string, unknown>).worker_id;
+        if (typeof workerId === "string") {
+          contextWorkerIdRef.current = workerId;
+          contextHydratedRef.current = true;
+          return;
+        }
+      }
+    }
+  }, [entries]);
 
   const filteredEntries = entries.filter((entry) => {
     if (activeType === "ALL") return true;
@@ -124,12 +141,26 @@ export default function CeoChatPage() {
       const res = await fetch("/api/ceo/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, action: "CHAT" }),
+        body: JSON.stringify({
+          message: text,
+          action: "CHAT",
+          ...(contextWorkerIdRef.current
+            ? { context_worker_id: contextWorkerIdRef.current }
+            : {}),
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         setError(err.error ?? `HTTP ${res.status}`);
       } else {
+        const result = await res.json() as {
+          action?: { worker?: { id?: string } };
+        };
+        const workerId = result.action?.worker?.id;
+        if (workerId) {
+          contextWorkerIdRef.current = workerId;
+          contextHydratedRef.current = true;
+        }
         // Append optimistic outbound entry immediately
         const now = Date.now();
         const outboundEntry: FeedEntry = {
@@ -319,10 +350,11 @@ export default function CeoChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={sending}
             placeholder="Message the CEO… (Enter to send, Shift+Enter for newline)"
             rows={1}
             aria-label="Message to CEO"
-            className="flex-1 rounded-xl bg-slate-950/80 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 px-4 py-3 resize-none focus:border-blue-500/60 focus:outline-none transition-colors"
+            className="flex-1 rounded-xl bg-slate-950/80 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 px-4 py-3 resize-none focus:border-blue-500/60 focus:outline-none transition-colors disabled:cursor-wait disabled:opacity-60"
           />
           <button
             type="button"

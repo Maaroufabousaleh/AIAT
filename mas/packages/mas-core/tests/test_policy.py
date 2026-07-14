@@ -672,6 +672,26 @@ class TestUnknownSenderRole:
         )
         assert result is not True
 
+    def test_cfo_and_chrm_can_read_kpi_tools(self):
+        for team in ("office_cfo", "office_chrm"):
+            for tool in ("kpi.compute", "kpi.compute_project", "kpi.query_history"):
+                assert policy.can_use_tool(AgentRole.C_SUITE, tool, sender_team=team) is True
+
+    def test_only_cso_can_submit_veto(self):
+        assert policy.can_use_tool(
+            AgentRole.C_SUITE, "review.submit_veto", sender_team="office_cso"
+        ) is True
+        assert policy.can_use_tool(
+            AgentRole.C_SUITE, "review.submit_veto", sender_team="office_cfo"
+        ) is not True
+
+    def test_only_orchestrator_can_override_cso(self):
+        assert policy.can_use_tool(AgentRole.ORCHESTRATOR, "approval.override_cso") is True
+        assert policy.can_use_tool(AgentRole.EXECUTIVE, "approval.override_cso") is not True
+        assert policy.can_use_tool(
+            AgentRole.C_SUITE, "approval.override_cso", sender_team="office_cso"
+        ) is not True
+
 
 class TestPolicyToolPatternValidity:
     """All explicit policy tool patterns should resolve against canonical or alias names."""
