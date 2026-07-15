@@ -148,10 +148,13 @@ def _no_op_lifespan():
 def _make_test_app(mock_redis: MagicMock):
     """Build a test FastAPI app with a no-op lifespan and pre-loaded mock Redis."""
     from message_router import redis_client
-    from message_router.routes_publish import router as publish_router
+    from message_router.routes_publish import _require_publisher_auth, router as publish_router
     from message_router.routes_ws import router as ws_router
 
     app = FastAPI(lifespan=_no_op_lifespan())
+    # Route-policy tests are not authentication tests.  Authentication itself
+    # has a focused regression test below.
+    app.dependency_overrides[_require_publisher_auth] = lambda: "test-publisher"
     app.include_router(publish_router, tags=["publish"])
     app.include_router(ws_router, tags=["subscribe"])
 

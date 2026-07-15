@@ -55,6 +55,7 @@ def _patch_env(monkeypatch):
     """Ensure orchestrator-api can start without real Postgres/Redis."""
     monkeypatch.setenv("PGBOUNCER_DSN", "postgresql+asyncpg://fake:fake@localhost:6432/fake")
     monkeypatch.setenv("ROUTER_URL", "http://localhost:9999")
+    monkeypatch.setenv("ROUTER_SECRET", "test-router-secret")
     monkeypatch.setenv("MAS_API_KEY", "test-mas-key")
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
 
@@ -78,6 +79,8 @@ async def client(monkeypatch):
     app.state._cached_system_state = "RUNNING"
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": "test-mas-key"},
     ) as ac:
         yield ac

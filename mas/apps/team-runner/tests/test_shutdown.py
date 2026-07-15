@@ -76,6 +76,7 @@ def runner_settings(temp_team_yaml):
         router_url="http://localhost:9999",
         router_secret="changeme",
         orchestrator_url="http://localhost:8000",
+        mas_api_key="test-mas-key",
         health_host="127.0.0.1",
         health_port=0,
     )

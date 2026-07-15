@@ -137,7 +137,10 @@ class RouterClient:
         response = await client.post(
             "/messages/publish",
             content=envelope.model_dump_json(),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
+            },
         )
         if response.status_code == 409:
             raise RouterDuplicateMessage(409, response.text)
@@ -155,7 +158,10 @@ class RouterClient:
         response = await client.post(
             "/messages/broadcast",
             content=envelope.model_dump_json(),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
+            },
         )
         if response.status_code not in (200, 201):
             raise RouterError(response.status_code, response.text)

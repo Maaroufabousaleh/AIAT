@@ -33,7 +33,7 @@ import httpx
 import prometheus_client
 import sqlalchemy as sa
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel, Field, field_validator
 
@@ -86,6 +86,27 @@ def _check_auth(x_api_key: str | None = Header(None), authorization: str | None 
     supplied = token.strip()
     if not any(hmac.compare_digest(supplied, key) for key in configured_keys):
         raise HTTPException(401, "Invalid API key")
+
+
+def _router_auth_headers() -> dict[str, str]:
+    """Return the service identity used for router HTTP publication.
+
+    Router publication is a control-plane operation.  Do not silently send an
+    unauthenticated request when ROUTER_SECRET is absent: that would turn a
+    deployment configuration error into an identity bypass.
+    """
+    secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
+    if not secret:
+        raise RuntimeError("ROUTER_SECRET must be configured for router publication")
+    return {"Authorization": f"Bearer orchestrator-api:{secret}"}
+
+
+def _control_plane_auth_headers() -> dict[str, str]:
+    """Return this service's own credential for loopback API calls."""
+    api_key = os.getenv("MAS_API_KEY") or os.getenv("GATEWAY_API_KEY")
+    if not api_key:
+        raise RuntimeError("MAS_API_KEY must be configured for control-plane requests")
+    return {"X-API-Key": api_key}
 
 
 # Custom Prometheus metrics for orchestrator-api
@@ -1039,7 +1060,7 @@ async def publish_system_event(
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if resp.status_code not in (200, 201, 409):
                 logger.warning(
@@ -1162,7 +1183,7 @@ async def run_resume_sequence(storage: AgentStorage) -> int:
             "created_at": datetime.now(tz=UTC).isoformat(),
         }
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
                 resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
                 if resp.status_code in (200, 201, 409):
                     count += 1
@@ -1222,6 +1243,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     app.state.stop_event = stop_event
     app.state.watchdog_task = None
     app.state.scheduler = None
+    app.state.ceo_command_tasks = set()
 
     # Run resume sequence if DB is available
     if storage is not None:
@@ -1276,6 +1298,11 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             logger.exception("Worker manifest seeding failed; continuing anyway")
 
+        try:
+            await _recover_ceo_commands(storage)
+        except Exception:
+            logger.exception("Durable CEO command recovery failed")
+
     yield
 
     # Shutdown
@@ -1293,6 +1320,9 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             pass
 
+    for task in list(app.state.ceo_command_tasks):
+        task.cancel()
+
     if storage is not None:
         await storage.close()
 
@@ -1305,6 +1335,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def require_control_plane_auth(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Authenticate every control-plane endpoint before route dispatch.
+
+    Route-local dependencies are too easy to omit as the API grows.  Health
+    probes remain unauthenticated so Docker can determine liveness without
+    distributing an operator credential.  Metrics deliberately remain
+    protected: scrape them through an authenticated internal collector.
+    """
+    if request.method == "OPTIONS" or request.url.path in {"/health", "/docs", "/openapi.json"}:
+        return await call_next(request)
+    try:
+        _check_auth(request.headers.get("x-api-key"), request.headers.get("authorization"))
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
@@ -1313,6 +1361,7 @@ app.state.watchdog_config = WatchdogConfig()
 app.state.boot_at = datetime.now(tz=UTC)
 app.state.stop_event = asyncio.Event()
 app.state.watchdog_task = None
+app.state.ceo_command_tasks = set()
 
 # ── LLM Gateway compatibility router (OpenAI-compatible) ─────────────────────
 from orchestrator_api.llm_gateway_compat import router as llm_compat_router  # noqa: E402
@@ -1473,7 +1522,7 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
     except Exception:
         logger.exception("Failed to publish project start directive")
@@ -2688,7 +2737,7 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
     envelope["timestamp"] = datetime.now(tz=UTC).isoformat()
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if resp.status_code not in (200, 201):
                 raise HTTPException(502, f"Router returned {resp.status_code}")
@@ -2883,7 +2932,7 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             return {"status": "published", "message_id": envelope["message_id"]}
     except Exception as e:
@@ -2963,7 +3012,7 @@ async def system_shutdown() -> dict[str, Any]:
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/broadcast", json=envelope)
             logger.info("SHUTDOWN broadcast sent: status=%s", resp.status_code)
     except Exception:
@@ -3708,7 +3757,9 @@ async def _cron_shutdown() -> None:
     """APScheduler callback: trigger system shutdown."""
     logger.info("Cron-triggered shutdown starting")
     try:
-        async with httpx.AsyncClient(timeout=60, base_url=ORCHESTRATOR_URL) as client:
+        async with httpx.AsyncClient(
+            timeout=60, base_url=ORCHESTRATOR_URL, headers=_control_plane_auth_headers()
+        ) as client:
             resp = await client.post("/system/shutdown")
             logger.info("Cron shutdown response: %s", resp.status_code)
     except Exception:
@@ -3719,7 +3770,9 @@ async def _cron_resume() -> None:
     """APScheduler callback: trigger system resume."""
     logger.info("Cron-triggered resume starting")
     try:
-        async with httpx.AsyncClient(timeout=30, base_url=ORCHESTRATOR_URL) as client:
+        async with httpx.AsyncClient(
+            timeout=30, base_url=ORCHESTRATOR_URL, headers=_control_plane_auth_headers()
+        ) as client:
             resp = await client.post("/system/resume")
             logger.info("Cron resume response: %s", resp.status_code)
     except Exception:
@@ -5395,7 +5448,7 @@ async def _publish_ceo_chat_response(
         "ack_required": False,
     }
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if not resp.is_success:
                 logger.warning(
@@ -5437,7 +5490,7 @@ async def _publish_ceo_chat_progress(
         "ack_required": False,
     }
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if not resp.is_success:
                 logger.warning(
@@ -6855,6 +6908,119 @@ def _ceo_progress_detail(instruction: str) -> str:
     return "I’m interpreting your request and selecting the safest available action."
 
 
+_CEO_COMMAND_PREFIX = "ceo_command:"
+
+
+def _ceo_command_json(record: dict[str, Any]) -> str:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+
+
+async def _load_ceo_command(storage: AgentStorage, message_id: str) -> tuple[dict[str, Any], str] | None:
+    raw = await storage.get_config(f"{_CEO_COMMAND_PREFIX}{message_id}")
+    if raw is None:
+        return None
+    return json.loads(raw), raw
+
+
+async def _store_new_ceo_command(
+    storage: AgentStorage,
+    *,
+    message_id: str,
+    instruction: str,
+    context_worker_id: UUID | None,
+    context_confirmation_token: UUID | None,
+) -> tuple[dict[str, Any], bool]:
+    record = {
+        "request_id": message_id,
+        "instruction": instruction,
+        "context_worker_id": str(context_worker_id) if context_worker_id else None,
+        "context_confirmation_token": (
+            str(context_confirmation_token) if context_confirmation_token else None
+        ),
+        "status": "PENDING",
+        "created_at": datetime.now(tz=UTC).isoformat(),
+        "updated_at": datetime.now(tz=UTC).isoformat(),
+    }
+    created = await storage.set_config_if_absent(
+        f"{_CEO_COMMAND_PREFIX}{message_id}", _ceo_command_json(record)
+    )
+    if created:
+        return record, True
+    loaded = await _load_ceo_command(storage, message_id)
+    if loaded is None:  # pragma: no cover - defensive against external deletion races
+        raise RuntimeError("CEO command record disappeared during creation")
+    return loaded[0], False
+
+
+async def _transition_ceo_command(
+    storage: AgentStorage,
+    message_id: str,
+    *,
+    from_statuses: set[str],
+    to_status: str,
+    updates: dict[str, Any] | None = None,
+) -> bool:
+    loaded = await _load_ceo_command(storage, message_id)
+    if loaded is None:
+        return False
+    record, raw = loaded
+    if record.get("status") not in from_statuses:
+        return False
+    record.update(updates or {})
+    record["status"] = to_status
+    record["updated_at"] = datetime.now(tz=UTC).isoformat()
+    return await storage.compare_and_set_config(
+        f"{_CEO_COMMAND_PREFIX}{message_id}", raw, _ceo_command_json(record)
+    )
+
+
+def _track_ceo_command_task(task: asyncio.Task[None]) -> None:
+    tasks: set[asyncio.Task[None]] = app.state.ceo_command_tasks
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
+async def _recover_ceo_commands(storage: AgentStorage) -> None:
+    """Recover accepted API-owned commands after an orchestrator restart."""
+    for key, raw in (await storage.get_all_config()).items():
+        if not key.startswith(_CEO_COMMAND_PREFIX):
+            continue
+        try:
+            record = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            logger.error("Invalid durable CEO command record", extra={"key": key})
+            continue
+        status = record.get("status")
+        message_id = str(record.get("request_id") or key.removeprefix(_CEO_COMMAND_PREFIX))
+        if status == "RUNNING":
+            recovered = await _transition_ceo_command(
+                storage,
+                message_id,
+                from_statuses={"RUNNING"},
+                to_status="PENDING",
+                updates={"recovered_after_restart": True},
+            )
+            if not recovered:
+                continue
+        elif status != "PENDING":
+            continue
+        task = asyncio.create_task(
+            _process_ceo_operator_intent(
+                instruction=str(record["instruction"]),
+                context_worker_id=(
+                    UUID(record["context_worker_id"]) if record.get("context_worker_id") else None
+                ),
+                context_confirmation_token=(
+                    UUID(record["context_confirmation_token"])
+                    if record.get("context_confirmation_token")
+                    else None
+                ),
+                message_id=message_id,
+            )
+        )
+        _track_ceo_command_task(task)
+
+
 async def _process_ceo_operator_intent(
     *,
     instruction: str,
@@ -6863,6 +7029,16 @@ async def _process_ceo_operator_intent(
     message_id: str,
 ) -> None:
     """Run an API-owned CEO command after the chat request has been accepted."""
+    storage: AgentStorage | None = app.state.storage
+    durable = storage is not None and await _load_ceo_command(storage, message_id) is not None
+    if durable and not await _transition_ceo_command(
+        storage,
+        message_id,
+        from_statuses={"PENDING", "FAILED"},
+        to_status="RUNNING",
+        updates={"started_at": datetime.now(tz=UTC).isoformat()},
+    ):
+        return
     await _publish_ceo_chat_progress(
         stage="Working on it",
         detail=_ceo_progress_detail(instruction),
@@ -6884,6 +7060,14 @@ async def _process_ceo_operator_intent(
                 correlation_id=message_id,
                 parent_id=message_id,
             )
+            if durable:
+                await _transition_ceo_command(
+                    storage,
+                    message_id,
+                    from_statuses={"RUNNING"},
+                    to_status="COMPLETED",
+                    updates={"result": {"action": None}},
+                )
             return
         await _publish_ceo_chat_response(
             response_text=action["response"],
@@ -6891,8 +7075,24 @@ async def _process_ceo_operator_intent(
             parent_id=message_id,
             action=action,
         )
+        if durable:
+            await _transition_ceo_command(
+                storage,
+                message_id,
+                from_statuses={"RUNNING"},
+                to_status="COMPLETED",
+                updates={"result": action},
+            )
     except Exception as exc:
         logger.exception("CEO chat async action failed")
+        if durable:
+            await _transition_ceo_command(
+                storage,
+                message_id,
+                from_statuses={"RUNNING"},
+                to_status="FAILED",
+                updates={"error": str(exc)[:1000]},
+            )
         await _publish_ceo_chat_response(
             response_text=(
                 "I could not complete that control-plane action. Nothing was silently assumed. "
@@ -6927,6 +7127,53 @@ async def operator_send_to_ceo(
         req.context_worker_id,
         req.context_confirmation_token,
     )
+    durable_record: dict[str, Any] | None = None
+    if api_owned and req.async_mode:
+        storage: AgentStorage | None = app.state.storage
+        if storage is None:
+            raise HTTPException(503, "Durable CEO command storage is unavailable")
+        durable_record, _created = await _store_new_ceo_command(
+            storage,
+            message_id=message_id,
+            instruction=instruction,
+            context_worker_id=req.context_worker_id,
+            context_confirmation_token=req.context_confirmation_token,
+        )
+        expected_identity = (
+            instruction,
+            str(req.context_worker_id) if req.context_worker_id else None,
+            str(req.context_confirmation_token) if req.context_confirmation_token else None,
+        )
+        stored_identity = (
+            durable_record.get("instruction"),
+            durable_record.get("context_worker_id"),
+            durable_record.get("context_confirmation_token"),
+        )
+        if stored_identity != expected_identity:
+            raise HTTPException(409, "request_id is already bound to a different CEO command")
+        if durable_record.get("status") == "COMPLETED":
+            return {
+                "ok": True,
+                "entry_id": durable_record.get("entry_id"),
+                "request_id": message_id,
+                "status": "duplicate",
+                "result": durable_record.get("result"),
+            }
+        if durable_record.get("status") == "RUNNING":
+            return {
+                "ok": True,
+                "entry_id": durable_record.get("entry_id"),
+                "request_id": message_id,
+                "status": "running",
+            }
+        if durable_record.get("status") == "FAILED":
+            await _transition_ceo_command(
+                storage,
+                message_id,
+                from_statuses={"FAILED"},
+                to_status="PENDING",
+                updates={"retry_requested_at": datetime.now(tz=UTC).isoformat()},
+            )
     if api_owned:
         payload["execution_owner"] = "orchestrator-api"
     envelope = {
@@ -6941,13 +7188,38 @@ async def operator_send_to_ceo(
         "payload": payload,
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
-        if resp.status_code == 403:
-            raise HTTPException(403, f"Policy denied: {resp.text}")
-        if not resp.is_success:
-            raise HTTPException(502, f"Router error {resp.status_code}: {resp.text}")
-        result = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=_router_auth_headers()) as client:
+            resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+            if resp.status_code == 403:
+                raise HTTPException(403, f"Policy denied: {resp.text}")
+            if not resp.is_success:
+                raise HTTPException(502, f"Router error {resp.status_code}: {resp.text}")
+            result = resp.json()
+    except Exception as exc:
+        if durable_record is not None:
+            storage = app.state.storage
+            if storage is not None:
+                await _transition_ceo_command(
+                    storage,
+                    message_id,
+                    from_statuses={"PENDING"},
+                    to_status="FAILED",
+                    updates={"error": f"Router publication failed: {str(exc)[:500]}"},
+                )
+        raise
+
+    if durable_record is not None:
+        storage = app.state.storage
+        if storage is not None:
+            loaded = await _load_ceo_command(storage, message_id)
+            if loaded is not None:
+                record, raw = loaded
+                record["entry_id"] = result.get("entry_id")
+                record["updated_at"] = datetime.now(tz=UTC).isoformat()
+                await storage.compare_and_set_config(
+                    f"{_CEO_COMMAND_PREFIX}{message_id}", raw, _ceo_command_json(record)
+                )
 
     if req.async_mode:
         if api_owned:

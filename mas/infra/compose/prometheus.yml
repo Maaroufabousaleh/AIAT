@@ -13,6 +13,9 @@ scrape_configs:
     static_configs:
       - targets: ["orchestrator-api:8000"]
     metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/orchestrator_api_key
     scrape_interval: 10s
 
   # ── Message Router ────────────────────────────────────────────────────────

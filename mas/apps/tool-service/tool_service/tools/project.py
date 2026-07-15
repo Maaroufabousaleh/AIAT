@@ -26,10 +26,17 @@ MESSAGE_ROUTER_URL = os.getenv("MESSAGE_ROUTER_URL") or os.getenv(
 )
 
 
+def _router_auth_headers() -> dict[str, str]:
+    secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
+    if not secret:
+        raise RuntimeError("ROUTER_SECRET must be configured for router publication")
+    return {"Authorization": f"Bearer tool-service:{secret}"}
+
+
 async def publish_message(envelope: dict[str, Any]) -> dict[str, Any]:
     """Publish a validated MAS envelope through the message-router."""
     async with httpx.AsyncClient(timeout=15, base_url=MESSAGE_ROUTER_URL) as client:
-        resp = await client.post("/messages/publish", json=envelope)
+        resp = await client.post("/messages/publish", json=envelope, headers=_router_auth_headers())
         resp.raise_for_status()
         return resp.json()
 

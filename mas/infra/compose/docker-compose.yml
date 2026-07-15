@@ -46,8 +46,7 @@ x-team-defaults: &team-defaults
     dockerfile: infra/docker/Dockerfile.team-runner
   restart: unless-stopped
   networks:
-    - internal
-    - public
+    - workers
   mem_limit: 512m
   cpus: "0.5"
   depends_on:
@@ -67,6 +66,9 @@ networks:
   public:
     driver: bridge
   internal:
+    driver: bridge
+    internal: true
+  workers:
     driver: bridge
     internal: true
 
@@ -173,6 +175,7 @@ services:
       LISTEN_PORT: "5432"
     networks:
       - internal
+      - workers
     depends_on:
       postgres:
         condition: service_healthy
@@ -194,6 +197,7 @@ services:
       - minio_data:/data
     networks:
       - internal
+      - workers
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -238,6 +242,7 @@ services:
         format: raw
     networks:
       - internal
+      - workers
     depends_on:
       redis-acl-init:
         condition: service_completed_successfully
@@ -271,8 +276,9 @@ services:
         format: raw
     networks:
       - internal
+      - workers
       - public
-    # No host port in production — only team-runners (on internal) need it.
+    # No host port in production — only team-runners (on workers) need it.
     # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
       redis-acl-init:
@@ -297,14 +303,12 @@ services:
       TOOL_MONITORING_SETUP_COMMAND: "${TOOL_MONITORING_SETUP_COMMAND:-aiat-devops-adapter monitoring --json-stdin}"
       TOOL_SANDBOX_COMMAND: "${TOOL_SANDBOX_COMMAND:-aiat-sandbox-runner --json-stdin}"
       AIAT_SANDBOX_IMAGE: "${AIAT_SANDBOX_IMAGE:-mas/tool-service:latest}"
-      TOOL_WORKSPACE_ROOT: "${TOOL_WORKSPACE_ROOT:-/mnt/c/projects/AIAT}"
+      TOOL_WORKSPACE_ROOT: "/workspace"
       AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
       PYTHONPATH: "/app"
       LOG_LEVEL: "INFO"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /usr/bin/docker:/usr/local/bin/docker:ro
-      - ../../..:/mnt/c/projects/AIAT
+      - ${AIAT_WORKSPACE_ROOT:-../../..}:/workspace
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -359,6 +363,7 @@ services:
     restart: unless-stopped
     networks:
       - internal
+      - workers
       - public
     dns:
       - 1.1.1.1
@@ -400,10 +405,11 @@ services:
       - path: ../../../.env
         format: raw
     networks:
-      - public
       - internal
+      - workers
+      - public
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -482,8 +488,6 @@ services:
       OMNIROUTE_DASHBOARD_URL: "${OMNIROUTE_DASHBOARD_URL:-http://localhost:20128/dashboard/analytics}"
       NODE_ENV: "production"
       PORT: "3000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:

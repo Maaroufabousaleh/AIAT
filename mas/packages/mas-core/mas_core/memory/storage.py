@@ -1360,6 +1360,28 @@ class AgentStorage:
         async with self.engine.begin() as conn:
             await conn.execute(stmt)
 
+    async def set_config_if_absent(self, key: str, value: str) -> bool:
+        """Insert a configuration record only when its key does not exist."""
+        stmt = (
+            pg_insert(t.system_config)
+            .values(key=key, value=value, updated_at=datetime.now(tz=UTC))
+            .on_conflict_do_nothing(index_elements=["key"])
+            .returning(t.system_config.c.key)
+        )
+        async with self.engine.begin() as conn:
+            return (await conn.execute(stmt)).scalar_one_or_none() is not None
+
+    async def compare_and_set_config(self, key: str, expected: str, value: str) -> bool:
+        """Atomically replace a configuration value when it still matches *expected*."""
+        stmt = (
+            t.system_config.update()
+            .where(t.system_config.c.key == key, t.system_config.c.value == expected)
+            .values(value=value, updated_at=datetime.now(tz=UTC))
+            .returning(t.system_config.c.key)
+        )
+        async with self.engine.begin() as conn:
+            return (await conn.execute(stmt)).scalar_one_or_none() is not None
+
     async def get_all_config(self) -> dict[str, str]:
         """Fetch all system_config rows as a dict."""
         async with self.engine.connect() as conn:

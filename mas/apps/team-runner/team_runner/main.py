@@ -87,6 +87,7 @@ class RunnerSettings(BaseModel):
     tool_secret: str | None = None
     pgbouncer_dsn: str | None = None
     orchestrator_url: str = "http://orchestrator-api:8000"
+    mas_api_key: str | None = None
     health_host: str = "0.0.0.0"
     health_port: int = 8080
     llm_model: str = "auto"
@@ -114,6 +115,7 @@ class RunnerSettings(BaseModel):
             tool_secret=os.environ.get("TOOL_SECRET"),
             pgbouncer_dsn=os.environ.get("PGBOUNCER_DSN"),
             orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
+            mas_api_key=os.environ.get("MAS_API_KEY"),
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
             llm_model=os.environ.get("LLM_DEFAULT_MODEL", "auto"),
@@ -574,6 +576,11 @@ class TeamRuntime:
         # G5: HTTP-call /system/shutdown-ack or /system/shutdown-nack on orchestrator
         orchestrator_url = self.settings.orchestrator_url
         admin_id = self.admin_agent.agent_id if self.admin_agent else "unknown"
+        api_key = self.settings.mas_api_key
+        if not api_key:
+            log.error("team_runner.shutdown_ack_not_sent", reason="MAS_API_KEY is not configured")
+            self._stop_event.set()
+            return
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 if checkpoint_errors:
@@ -584,6 +591,7 @@ class TeamRuntime:
                             "agent_id": admin_id,
                             "reason": f"checkpoint_save_failed for agents: {checkpoint_errors}",
                         },
+                        headers={"X-API-Key": api_key},
                     )
                     log.warning(
                         "team_runner.shutdown_nack_sent",
@@ -598,6 +606,7 @@ class TeamRuntime:
                             "team_id": self.team_config.team_id,
                             "agent_id": admin_id,
                         },
+                        headers={"X-API-Key": api_key},
                     )
                     log.info(
                         "team_runner.shutdown_ack_sent",

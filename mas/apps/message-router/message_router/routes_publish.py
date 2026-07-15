@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
+
 import structlog
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from mas_core.observability.metrics import MAS_MESSAGES_TOTAL, MESSAGES_PUBLISHED_TOTAL
@@ -26,6 +28,25 @@ router = APIRouter()
 policy = CommunicationPolicy()
 
 
+def _require_publisher_auth(authorization: str | None = Header(default=None)) -> str:
+    """Authenticate HTTP publishers before trusting an envelope.
+
+    The authenticated producer is intentionally returned for audit logging.
+    The current shared-secret protocol is a compatibility baseline; callers
+    must still migrate to per-agent signed credentials before untrusted worker
+    support can be enabled.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Publisher authentication required")
+    token = authorization[7:].strip()
+    if ":" not in token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid publisher credential")
+    producer_id, secret = token.split(":", 1)
+    if not producer_id or not settings.agent_token_secret or not hmac.compare_digest(secret, settings.agent_token_secret):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid publisher credential")
+    return producer_id
+
+
 class PublishResponse(BaseModel):
     """Returned by POST /messages/publish."""
 
@@ -44,7 +65,10 @@ class PublishResponse(BaseModel):
         "stream:{recipient_team} via XADD.  Returns the Redis stream entry ID."
     ),
 )
-async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
+async def publish_message(
+    envelope: MessageEnvelope,
+    publisher_id: str = Depends(_require_publisher_auth),
+) -> PublishResponse:
     """Publish a validated MessageEnvelope to the target team's Redis stream."""
     policy_result = policy.can(
         sender_role=envelope.sender_role,
@@ -55,7 +79,8 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
     )
     if policy_result is not True:
         logger.warning(
-            "Policy denied publish: sender=%s role=%s → team=%s type=%s reason=%s",
+            "Policy denied publish: publisher=%s sender=%s role=%s → team=%s type=%s reason=%s",
+            publisher_id,
             envelope.sender_id,
             envelope.sender_role,
             envelope.recipient_team,
@@ -152,9 +177,12 @@ async def publish_message(envelope: MessageEnvelope) -> PublishResponse:
     status_code=status.HTTP_200_OK,
     include_in_schema=False,
 )
-async def publish_message_compat(envelope: MessageEnvelope) -> PublishResponse:
+async def publish_message_compat(
+    envelope: MessageEnvelope,
+    publisher_id: str = Depends(_require_publisher_auth),
+) -> PublishResponse:
     """Compatibility alias matching the shorter Phase 3 route from the plan."""
-    return await publish_message(envelope)
+    return await publish_message(envelope, publisher_id)
 
 
 class BroadcastResponse(BaseModel):
@@ -174,7 +202,10 @@ class BroadcastResponse(BaseModel):
         "Only orchestrator and executive roles may broadcast."
     ),
 )
-async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
+async def broadcast_message(
+    envelope: MessageEnvelope,
+    publisher_id: str = Depends(_require_publisher_auth),
+) -> BroadcastResponse:
     """Broadcast an envelope to every known team stream."""
 
     policy_result = policy.can(
@@ -223,6 +254,9 @@ async def broadcast_message(envelope: MessageEnvelope) -> BroadcastResponse:
     status_code=status.HTTP_200_OK,
     include_in_schema=False,
 )
-async def broadcast_message_compat(envelope: MessageEnvelope) -> BroadcastResponse:
+async def broadcast_message_compat(
+    envelope: MessageEnvelope,
+    publisher_id: str = Depends(_require_publisher_auth),
+) -> BroadcastResponse:
     """Compatibility alias matching the shorter Phase 3 route from the plan."""
-    return await broadcast_message(envelope)
+    return await broadcast_message(envelope, publisher_id)

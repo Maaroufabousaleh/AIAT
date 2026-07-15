@@ -201,6 +201,7 @@ async def live_client(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
+        headers={"X-API-Key": "test-mas-key"},
     ) as client:
         yield client, storage
 

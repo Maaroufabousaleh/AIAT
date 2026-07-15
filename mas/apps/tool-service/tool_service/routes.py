@@ -53,9 +53,13 @@ def _verify_secret(
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Verify the Bearer token matches TOOL_SECRET (if configured)."""
+    """Verify the Bearer token matches a configured TOOL_SECRET.
+
+    Missing deployment credentials must fail closed; an unauthenticated tool
+    runner is never a safe fallback.
+    """
     if not settings.tool_secret:
-        return  # No secret configured — allow all
+        raise HTTPException(status_code=503, detail="Tool authentication is not configured.")
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header.")
     parts = authorization.split(" ", 1)

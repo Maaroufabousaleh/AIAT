@@ -63,6 +63,8 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    secrets:
+      - orchestrator_api_key
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=7d"
@@ -125,6 +127,10 @@ services:
     environment:
       LOG_LEVEL: DEBUG
       WATCHFILES_FORCE_POLLING: "true"
+
+secrets:
+  orchestrator_api_key:
+    environment: MAS_API_KEY
 
 # ── Volumes (dev-only) ─────────────────────────────────────────────────────
 volumes:
