@@ -1,385 +1,597 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clsx } from "clsx";
-import { Send } from "lucide-react";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { PageHeader } from "@/components/ui/PageHeader";
+import {
+  Activity,
+  ArrowDown,
+  Bot,
+  CheckCircle2,
+  Clock3,
+  Command,
+  Eraser,
+  Loader2,
+  Send,
+  Sparkles,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { formatInTz, getChatDateLabel } from "@/lib/datetime";
 import {
-  useCeoStream,
-  KNOWN_TYPES,
-  getTypeClass,
-  getTypeAccent,
   payloadText,
+  progressText,
+  useCeoStream,
   type FeedEntry,
-  type KnownType,
 } from "@/lib/ceo-feed";
 
-const CHAT_DISPLAY_TYPES: KnownType[] = [
-  "DIRECTIVE",
-  "REPORT",
-  "RESPONSE",
-  "TOOL_RESULT",
-  "VETO",
-  "OUTBOUND",
-  "UNKNOWN",
+type ActiveRequest = {
+  id: string;
+  startedAt: number;
+  stage: string;
+  detail: string;
+};
+
+const QUICK_COMMANDS = [
+  {
+    label: "Company status",
+    prompt: "Show me the live company status and tell me what needs attention.",
+  },
+  {
+    label: "Recent projects",
+    prompt: "List recent projects with their current state and the next action I should care about.",
+  },
+  {
+    label: "Hiring board",
+    prompt: "Show the hiring board workers and highlight blocked or pending candidates.",
+  },
+  {
+    label: "Runtime readiness",
+    prompt: "Show runtime and integration readiness, then summarize any gaps.",
+  },
 ];
 
-function isOperatorEntry(entry: FeedEntry): boolean {
-  return entry.outbound === true || entry.parsed?.sender_id === "human_operator";
-}
-
-function isUserSentEntry(entry: FeedEntry): boolean {
-  // Check if this is a user-sent message (either optimistic or from Redis)
+function isUserEntry(entry: FeedEntry): boolean {
   const parsed = entry.parsed;
   if (!parsed) return false;
-  // Optimistic entry has sender_id: "you"
-  if (parsed.sender_id === "you") return true;
-  // Redis entry has sender_id: "human_operator" and msg_type: "TASK" with HUMAN_DIRECTIVE action
-  if (parsed.sender_id === "human_operator" && parsed.msg_type === "TASK") {
-    const payload = parsed.payload as Record<string, unknown> | undefined;
-    if (payload?.action === "HUMAN_DIRECTIVE") return true;
-  }
-  return false;
+  if (entry.outbound || parsed.sender_id === "you") return true;
+  return (
+    parsed.sender_id === "human_operator" &&
+    parsed.msg_type === "TASK" &&
+    parsed.payload?.action === "HUMAN_DIRECTIVE"
+  );
 }
 
-function isCeoSentEntry(entry: FeedEntry): boolean {
-  const senderId = entry.parsed?.sender_id;
-  return senderId === "ceo" || senderId === "ceo_agent";
+function isProgressEntry(entry: FeedEntry): boolean {
+  const parsed = entry.parsed;
+  return (
+    parsed?.msg_type === "SYSTEM_EVENT" &&
+    parsed.payload?.event === "CEO_CHAT_PROGRESS"
+  );
 }
 
-function entryType(entry: FeedEntry): KnownType {
-  const rawType = entry.parsed?.message_type ?? entry.parsed?.msg_type ?? "UNKNOWN";
-  if (isOperatorEntry(entry)) return "OUTBOUND";
-  return CHAT_DISPLAY_TYPES.includes(rawType as KnownType) ? (rawType as KnownType) : "UNKNOWN";
-}
-
-function entryText(entry: FeedEntry): string {
-  const payload = entry.parsed?.payload;
-  if (isOperatorEntry(entry)) {
-    if (payload?.instruction != null) return String(payload.instruction);
-    if (payload?.message != null) return String(payload.message);
-  }
-  return payloadText(payload) ?? "";
+function isCeoResponse(entry: FeedEntry): boolean {
+  const parsed = entry.parsed;
+  if (!parsed || !["ceo", "ceo_agent"].includes(parsed.sender_id ?? "")) return false;
+  return ["RESPONSE", "REPORT", "RESULT", "TOOL_RESULT", "VETO"].includes(
+    parsed.message_type ?? parsed.msg_type ?? "",
+  );
 }
 
 function isChatEntry(entry: FeedEntry): boolean {
-  const parsed = entry.parsed;
-  if (!parsed) return false;
-  const type = parsed?.message_type ?? parsed?.msg_type ?? "UNKNOWN";
-  // Include operator entries (both optimistic and from Redis)
-  if (isUserSentEntry(entry)) return true;
-  // Include CEO responses and other chat-relevant messages
-  if (isCeoSentEntry(entry)) {
-    if (CHAT_DISPLAY_TYPES.includes(type as KnownType)) return true;
-  }
-  return false;
+  return isUserEntry(entry) || isProgressEntry(entry) || isCeoResponse(entry);
+}
+
+function correlationId(entry: FeedEntry): string | undefined {
+  return entry.parsed?.correlation_id ?? entry.parsed?.envelope?.correlation_id;
+}
+
+function messageId(entry: FeedEntry): string | undefined {
+  return entry.parsed?.message_id ?? entry.parsed?.envelope?.message_id;
+}
+
+function userText(entry: FeedEntry): string {
+  const payload = entry.parsed?.payload;
+  if (payload?.instruction != null) return String(payload.instruction);
+  if (payload?.message != null) return String(payload.message);
+  return "";
+}
+
+function safeOperatorDisplayText(text: string): string {
+  const credentialIntent = /\b(?:credential|credentials|secret|secrets)\b/i.test(text);
+  const secretChange = /\b(?:create|add|set|update|rotate|replace|value|token|password)\b/i.test(text);
+  return credentialIntent && secretChange
+    ? "Secure credential change requested. Secret-bearing details are hidden from chat history."
+    : text;
+}
+
+function entryKey(entry: FeedEntry, index: number): string {
+  return messageId(entry) ?? `${entry.ts}-${index}-${entry.raw.slice(0, 32)}`;
+}
+
+function CeoMarkdown({ children }: { children: string }) {
+  return (
+    <div className="ceo-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+        a: ({ children: label, ...props }) => (
+          <a {...props} target="_blank" rel="noreferrer" className="text-cyan-300 underline decoration-cyan-500/40 underline-offset-2 hover:text-cyan-200">
+            {label}
+          </a>
+        ),
+        code: ({ children: code, className, ...props }) => {
+          const block = Boolean(className);
+          return block ? (
+            <code {...props} className={clsx(className, "block overflow-x-auto rounded-xl border border-slate-700/70 bg-slate-950/80 p-3 text-xs text-cyan-100")}>
+              {code}
+            </code>
+          ) : (
+            <code {...props} className="rounded bg-slate-950/80 px-1.5 py-0.5 text-[0.85em] text-cyan-200 ring-1 ring-slate-700/70">
+              {code}
+            </code>
+          );
+        },
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export default function CeoChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
+  const [failedRequestIds, setFailedRequestIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [activeType, setActiveType] = useState<KnownType>("ALL");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [showJumpButton, setShowJumpButton] = useState(false);
+  const [pendingConfirmationToken, setPendingConfirmationToken] = useState<string | null>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const contextWorkerIdRef = useRef<string | null>(null);
-  const contextHydratedRef = useRef(false);
+  const ownedRequestIdsRef = useRef<Set<string>>(new Set());
+  const autoScrollRef = useRef(true);
+  const initialScrollRef = useRef(false);
 
-  const { entries, connected: streamConnected, clear, append } = useCeoStream(
+  const { entries, connected, clear, append } = useCeoStream(
     "exec_ceo",
     isChatEntry,
-    50,
+    100,
   );
 
-  const connected = streamConnected;
+  const completedCorrelations = useMemo(
+    () => new Set(entries.filter(isCeoResponse).map(correlationId).filter(Boolean)),
+    [entries],
+  );
+
+  const visibleEntries = useMemo(
+    () => entries.filter((entry) => !isProgressEntry(entry) || !completedCorrelations.has(correlationId(entry))),
+    [completedCorrelations, entries],
+  );
 
   useEffect(() => {
-    if (contextHydratedRef.current) return;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const context = entries[index].parsed?.payload?.context;
-      if (context && typeof context === "object" && "worker_id" in context) {
-        const workerId = (context as Record<string, unknown>).worker_id;
-        if (typeof workerId === "string") {
-          contextWorkerIdRef.current = workerId;
-          contextHydratedRef.current = true;
-          return;
-        }
+      const entry = entries[index];
+      const correlation = correlationId(entry);
+      if (!isCeoResponse(entry) || !correlation || !ownedRequestIdsRef.current.has(correlation)) {
+        continue;
+      }
+      const context = entry.parsed?.payload?.context;
+      const workerId = context && typeof context === "object"
+        ? (context as Record<string, unknown>).worker_id
+        : null;
+      if (typeof workerId === "string") {
+        contextWorkerIdRef.current = workerId;
+        break;
       }
     }
   }, [entries]);
 
-  const filteredEntries = entries.filter((entry) => {
-    if (activeType === "ALL") return true;
-    return entryType(entry) === activeType;
-  });
+  useEffect(() => {
+    const latestResponse = entries.findLast((entry) => {
+      const correlation = correlationId(entry);
+      return isCeoResponse(entry)
+        && Boolean(correlation)
+        && ownedRequestIdsRef.current.has(correlation!);
+    });
+    const context = latestResponse?.parsed?.payload?.context;
+    if (!context || typeof context !== "object") return;
+    const record = context as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, "confirmation_token")) return;
+    setPendingConfirmationToken(typeof record.confirmation_token === "string"
+      ? record.confirmation_token
+      : null);
+  }, [entries]);
 
-  const typeCounts = entries.reduce<Record<KnownType, number>>((counts, entry) => {
-    const type = entryType(entry);
-    counts[type] = (counts[type] || 0) + 1;
-    return counts;
-  }, {
-    ALL: entries.length,
-    TOOL_CALL: 0,
-    DIRECTIVE: 0,
-    REPORT: 0,
-    RESPONSE: 0,
-    TOOL_RESULT: 0,
-    VETO: 0,
-    HEARTBEAT: 0,
-    OUTBOUND: 0,
-    UNKNOWN: 0,
-  });
+  useEffect(() => {
+    if (!activeRequest) return;
+    const matching = entries.filter((entry) => correlationId(entry) === activeRequest.id);
+    const response = matching.find(isCeoResponse);
+    if (response) {
+      setActiveRequest(null);
+      setElapsedSeconds(0);
+      return;
+    }
+    const latestProgress = matching.filter(isProgressEntry).at(-1);
+    if (latestProgress) {
+      setActiveRequest((current) => current?.id === activeRequest.id
+        ? {
+            ...current,
+            stage: String(latestProgress.parsed?.payload?.stage ?? "Working on it"),
+            detail: progressText(latestProgress.parsed?.payload) ?? current.detail,
+          }
+        : current,
+      );
+    }
+  }, [activeRequest, entries]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setSending(true);
+  useEffect(() => {
+    if (!activeRequest) return;
+    const updateElapsed = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - activeRequest.startedAt) / 1000)));
+    };
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, [activeRequest]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    autoScrollRef.current = true;
+    setShowJumpButton(false);
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  useEffect(() => {
+    if (!initialScrollRef.current && entries.length > 0) {
+      initialScrollRef.current = true;
+      window.requestAnimationFrame(() => scrollToBottom("auto"));
+      return;
+    }
+    if (autoScrollRef.current) scrollToBottom();
+  }, [activeRequest, entries.length, scrollToBottom]);
+
+  const handleTranscriptScroll = useCallback(() => {
+    const element = transcriptRef.current;
+    if (!element) return;
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    autoScrollRef.current = distance < 120;
+    setShowJumpButton(distance >= 120);
+  }, []);
+
+  const handleSend = useCallback(async (override?: string) => {
+    const text = (override ?? input).trim();
+    if (!text || sending || activeRequest) return;
+
+    const requestId = crypto.randomUUID();
+    const now = Date.now();
+    ownedRequestIdsRef.current.add(requestId);
+    const displayText = safeOperatorDisplayText(text);
+    const optimisticEntry: FeedEntry = {
+      parsed: {
+        message_id: requestId,
+        correlation_id: requestId,
+        message_type: "OUTBOUND",
+        sender_id: "you",
+        payload: { instruction: displayText },
+        created_at: new Date(now).toISOString(),
+      },
+      raw: JSON.stringify({ message_id: requestId, message_type: "OUTBOUND", payload: { instruction: displayText } }),
+      ts: now,
+      outbound: true,
+    };
+
+    append(optimisticEntry);
+    setInput("");
     setError(null);
+    setSending(true);
+    setActiveRequest({
+      id: requestId,
+      startedAt: now,
+      stage: "Sending to CEO",
+      detail: "Publishing your request to the control plane…",
+    });
+    scrollToBottom();
+
     try {
       const res = await fetch("/api/ceo/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          action: "CHAT",
-          ...(contextWorkerIdRef.current
-            ? { context_worker_id: contextWorkerIdRef.current }
-            : {}),
+          request_id: requestId,
+          ...(contextWorkerIdRef.current ? { context_worker_id: contextWorkerIdRef.current } : {}),
+          ...(pendingConfirmationToken ? { context_confirmation_token: pendingConfirmationToken } : {}),
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }));
-        setError(err.error ?? `HTTP ${res.status}`);
-      } else {
-        const result = await res.json() as {
-          action?: { worker?: { id?: string } };
-        };
-        const workerId = result.action?.worker?.id;
-        if (workerId) {
-          contextWorkerIdRef.current = workerId;
-          contextHydratedRef.current = true;
-        }
-        // Append optimistic outbound entry immediately
-        const now = Date.now();
-        const outboundEntry: FeedEntry = {
-          parsed: {
-            message_type: "OUTBOUND",
-            sender_id: "you",
-            payload: { instruction: text },
-            timestamp: new Date().toISOString(),
-          },
-          raw: JSON.stringify({ message_type: "OUTBOUND", sender_id: "you", payload: { instruction: text } }),
-          ts: now,
-          outbound: true,
-        };
-        append(outboundEntry);
-        setInput("");
-        inputRef.current?.focus();
+        const body = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(body.error ?? `Request failed with HTTP ${res.status}`);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error");
+      setActiveRequest((current) => current?.id === requestId
+        ? {
+            ...current,
+            stage: "CEO received your request",
+            detail: "Interpreting the outcome you want and checking the live system state…",
+          }
+        : current,
+      );
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Network error";
+      setError(message);
+      setFailedRequestIds((current) => new Set(current).add(requestId));
+      setActiveRequest(null);
     } finally {
       setSending(false);
+      inputRef.current?.focus();
     }
-  }, [input, sending, append]);
+  }, [activeRequest, append, input, pendingConfirmationToken, scrollToBottom, sending]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleSend();
     }
   }, [handleSend]);
 
+  const handleClear = useCallback(() => {
+    clear();
+    setError(null);
+    setFailedRequestIds(new Set());
+    setPendingConfirmationToken(null);
+    contextWorkerIdRef.current = null;
+    ownedRequestIdsRef.current.clear();
+    initialScrollRef.current = false;
+  }, [clear]);
+
+  const groupedEntries = useMemo(() => {
+    const groups = new Map<string, FeedEntry[]>();
+    for (const entry of visibleEntries) {
+      const label = getChatDateLabel(entry.ts);
+      groups.set(label, [...(groups.get(label) ?? []), entry]);
+    }
+    return Array.from(groups.entries());
+  }, [visibleEntries]);
+
+  const isBusy = Boolean(activeRequest);
+
   return (
-    <div className="dashboard-page flex flex-col h-full">
-      <PageHeader
-        icon="brain"
-        title="CEO Chat"
-        description={
-          <span className="flex items-center gap-2 flex-wrap">
-            <span
-              className={clsx(
-                "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xxs font-semibold border",
-                connected
-                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
-                  : "bg-slate-800/60 text-slate-400 border-slate-700",
-              )}
-            >
-              <span className={clsx("w-1.5 h-1.5 rounded-full", connected ? "bg-emerald-400 animate-pulse" : "bg-slate-500")} />
-              {connected ? "stream:exec_ceo connected" : "connecting…"}
-            </span>
-            <span className="text-slate-500 text-xxs">
-              {filteredEntries.length} chat message{filteredEntries.length === 1 ? "" : "s"}
-            </span>
-          </span>
-        }
-        actions={
-          <button
-            type="button"
-            onClick={clear}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
-          >
-            Clear
-          </button>
-        }
-      />
-
-      {entries.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-4 mt-2">
-          {KNOWN_TYPES.map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setActiveType(type)}
-              className={clsx(
-                "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xxs font-semibold border transition-colors",
-                activeType === type
-                  ? "bg-blue-500/15 text-blue-200 border-blue-500/40"
-                  : "bg-slate-900/60 text-slate-400 border-slate-700 hover:bg-slate-800 hover:text-slate-200",
-              )}
-            >
-              {type === "ALL" ? "All" : type.replace(/_/g, " ")}
-              <span className="font-mono opacity-80">
-                {typeCounts[type] || 0}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/55 px-4 py-3 backdrop-blur-xl md:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border border-cyan-400/25 bg-gradient-to-br from-blue-500/20 to-cyan-400/10 text-cyan-200 shadow-lg shadow-cyan-950/30">
+            <Command size={18} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-lg font-semibold tracking-tight text-white md:text-xl">CEO Command Center</h1>
+              <span className="hidden rounded-full border border-violet-400/20 bg-violet-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-200 sm:inline">Primary control</span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 text-xs">
+              <span className={clsx("inline-flex items-center gap-1.5", connected ? "text-emerald-300" : "text-amber-300")} aria-live="polite">
+                {connected ? <Wifi size={12} /> : <WifiOff size={12} />}
+                {connected ? "Live" : "Reconnecting"}
               </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-        {filteredEntries.length === 0 ? (
-          <div className="py-16">
-            <EmptyState
-              icon="radio"
-              title="Start a conversation with the CEO"
-              description={
-                connected
-                  ? "The connection is live. Type a message below and press Enter to send."
-                  : "Connecting to the CEO stream… Messages will appear once connected."
-              }
-            />
+              <span className="text-slate-600">•</span>
+              <span className="truncate text-slate-400">Ask for an outcome; the CEO handles routing and details.</span>
+            </div>
           </div>
-        ) : (
-          <>
-            {(() => {
-              // Group entries by date
-              const groups = new Map<string, FeedEntry[]>();
-              for (const entry of filteredEntries) {
-                const dateLabel = getChatDateLabel(entry.ts);
-                if (!groups.has(dateLabel)) {
-                  groups.set(dateLabel, []);
-                }
-                groups.get(dateLabel)!.push(entry);
-              }
-
-              return Array.from(groups.entries()).map(([dateLabel, entries]) => (
-                <div key={dateLabel} className="space-y-2">
-                  <div className="flex items-center gap-2 my-2">
-                    <div className="flex-1 border-t border-slate-800" />
-                    <span className="text-xs text-slate-500 px-2 font-medium bg-slate-950/50">{dateLabel}</span>
-                    <div className="flex-1 border-t border-slate-800" />
-                  </div>
-                  {entries.map((entry) => {
-                    const parsed = entry.parsed;
-                    const type = (parsed?.message_type ?? parsed?.msg_type ?? "UNKNOWN") as KnownType;
-                    const isOutbound = isUserSentEntry(entry);
-                    const operatorMessage = isOutbound
-                      ? parsed?.payload
-                        ? (typeof parsed.payload === "object" && parsed.payload && "instruction" in parsed.payload
-                            ? String((parsed.payload as Record<string, unknown>).instruction)
-                            : JSON.stringify(parsed.payload))
-                        : ""
-                      : "";
-                    const ceoMessage = isOutbound
-                      ? ""
-                      : payloadText(parsed?.payload) ?? "";
-                    const text = isOutbound ? operatorMessage : ceoMessage;
-                    const role = isOutbound ? "operator" as const : "ceo" as const;
-
-                    if (!text) return null;
-
-                    return (
-                      <div
-                        key={entry.raw}
-                        className={clsx("flex gap-3", role === "operator" ? "flex-row-reverse" : "flex-row")}
-                      >
-                        <div
-                          className={clsx(
-                            "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold",
-                            role === "operator" ? "bg-violet-600 text-white" : "bg-blue-600 text-white",
-                          )}
-                        >
-                          {role === "operator" ? "OP" : "CEO"}
-                        </div>
-                        <div
-                          className={clsx(
-                            "max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
-                            role === "operator"
-                              ? "bg-violet-600 text-white rounded-tr-sm"
-                              : clsx("rounded-tl-sm", getTypeClass(type)),
-                          )}
-                        >
-                          <p className="whitespace-pre-wrap break-words">{text}</p>
-                          <span
-                            className={clsx(
-                              "block mt-1 text-xxs",
-                              role === "operator" ? "text-violet-200" : clsx(getTypeAccent(type)),
-                            )}
-                          >
-                            {formatInTz(entry.ts, "HH:mm:ss")}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ));
-            })()}
-          </>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      <div className="border-t border-slate-800 px-4 py-3">
-        <div className="flex gap-3">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={sending}
-            placeholder="Message the CEO… (Enter to send, Shift+Enter for newline)"
-            rows={1}
-            aria-label="Message to CEO"
-            className="flex-1 rounded-xl bg-slate-950/80 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 px-4 py-3 resize-none focus:border-blue-500/60 focus:outline-none transition-colors disabled:cursor-wait disabled:opacity-60"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!input.trim() || sending}
-            aria-label="Send message"
-            className={clsx(
-              "flex-shrink-0 flex items-center justify-center w-11 h-11 rounded-xl border transition-colors",
-              input.trim() && !sending
-                ? "bg-blue-600 hover:bg-blue-500 text-white border-blue-500/60 hover:border-blue-400"
-                : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed",
-            )}
-          >
-            {sending ? (
-              <span className="w-4 h-4 border border-slate-400 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <Send size={16} />
-            )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/ceo" className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white">
+            <Activity size={14} />
+            <span className="hidden sm:inline">Activity</span>
+          </Link>
+          <button type="button" onClick={handleClear} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-xs font-medium text-slate-300 transition hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-200" aria-label="Clear conversation view">
+            <Eraser size={14} />
+            <span className="hidden sm:inline">Clear view</span>
           </button>
         </div>
-        {error && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
-            {error}
-          </div>
-        )}
+      </header>
+
+      <div className="min-h-0 flex-1 p-3 md:p-4">
+        <div className="mx-auto grid h-full max-w-[1600px] min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
+          <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/55 shadow-2xl shadow-black/20">
+            <div ref={transcriptRef} onScroll={handleTranscriptScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 md:px-8" aria-label="CEO conversation" aria-live="polite">
+              {groupedEntries.length === 0 ? (
+                <div className="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center py-12 text-center">
+                  <div className="relative mb-5">
+                    <div className="absolute inset-0 rounded-full bg-cyan-400/20 blur-2xl" />
+                    <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-blue-500/20 to-cyan-400/10 text-cyan-200">
+                      <Sparkles size={27} />
+                    </div>
+                  </div>
+                  <h2 className="text-xl font-semibold text-white">What outcome should AIAT drive?</h2>
+                  <p className="mt-2 max-w-lg text-sm leading-6 text-slate-400">
+                    Speak naturally. The CEO will inspect live state, coordinate teams, and only ask for details when a safe decision truly needs them.
+                  </p>
+                  <div className="mt-6 grid w-full gap-2 sm:grid-cols-2">
+                    {QUICK_COMMANDS.map((command) => (
+                      <button key={command.label} type="button" onClick={() => void handleSend(command.prompt)} disabled={isBusy} className="rounded-xl border border-slate-700/70 bg-slate-900/65 px-4 py-3 text-left text-sm text-slate-200 transition hover:border-cyan-500/35 hover:bg-cyan-500/5 disabled:cursor-not-allowed disabled:opacity-50">
+                        <span className="font-medium">{command.label}</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">{command.prompt}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mx-auto w-full max-w-4xl space-y-6">
+                  {groupedEntries.map(([dateLabel, dayEntries]) => (
+                    <div key={dateLabel} className="space-y-4">
+                      <div className="sticky top-0 z-10 flex items-center gap-3 py-1">
+                        <div className="h-px flex-1 bg-slate-800/80" />
+                        <span className="rounded-full border border-slate-800 bg-slate-950/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500 backdrop-blur">{dateLabel}</span>
+                        <div className="h-px flex-1 bg-slate-800/80" />
+                      </div>
+                      {dayEntries.map((entry, index) => {
+                        if (isProgressEntry(entry)) {
+                          const stage = String(entry.parsed?.payload?.stage ?? "Working on it");
+                          const detail = progressText(entry.parsed?.payload) ?? "Processing your request…";
+                          return (
+                            <div key={entryKey(entry, index)} className="flex items-start gap-3 pl-1 sm:pl-12" data-testid="ceo-thinking">
+                              <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10 text-cyan-300">
+                                <Loader2 size={13} className="animate-spin" />
+                              </div>
+                              <div className="min-w-0 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] px-3 py-2.5">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                  <span className="font-semibold text-cyan-200">{stage}</span>
+                                  <span className="text-slate-600">•</span>
+                                  <span className="text-slate-500">live progress</span>
+                                </div>
+                                <p className="mt-1 text-xs leading-5 text-slate-400">{detail}</p>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        const user = isUserEntry(entry);
+                        const text = user ? userText(entry) : payloadText(entry.parsed?.payload) ?? "";
+                        if (!text) return null;
+                        const action = !user && entry.parsed?.payload?.action && typeof entry.parsed.payload.action === "object"
+                          ? entry.parsed.payload.action as Record<string, unknown>
+                          : null;
+                        const needsConfirmation = action?.requires_confirmation === true;
+                        const entryContext = entry.parsed?.payload?.context;
+                        const entryConfirmationToken = entryContext && typeof entryContext === "object"
+                          ? (entryContext as Record<string, unknown>).confirmation_token
+                          : null;
+                        const confirmationIsPending = needsConfirmation
+                          && typeof entryConfirmationToken === "string"
+                          && entryConfirmationToken === pendingConfirmationToken;
+                        const failed = Boolean(messageId(entry) && failedRequestIds.has(messageId(entry)!));
+                        return (
+                          <article key={entryKey(entry, index)} className={clsx("flex items-start gap-3", user && "flex-row-reverse")}>
+                            <div className={clsx("mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold shadow-lg", user ? "border-violet-400/30 bg-violet-500/15 text-violet-200 shadow-violet-950/30" : "border-cyan-400/25 bg-gradient-to-br from-blue-500/25 to-cyan-400/10 text-cyan-100 shadow-cyan-950/30")}>
+                              {user ? "YOU" : <Bot size={15} />}
+                            </div>
+                            <div className={clsx("min-w-0", user ? "max-w-[82%] sm:max-w-[72%]" : "max-w-[calc(100%-2.75rem)] flex-1")}>
+                              <div className={clsx("rounded-2xl border px-4 py-3 text-sm leading-6 shadow-sm", user ? "rounded-tr-md border-violet-400/25 bg-violet-500/15 text-violet-50" : "rounded-tl-md border-slate-700/70 bg-slate-900/75 text-slate-200")}>
+                                {user ? <p className="whitespace-pre-wrap break-words">{text}</p> : <CeoMarkdown>{text}</CeoMarkdown>}
+                                {action && (
+                                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-700/60 pt-2.5 text-[11px]">
+                                    {needsConfirmation ? (
+                                      <Clock3 size={13} className="text-amber-300" />
+                                    ) : (
+                                      <CheckCircle2 size={13} className="text-emerald-300" />
+                                    )}
+                                    <span className={clsx("font-medium", needsConfirmation ? "text-amber-200" : "text-emerald-200")}>
+                                      {needsConfirmation ? "Confirmation required" : "Action completed"}
+                                    </span>
+                                    {action.type != null && <span className="rounded bg-slate-950/70 px-1.5 py-0.5 text-slate-400">{String(action.type).replaceAll("_", " ")}</span>}
+                                    {action.status != null && <span className="text-slate-500">{String(action.status)}</span>}
+                                    {confirmationIsPending && (
+                                      <>
+                                        <button type="button" onClick={() => void handleSend("confirm")} disabled={isBusy} className="ml-auto rounded-lg border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 font-semibold text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-50">
+                                          Confirm
+                                        </button>
+                                        <button type="button" onClick={() => void handleSend("cancel")} disabled={isBusy} className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-2.5 py-1 font-medium text-slate-300 transition hover:bg-slate-700 disabled:opacity-50">
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className={clsx("mt-1.5 flex items-center gap-2 px-1 text-[10px] text-slate-600", user && "justify-end")}>
+                                <span>{user ? "You" : "CEO"}</span>
+                                <span>•</span>
+                                <span>{formatInTz(entry.ts, "HH:mm")}</span>
+                                {failed && <span className="font-medium text-rose-400">Not delivered</span>}
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ))}
+
+                  {activeRequest && !visibleEntries.some((entry) => isProgressEntry(entry) && correlationId(entry) === activeRequest.id) && (
+                    <div className="flex items-start gap-3 pl-1 sm:pl-12" data-testid="ceo-thinking">
+                      <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10 text-cyan-300">
+                        <Loader2 size={13} className="animate-spin" />
+                      </div>
+                      <div className="min-w-0 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                          <span className="font-semibold text-cyan-200">{activeRequest.stage}</span>
+                          <span className="inline-flex items-center gap-1 text-slate-500"><Clock3 size={11} /> {elapsedSeconds}s</span>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-slate-400">{activeRequest.detail}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div ref={bottomRef} className="h-1" />
+            </div>
+
+            {showJumpButton && (
+              <button type="button" onClick={() => scrollToBottom()} className="absolute bottom-32 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/95 px-3 py-1.5 text-xs text-slate-300 shadow-xl shadow-black/40 hover:bg-slate-800">
+                <ArrowDown size={13} /> Latest
+              </button>
+            )}
+
+            <div className="border-t border-slate-800/90 bg-slate-950/90 p-3 backdrop-blur-xl sm:p-4">
+              {error && (
+                <div className="mb-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" role="alert">{error}</div>
+              )}
+              <div className={clsx("rounded-2xl border bg-slate-900/80 p-2 shadow-inner transition", isBusy ? "border-cyan-500/25" : "border-slate-700/80 focus-within:border-cyan-500/45")}>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={isBusy}
+                  placeholder={isBusy ? "The CEO is working on your request…" : "Tell the CEO what outcome you want…"}
+                  rows={2}
+                  aria-label="Message to CEO"
+                  className="block max-h-36 min-h-[3.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500 disabled:cursor-wait disabled:opacity-70"
+                />
+                <div className="flex items-center justify-between gap-3 px-1 pt-1">
+                  <div className="min-w-0 truncate text-[10px] text-slate-500">
+                    {isBusy ? `Working for ${elapsedSeconds}s · live updates appear above` : "Enter to send · Shift+Enter for a new line"}
+                  </div>
+                  <button type="button" onClick={() => void handleSend()} disabled={!input.trim() || isBusy || sending} aria-label="Send message" className={clsx("inline-flex h-9 flex-shrink-0 items-center gap-2 rounded-xl px-3.5 text-xs font-semibold transition", input.trim() && !isBusy ? "bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg shadow-cyan-950/40 hover:from-blue-400 hover:to-cyan-400" : "cursor-not-allowed bg-slate-800 text-slate-500")}>
+                    {isBusy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    <span className="hidden sm:inline">{isBusy ? "Working" : "Send"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside className="hidden min-h-0 flex-col gap-3 overflow-y-auto xl:flex">
+            <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/[0.07] to-slate-950/50 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles size={15} className="text-cyan-300" /> Ask for outcomes</div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">You do not need to choose teams, tools, or routes. The CEO resolves those details and reports what changed.</p>
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-950/50 px-3 py-2 text-[11px] text-slate-400">
+                {connected ? <CheckCircle2 size={13} className="text-emerald-300" /> : <Loader2 size={13} className="animate-spin text-amber-300" />}
+                {connected ? "Real-time control stream connected" : "Restoring the control stream"}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800/90 bg-slate-950/45 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quick commands</div>
+              <div className="mt-3 space-y-2">
+                {QUICK_COMMANDS.map((command) => (
+                  <button key={command.label} type="button" onClick={() => void handleSend(command.prompt)} disabled={isBusy} className="group w-full rounded-xl border border-slate-800 bg-slate-900/55 px-3 py-2.5 text-left transition hover:border-cyan-500/30 hover:bg-cyan-500/[0.04] disabled:cursor-not-allowed disabled:opacity-50">
+                    <span className="block text-xs font-medium text-slate-200 group-hover:text-cyan-100">{command.label}</span>
+                    <span className="mt-0.5 block line-clamp-2 text-[10px] leading-4 text-slate-500">{command.prompt}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800/90 bg-slate-950/45 p-4 text-xs leading-5 text-slate-500">
+              <div className="flex items-center gap-2 font-medium text-slate-300"><Bot size={14} /> Progress, not private reasoning</div>
+              <p className="mt-2">Live updates show what the CEO is checking or changing. Hidden model reasoning is never exposed.</p>
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );

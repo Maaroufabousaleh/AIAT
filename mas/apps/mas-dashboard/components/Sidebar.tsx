@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   FolderKanban,
   Radio,
-  Brain,
   BarChart3,
   Inbox,
   ScrollText,
@@ -32,6 +31,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Operate",
     items: [
+      { href: "/ceo/chat",    label: "CEO Command",  icon: Send },
       { href: "/",            label: "Overview",     icon: LayoutDashboard },
       { href: "/projects",    label: "Projects",     icon: FolderKanban },
       { href: "/workers",     label: "Workers",      icon: Users },
@@ -44,8 +44,6 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/flows",      label: "Flows",      icon: GitBranch },
       { href: "/system-viz", label: "System Viz", icon: Network },
       { href: "/streams",    label: "Streams",    icon: Radio },
-      { href: "/ceo",        label: "CEO Feed",   icon: Brain },
-      { href: "/ceo/chat",  label: "CEO Chat",   icon: Send },
     ],
   },
   {
@@ -67,7 +65,13 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobileOpen = false,
+  onNavigate,
+}: {
+  mobileOpen?: boolean;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -77,10 +81,13 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-slate-800/90 bg-slate-950/80 flex flex-col shadow-2xl shadow-black/30">
+    <aside className={clsx(
+      "fixed inset-y-0 left-0 z-50 flex w-72 flex-shrink-0 flex-col border-r border-slate-800/90 bg-slate-950 shadow-2xl shadow-black/40 transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:bg-slate-950/80",
+      mobileOpen ? "translate-x-0" : "-translate-x-full",
+    )}>
       {/* Logo */}
       <div className="px-5 py-5 border-b border-slate-800/80">
-        <Link href="/" prefetch={false} className="flex items-center gap-3 group">
+        <Link href="/" prefetch={false} onClick={onNavigate} className="flex items-center gap-3 group">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
             <span className="text-white text-sm font-bold">M</span>
           </div>
@@ -111,7 +118,7 @@ export default function Sidebar() {
             </div>
             <div className="space-y-0.5">
               {group.items.map(({ href, label, icon: Icon }) => {
-                const active = href.startsWith("/analytics/")
+                const active = href.startsWith("/analytics/") || href === "/ceo/chat"
                   ? pathname === href
                   : href === "/"
                     ? pathname === "/"
@@ -121,6 +128,7 @@ export default function Sidebar() {
                     key={href}
                     href={href}
                     prefetch={false}
+                    onClick={onNavigate}
                     className={clsx(
                       "group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
                       active

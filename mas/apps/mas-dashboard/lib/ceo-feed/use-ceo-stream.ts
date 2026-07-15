@@ -8,6 +8,9 @@ type FilterPredicate = ((entry: FeedEntry) => boolean) | null;
 
 function entriesEqual(a: FeedEntry, b: FeedEntry): boolean {
   if (a.raw === b.raw) return true;
+  const aId = a.parsed?.message_id ?? a.parsed?.envelope?.message_id;
+  const bId = b.parsed?.message_id ?? b.parsed?.envelope?.message_id;
+  if (aId && bId && aId === bId) return true;
   const aText =
     a.parsed?.payload?.instruction ??
     a.parsed?.payload?.message ??

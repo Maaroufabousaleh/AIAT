@@ -52,15 +52,15 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
     ),
   ).toBeVisible();
 
-  const approval = await page.request.post("/api/ceo/messages", {
-    data: { message: `approve worker ${candidateId}` },
+  await page.goto("/ceo/chat");
+  const ceoInput = page.getByRole("textbox");
+  await ceoInput.fill(`approve worker ${candidateId}`);
+  await ceoInput.press("Enter");
+  await expect(page.getByText(new RegExp(`cannot approve.*${candidateId}`, "i"))).toBeVisible({
+    timeout: 30_000,
   });
-  expect(approval.ok()).toBeTruthy();
-  const approvalBody = await approval.json();
-  expect(approvalBody.action?.status).toBe("blocked");
-  expect(approvalBody.action?.response).toContain("cannot approve");
 
-  await page.reload();
+  await page.goto("/workers");
   await search.fill(candidateId);
   row = page.getByRole("row", { name: new RegExp(candidateId) });
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();

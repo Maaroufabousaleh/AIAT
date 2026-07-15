@@ -5305,6 +5305,9 @@ async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
 class OperatorToCeoRequest(BaseModel):
     message: str
     context_worker_id: UUID | None = None
+    context_confirmation_token: UUID | None = None
+    request_id: UUID | None = None
+    async_mode: bool = False
 
     @field_validator("message")
     @classmethod
@@ -5337,6 +5340,21 @@ def _clean_ceo_chat_text(text: str) -> str:
     return cleaned.strip()
 
 
+def _ceo_stream_instruction(instruction: str) -> str:
+    """Redact potentially secret-bearing credential changes from durable chat streams."""
+    lowered = instruction.lower()
+    credential_intent = any(
+        token in lowered for token in ("credential", "credentials", "secret", "secrets")
+    )
+    secret_change = re.search(
+        r"\b(?:create|add|set|update|rotate|replace|value|token|password)\b",
+        lowered,
+    ) is not None
+    if credential_intent and secret_change:
+        return "Secure credential change requested. Secret-bearing details were withheld from chat history."
+    return instruction
+
+
 async def _publish_ceo_chat_response(
     *,
     response_text: str,
@@ -5354,9 +5372,13 @@ async def _publish_ceo_chat_response(
         payload["action"] = {
             "type": action.get("type"),
             "status": action.get("status"),
+            "requires_confirmation": action.get("status") == "needs_confirmation",
+            "confirmation_label": action.get("confirmation_label"),
         }
+        context: dict[str, Any] = {"confirmation_token": action.get("confirmation_token")}
         if worker_id:
-            payload["context"] = {"worker_id": str(worker_id)}
+            context["worker_id"] = str(worker_id)
+        payload["context"] = context
 
     envelope = {
         "message_id": str(uuid4()),
@@ -5383,6 +5405,48 @@ async def _publish_ceo_chat_response(
                 )
     except Exception:
         logger.exception("CEO chat response publish failed")
+
+
+async def _publish_ceo_chat_progress(
+    *,
+    stage: str,
+    detail: str,
+    correlation_id: str,
+    parent_id: str,
+    state: str = "working",
+) -> None:
+    """Publish operator-safe progress without exposing model chain-of-thought."""
+    envelope = {
+        "message_id": str(uuid4()),
+        "correlation_id": correlation_id,
+        "parent_id": parent_id,
+        "msg_type": MessageType.SYSTEM_EVENT.value,
+        "sender_id": "ceo",
+        "sender_team": "exec_ceo",
+        "sender_role": AgentRole.ORCHESTRATOR.value,
+        "recipient_team": "exec_ceo",
+        "project_id": "operator-direct",
+        "payload": {
+            "event": "CEO_CHAT_PROGRESS",
+            "stage": stage,
+            "detail": detail,
+            "state": state,
+            "source": "ceo_chat",
+        },
+        "created_at": datetime.now(tz=UTC).isoformat(),
+        "ack_required": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+            if not resp.is_success:
+                logger.warning(
+                    "CEO chat progress publish failed: status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:300],
+                )
+    except Exception:
+        logger.exception("CEO chat progress publish failed")
 
 
 async def _publish_ceo_response(
@@ -5689,12 +5753,182 @@ async def _handle_ceo_hiring_followup_intent(
     }
 
 
+def _ceo_confirmation_store() -> dict[str, dict[str, Any]]:
+    """Return the short-lived server-side store for exact chat confirmations."""
+    store = getattr(app.state, "ceo_pending_confirmations", None)
+    if not isinstance(store, dict):
+        store = {}
+        app.state.ceo_pending_confirmations = store
+    return store
+
+
+def _queue_ceo_confirmation(
+    *,
+    action: str,
+    target_id: str | int | None,
+    label: str,
+    response: str,
+) -> dict[str, Any]:
+    token = str(uuid4())
+    _ceo_confirmation_store()[token] = {
+        "action": action,
+        "target_id": str(target_id) if target_id is not None else None,
+        "label": label,
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+    return {
+        "type": action,
+        "status": "needs_confirmation",
+        "confirmation_token": token,
+        "confirmation_label": label,
+        "response": response + " Reply `confirm` to continue or `cancel` to leave everything unchanged.",
+        "trace": ["parsed_privileged_action", "queued_exact_confirmation"],
+    }
+
+
+async def _handle_ceo_confirmation_intent(
+    instruction: str,
+    confirmation_token: UUID | None,
+) -> dict[str, Any] | None:
+    lowered = instruction.strip().lower()
+    is_confirm = re.search(r"\b(?:confirm|confirmed|proceed|yes|do it)\b", lowered) is not None
+    is_cancel = re.search(r"\b(?:cancel|never mind|nevermind|no|stop)\b", lowered) is not None
+    if not (is_confirm or is_cancel):
+        return None
+    if confirmation_token is None:
+        if re.fullmatch(
+            r"(?:confirm|confirmed|proceed|yes|do it|cancel|never mind|nevermind|no|stop)(?:\s+(?:it|action))?[.!]?",
+            lowered,
+        ) is None:
+            return None
+        return {
+            "type": "privileged_confirmation",
+            "status": "missing_context",
+            "response": "There is no pending CEO-chat action to confirm. Ask for the action first so I can bind confirmation to an exact target.",
+            "trace": ["parsed_confirmation", "missing_confirmation_context"],
+        }
+
+    token = str(confirmation_token)
+    pending = _ceo_confirmation_store().pop(token, None)
+    if pending is None:
+        return {
+            "type": "privileged_confirmation",
+            "status": "expired",
+            "response": "That confirmation is no longer pending. Ask for the action again so I can re-check the current live state.",
+            "trace": ["parsed_confirmation", "confirmation_missing_or_consumed"],
+        }
+
+    try:
+        created_at = datetime.fromisoformat(str(pending["created_at"]))
+    except (KeyError, TypeError, ValueError):
+        created_at = datetime.min.replace(tzinfo=UTC)
+    if (datetime.now(tz=UTC) - created_at).total_seconds() > 600:
+        return {
+            "type": str(pending.get("action") or "privileged_confirmation"),
+            "status": "expired",
+            "response": "That confirmation expired after 10 minutes. Ask for the action again so I can re-check the target.",
+            "trace": ["parsed_confirmation", "confirmation_expired"],
+        }
+    if is_cancel:
+        return {
+            "type": str(pending.get("action") or "privileged_confirmation"),
+            "status": "cancelled",
+            "response": f"Cancelled `{pending.get('label')}`. Nothing was changed.",
+            "trace": ["parsed_confirmation", "cancelled_pending_action"],
+        }
+
+    action = str(pending.get("action") or "")
+    target = pending.get("target_id")
+    if action == "system_shutdown":
+        result = await system_shutdown()
+    elif action == "system_resume":
+        result = await system_resume()
+    elif action == "project_archive":
+        result = await archive_project(UUID(str(target)))
+    elif action == "project_delete":
+        result = await delete_project(UUID(str(target)))
+    elif action == "flow_delete":
+        result = await delete_flow(UUID(str(target)))
+    elif action == "flow_instance_cancel":
+        result = await flow_instance_action(
+            UUID(str(target)), FlowInstanceActionRequest(action="cancel")
+        )
+    elif action == "dead_letter_replay":
+        result = await replay_dead_letter(int(str(target)))
+    elif action == "credential_delete":
+        await delete_credential(str(target))
+        result = {"status": "deleted"}
+    else:
+        return {
+            "type": "privileged_confirmation",
+            "status": "unsupported",
+            "response": "The pending action type is no longer supported. Nothing was changed.",
+            "trace": ["parsed_confirmation", "unsupported_pending_action"],
+        }
+    return {
+        "type": action,
+        "status": str(result.get("status") or "completed"),
+        "result": _serialize(result),
+        "response": f"Completed `{pending.get('label')}`. Result: `{result.get('status') or 'completed'}`.",
+        "trace": ["parsed_confirmation", "validated_exact_target", "executed_confirmed_action"],
+    }
+
+
+async def _find_project_for_ceo_text(
+    storage: AgentStorage,
+    instruction: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    project_id = _extract_uuid_from_text(instruction)
+    if project_id:
+        return await storage.get_project(UUID(project_id)), False
+    projects = await storage.list_projects(limit=100)
+    lowered = instruction.lower()
+    matches = [
+        project
+        for project in projects
+        if str(project.get("name") or "").strip()
+        and str(project.get("name") or "").strip().lower() in lowered
+    ]
+    return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
+
+
 async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
     lowered = instruction.lower()
     if "project" not in lowered:
         return None
 
     project_id = _extract_uuid_from_text(instruction)
+
+    destructive_action = None
+    if re.search(r"\b(?:delete|remove|purge)\b", lowered):
+        destructive_action = "project_delete"
+    elif re.search(r"\barchive\b", lowered):
+        destructive_action = "project_archive"
+    if destructive_action:
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": destructive_action,
+                "status": "needs_project",
+                "response": (
+                    "More than one project matches that name; give me the project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID for that action."
+                ),
+                "trace": ["parsed_project_destructive_intent", "project_not_uniquely_identified"],
+            }
+        project_name = str(project.get("name") or project.get("id"))
+        verb = "permanently delete" if destructive_action == "project_delete" else "archive"
+        return _queue_ceo_confirmation(
+            action=destructive_action,
+            target_id=project.get("id"),
+            label=f"{verb} project {project_name}",
+            response=(
+                f"I found project `{project_name}` (`{project.get('id')}`), currently `{project.get('state')}`. "
+                f"This will {verb} that exact project."
+            ),
+        )
 
     if any(word in lowered for word in ("create", "new", "start", "initialize", "init")):
         name = _extract_named_text(instruction, "CEO Chat Project")
@@ -5806,6 +6040,338 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
         }
 
     return None
+
+
+async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("system", "schedule", "shutdown", "shut down")):
+        return None
+
+    if "schedule" in lowered:
+        storage = _storage()
+        if re.search(r"\b(?:show|status|current|what|inspect|list)\b", lowered) or not re.search(
+            r"\b(?:enable|disable|set|update|change|configure)\b", lowered
+        ):
+            schedule = {
+                "enabled": (await storage.get_config("schedule_enabled") or "false") == "true",
+                "start_hour": int(await storage.get_config("schedule_start_hour") or 8),
+                "end_hour": int(await storage.get_config("schedule_end_hour") or 18),
+                "timezone": await storage.get_config("schedule_timezone") or "UTC",
+                "days": (await storage.get_config("schedule_days") or "mon,tue,wed,thu,fri").split(","),
+                "auto_shutdown": (await storage.get_config("schedule_auto_shutdown") or "true") == "true",
+                "auto_resume": (await storage.get_config("schedule_auto_resume") or "true") == "true",
+            }
+            return {
+                "type": "system_schedule",
+                "status": "read",
+                "schedule": schedule,
+                "response": (
+                    f"System schedule is `{'enabled' if schedule['enabled'] else 'disabled'}`: "
+                    f"{schedule['start_hour']:02d}:00–{schedule['end_hour']:02d}:00 "
+                    f"`{schedule['timezone']}` on {', '.join(schedule['days'])}."
+                ),
+                "trace": ["parsed_schedule_intent", "read_system_schedule"],
+            }
+
+        start_match = re.search(r"\b(?:start|from)\s+(\d{1,2})(?::\d{2})?\b", lowered)
+        end_match = re.search(r"\b(?:end|until|to)\s+(\d{1,2})(?::\d{2})?\b", lowered)
+        timezone_match = re.search(r"\b([A-Za-z]+/[A-Za-z_+-]+)\b", instruction)
+        current_days = (await storage.get_config("schedule_days") or "mon,tue,wed,thu,fri").split(",")
+        if "weekdays" in lowered:
+            current_days = ["mon", "tue", "wed", "thu", "fri"]
+        elif "every day" in lowered or "daily" in lowered:
+            current_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        enabled = "disable" not in lowered
+        req = ScheduleRequest(
+            enabled=enabled,
+            start_hour=int(start_match.group(1)) if start_match else int(await storage.get_config("schedule_start_hour") or 8),
+            end_hour=int(end_match.group(1)) if end_match else int(await storage.get_config("schedule_end_hour") or 18),
+            timezone=timezone_match.group(1) if timezone_match else (await storage.get_config("schedule_timezone") or "UTC"),
+            days=current_days,
+            auto_shutdown="no auto shutdown" not in lowered,
+            auto_resume="no auto resume" not in lowered,
+        )
+        try:
+            ZoneInfo(req.timezone)
+        except ZoneInfoNotFoundError:
+            return {
+                "type": "system_schedule",
+                "status": "needs_timezone",
+                "response": f"`{req.timezone}` is not a recognized IANA timezone. Use a value such as `America/Toronto` or `UTC`.",
+                "trace": ["parsed_schedule_intent", "rejected_invalid_timezone"],
+            }
+        await update_schedule(req)
+        return {
+            "type": "system_schedule",
+            "status": "updated",
+            "schedule": req.model_dump(),
+            "response": (
+                f"System schedule is now `{'enabled' if req.enabled else 'disabled'}`: "
+                f"{req.start_hour:02d}:00–{req.end_hour:02d}:00 `{req.timezone}` on {', '.join(req.days)}."
+            ),
+            "trace": ["parsed_schedule_intent", "validated_timezone", "updated_system_schedule"],
+        }
+
+    if re.search(r"\b(?:shutdown|shut down)\b", lowered):
+        current = await system_status()
+        return _queue_ceo_confirmation(
+            action="system_shutdown",
+            target_id=None,
+            label="shut down the AIAT control plane",
+            response=(
+                f"The system is currently `{current.get('state')}` with {current.get('active_projects')} active projects. "
+                "Shutdown broadcasts to every team, waits for acknowledgements, and stops work."
+            ),
+        )
+    if re.search(r"\b(?:resume|restart|start)\b", lowered):
+        current = await system_status()
+        return _queue_ceo_confirmation(
+            action="system_resume",
+            target_id=None,
+            label="resume the AIAT control plane",
+            response=f"The system is currently `{current.get('state')}`. Resume republishes work for active projects.",
+        )
+    if re.search(r"\b(?:status|state|health|uptime|show|inspect)\b", lowered):
+        status = await system_status()
+        return {
+            "type": "system_status",
+            "status": "read",
+            "system": status,
+            "response": (
+                f"System is `{status.get('state')}` with {status.get('active_projects')} active of "
+                f"{status.get('total_projects')} total projects. Uptime is {status.get('uptime_seconds')} seconds; "
+                f"scheduled operation is `{'enabled' if status.get('schedule_enabled') else 'disabled'}`."
+            ),
+            "trace": ["parsed_system_status_intent", "read_system_lifecycle"],
+        }
+    return None
+
+
+async def _handle_ceo_dead_letter_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("dead letter", "dead-letter", "dlq")):
+        return None
+    id_match = re.search(r"(?:dead[ -]?letter|dlq)(?:\s+(?:entry|id))?\s*#?\s*(\d+)", lowered)
+    letter_id = int(id_match.group(1)) if id_match else None
+    if re.search(r"\breplay\b", lowered):
+        if letter_id is None:
+            return {
+                "type": "dead_letter_replay",
+                "status": "needs_dead_letter",
+                "response": "Give me the numeric dead-letter ID to replay. I will inspect it and ask for confirmation first.",
+                "trace": ["parsed_dead_letter_replay", "missing_dead_letter_id"],
+            }
+        letter = await get_dead_letter(letter_id)
+        return _queue_ceo_confirmation(
+            action="dead_letter_replay",
+            target_id=letter_id,
+            label=f"replay dead letter {letter_id}",
+            response=(
+                f"Dead letter `{letter_id}` failed for `{letter.get('recipient_team')}` because "
+                f"`{letter.get('failure_reason')}`. Replay creates a new delivery attempt and preserves the forensic record."
+            ),
+        )
+    if letter_id is not None:
+        letter = await get_dead_letter(letter_id)
+        safe_letter = {
+            key: value
+            for key, value in letter.items()
+            if key not in {"envelope_json", "payload", "body"}
+        }
+        return {
+            "type": "dead_letter_detail",
+            "status": "read",
+            "dead_letter": safe_letter,
+            "response": (
+                f"Dead letter `{letter_id}` targets `{letter.get('recipient_team')}` and failed because "
+                f"`{letter.get('failure_reason')}`. Say `replay dead letter {letter_id}` to begin a confirmed replay."
+            ),
+            "trace": ["parsed_dead_letter_detail", "read_dead_letter_metadata"],
+        }
+    letters = await list_dead_letters(limit=20)
+    summary = "; ".join(
+        f"#{letter.get('id')} {letter.get('recipient_team')} — {letter.get('failure_reason')}"
+        for letter in letters[:8]
+    ) or "none"
+    return {
+        "type": "dead_letter_list",
+        "status": "read",
+        "dead_letters": letters,
+        "response": f"Dead-letter queue: {summary}.",
+        "trace": ["parsed_dead_letter_list", "read_dead_letter_queue"],
+    }
+
+
+async def _handle_ceo_credential_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("credential", "credentials", "secret", "secrets")):
+        return None
+    credentials = await list_credentials()
+    matches = [
+        credential
+        for credential in credentials
+        if str(credential.get("name") or "").lower() in lowered
+    ]
+    credential = matches[0] if len(matches) == 1 else None
+    if re.search(r"\b(?:create|add|set|update|rotate|replace|value|token|password)\b", lowered):
+        return {
+            "type": "credential_secure_change",
+            "status": "requires_secure_input",
+            "response": (
+                "I will not accept, echo, or persist credential values in chat history. Open the "
+                "[Credentials](/credentials) secure form to create or rotate the value; then ask me here to inspect its metadata or audit trail."
+            ),
+            "trace": ["parsed_credential_change", "blocked_secret_in_chat", "directed_secure_boundary"],
+        }
+    if re.search(r"\b(?:delete|remove|purge)\b", lowered):
+        if credential is None:
+            return {
+                "type": "credential_delete",
+                "status": "needs_credential",
+                "response": "Give me one exact existing credential name. Credential values are never shown in chat.",
+                "trace": ["parsed_credential_delete", "credential_not_uniquely_identified"],
+            }
+        name = str(credential.get("name"))
+        return _queue_ceo_confirmation(
+            action="credential_delete",
+            target_id=name,
+            label=f"delete credential {name}",
+            response=f"I found credential `{name}`. Deleting it can break every adapter that references that name; its value remains hidden.",
+        )
+    if "audit" in lowered and credential is not None:
+        audit = await credential_audit_log(str(credential.get("name")), limit=20)
+        return {
+            "type": "credential_audit",
+            "status": "read",
+            "credential": credential,
+            "audit": audit,
+            "response": f"Credential `{credential.get('name')}` has {len(audit)} recent audited access events. No secret value was read or exposed.",
+            "trace": ["parsed_credential_audit", "read_credential_audit_metadata"],
+        }
+    if credential is not None:
+        return {
+            "type": "credential_metadata",
+            "status": "read",
+            "credential": credential,
+            "response": f"Credential `{credential.get('name')}` exists. Type is `{credential.get('secret_type') or credential.get('type') or 'other'}`; its value is intentionally hidden.",
+            "trace": ["parsed_credential_metadata", "read_non_secret_metadata"],
+        }
+    names = [str(item.get("name")) for item in credentials]
+    return {
+        "type": "credential_list",
+        "status": "read",
+        "credentials": credentials,
+        "response": "Credential registry (metadata only): " + (", ".join(f"`{name}`" for name in names) if names else "empty") + ".",
+        "trace": ["parsed_credential_list", "read_non_secret_credential_registry"],
+    }
+
+
+async def _find_flow_for_ceo_text(storage: AgentStorage, instruction: str) -> tuple[dict[str, Any] | None, bool]:
+    flow_id = _extract_uuid_from_text(instruction)
+    if flow_id:
+        return await storage.get_flow(UUID(flow_id)), False
+    flows = await storage.list_flows(limit=100)
+    lowered = instruction.lower()
+    matches = [
+        flow
+        for flow in flows
+        if str(flow.get("name") or "").strip()
+        and str(flow.get("name") or "").strip().lower() in lowered
+    ]
+    return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
+
+
+async def _handle_ceo_flow_intent(instruction: str) -> dict[str, Any] | None:
+    lowered = instruction.lower()
+    if not any(token in lowered for token in ("flow", "workflow")):
+        return None
+    storage = _storage()
+    if "instance" in lowered and re.search(r"\b(?:start|pause|resume|cancel)\b", lowered):
+        instance_id = _extract_uuid_from_text(instruction)
+        if instance_id is None:
+            return {
+                "type": "flow_instance_action",
+                "status": "needs_instance",
+                "response": "Give me the flow-instance UUID for that lifecycle action.",
+                "trace": ["parsed_flow_instance_action", "missing_instance_id"],
+            }
+        instance = await get_flow_instance(UUID(instance_id))
+        action_match = re.search(r"\b(start|pause|resume|cancel)\b", lowered)
+        action_name = action_match.group(1) if action_match else ""
+        if action_name == "cancel":
+            return _queue_ceo_confirmation(
+                action="flow_instance_cancel",
+                target_id=instance_id,
+                label=f"cancel flow instance {instance_id}",
+                response=f"Flow instance `{instance_id}` is currently `{instance.get('status')}`. Cancellation is terminal for this instance.",
+            )
+        result = await flow_instance_action(
+            UUID(instance_id), FlowInstanceActionRequest(action=action_name)
+        )
+        return {
+            "type": "flow_instance_action",
+            "status": str(result.get("status") or action_name),
+            "instance": result,
+            "response": f"Flow instance `{instance_id}` action `{action_name}` completed; current status is `{result.get('status')}`.",
+            "trace": ["parsed_flow_instance_action", f"executed_{action_name}"],
+        }
+    if re.search(r"\b(?:delete|remove|purge)\b", lowered):
+        flow, ambiguous = await _find_flow_for_ceo_text(storage, instruction)
+        if flow is None:
+            return {
+                "type": "flow_delete",
+                "status": "needs_flow",
+                "response": "More than one flow matches; give me its UUID." if ambiguous else "Give me an existing flow name or UUID to delete.",
+                "trace": ["parsed_flow_delete", "flow_not_uniquely_identified"],
+            }
+        return _queue_ceo_confirmation(
+            action="flow_delete",
+            target_id=flow.get("id"),
+            label=f"delete flow {flow.get('name') or flow.get('id')}",
+            response=f"I found flow `{flow.get('name')}` (`{flow.get('id')}`), version `{flow.get('version')}`. Deletion removes that definition.",
+        )
+    if re.search(r"\b(?:create|new|build)\b", lowered):
+        return {
+            "type": "flow_create",
+            "status": "needs_definition",
+            "response": (
+                "I can create the flow after I have its ordered nodes and transitions. Describe the departments/outcomes in order, "
+                "or use the [Flow Builder](/flows/new) for a visual graph; I will validate the resulting definition before activation."
+            ),
+            "trace": ["parsed_flow_create", "requested_flow_definition"],
+        }
+    if re.search(r"\b(?:status|detail|inspect|show)\b", lowered):
+        flow, ambiguous = await _find_flow_for_ceo_text(storage, instruction)
+        if flow is not None:
+            return {
+                "type": "flow_detail",
+                "status": "read",
+                "flow": _serialize(flow),
+                "response": f"Flow `{flow.get('name')}` is version `{flow.get('version')}` and `{'active' if flow.get('is_active') else 'inactive'}`.",
+                "trace": ["parsed_flow_detail", "read_flow_definition"],
+            }
+        if ambiguous:
+            return {
+                "type": "flow_detail",
+                "status": "needs_flow",
+                "response": "More than one flow matches that name; give me the flow UUID.",
+                "trace": ["parsed_flow_detail", "ambiguous_flow_name"],
+            }
+    flow_rows = await storage.list_flows(limit=20, offset=0)
+    flows = [_serialize(flow) for flow in flow_rows]
+    instances = await list_active_flow_instances_early()
+    summary = "; ".join(
+        f"{flow.get('name')} ({flow.get('id')}, {'active' if flow.get('is_active') else 'inactive'})"
+        for flow in flows[:8]
+    ) or "none"
+    return {
+        "type": "flow_list",
+        "status": "read",
+        "flows": flows,
+        "active_instances": instances,
+        "response": f"Flows: {summary}. Active instances: {len(instances)}.",
+        "trace": ["parsed_flow_list", "read_flow_definitions", "read_active_instances"],
+    }
 
 
 async def _handle_ceo_company_intent(instruction: str) -> dict[str, Any] | None:
@@ -6139,8 +6705,38 @@ async def _handle_ceo_readiness_intent(instruction: str) -> dict[str, Any] | Non
     return None
 
 
-def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
+def _ceo_operator_intent_is_api_owned(
+    instruction: str,
+    context_worker_id: UUID | None = None,
+    context_confirmation_token: UUID | None = None,
+) -> bool:
     lowered = instruction.lower()
+    simple_confirmation = re.fullmatch(
+        r"(?:confirm|confirmed|proceed|yes|do it|cancel|never mind|nevermind|no|stop)(?:\s+(?:it|action))?[.!]?",
+        lowered.strip(),
+    ) is not None
+    if context_confirmation_token is not None and re.search(
+        r"\b(?:confirm|confirmed|proceed|yes|do it|cancel|never mind|nevermind|no|stop)\b",
+        lowered,
+    ):
+        return True
+    if simple_confirmation:
+        return True
+    if context_worker_id is not None and any(
+        token in lowered
+        for token in (
+            "reclassify",
+            "evaluate",
+            "approve",
+            "activate",
+            "deactivate",
+            "drain",
+            "status",
+            "department",
+            "production dep",
+        )
+    ):
+        return True
     if "hire" in lowered and any(
         token in lowered for token in ("agent", "worker", "engineer", "developer", "specialist")
     ):
@@ -6148,7 +6744,10 @@ def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
     if "project" in lowered:
         if any(
             word in lowered
-            for word in ("create", "new", "start", "initialize", "init", "list", "show", "recent")
+            for word in (
+                "create", "new", "start", "initialize", "init", "list", "show", "recent",
+                "delete", "remove", "purge", "archive",
+            )
         ):
             return True
         if any(word in lowered for word in ("status", "state", "progress", "workspace")):
@@ -6179,17 +6778,45 @@ def _ceo_operator_intent_is_api_owned(instruction: str) -> bool:
         )
     ):
         return True
-    return False
+    return any(
+        token in lowered
+        for token in (
+            "system",
+            "schedule",
+            "shutdown",
+            "shut down",
+            "dead letter",
+            "dead-letter",
+            "dlq",
+            "credential",
+            "credentials",
+            "secret",
+            "secrets",
+            "flow",
+            "workflow",
+        )
+    )
 
 
 async def _handle_ceo_operator_intent(
     instruction: str,
     context_worker_id: UUID | None = None,
+    context_confirmation_token: UUID | None = None,
 ) -> dict[str, Any] | None:
+    confirmation = await _handle_ceo_confirmation_intent(
+        instruction,
+        context_confirmation_token,
+    )
+    if confirmation is not None:
+        return confirmation
     handlers = (
         (_handle_ceo_hiring_intent, False),
         (_handle_ceo_hiring_followup_intent, True),
+        (_handle_ceo_system_intent, False),
+        (_handle_ceo_dead_letter_intent, False),
+        (_handle_ceo_credential_intent, False),
         (_handle_ceo_project_intent, False),
+        (_handle_ceo_flow_intent, False),
         (_handle_ceo_readiness_intent, False),
         (_handle_ceo_company_intent, False),
         (_handle_ceo_worker_intent, True),
@@ -6205,6 +6832,77 @@ async def _handle_ceo_operator_intent(
     return None
 
 
+def _ceo_progress_detail(instruction: str) -> str:
+    lowered = instruction.lower()
+    if "hire" in lowered:
+        return "I’m validating the candidate source, department routing, and hiring gates."
+    if any(token in lowered for token in ("worker", "workers", "candidate", "hiring board")):
+        return "I’m checking the live worker registry and governance state."
+    if "project" in lowered:
+        return "I’m checking project records, workflow state, and available next actions."
+    if any(token in lowered for token in ("system", "schedule", "shutdown", "shut down")):
+        return "I’m checking lifecycle state, active work, and the exact control boundary."
+    if any(token in lowered for token in ("dead letter", "dead-letter", "dlq")):
+        return "I’m inspecting dead-letter metadata and replay safety."
+    if any(token in lowered for token in ("credential", "credentials", "secret", "secrets")):
+        return "I’m checking credential metadata without reading or exposing secret values."
+    if any(token in lowered for token in ("flow", "workflow")):
+        return "I’m checking flow definitions, active instances, and allowed lifecycle actions."
+    if any(token in lowered for token in ("company", "organization", "org", "department")):
+        return "I’m reading the live company structure and control-plane status."
+    if any(token in lowered for token in ("runtime", "integration", "docling", "semgrep")):
+        return "I’m checking runtime and integration readiness."
+    return "I’m interpreting your request and selecting the safest available action."
+
+
+async def _process_ceo_operator_intent(
+    *,
+    instruction: str,
+    context_worker_id: UUID | None,
+    context_confirmation_token: UUID | None,
+    message_id: str,
+) -> None:
+    """Run an API-owned CEO command after the chat request has been accepted."""
+    await _publish_ceo_chat_progress(
+        stage="Working on it",
+        detail=_ceo_progress_detail(instruction),
+        correlation_id=message_id,
+        parent_id=message_id,
+    )
+    try:
+        action = await _handle_ceo_operator_intent(
+            instruction,
+            context_worker_id,
+            context_confirmation_token,
+        )
+        if action is None:
+            await _publish_ceo_chat_response(
+                response_text=(
+                    "I received the request, but I could not map it to a safe control-plane action. "
+                    "Tell me the outcome you want, and I’ll either execute it or ask for the one missing detail."
+                ),
+                correlation_id=message_id,
+                parent_id=message_id,
+            )
+            return
+        await _publish_ceo_chat_response(
+            response_text=action["response"],
+            correlation_id=message_id,
+            parent_id=message_id,
+            action=action,
+        )
+    except Exception as exc:
+        logger.exception("CEO chat async action failed")
+        await _publish_ceo_chat_response(
+            response_text=(
+                "I could not complete that control-plane action. Nothing was silently assumed. "
+                f"The recorded error is: {str(exc)[:240]}"
+            ),
+            correlation_id=message_id,
+            parent_id=message_id,
+        )
+
+
 @app.post("/ceo/message")
 async def operator_send_to_ceo(
     req: OperatorToCeoRequest,
@@ -6216,14 +6914,20 @@ async def operator_send_to_ceo(
     _check_auth(x_api_key, authorization)
     tid = new_trace_id()
     bind_trace_id(tid)
-    message_id = str(uuid4())
+    message_id = str(req.request_id or uuid4())
     instruction = req.message.strip()
+    stream_instruction = _ceo_stream_instruction(instruction)
     payload = {
         "action": "HUMAN_DIRECTIVE",
-        "instruction": instruction,
+        "instruction": stream_instruction,
         "source": "ceo_chat",
     }
-    if _ceo_operator_intent_is_api_owned(instruction):
+    api_owned = _ceo_operator_intent_is_api_owned(
+        instruction,
+        req.context_worker_id,
+        req.context_confirmation_token,
+    )
+    if api_owned:
         payload["execution_owner"] = "orchestrator-api"
     envelope = {
         "message_id": message_id,
@@ -6244,7 +6948,36 @@ async def operator_send_to_ceo(
         if not resp.is_success:
             raise HTTPException(502, f"Router error {resp.status_code}: {resp.text}")
         result = resp.json()
-    action = await _handle_ceo_operator_intent(instruction, req.context_worker_id)
+
+    if req.async_mode:
+        if api_owned:
+            background_tasks.add_task(
+                _process_ceo_operator_intent,
+                instruction=instruction,
+                context_worker_id=req.context_worker_id,
+                context_confirmation_token=req.context_confirmation_token,
+                message_id=message_id,
+            )
+        else:
+            background_tasks.add_task(
+                _publish_ceo_chat_progress,
+                stage="Thinking",
+                detail="I’m reviewing the request, available actions, and the current operating context.",
+                correlation_id=message_id,
+                parent_id=message_id,
+            )
+        return {
+            "ok": True,
+            "entry_id": result.get("entry_id"),
+            "request_id": message_id,
+            "status": "accepted",
+        }
+
+    action = await _handle_ceo_operator_intent(
+        instruction,
+        req.context_worker_id,
+        req.context_confirmation_token,
+    )
     if action is not None:
         background_tasks.add_task(
             _publish_ceo_chat_response,

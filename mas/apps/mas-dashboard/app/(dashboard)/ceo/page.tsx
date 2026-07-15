@@ -104,6 +104,7 @@ export default function CeoPage() {
       RESPONSE: 0,
       VETO: 0,
       HEARTBEAT: 0,
+      PROGRESS: 0,
       OUTBOUND: 0,
       UNKNOWN: 0,
     };

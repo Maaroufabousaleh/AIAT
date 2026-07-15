@@ -4,9 +4,11 @@ import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { message, context_worker_id } = body as {
+    const { message, context_worker_id, context_confirmation_token, request_id } = body as {
       message: string;
       context_worker_id?: string;
+      context_confirmation_token?: string;
+      request_id?: string;
     };
 
     if (!message || typeof message !== "string" || message.trim().length === 0) {
@@ -26,7 +28,10 @@ export async function POST(req: Request) {
         method: "POST",
         body: JSON.stringify({
           message: message.trim(),
+          async_mode: true,
+          ...(request_id ? { request_id } : {}),
           ...(context_worker_id ? { context_worker_id } : {}),
+          ...(context_confirmation_token ? { context_confirmation_token } : {}),
         }),
       }
     );

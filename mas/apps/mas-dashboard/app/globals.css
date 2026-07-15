@@ -122,6 +122,68 @@
     @apply bg-slate-800/35;
   }
 
+  .ceo-markdown {
+    @apply space-y-3 break-words text-sm leading-6 text-slate-200;
+  }
+
+  .ceo-markdown > :first-child {
+    @apply mt-0;
+  }
+
+  .ceo-markdown > :last-child {
+    @apply mb-0;
+  }
+
+  .ceo-markdown h1,
+  .ceo-markdown h2,
+  .ceo-markdown h3 {
+    @apply mt-5 font-semibold tracking-tight text-white;
+  }
+
+  .ceo-markdown h1 {
+    @apply text-lg;
+  }
+
+  .ceo-markdown h2 {
+    @apply text-base;
+  }
+
+  .ceo-markdown h3 {
+    @apply text-sm;
+  }
+
+  .ceo-markdown p {
+    @apply whitespace-pre-wrap;
+  }
+
+  .ceo-markdown ul {
+    @apply ml-5 list-disc space-y-1 marker:text-cyan-400;
+  }
+
+  .ceo-markdown ol {
+    @apply ml-5 list-decimal space-y-1 marker:text-cyan-400;
+  }
+
+  .ceo-markdown blockquote {
+    @apply border-l-2 border-cyan-500/50 pl-3 text-slate-400;
+  }
+
+  .ceo-markdown hr {
+    @apply my-4 border-slate-700/70;
+  }
+
+  .ceo-markdown table {
+    @apply block max-w-full overflow-x-auto rounded-lg border border-slate-700/70 text-xs;
+  }
+
+  .ceo-markdown th {
+    @apply bg-slate-950/70 px-3 py-2 text-left font-semibold text-slate-300;
+  }
+
+  .ceo-markdown td {
+    @apply border-t border-slate-800 px-3 py-2 align-top;
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Focus ring utility                                                     */
   /* Use on custom interactive elements (cards, list rows) that aren't       */

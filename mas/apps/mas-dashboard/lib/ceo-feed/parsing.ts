@@ -15,7 +15,10 @@ export function entryFromRaw(raw: string, outbound = false): FeedEntry {
   const timestamp = parseFirstTimestamp(
     parsed?.timestamp,
     parsed?.sent_at,
+    parsed?.created_at,
     parsed?.envelope?.timestamp,
+    parsed?.envelope?.sent_at,
+    parsed?.envelope?.created_at,
   );
   return { raw, parsed, ts: timestamp, outbound };
 }
@@ -58,4 +61,9 @@ export function payloadText(payload: Record<string, unknown> | undefined): strin
           ? String(payload.report)
           : null;
   return raw ? cleanChatText(raw) : null;
+}
+
+export function progressText(payload: Record<string, unknown> | undefined): string | null {
+  const raw = payload?.detail ?? payload?.summary ?? payload?.message ?? payload?.stage;
+  return raw == null ? null : cleanChatText(String(raw));
 }

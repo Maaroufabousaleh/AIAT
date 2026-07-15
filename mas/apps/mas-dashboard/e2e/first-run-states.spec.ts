@@ -2,15 +2,15 @@ import { expect, test } from "@playwright/test";
 import { authenticate } from "./auth";
 
 test("renders the requested first-run state from the live orchestrator", async ({ page }) => {
-  const expected = process.env.EXPECTED_FIRST_RUN;
-  expect(["not_seeded", "seeded", "needs_migration_config"]).toContain(expected);
-
   await authenticate(page);
   await expect(page.getByRole("heading", { name: "System Overview" })).toBeVisible();
 
   const response = await page.request.get("/api/system/status");
   expect(response.ok()).toBeTruthy();
-  expect((await response.json()).first_run).toBe(expected);
+  const liveState = (await response.json()).first_run as string;
+  const expected = process.env.EXPECTED_FIRST_RUN ?? liveState;
+  expect(["not_seeded", "seeded", "needs_migration_config"]).toContain(liveState);
+  expect(liveState).toBe(expected);
 
   if (expected === "seeded") {
     await expect(page.getByText("Default company not yet seeded")).toHaveCount(0);

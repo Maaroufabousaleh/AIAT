@@ -8,8 +8,15 @@ import httpx
 import pytest
 
 from orchestrator_api.main import (
+    _ceo_operator_intent_is_api_owned,
     _department_for_hiring_text,
+    _handle_ceo_confirmation_intent,
+    _handle_ceo_credential_intent,
+    _handle_ceo_flow_intent,
+    _handle_ceo_system_intent,
     _handle_ceo_worker_intent,
+    _queue_ceo_confirmation,
+    _ceo_stream_instruction,
     _target_department_for_reclassification_text,
     _worker_name_from_hiring_text,
 )
@@ -54,6 +61,117 @@ def test_hiring_worker_name_uses_explicit_name_when_provided():
 @pytest.mark.anyio
 async def test_generic_status_does_not_enter_worker_intent_handler():
     assert await _handle_ceo_worker_intent("what is the status?") is None
+
+
+def test_contextual_worker_followup_is_owned_by_orchestrator_api():
+    worker_id = UUID("00000000-0000-4000-a000-0000000000ce")
+
+    assert _ceo_operator_intent_is_api_owned("reclassify it to QA", worker_id) is True
+    assert _ceo_operator_intent_is_api_owned("what else can you do?", worker_id) is False
+
+
+def test_control_plane_and_exact_confirmation_intents_are_api_owned():
+    assert _ceo_operator_intent_is_api_owned("show system status") is True
+    assert _ceo_operator_intent_is_api_owned("list the DLQ") is True
+    assert _ceo_operator_intent_is_api_owned("show credential metadata") is True
+    assert _ceo_operator_intent_is_api_owned("list flows") is True
+    assert _ceo_operator_intent_is_api_owned("confirm") is True
+    assert _ceo_operator_intent_is_api_owned("confirm you are online") is False
+
+
+@pytest.mark.anyio
+async def test_confirmation_is_bound_to_exact_pending_action_and_can_be_cancelled():
+    from orchestrator_api.main import app
+
+    app.state.ceo_pending_confirmations = {}
+    pending = _queue_ceo_confirmation(
+        action="project_delete",
+        target_id="00000000-0000-4000-a000-000000000099",
+        label="delete project demo",
+        response="This deletes the exact project.",
+    )
+
+    result = await _handle_ceo_confirmation_intent(
+        "cancel",
+        UUID(pending["confirmation_token"]),
+    )
+
+    assert result is not None
+    assert result["status"] == "cancelled"
+    assert "Nothing was changed" in result["response"]
+    assert app.state.ceo_pending_confirmations == {}
+
+
+@pytest.mark.anyio
+async def test_system_status_chat_reads_live_lifecycle(monkeypatch):
+    async def fake_system_status() -> dict[str, Any]:
+        return {
+            "state": "RUNNING",
+            "active_projects": 2,
+            "total_projects": 5,
+            "uptime_seconds": 42.0,
+            "schedule_enabled": True,
+        }
+
+    monkeypatch.setattr("orchestrator_api.main.system_status", fake_system_status)
+    result = await _handle_ceo_system_intent("show system status and uptime")
+
+    assert result is not None
+    assert result["type"] == "system_status"
+    assert result["system"]["active_projects"] == 2
+    assert "`RUNNING`" in result["response"]
+
+
+@pytest.mark.anyio
+async def test_credential_values_are_rejected_from_chat(monkeypatch):
+    async def fake_list_credentials() -> list[dict[str, Any]]:
+        return [{"name": "github_token", "secret_type": "token"}]
+
+    monkeypatch.setattr("orchestrator_api.main.list_credentials", fake_list_credentials)
+    result = await _handle_ceo_credential_intent(
+        "rotate credential github_token to super-secret-value"
+    )
+
+    assert result is not None
+    assert result["status"] == "requires_secure_input"
+    assert "super-secret-value" not in result["response"]
+    assert "Credentials" in result["response"]
+
+
+def test_secret_bearing_credential_directive_is_redacted_from_stream_history():
+    raw = "rotate credential github_token to super-secret-value"
+
+    streamed = _ceo_stream_instruction(raw)
+
+    assert streamed != raw
+    assert "super-secret-value" not in streamed
+    assert "withheld from chat history" in streamed
+    assert _ceo_stream_instruction("show credential github_token metadata") == "show credential github_token metadata"
+
+
+@pytest.mark.anyio
+async def test_flow_list_chat_uses_explicit_storage_pagination():
+    from orchestrator_api.main import app
+
+    storage = MagicMock()
+    storage.list_flows = AsyncMock(
+        return_value=[
+            {
+                "id": UUID("00000000-0000-4000-a000-000000000123"),
+                "name": "release flow",
+                "is_active": True,
+            }
+        ]
+    )
+    storage.get_active_flow_instances = AsyncMock(return_value=[])
+    app.state.storage = storage
+
+    result = await _handle_ceo_flow_intent("list flows")
+
+    assert result is not None
+    assert result["status"] == "read"
+    assert "release flow" in result["response"]
+    storage.list_flows.assert_awaited_once_with(limit=20, offset=0)
 
 
 @pytest.mark.anyio
@@ -108,6 +226,62 @@ async def test_operator_send_to_ceo_publishes_human_directive(client, monkeypatc
         "instruction": "Hello CEO, confirm you are online.",
         "source": "ceo_chat",
     }
+
+
+@pytest.mark.anyio
+async def test_operator_send_to_ceo_async_mode_uses_caller_request_id(client, monkeypatch):
+    published: list[dict[str, Any]] = []
+    request_id = "b870d9a2-8695-4f6e-870a-6f205202bdde"
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"Authorization": "Bearer test-mas-key"},
+        json={
+            "message": "Hello CEO, give me a concise operational summary.",
+            "request_id": request_id,
+            "async_mode": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "entry_id": "stream-entry-1",
+        "request_id": request_id,
+        "status": "accepted",
+    }
+    assert published[0]["envelope"]["message_id"] == request_id
+    assert published[0]["envelope"]["correlation_id"] == request_id
+    assert published[1]["envelope"]["msg_type"] == "SYSTEM_EVENT"
+    assert published[1]["envelope"]["correlation_id"] == request_id
+    assert published[1]["envelope"]["payload"]["event"] == "CEO_CHAT_PROGRESS"
 
 
 @pytest.mark.anyio

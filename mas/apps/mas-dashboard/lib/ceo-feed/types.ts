@@ -1,13 +1,17 @@
 export interface MessageEnvelope {
+  message_id?: string;
+  correlation_id?: string;
+  parent_id?: string;
   type?: string;
   msg_type?: string;
-  message_type: string;
+  message_type?: string;
   sender_id?: string;
   sender_team?: string;
   project_id?: string;
   payload?: Record<string, unknown>;
   timestamp?: string;
   sent_at?: string;
+  created_at?: string;
   envelope?: MessageEnvelope;
 }
 
@@ -33,6 +37,7 @@ export type KnownType =
   | "RESPONSE"
   | "VETO"
   | "HEARTBEAT"
+  | "PROGRESS"
   | "OUTBOUND"
   | "UNKNOWN";
 
@@ -45,6 +50,7 @@ export const KNOWN_TYPES: KnownType[] = [
   "RESPONSE",
   "VETO",
   "HEARTBEAT",
+  "PROGRESS",
   "OUTBOUND",
   "UNKNOWN",
 ];
