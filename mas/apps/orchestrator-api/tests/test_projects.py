@@ -326,6 +326,42 @@ async def test_retry_failed_project(client):
 
 
 @pytest.mark.anyio
+async def test_retry_failed_project_recreates_human_checkpoint_gate(client):
+    """Retrying into a human checkpoint restores its pending approval gate."""
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
+
+    project = _fake_project("FAILED")
+    project["failed_from_state"] = "FEASIBILITY_REPORT"
+    storage = _make_storage(project=project)
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.create_approval_gate = AsyncMock()
+
+    result = WorkflowTransitionResult(
+        project_id=str(PROJECT_ID),
+        prior_state=ProjectState.FAILED,
+        event=WorkflowEvent.RETRY,
+        next_state=ProjectState.FEASIBILITY_REPORT,
+        actor_id="human",
+        context={"last_safe_state": "FEASIBILITY_REPORT"},
+    )
+    _patch_state(storage, _make_controller(result=result))
+
+    resp = await client.post(f"/projects/{PROJECT_ID}/retry")
+
+    assert resp.status_code == 200
+    storage.list_approval_gates.assert_awaited_once_with(
+        project_id=PROJECT_ID,
+        status="PENDING",
+        limit=100,
+    )
+    storage.create_approval_gate.assert_awaited_once_with(
+        project_id=PROJECT_ID,
+        gate_type="feasibility",
+    )
+
+
+@pytest.mark.anyio
 async def test_retry_non_failed_project_returns_409(client):
     """POST /projects/{id}/retry returns 409 if project is not in FAILED state."""
     project = _fake_project("IN_PROGRESS")

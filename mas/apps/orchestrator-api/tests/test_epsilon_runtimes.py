@@ -33,6 +33,7 @@ async def test_autogen_requires_firecracker_sandbox(client):
     assert resp.status_code == 200
     data = resp.json()
     autogen = next(r for r in data["runtimes"] if r["id"] == "autogen")
+    assert autogen["optional"] is True
     assert autogen["policy"]["sandbox_required"] == "firecracker"
     assert autogen["policy"]["max_instances"] == 1
     assert autogen["policy"]["inner_runtime"] is False

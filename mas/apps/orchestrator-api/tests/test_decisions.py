@@ -33,11 +33,11 @@ def _fake_gate() -> dict:
     }
 
 
-def _make_storage(project=None, gate=None, pending_gates=None):
+def _make_storage(project=None, gate=None, pending_gates=None, decision_result=None):
     """Return a mock storage with approval_gate query support."""
     storage = MagicMock()
     storage.get_project = AsyncMock(return_value=project)
-    storage.decide_approval_gate = AsyncMock(return_value=None)
+    storage.decide_approval_gate = AsyncMock(return_value=decision_result)
 
     # Mock the engine.connect() async context manager for raw SQL queries
     mock_conn = MagicMock()
@@ -155,6 +155,25 @@ async def test_submit_decision_approved(client):
     assert data["status"] == "transitioned"
     assert "gate_id" in data
     assert "next_state" in data
+
+
+@pytest.mark.anyio
+async def test_submit_decision_rejects_gate_cancelled_by_racing_transition(client):
+    """A late human decision cannot act on a gate already cancelled by cleanup."""
+    project = _fake_project("HUMAN_APPROVAL")
+    gate = _fake_gate()
+    storage = _make_storage(project=project, gate=gate, decision_result=False)
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    resp = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "APPROVED", "decided_by": "alice"},
+    )
+
+    assert resp.status_code == 409
+    assert "no longer pending" in resp.json()["detail"]
+    ctrl.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio

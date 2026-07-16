@@ -247,6 +247,26 @@ class AgentStorage:
                 t.projects.update().where(t.projects.c.id == project_id).values(**update_values)
             )
 
+            # A terminal project cannot continue waiting for a human decision.
+            # Close any gate that was left pending by a timeout or another
+            # terminal failure in the same transaction as the state change.
+            # This keeps operator backlog counts and project workspaces from
+            # advertising approvals that can no longer be acted on.
+            if new_state in {"FAILED", "COMPLETED", "ARCHIVED"}:
+                await conn.execute(
+                    t.approval_gates.update()
+                    .where(t.approval_gates.c.project_id == project_id)
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .values(
+                        status="CANCELLED",
+                        decided_by=triggered_by,
+                        justification=(
+                            f"Automatically cancelled because the project entered {new_state}."
+                        ),
+                        decided_at=now,
+                    )
+                )
+
             # Append history
             await conn.execute(
                 t.project_state_history.insert().values(
@@ -982,13 +1002,19 @@ class AgentStorage:
         decided_by: str,
         justification: str | None = None,
         human_input: dict | None = None,
-    ) -> None:
-        """Record a decision on an approval gate."""
+    ) -> bool:
+        """Record a decision only while an approval gate is still pending.
+
+        Returns ``False`` when another transaction already decided or
+        cancelled the gate. The status predicate makes terminal-state cleanup
+        and human decisions safe against late-arriving requests.
+        """
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 t.approval_gates.update()
                 .where(t.approval_gates.c.id == gate_id)
+                .where(t.approval_gates.c.status == "PENDING")
                 .values(
                     status=status,
                     decided_by=decided_by,
@@ -997,6 +1023,8 @@ class AgentStorage:
                     decided_at=now,
                 )
             )
+            rowcount = getattr(result, "rowcount", None)
+            return rowcount > 0 if isinstance(rowcount, int) else True
 
     async def list_approval_gates(
         self,

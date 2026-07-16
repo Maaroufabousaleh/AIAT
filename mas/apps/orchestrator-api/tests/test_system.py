@@ -174,6 +174,45 @@ async def test_company_overview_returns_department_health(client):
 
 
 @pytest.mark.anyio
+async def test_company_overview_excludes_terminal_project_approvals(client):
+    """Pending gates on terminal projects are not operator backlog."""
+    from uuid import UUID
+
+    active_project_id = UUID("00000000-0000-4000-a000-000000000001")
+    failed_project_id = UUID("00000000-0000-4000-a000-000000000002")
+    storage = MagicMock()
+    storage.get_config = AsyncMock(
+        side_effect=lambda key: {
+            "default_company_seeded": "true",
+            "default_company_departments": json.dumps(
+                [{"id": "exec_ceo", "name": "CEO Office"}]
+            ),
+        }.get(key)
+    )
+    storage.list_workers = AsyncMock(return_value=[])
+    storage.list_projects = AsyncMock(
+        return_value=[
+            _fake_project("HUMAN_APPROVAL", project_id=active_project_id),
+            _fake_project("FAILED", project_id=failed_project_id),
+        ]
+    )
+    storage.list_capabilities = AsyncMock(return_value=[])
+    storage.list_approval_gates = AsyncMock(
+        return_value=[
+            {"id": "active-gate", "project_id": active_project_id},
+            {"id": "stale-gate", "project_id": failed_project_id},
+        ]
+    )
+    _patch_state(storage)
+
+    resp = await client.get("/system/company")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["totals"]["pending_approvals"] == 1
+
+
+@pytest.mark.anyio
 async def test_project_workspace_groups_operator_state(client):
     """GET /projects/{id}/workspace groups approvals, artifacts, activity, and next actions."""
     from conftest import PROJECT_ID

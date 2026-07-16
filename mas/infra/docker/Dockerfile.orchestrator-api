@@ -24,7 +24,7 @@ COPY migrations/ /tmp/migrations/
 
 RUN pip install --no-deps /tmp/mas-core && \
     pip install --no-deps /tmp/mas-tools-sdk && \
-    pip install /tmp/orchestrator-api && \
+    pip install "/tmp/orchestrator-api[runtime-default]" && \
     pip install \
         uvicorn \
         httpx \

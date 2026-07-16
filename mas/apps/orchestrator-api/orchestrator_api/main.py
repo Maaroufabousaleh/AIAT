@@ -679,6 +679,22 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
     except Exception:
         logger.debug("company_read_model.pending_approvals_unavailable", exc_info=True)
 
+    # Approval gates are project-scoped.  A failed, completed, or archived
+    # project cannot still require operator action; older databases may
+    # contain gates created before terminal-state cleanup was added to the
+    # storage transition.  Filter those legacy rows defensively while the
+    # migration repairs their persisted status.
+    live_project_ids = {
+        str(project.get("id"))
+        for project in projects
+        if str(project.get("state")) not in TERMINAL_PROJECT_STATES
+    }
+    pending_approvals = [
+        approval
+        for approval in pending_approvals
+        if str(approval.get("project_id")) in live_project_ids
+    ]
+
     summaries = []
     for department in departments:
         dept_id = department.get("id")
@@ -2004,13 +2020,15 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
     gate_id = gate["id"]
 
     # Record decision
-    await storage.decide_approval_gate(
+    gate_updated = await storage.decide_approval_gate(
         gate_id,
         status=decision,
         decided_by=req.decided_by,
         justification=req.comments,
         human_input=req.edits,
     )
+    if gate_updated is False:
+        raise HTTPException(409, "Approval gate is no longer pending")
 
     # Map decision to workflow event
     decision_to_event = {
@@ -2626,6 +2644,11 @@ async def retry_project(project_id: UUID) -> dict[str, Any]:
                 "failed_from_state": project.get("failed_from_state"),
                 "last_safe_state": project.get("failed_from_state"),
             },
+        )
+        await _ensure_workflow_approval_gate(
+            storage,
+            project_id,
+            ProjectState(result.next_state),
         )
         return {
             "status": "retried",
@@ -3384,6 +3407,8 @@ RUNTIME_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     "letta": ("letta",),
 }
 
+OPTIONAL_RUNTIME_IDS = {"autogen", "letta"}
+
 
 def _runtime_status(runtime_id: str) -> str:
     """Return runtime availability status based on package installation."""
@@ -3399,6 +3424,16 @@ def _missing_runtime_packages(runtime_tier: str) -> list[str]:
         for package in RUNTIME_REQUIRED_PACKAGES.get(runtime_tier, ())
         if importlib.util.find_spec(package) is None
     ]
+
+
+def _runtime_readiness(runtime_id: str) -> dict[str, Any]:
+    """Return an actionable runtime availability record."""
+    missing_packages = _missing_runtime_packages(runtime_id)
+    return {
+        "status": "available" if not missing_packages else "unavailable",
+        "missing_packages": missing_packages,
+        "optional": runtime_id in OPTIONAL_RUNTIME_IDS,
+    }
 
 
 async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
@@ -3438,15 +3473,16 @@ async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) ->
 async def list_available_runtimes() -> dict[str, Any]:
     """List all advanced runtimes and their current status.
 
-    Epsilon adds LangGraph, CrewAI, AutoGen, and Letta as guardrailed
-    specialist runtimes behind AIAT's control plane.
+    Epsilon catalogs LangGraph, CrewAI, AutoGen, and Letta as guardrailed
+    runtimes behind AIAT's control plane. AutoGen and Letta are opt-in
+    specialist runtimes and are not part of the default control-plane image.
     """
     return {
         "runtimes": [
             {
                 "id": "langgraph",
                 "name": "LangGraph",
-                "status": _runtime_status("langgraph"),
+                **_runtime_readiness("langgraph"),
                 "tier": "departmental",
                 "description": "Durable stateful departmental runtime with checkpointing and interrupts",
                 "policy": {
@@ -3461,7 +3497,7 @@ async def list_available_runtimes() -> dict[str, Any]:
             {
                 "id": "crewai",
                 "name": "CrewAI",
-                "status": _runtime_status("crewai"),
+                **_runtime_readiness("crewai"),
                 "tier": "departmental",
                 "description": "Crew-style multi-agent department runtime",
                 "policy": {
@@ -3475,7 +3511,7 @@ async def list_available_runtimes() -> dict[str, Any]:
             {
                 "id": "autogen",
                 "name": "AutoGen",
-                "status": _runtime_status("autogen"),
+                **_runtime_readiness("autogen"),
                 "tier": "specialist",
                 "description": "Distributed multi-agent specialist runtime — guardrailed",
                 "policy": {
@@ -3489,7 +3525,7 @@ async def list_available_runtimes() -> dict[str, Any]:
             {
                 "id": "letta",
                 "name": "Letta",
-                "status": _runtime_status("letta"),
+                **_runtime_readiness("letta"),
                 "tier": "specialist",
                 "description": "Memory-heavy research specialist with persistent memory",
                 "policy": {
@@ -6737,7 +6773,16 @@ async def _handle_ceo_readiness_intent(instruction: str) -> dict[str, Any] | Non
             "runtimes": runtime_catalog,
             "response": (
                 "Runtime readiness: "
-                + "; ".join(f"{runtime['id']}={runtime['status']}" for runtime in runtimes)
+                + "; ".join(
+                    f"{runtime['id']}={runtime['status']}"
+                    + (
+                        f" ({'optional; ' if runtime.get('optional') else ''}"
+                        f"missing: {', '.join(runtime['missing_packages'])})"
+                        if runtime.get("missing_packages")
+                        else ""
+                    )
+                    for runtime in runtimes
+                )
             ),
             "trace": ["parsed_runtime_readiness_intent", "read_runtime_policy"],
         }

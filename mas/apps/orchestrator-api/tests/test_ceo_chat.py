@@ -1656,6 +1656,23 @@ async def test_operator_send_to_ceo_reads_runtime_readiness(client, monkeypatch)
 
 
 @pytest.mark.anyio
+async def test_runtime_readiness_reports_missing_packages(client, monkeypatch):
+    """Runtime diagnostics identify the import names needed for installation."""
+    from orchestrator_api import main as orchestrator_main
+
+    monkeypatch.setattr(orchestrator_main.importlib.util, "find_spec", lambda _: None)
+
+    response = await client.get("/runtimes")
+
+    assert response.status_code == 200
+    runtimes = response.json()["runtimes"]
+    by_id = {runtime["id"]: runtime for runtime in runtimes}
+    assert by_id["langgraph"]["status"] == "unavailable"
+    assert by_id["langgraph"]["missing_packages"] == ["langgraph"]
+    assert by_id["autogen"]["missing_packages"] == ["autogen_agentchat", "autogen_core"]
+
+
+@pytest.mark.anyio
 async def test_operator_send_to_ceo_rejects_missing_auth(client):
     response = await client.post("/ceo/message", json={"message": "hello"})
 

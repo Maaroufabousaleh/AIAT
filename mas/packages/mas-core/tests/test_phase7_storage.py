@@ -519,15 +519,31 @@ class TestAgentStorageCRUD:
     async def test_decide_approval_gate(self):
         storage, engine = self._make_storage()
         conn = engine._mock_conn
-        conn.execute = AsyncMock()
+        conn.execute = AsyncMock(return_value=MagicMock(rowcount=1))
 
-        await storage.decide_approval_gate(
+        updated = await storage.decide_approval_gate(
             uuid4(),
             status="APPROVED",
             decided_by="human_operator",
             justification="Looks good",
         )
+        assert updated is True
         conn.execute.assert_awaited_once()
+        assert "approval_gates.status" in str(conn.execute.await_args.args[0])
+
+    @pytest.mark.asyncio
+    async def test_decide_approval_gate_returns_false_when_not_pending(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock(return_value=MagicMock(rowcount=0))
+
+        updated = await storage.decide_approval_gate(
+            uuid4(),
+            status="APPROVED",
+            decided_by="late_operator",
+        )
+
+        assert updated is False
 
     # ── Sprints ──
 
