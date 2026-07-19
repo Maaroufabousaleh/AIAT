@@ -99,6 +99,12 @@ class _FakeLLMClient:
         return await self.chat_completion(messages, **kwargs)
 
 
+class _FailingLLMClient(_FakeLLMClient):
+    async def chat_completion(self, messages, **kwargs) -> ChatResponse:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        raise RuntimeError("gateway unavailable")
+
+
 class _FakeToolClient:
     """Stub ToolServiceClient."""
 
@@ -145,6 +151,28 @@ def _patch_router(agent: AgentBase) -> AsyncMock:
 
 class TestWorkerAgent:
     """WorkerAgent: task execution, tool calls, fan-out."""
+
+    @pytest.mark.asyncio
+    async def test_failed_llm_call_records_project_usage(self):
+        project_id = "00000000-0000-4000-a000-000000000124"
+        storage = MagicMock()
+        storage.record_project_usage = AsyncMock(return_value={})
+        agent = WorkerAgent(
+            _make_config(),
+            storage=storage,
+            llm_client=_FailingLLMClient(),
+        )
+        agent._current_envelope = _make_envelope(project_id=project_id)
+        agent._budget = BudgetTracker()
+
+        with pytest.raises(RuntimeError, match="gateway unavailable"):
+            await agent.think(messages=[{"role": "user", "content": "work"}])
+
+        usage = storage.record_project_usage.await_args.kwargs
+        assert str(usage["project_id"]) == project_id
+        assert usage["event_type"] == "llm"
+        assert usage["status"] == "error"
+        assert usage["details"]["error_type"] == "RuntimeError"
 
     @pytest.mark.asyncio
     async def test_handle_admin_task(self):
@@ -388,8 +416,8 @@ class TestAdminAgent:
         assert published.msg_type == MessageType.ISSUE_COMPLETE
 
     @pytest.mark.asyncio
-    async def test_directive_broadcast(self):
-        """Admin re-broadcasts directives to team."""
+    async def test_directive_delegates_as_admin_task(self):
+        """Admin directives use the worker-task path and cannot loop on a team stream."""
         config = _make_config(agent_id="admin-pm", agent_role=AgentRole.ADMIN)
         agent = AdminAgent(config)
         router = _patch_router(agent)
@@ -404,7 +432,41 @@ class TestAdminAgent:
         await agent.handle_message(env)
         assert router.publish.call_count == 1
         published = router.publish.call_args[0][0]
-        assert published.msg_type == MessageType.DIRECTIVE
+        assert published.msg_type == MessageType.ADMIN_TASK
+        assert published.payload["directive_forwarded"] is True
+
+    @pytest.mark.asyncio
+    async def test_devops_resume_directive_runs_infrastructure_adapter(self):
+        config = _make_config(
+            agent_id="devops-pm",
+            team_id="dept_devops",
+            agent_role=AgentRole.ADMIN,
+        )
+        agent = AdminAgent(config)
+        agent.execute_tool = AsyncMock(
+            side_effect=[
+                {"available": True, "configured": True, "verified": True},
+                {"next_state": "IN_PROGRESS"},
+            ]
+        )
+        router = _patch_router(agent)
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            sender_team="exec_ceo",
+            recipient_team="dept_devops",
+            project_id="project-infra",
+            payload={"action": "RESUME", "state": "INFRA_PROVISIONING"},
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert [call.args[0] for call in agent.execute_tool.await_args_list] == [
+            "infra.provision",
+            "infra.ready_signal",
+        ]
+        router.publish.assert_not_called()
 
 
 # =====================================================================
@@ -519,6 +581,125 @@ class TestExecutiveAgent:
         assert agent._pending_delegations == {}
 
     @pytest.mark.asyncio
+    async def test_execution_dispatches_open_issues_and_waits_for_completion(self):
+        """Execution advances only after worker-owned issue completion is durable."""
+        agent = ExecutiveAgent(
+            _make_config(agent_id="coo-multi-sprint", agent_role=AgentRole.EXECUTIVE)
+        )
+        sprints = [
+            {"id": "sprint-1", "sprint_number": 1, "status": "CLOSED"},
+            {"id": "sprint-2", "sprint_number": 2, "status": "PLANNED"},
+        ]
+        issues: dict[str, list[dict[str, Any]]] = {
+            "sprint-1": [{"id": "issue-1", "status": "DONE"}],
+            "sprint-2": [],
+        }
+        calls: list[tuple[str, dict[str, Any]]] = []
+        transitions: list[dict[str, Any]] = []
+
+        async def execute_tool(name: str, kwargs: dict[str, Any]) -> Any:
+            calls.append((name, kwargs))
+            if name == "project.status":
+                return {"state": "IN_PROGRESS"}
+            if name == "sprint.list":
+                return {"sprints": sprints}
+            if name == "issue.list":
+                return {"issues": issues[str(kwargs["sprint_id"])]}
+            if name == "issue.create":
+                issue = {"id": "issue-2", "status": "TODO", "issue_type": "TEST"}
+                issues[str(kwargs["sprint_id"])].append(issue)
+                return {"status": "completed", "result": issue}
+            if name == "sprint.activate":
+                next(item for item in sprints if item["id"] == kwargs["sprint_id"])["status"] = "IN_PROGRESS"
+                return {"status": "completed"}
+            if name == "department_task":
+                assert kwargs["issue_id"] == "issue-2"
+                assert kwargs["team"] == "dept_qa"
+                return {"status": "published", "message_id": "work-1"}
+            if name == "issue.update_status":
+                issue = next(
+                    issue
+                    for sprint_issues in issues.values()
+                    for issue in sprint_issues
+                    if issue["id"] == kwargs["issue_id"]
+                )
+                issue["status"] = kwargs["status"]
+                return {"status": "completed"}
+            if name == "sprint.close":
+                next(item for item in sprints if item["id"] == kwargs["sprint_id"])["status"] = "CLOSED"
+                return {"status": "completed"}
+            if name == "project.transition":
+                transitions.append(kwargs)
+                return {"status": "completed"}
+            raise AssertionError(f"unexpected tool {name}")
+
+        agent.execute_tool = AsyncMock(side_effect=execute_tool)
+        envelope = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            project_id="project-multi-sprint",
+            payload={"action": "START_EXECUTION", "state": "IN_PROGRESS"},
+        )
+
+        await agent._recover_directive_progress(envelope, "START_EXECUTION")
+
+        assert [name for name, _ in calls].count("sprint.activate") == 1
+        assert [kwargs["sprint_id"] for name, kwargs in calls if name == "sprint.activate"] == [
+            "sprint-2"
+        ]
+        assert [name for name, _ in calls].count("department_task") == 1
+        status_updates = [kwargs for name, kwargs in calls if name == "issue.update_status"]
+        assert status_updates == [
+            {
+                "project_id": "project-multi-sprint",
+                "issue_id": "issue-2",
+                "status": "IN_PROGRESS",
+            }
+        ]
+        assert not [kwargs for name, kwargs in calls if name == "sprint.close"]
+        assert transitions == []
+        assert issues["sprint-2"][0]["status"] == "IN_PROGRESS"
+
+        # An empty reply is not completion evidence.
+        rejected_reply = _make_envelope(
+            msg_type=MessageType.ADMIN_REPLY,
+            sender_id="qa-pm",
+            sender_team="dept_qa",
+            recipient_team="exec_coo",
+            project_id="project-multi-sprint",
+            payload={
+                "action": "EXECUTE_ISSUE",
+                "issue_id": "issue-2",
+                "sprint_id": "sprint-2",
+                "results": [{"sender": "tester", "result": ""}],
+            },
+        )
+        await agent.handle_message(rejected_reply)
+        assert issues["sprint-2"][0]["status"] == "IN_PROGRESS"
+
+        # A non-empty worker output is validated before the issue is marked
+        # done, then authoritative sprint reconciliation can advance.
+        completed_reply = rejected_reply.model_copy(
+            update={
+                "message_id": uuid4(),
+                "payload": {
+                    **rejected_reply.payload,
+                    "results": [{"sender": "tester", "result": "Verified test artifact"}],
+                },
+            }
+        )
+        await agent.handle_message(completed_reply)
+
+        assert [name for name, _ in calls].count("department_task") == 1
+        assert [
+            kwargs["status"] for name, kwargs in calls if name == "issue.update_status"
+        ] == ["IN_PROGRESS", "DONE"]
+        assert [kwargs["sprint_id"] for name, kwargs in calls if name == "sprint.close"] == [
+            "sprint-2"
+        ]
+        assert transitions and transitions[0]["event"] == "all_sprints_done"
+        assert all(item["status"] == "CLOSED" for item in sprints)
+
+    @pytest.mark.asyncio
     async def test_document_submit_triggers_review_fanout(self):
         """Executive fans out REVIEW_REQUEST on DOCUMENT_SUBMIT."""
         config = _make_config(
@@ -570,6 +751,7 @@ class TestExecutiveAgent:
         storage.create_review_session = AsyncMock()
         storage.add_review_comment = AsyncMock()
         storage.update_review_session = AsyncMock()
+        storage.update_document_status = AsyncMock()
         agent = ExecutiveAgent(
             config,
             reviewer_teams=["office_cfo"],
@@ -611,6 +793,68 @@ class TestExecutiveAgent:
         update_kwargs = storage.update_review_session.await_args.kwargs
         assert update_kwargs["status"] == "COMPLETED"
         assert update_kwargs["completed_at"] is not None
+        assert [call.kwargs["status"] for call in storage.update_document_status.await_args_list] == [
+            "IN_REVIEW",
+            "APPROVED",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_review_response_rehydrates_durable_session_after_restart(self):
+        """A queued response restores the COO session instead of being discarded."""
+        project_id = uuid4()
+        document_id = uuid4()
+        session_id = uuid4()
+        storage = MagicMock()
+        storage.get_review_session = AsyncMock(
+            return_value={
+                "id": session_id,
+                "project_id": project_id,
+                "document_id": document_id,
+                "session_type": "PDR",
+                "status": "IN_PROGRESS",
+                "reviewer_ids": ["office_cfo"],
+                "timeout_count": 0,
+            }
+        )
+        storage.get_review_comments = AsyncMock(return_value=[])
+        storage.add_review_comment = AsyncMock()
+        storage.update_review_session = AsyncMock()
+        storage.update_document_status = AsyncMock()
+        agent = ExecutiveAgent(
+            _make_config(agent_id="coo-restarted", agent_role=AgentRole.EXECUTIVE),
+            reviewer_teams=["office_cfo"],
+            review_storage=storage,
+        )
+        _patch_router(agent)
+        transitions: list[dict[str, Any]] = []
+
+        async def execute_tool(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+            if name == "project.transition":
+                transitions.append(kwargs)
+                return {"status": "completed"}
+            raise AssertionError(f"unexpected tool {name}")
+
+        agent.execute_tool = AsyncMock(side_effect=execute_tool)
+        response = _make_envelope(
+            msg_type=MessageType.REVIEW_RESPONSE,
+            project_id=str(project_id),
+            sender_id="cfo-1",
+            sender_team="office_cfo",
+            payload={
+                "session_id": str(session_id),
+                "verdict": "APPROVED",
+                "comments": [],
+            },
+        )
+
+        await agent._handle_review_response(response)
+
+        storage.get_review_session.assert_awaited_once_with(session_id)
+        storage.add_review_comment.assert_awaited_once()
+        assert transitions[0]["event"] == "all_reviews_in"
+        assert str(session_id) not in agent._review_sessions
+        status_updates = storage.update_review_session.await_args_list
+        assert any(call.kwargs.get("status") == "COMPLETED" for call in status_updates)
 
     @pytest.mark.asyncio
     async def test_veto_and_circuit_open_persist_completion_time(self):
@@ -819,7 +1063,7 @@ class TestExecutiveAgent:
 
     @pytest.mark.asyncio
     async def test_max_revisions_exceeded(self):
-        """After max revisions, review is rejected."""
+        """Revision limits apply across immutable IDs in one document lineage."""
         config = _make_config(
             agent_id="coo-5", team_id="exec_coo", agent_role=AgentRole.EXECUTIVE
         )
@@ -854,8 +1098,10 @@ class TestExecutiveAgent:
         await agent._request_revision(summary, parent_env)
         router.publish.reset_mock()
 
-        # Second revision attempt (exceeds max_revisions=1)
-        await agent._request_revision(summary, parent_env)
+        # The revised artifact has a new immutable ID, but remains in the same
+        # project/PDR lineage and must not reset the limit.
+        revised_summary = summary.model_copy(update={"document_id": uuid4()})
+        await agent._request_revision(revised_summary, parent_env)
         assert any(e[0] == "review_rejected" for e in events)
 
     @pytest.mark.asyncio
@@ -1002,6 +1248,81 @@ class TestCSuiteAgent:
         assert reply.payload["verdict"] == "APPROVED"
 
     @pytest.mark.asyncio
+    async def test_review_request_skips_superseded_document_without_llm(self):
+        """Stale review work is acknowledged without blocking the current revision."""
+        config = _make_config(
+            agent_id="cfo-stale", team_id="office_cfo", agent_role=AgentRole.C_SUITE
+        )
+        llm = _FakeLLMClient("must not review superseded content")
+        tool_client = _FakeToolClient(
+            result={
+                "id": "doc-v2",
+                "version": 2,
+                "doc_type": "CDR",
+                "blob_key": "project/documents/cdr_v2.md",
+            }
+        )
+        agent = CSuiteAgent(
+            config,
+            specialization="CFO",
+            llm_client=llm,
+            tool_client=tool_client,
+        )
+        router = _patch_router(agent)
+
+        env = _make_envelope(
+            msg_type=MessageType.REVIEW_REQUEST,
+            sender_id="coo-1",
+            sender_team="exec_coo",
+            payload={
+                "session_id": str(uuid4()),
+                "document_id": "doc-v1",
+                "doc_type": "CDR",
+                "document_payload": {"project_id": "proj-001"},
+            },
+        )
+        agent._current_envelope = env
+        agent._budget = BudgetTracker()
+
+        await agent.handle_message(env)
+
+        assert llm.calls == []
+        assert router.publish.call_count == 1
+        reply = router.publish.call_args[0][0]
+        assert reply.payload["document_id"] == "doc-v1"
+        assert reply.payload["comments"] == []
+
+    @pytest.mark.asyncio
+    async def test_review_request_nacks_when_durable_document_is_unavailable(self):
+        """Reviewers must not approve or veto based on metadata alone."""
+        llm = _FakeLLMClient("APPROVED")
+        agent = CSuiteAgent(
+            _make_config(
+                agent_id="cfo-fetch-failure",
+                team_id="office_cfo",
+                agent_role=AgentRole.C_SUITE,
+            ),
+            specialization="CFO",
+            llm_client=llm,
+            tool_client=_FakeToolClient(result={"error": "database unavailable"}),
+        )
+        env = _make_envelope(
+            msg_type=MessageType.REVIEW_REQUEST,
+            project_id="00000000-0000-4000-a000-000000000125",
+            payload={
+                "session_id": str(uuid4()),
+                "document_id": str(uuid4()),
+                "doc_type": "CDR",
+                "document_payload": {},
+            },
+        )
+
+        with pytest.raises(RuntimeError, match="without its durable content"):
+            await agent.handle_message(env)
+
+        assert llm.calls == []
+
+    @pytest.mark.asyncio
     async def test_cso_veto_detection(self):
         """CSO agent detects veto triggers in review text."""
         config = _make_config(
@@ -1030,6 +1351,23 @@ class TestCSuiteAgent:
         reply = router.publish.call_args[0][0]
         assert reply.payload["veto"] is True
         assert reply.payload["verdict"] == "REJECTED"
+
+    def test_cso_does_not_treat_veto_discussion_as_veto(self):
+        """A review that explicitly declines a veto must remain non-blocking."""
+        config = _make_config(
+            agent_id="cso-affirmative-only",
+            team_id="office_cso",
+            agent_role=AgentRole.C_SUITE,
+        )
+        agent = CSuiteAgent(config, specialization="CSO")
+
+        comments, verdict, has_veto = agent._parse_review_output(
+            "APPROVED_WITH_COMMENTS. Grounds for veto considered: None."
+        )
+
+        assert comments[0].veto is False
+        assert verdict.value == "APPROVED_WITH_COMMENTS"
+        assert has_veto is False
 
     @pytest.mark.asyncio
     async def test_query_response(self):
@@ -1142,6 +1480,164 @@ class TestCSuiteAgent:
         await agent._handle_directive(env)
 
         agent._directive_think.assert_awaited_once_with(env, "START_FEASIBILITY")
+
+    @pytest.mark.asyncio
+    async def test_ceo_document_stage_is_deterministic(self):
+        """CEO document handoffs do not depend on an LLM choosing control tools."""
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("must not run for a document handoff")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        agent._recover_directive_progress = AsyncMock()
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            recipient_team="exec_ceo",
+            project_id="project-cdr",
+            payload={
+                "action": "START_CDR",
+                "triggered_by_event": "cdr_revision_requested",
+            },
+        )
+
+        await agent._handle_directive(env)
+
+        agent._recover_directive_progress.assert_awaited_once_with(env, "START_CDR")
+        assert llm.calls == []
+
+    @pytest.mark.asyncio
+    async def test_initial_pdr_contains_complete_review_structure(self):
+        """Initial artifacts include all review domains and explicit evidence gaps."""
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        agent = CSuiteAgent(config, specialization="CEO")
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def execute_tool(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+            calls.append((name, kwargs))
+            if name == "project.status":
+                return {
+                    "id": "project-initial-pdr",
+                    "name": "Evidence-first system",
+                    "description": "Build a governed service with auditable release evidence.",
+                    "state": "PDR_CREATION",
+                    "config": {
+                        "financial_model": {
+                            "implementation_estimate_usd": 42000,
+                            "source": "CFO estimate 2026-07-19",
+                        }
+                    },
+                }
+            if name == "document.get_latest":
+                return {"error": "document_not_found"}
+            if name == "document.create_draft":
+                content = kwargs["content"]
+                assert "Objective, scope, and requirements" in content
+                assert "Proposed architecture and interfaces" in content
+                assert "Security, privacy, and governance requirements" in content
+                assert "Risks, decisions, and mitigations" in content
+                assert "Verification and readiness evidence" in content
+                assert '"implementation_estimate_usd": 42000' in content
+                assert "USD 25,000" not in content
+                return {"document": {"id": "pdr-v1", "version": 1, "doc_type": "PDR"}}
+            if name == "document.submit":
+                return {"status": "submitted"}
+            if name == "review.start_session":
+                return {"status": "published"}
+            raise AssertionError(f"unexpected tool {name}")
+
+        agent.execute_tool = AsyncMock(side_effect=execute_tool)
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            recipient_team="exec_ceo",
+            project_id="project-initial-pdr",
+            payload={"action": "START_PDR", "triggered_by_event": "feasibility_approved"},
+        )
+
+        await agent._recover_directive_progress(env, "START_PDR")
+
+        assert [name for name, _ in calls] == [
+            "project.status",
+            "document.get_latest",
+            "document.create_draft",
+            "document.submit",
+            "review.start_session",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pdr_revision_creates_sourced_reviewable_document_version(self):
+        """A PDR revision records evidence gaps without fabricated finances."""
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        agent = CSuiteAgent(
+            config,
+            specialization="CEO",
+            llm_client=_FakeLLMClient("must not run for deterministic recovery"),
+        )
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def execute_tool(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+            calls.append((name, kwargs))
+            if name == "project.status":
+                return {
+                    "id": "project-pdr-revision",
+                    "name": "Governed runtime preview",
+                    "description": "A production-ready governed runtime preview.",
+                    "state": "PDR_REVIEW",
+                }
+            if name == "project.transition":
+                return {"status": "completed", "next_state": "PDR_CREATION"}
+            if name == "document.get_latest":
+                return {"id": "pdr-v1", "version": 1, "doc_type": "PDR"}
+            if name == "document.create_draft":
+                assert kwargs["doc_type"] == "PDR"
+                content = kwargs["content"]
+                assert "Objective, scope, and requirements" in content
+                assert "Proposed architecture and interfaces" in content
+                assert "Security, privacy, and governance requirements" in content
+                assert "Financial model" in content
+                assert "UNRESOLVED — CFO estimate required" in content
+                assert "Requested remediation" in content
+                assert "does not claim remediation is complete" in content
+                assert "USD 25,000" not in content
+                assert "15% ROI" not in content
+                return {"document": {"id": "pdr-v2", "version": 2, "doc_type": "PDR"}}
+            if name == "document.submit":
+                assert kwargs["document_id"] == "pdr-v2"
+                return {"status": "submitted"}
+            if name == "review.start_session":
+                assert kwargs["document_id"] == "pdr-v2"
+                return {"status": "started"}
+            raise AssertionError(f"unexpected tool {name}")
+
+        agent.execute_tool = AsyncMock(side_effect=execute_tool)
+        env = _make_envelope(
+            msg_type=MessageType.DIRECTIVE,
+            recipient_team="exec_ceo",
+            project_id="project-pdr-revision",
+            payload={
+                "action": "START_PDR",
+                "triggered_by_event": "pdr_revision_requested",
+                "context": {
+                    "revision_requested": True,
+                    "reason": "CFO requested budget, ROI, contingency, and sprint estimates.",
+                },
+            },
+        )
+
+        await agent._recover_directive_progress(env, "START_PDR")
+
+        assert [name for name, _ in calls] == [
+            "project.status",
+            "project.transition",
+            "document.get_latest",
+            "document.create_draft",
+            "document.submit",
+            "review.start_session",
+        ]
+        assert calls[1][1]["event"] == "pdr_revision_requested"
 
     @pytest.mark.asyncio
     async def test_ceo_human_directive_publishes_terminal_tool_call_message(self):

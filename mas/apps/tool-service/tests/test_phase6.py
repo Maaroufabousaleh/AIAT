@@ -2,12 +2,115 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import anyio
 import httpx
 import pytest
 
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import CircuitState, ToolRequest
+
+
+@pytest.mark.asyncio
+async def test_project_usage_storage_recovers_without_service_restart():
+    from tool_service.main import _recover_usage
+
+    app = SimpleNamespace(state=SimpleNamespace(usage_storage=None))
+    registry = MagicMock()
+    settings = SimpleNamespace(pgbouncer_dsn="postgresql://usage")
+    recovered_writer = MagicMock()
+
+    with (
+        patch(
+            "tool_service.main.asyncio.sleep",
+            new=AsyncMock(side_effect=[None, asyncio.CancelledError()]),
+        ),
+        patch(
+            "tool_service.main._connect_usage",
+            new=AsyncMock(return_value=recovered_writer),
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await _recover_usage(app, registry, settings)
+
+    assert app.state.usage_storage is recovered_writer
+    registry.set_usage_storage.assert_called_once_with(recovered_writer)
+
+
+@pytest.mark.asyncio
+async def test_review_start_republishes_active_session_for_rehydration(monkeypatch):
+    """A durable active review must wake a restarted COO runner."""
+    import tool_service.tools.project as project_mod
+    from tool_service.tools.project import ReviewStartSessionTool
+
+    async def fake_orch_get(path, params=None):
+        if path.endswith("/documents"):
+            return [{"id": "00000000-0000-4000-a000-000000000011", "doc_type": "PDR"}]
+        if path.endswith("/review-sessions"):
+            return [
+                {
+                    "id": "00000000-0000-4000-a000-000000000012",
+                    "document_id": "00000000-0000-4000-a000-000000000011",
+                    "status": "IN_PROGRESS",
+                }
+            ]
+        raise AssertionError(path)
+
+    published: list[dict] = []
+
+    async def fake_publish(envelope):
+        published.append(envelope)
+        return {"entry_id": "router-entry"}
+
+    monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+    monkeypatch.setattr(project_mod, "publish_message", fake_publish)
+
+    result = await ReviewStartSessionTool().execute(
+        project_id="00000000-0000-4000-a000-000000000010",
+        doc_type="PDR",
+    )
+
+    assert result["status"] == "rehydration_published"
+    assert result["session_id"] == "00000000-0000-4000-a000-000000000012"
+    assert published[0]["msg_type"] == "DOCUMENT_SUBMIT"
+    assert published[0]["payload"]["rehydrate_session"] is True
+    assert published[0]["payload"]["session_id"] == result["session_id"]
+
+
+@pytest.mark.asyncio
+async def test_review_start_reports_completed_session_without_republishing(monkeypatch):
+    """Completed durable reviews remain terminal during resume reconciliation."""
+    import tool_service.tools.project as project_mod
+    from tool_service.tools.project import ReviewStartSessionTool
+
+    async def fake_orch_get(path, params=None):
+        if path.endswith("/documents"):
+            return [{"id": "00000000-0000-4000-a000-000000000021", "doc_type": "PDR"}]
+        if path.endswith("/review-sessions"):
+            return [
+                {
+                    "id": "00000000-0000-4000-a000-000000000022",
+                    "document_id": "00000000-0000-4000-a000-000000000021",
+                    "status": "COMPLETED",
+                }
+            ]
+        raise AssertionError(path)
+
+    publish = AsyncMock()
+    monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+    monkeypatch.setattr(project_mod, "publish_message", publish)
+
+    result = await ReviewStartSessionTool().execute(
+        project_id="00000000-0000-4000-a000-000000000020",
+        doc_type="PDR",
+    )
+
+    assert result["status"] == "existing"
+    assert result["session_status"] == "COMPLETED"
+    publish.assert_not_awaited()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Registry: tool lookup, manifest, execute pipeline
@@ -621,6 +724,79 @@ class TestHTTPIntegration:
             "error": "project_not_found",
             "project_id": missing_id,
         }
+
+    @pytest.mark.anyio
+    async def test_document_create_draft_creates_blob_backed_revision(
+        self, monkeypatch
+    ):
+        """A changed draft must become v2 even when v1 already has a blob."""
+        import tool_service.tools.infra as infra_mod
+        import tool_service.tools.project as project_mod
+
+        latest = {
+            "id": "doc-v1",
+            "version": 1,
+            "doc_type": "CDR",
+            "blob_key": "project/documents/cdr_v1.md",
+            "blob_sha256": "old-content-sha",
+        }
+        uploads: list[dict] = []
+        posts: list[tuple[str, dict | None]] = []
+
+        async def fake_orch_get(path, params=None):
+            return [latest]
+
+        async def fake_orch_post(path, body=None):
+            posts.append((path, body))
+            return {
+                "id": "doc-v2",
+                "version": 2,
+                "doc_type": "CDR",
+                "blob_key": body["blob_key"],
+                "blob_sha256": body["blob_sha256"],
+            }
+
+        class FakeBlob:
+            async def upload(self, *, project_id, key, data, content_type):
+                uploads.append(
+                    {
+                        "project_id": project_id,
+                        "key": key,
+                        "data": data,
+                        "content_type": content_type,
+                    }
+                )
+                return type(
+                    "BlobRef",
+                    (),
+                    {
+                        "to_dict": lambda self: {
+                            "bucket": "artifacts",
+                            "key": f"{project_id}/{key}",
+                            "sha256": "new-content-sha",
+                        }
+                    },
+                )()
+
+        async def fake_get_blob_client():
+            return FakeBlob()
+
+        monkeypatch.setattr(project_mod, "orch_get", fake_orch_get)
+        monkeypatch.setattr(project_mod, "orch_post", fake_orch_post)
+        monkeypatch.setattr(infra_mod, "get_blob_client", fake_get_blob_client)
+
+        result = await project_mod.DocumentCreateDraftTool().execute(
+            project_id="project-1",
+            doc_type="CDR",
+            content="# Security-remediated CDR",
+            created_by="ceo",
+        )
+
+        assert result["status"] == "revised"
+        assert result["document"]["version"] == 2
+        assert uploads[0]["key"] == "documents/cdr_v2.md"
+        assert uploads[0]["content_type"] == "text/markdown"
+        assert posts[0][0] == "/projects/project-1/documents/doc-v1/revisions"
 
     @pytest.mark.anyio
     async def test_human_notify_publishes_ceo_response_envelope(self, client, monkeypatch):

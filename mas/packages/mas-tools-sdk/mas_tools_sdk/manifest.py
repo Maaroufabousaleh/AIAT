@@ -280,6 +280,13 @@ _register(
         idempotent=False,
     ),
     _entry(
+        name="sprint.list",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="List sprints for a project.",
+        allowed_roles=_ADMIN,
+        cache_ttl=0,
+    ),
+    _entry(
         name="sprint.activate",
         group=ToolGroup.SPRINT_ISSUE,
         description="Activate sprint.",

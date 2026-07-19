@@ -13,6 +13,7 @@ from orchestrator_api.main import (
     _handle_ceo_confirmation_intent,
     _handle_ceo_credential_intent,
     _handle_ceo_flow_intent,
+    _handle_ceo_project_intent,
     _handle_ceo_system_intent,
     _handle_ceo_worker_intent,
     _queue_ceo_confirmation,
@@ -79,6 +80,202 @@ def test_control_plane_and_exact_confirmation_intents_are_api_owned():
     assert _ceo_operator_intent_is_api_owned("confirm you are online") is False
 
 
+def test_project_decisions_are_owned_by_the_orchestrator_api():
+    project_id = UUID("00000000-0000-4000-a000-0000000000c1")
+
+    assert _ceo_operator_intent_is_api_owned(f"approve feasibility for project {project_id}") is True
+    assert _ceo_operator_intent_is_api_owned(f"retry project {project_id} after an infra failure") is True
+
+
+def test_security_blocker_revision_is_owned_by_the_orchestrator_api():
+    project_id = UUID("00000000-0000-4000-a000-0000000000c1")
+
+    assert (
+        _ceo_operator_intent_is_api_owned(
+            f"resolve the security blocker for project {project_id} because encryption and threat-model controls are complete"
+        )
+        is True
+    )
+
+
+@pytest.mark.anyio
+async def test_ceo_project_approval_is_persisted_and_reports_authoritative_state(monkeypatch):
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000c2")
+    project = {
+        "id": project_id,
+        "name": "approval-path",
+        "state": "FEASIBILITY_REPORT",
+    }
+    updated_project = {**project, "state": "PDR_CREATION"}
+    gate = {
+        "id": UUID("00000000-0000-4000-a000-0000000000c3"),
+        "project_id": project_id,
+        "gate_type": "feasibility",
+        "status": "PENDING",
+    }
+    storage = MagicMock()
+    storage.get_project = AsyncMock(side_effect=[project, updated_project])
+    storage.list_approval_gates = AsyncMock(return_value=[gate])
+    app.state.storage = storage
+    submit = AsyncMock(
+        return_value={
+            "status": "transitioned",
+            "gate_id": str(gate["id"]),
+            "next_state": "PDR_CREATION",
+        }
+    )
+    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+
+    result = await _handle_ceo_project_intent(
+        f"approve feasibility for project {project_id}"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_decision"
+    assert result["status"] == "transitioned"
+    assert result["decision"] == "APPROVED"
+    assert result["project"]["state"] == "PDR_CREATION"
+    assert "persisted_human_decision" in result["trace"]
+    submit.assert_awaited_once()
+    request = submit.await_args.args[1]
+    assert request.decision == "APPROVED"
+    assert request.decided_by == "human_operator"
+
+
+@pytest.mark.anyio
+async def test_ceo_project_decision_reports_the_newest_mutated_gate(monkeypatch):
+    """Chat must identify the same newest gate that submit_decision updates."""
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000d1")
+    newest = {
+        "id": UUID("00000000-0000-4000-a000-0000000000d2"),
+        "gate_type": "production_release",
+        "status": "PENDING",
+    }
+    oldest = {
+        "id": UUID("00000000-0000-4000-a000-0000000000d3"),
+        "gate_type": "feasibility",
+        "status": "PENDING",
+    }
+    project = {"id": project_id, "name": "multi-gate", "state": "HUMAN_APPROVAL"}
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=project)
+    storage.list_approval_gates = AsyncMock(return_value=[newest, oldest])
+    app.state.storage = storage
+    submit = AsyncMock(
+        return_value={"status": "transitioned", "gate_id": str(newest["id"])}
+    )
+    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+
+    result = await _handle_ceo_project_intent(f"approve project {project_id}")
+
+    assert result is not None
+    assert result["gate"]["id"] == str(newest["id"])
+    assert "production_release" in result["response"]
+    assert "feasibility" not in result["response"]
+
+
+@pytest.mark.anyio
+async def test_ceo_project_rejection_requires_a_reason(monkeypatch):
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000c4")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(
+        return_value={"id": project_id, "name": "reason-path", "state": "FEASIBILITY_REPORT"}
+    )
+    storage.list_approval_gates = AsyncMock(
+        return_value=[{"gate_type": "feasibility", "status": "PENDING"}]
+    )
+    app.state.storage = storage
+    submit = AsyncMock()
+    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+
+    result = await _handle_ceo_project_intent(f"reject project {project_id}")
+
+    assert result is not None
+    assert result["status"] == "needs_justification"
+    assert "Tell me why" in result["response"]
+    submit.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_ceo_security_blocker_recovery_requests_document_revision(monkeypatch):
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000c5")
+    project = {
+        "id": project_id,
+        "name": "security-revision-path",
+        "state": "SECURITY_BLOCKED",
+    }
+    updated_project = {**project, "state": "CDR_CREATION"}
+    storage = MagicMock()
+    storage.get_project = AsyncMock(side_effect=[project, updated_project])
+    app.state.storage = storage
+    transitions: list[Any] = []
+
+    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+        transitions.append((project_uuid, request))
+        return {
+            "next_state": "CDR_REVIEW"
+            if request.event == "blocker_resolved"
+            else "CDR_CREATION"
+        }
+
+    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+
+    result = await _handle_ceo_project_intent(
+        f"resolve the security blocker for project {project_id} because TLS, AES-256, data classification, STRIDE, GDPR/SOC2 mapping, secrets rotation, MCP authentication, and gVisor controls are complete"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_security_revision"
+    assert result["status"] == "revision_requested"
+    assert result["project"]["state"] == "CDR_CREATION"
+    assert [request.event for _, request in transitions] == [
+        "blocker_resolved",
+        "cdr_revision_requested",
+    ]
+    assert "requested_immutable_document_revision" in result["trace"]
+
+
+@pytest.mark.anyio
+async def test_ceo_document_revision_chat_requests_cdr_revision(monkeypatch):
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000c6")
+    project = {
+        "id": project_id,
+        "name": "cdr-budget-revision-path",
+        "state": "CDR_REVIEW",
+    }
+    updated_project = {**project, "state": "CDR_CREATION"}
+    storage = MagicMock()
+    storage.get_project = AsyncMock(side_effect=[project, updated_project])
+    app.state.storage = storage
+    transitions: list[Any] = []
+
+    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+        transitions.append((project_uuid, request))
+        return {"next_state": "CDR_CREATION"}
+
+    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+
+    result = await _handle_ceo_project_intent(
+        f"revise the CDR for project {project_id} because CFO requested budget, ROI, and contingency details"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_document_revision"
+    assert result["status"] == "revision_requested"
+    assert result["project"]["state"] == "CDR_CREATION"
+    assert [request.event for _, request in transitions] == ["cdr_revision_requested"]
+
+
 @pytest.mark.anyio
 async def test_confirmation_is_bound_to_exact_pending_action_and_can_be_cancelled():
     from orchestrator_api.main import app
@@ -100,6 +297,83 @@ async def test_confirmation_is_bound_to_exact_pending_action_and_can_be_cancelle
     assert result["status"] == "cancelled"
     assert "Nothing was changed" in result["response"]
     assert app.state.ceo_pending_confirmations == {}
+
+
+@pytest.mark.anyio
+async def test_ceo_project_resume_requires_confirmation_and_targets_one_project(monkeypatch):
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-00000000009a")
+    project = {
+        "id": project_id,
+        "name": "exact-recovery-project",
+        "state": "INFRA_PROVISIONING",
+    }
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=project)
+    app.state.storage = storage
+    app.state.ceo_pending_confirmations = {}
+
+    requested = await _handle_ceo_project_intent(
+        f"resume project {project_id} after the workspace failure"
+    )
+
+    assert requested is not None
+    assert requested["type"] == "project_resume"
+    assert requested["status"] == "needs_confirmation"
+    token = UUID(requested["confirmation_token"])
+    pending = app.state.ceo_pending_confirmations[str(token)]
+    assert pending["action"] == "project_resume"
+    assert pending["target_id"] == str(project_id)
+
+    execute = AsyncMock(
+        return_value={
+            "status": "resumed",
+            "project_id": str(project_id),
+            "projects_resumed": 1,
+        }
+    )
+    monkeypatch.setattr("orchestrator_api.main.resume_project", execute)
+
+    confirmed = await _handle_ceo_confirmation_intent("confirm", token)
+
+    assert confirmed is not None
+    assert confirmed["type"] == "project_resume"
+    assert confirmed["status"] == "resumed"
+    execute.assert_awaited_once_with(project_id)
+    assert app.state.ceo_pending_confirmations == {}
+
+
+@pytest.mark.anyio
+async def test_failed_project_resume_uses_only_retry_transition_directive(monkeypatch):
+    """Retry transition publication must not be followed by a second RESUME."""
+    import orchestrator_api.main as main
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000d4")
+    failed = {
+        "id": project_id,
+        "name": "failed-once",
+        "state": "FAILED",
+        "failed_from_state": "INFRA_PROVISIONING",
+    }
+    restored = {**failed, "state": "INFRA_PROVISIONING"}
+    storage = MagicMock()
+    storage.get_project = AsyncMock(side_effect=[failed, restored])
+    main.app.state.storage = storage
+    retry = AsyncMock(
+        return_value={"status": "retried", "next_state": "INFRA_PROVISIONING"}
+    )
+    publish_resume = AsyncMock(return_value=True)
+    monkeypatch.setattr(main, "retry_project", retry)
+    monkeypatch.setattr(main, "_publish_project_resume", publish_resume)
+
+    result = await main.resume_project(project_id)
+
+    assert result["status"] == "resumed"
+    assert result["retried"] is True
+    assert result["directive_source"] == "retry_transition"
+    retry.assert_awaited_once_with(project_id)
+    publish_resume.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -218,7 +492,7 @@ async def test_operator_send_to_ceo_publishes_human_directive(client, monkeypatc
     envelope = published["envelope"]
     assert envelope["msg_type"] == "TASK"
     assert envelope["sender_id"] == "human_operator"
-    assert envelope["sender_team"] == "orchestrator"
+    assert envelope["sender_team"] == "exec_ceo"
     assert envelope["recipient_team"] == "exec_ceo"
     assert envelope["project_id"] == "operator-direct"
     assert envelope["payload"] == {
@@ -1674,7 +1948,11 @@ async def test_runtime_readiness_reports_missing_packages(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_operator_send_to_ceo_rejects_missing_auth(client):
-    response = await client.post("/ceo/message", json={"message": "hello"})
+    response = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": ""},
+        json={"message": "hello"},
+    )
 
     assert response.status_code == 401
 
@@ -1683,7 +1961,7 @@ async def test_operator_send_to_ceo_rejects_missing_auth(client):
 async def test_operator_send_to_ceo_rejects_legacy_default_credential(client):
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer mas-internal"},
+        headers={"X-API-Key": "", "Authorization": "Bearer mas-internal"},
         json={"message": "hello"},
     )
 

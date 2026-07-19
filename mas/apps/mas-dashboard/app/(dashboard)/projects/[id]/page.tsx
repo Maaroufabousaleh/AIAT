@@ -155,6 +155,11 @@ interface WorkspaceSummary {
     total_cost_usd?: number;
     tool_calls?: number;
     llm_calls?: number;
+    failed_calls?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    source?: string;
   };
   flow_instance?: FlowInstance | null;
 }
@@ -1289,7 +1294,7 @@ export default function ProjectDetailPage() {
                 Cost And Usage
               </h2>
               {workspace?.cost_usage?.available ? (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                   <KpiCard
                     label="Total cost"
                     value={`$${workspace.cost_usage.total_cost_usd ?? 0}`}
@@ -1310,6 +1315,24 @@ export default function ProjectDetailPage() {
                     hint="external tool invocations"
                     icon="wrench"
                     tone="info"
+                  />
+                  <KpiCard
+                    label="Tokens"
+                    value={workspace.cost_usage.total_tokens ?? 0}
+                    hint="prompt and completion"
+                    icon="activity"
+                    tone="info"
+                  />
+                  <KpiCard
+                    label="Failed calls"
+                    value={workspace.cost_usage.failed_calls ?? 0}
+                    hint="LLM or tool failures"
+                    icon="shield"
+                    tone={
+                      (workspace.cost_usage.failed_calls ?? 0) > 0
+                        ? "negative"
+                        : "positive"
+                    }
                   />
                 </div>
               ) : (

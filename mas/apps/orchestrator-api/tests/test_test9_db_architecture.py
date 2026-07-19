@@ -142,6 +142,7 @@ async def test_create_project_returns_row(client):
     pid = uuid4()
     storage.get_flow = AsyncMock(return_value=None)
     storage.create_project = AsyncMock(return_value=_fake_project("PENDING", pid))
+    storage.get_project = AsyncMock(return_value=_fake_project("PENDING", pid))
     storage.create_flow_instance = AsyncMock(return_value={"id": str(uuid4())})
     storage.get_flow_instance_by_project = AsyncMock(return_value=None)
     storage.transition_project = AsyncMock(return_value=_fake_project("PENDING", pid))
@@ -221,6 +222,68 @@ async def test_state_transition_via_controller_endpoint(client):
     assert r.status_code in (200, 202)
     data = r.json()
     assert "next_state" in data or "state" in data
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("current_state", "event", "next_state", "doc_type", "expected_status"),
+    [
+        ("PDR_CREATION", "pdr_submitted", "PDR_REVIEW", "PDR", "IN_REVIEW"),
+        ("CDR_CREATION", "cdr_submitted", "CDR_REVIEW", "CDR", "IN_REVIEW"),
+        ("RR_CREATION", "rr_submitted", "SPRINT_PLANNING", "RR", "APPROVED"),
+    ],
+)
+async def test_document_status_follows_authoritative_transition(
+    client,
+    current_state,
+    event,
+    next_state,
+    doc_type,
+    expected_status,
+):
+    """Document badges stay aligned when the controller accepts a handoff."""
+    from orchestrator_api.main import app
+    from mas_core.protocols.enums import ProjectState
+    from mas_core.workflow.controller import WorkflowTransitionResult
+    from mas_core.workflow.events import WorkflowEvent
+
+    pid = uuid4()
+    document_id = uuid4()
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project(current_state, pid))
+    storage.get_document = AsyncMock(
+        return_value={"id": str(document_id), "project_id": str(pid)}
+    )
+    storage.update_document_status = AsyncMock()
+    _patch(storage)
+
+    controller = MagicMock()
+    controller.transition = AsyncMock(
+        return_value=WorkflowTransitionResult(
+            project_id=str(pid),
+            prior_state=ProjectState(current_state),
+            event=WorkflowEvent(event),
+            next_state=ProjectState(next_state),
+            actor_id="agent",
+            context={"document_id": str(document_id)},
+        )
+    )
+    app.state.controller = controller
+
+    response = await client.post(
+        f"/projects/{pid}/transition",
+        json={
+            "event": event,
+            "actor_id": "agent",
+            "context": {"document_id": str(document_id), "doc_type": doc_type},
+        },
+    )
+
+    assert response.status_code == 200
+    storage.update_document_status.assert_awaited_once_with(
+        document_id,
+        status=expected_status,
+    )
 
 
 @pytest.mark.anyio

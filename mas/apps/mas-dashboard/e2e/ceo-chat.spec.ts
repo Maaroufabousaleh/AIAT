@@ -69,6 +69,10 @@ test("CEO chat binds destructive controls to confirmation and supports cancel", 
 }) => {
   await authenticate(page, "/ceo/chat");
   await expect(page.getByText("Live", { exact: true })).toBeVisible();
+  // CEO chat history is shared by the live stream. Start this destructive
+  // assertion from a clean view so confirmations from parallel smoke tests do
+  // not make the exact-state locator ambiguous.
+  await page.getByRole("button", { name: /clear conversation view/i }).click();
 
   const input = page.getByRole("textbox");
   await input.fill("shutdown system");

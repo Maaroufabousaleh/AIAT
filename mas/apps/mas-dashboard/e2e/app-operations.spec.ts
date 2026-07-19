@@ -173,11 +173,22 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "Project Logs" }),
     ).toBeVisible();
+    await expect(page.getByText(/state_transition:/i).first()).toBeVisible();
 
     await page.getByRole("tab", { name: "Cost" }).click();
     await expect(
       page.getByRole("heading", { name: "Cost And Usage" }),
     ).toBeVisible();
+    await expect(page.getByText("Usage telemetry unavailable")).toHaveCount(0);
+    for (const label of [
+      "Total cost",
+      "LLM calls",
+      "Tool calls",
+      "Tokens",
+      "Failed calls",
+    ]) {
+      await expect(page.getByText(label, { exact: true })).toBeVisible();
+    }
   });
 
   test("system, logs, metrics, and DLQ pages load operational controls", async ({

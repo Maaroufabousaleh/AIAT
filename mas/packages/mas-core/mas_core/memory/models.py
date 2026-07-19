@@ -534,6 +534,37 @@ evaluation_reports = sa.Table(
     sa.Column("notes", sa.Text(), nullable=True),
 )
 
+# Project-scoped usage ledger.  Prometheus remains the fleet-level metrics
+# surface; this durable table is the authority for per-project cost and call
+# accounting shown in the workspace UI.
+project_usage_events = sa.Table(
+    "project_usage_events",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    ),
+    sa.Column("event_type", sa.Text(), nullable=False),
+    sa.Column("agent_id", sa.Text()),
+    sa.Column("team_id", sa.Text()),
+    sa.Column("model", sa.Text()),
+    sa.Column("tool_name", sa.Text()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="success"),
+    sa.Column("prompt_tokens", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("completion_tokens", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("cost_usd", sa.Numeric(14, 8), nullable=False, server_default="0"),
+    sa.Column("duration_ms", sa.Numeric(14, 3)),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
+    sa.Column("details", JSONB()),
+    sa.Column(
+        "occurred_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.CheckConstraint(
+        "event_type IN ('llm', 'tool')", name="ck_project_usage_events_event_type"
+    ),
+)
+
 # ── 20. role_capability_map ───────────────────────────────────────────────────
 role_capability_map = sa.Table(
     "role_capability_map",

@@ -553,6 +553,38 @@ async def test_infra_provision_fails_closed_when_unconfigured(make_registry, mon
 
 
 @pytest.mark.anyio
+async def test_infra_provision_creates_project_workspace(make_registry, monkeypatch, tmp_path):
+    captured = {}
+
+    async def fake_adapter(env_name, payload, *, cwd=None):
+        captured.update(env_name=env_name, payload=payload, cwd=cwd)
+        return {"available": True, "configured": True, "verified": True}
+
+    monkeypatch.setenv("TOOL_INFRA_PROVISION_COMMAND", "configured-adapter")
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.infra._run_configured_adapter",
+        fake_adapter,
+    )
+
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="devops-pm",
+            caller_role=AgentRole.ADMIN,
+            caller_team="dept_devops",
+            project_id="project-1",
+            tool_name="infra.provision",
+            kwargs={"resource": "preview-environment", "config": {}},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["verified"] is True
+    assert captured["cwd"] == tmp_path / "project-1"
+    assert (tmp_path / "project-1").is_dir()
+
+
+@pytest.mark.anyio
 async def test_mcp_invoke_reports_unconfigured_transport_without_fabricating_success(
     make_registry,
 ):

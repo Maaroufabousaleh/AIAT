@@ -33,6 +33,10 @@ def test_transition_table_matches_happy_path_edge_examples() -> None:
         resolve_transition(ProjectState.SECURITY_BLOCKED, WorkflowEvent.CEO_OVERRIDE)
         == RESTORE_PRIOR_STATE
     )
+    assert (
+        resolve_transition(ProjectState.CDR_REVIEW, WorkflowEvent.CDR_REVISION_REQUESTED)
+        == ProjectState.CDR_CREATION
+    )
 
 
 def test_wildcard_failure_event_is_allowed_from_any_state() -> None:

@@ -33,6 +33,7 @@ from .rules import (
     C_SUITE_CROSS_TEAM_TYPES,
     C_SUITE_MSG_TYPES,
     CSO_TEAM,
+    COO_EXTRA_TOOLS,
     CTO_EXTRA_TOOLS,
     CTO_TEAM,
     DEVOPS_TEAM,
@@ -192,7 +193,9 @@ class CommunicationPolicy:
             return "only the orchestrator (CEO) may use tool 'approval.override_cso'"
 
         if sender_role == AgentRole.EXECUTIVE:
-            if _matches_any(tool_name, EXECUTIVE_TOOLS):
+            if _matches_any(tool_name, EXECUTIVE_TOOLS) or (
+                sender_team == "exec_coo" and _matches_any(tool_name, COO_EXTRA_TOOLS)
+            ):
                 return True
             return (
                 f"executive role does not have access to tool '{tool_name}'"

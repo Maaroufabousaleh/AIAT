@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     redis_db_shared_memory: int = 2
 
     tool_secret: str = ""
+    pgbouncer_dsn: str | None = None
 
     llm_gateway_url: str = "http://llm-gateway:8003"
     llm_api_key: str = ""

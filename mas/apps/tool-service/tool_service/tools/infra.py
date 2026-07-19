@@ -124,6 +124,10 @@ class InfraProvisionTool(BaseTool):
         if not resource:
             raise ValueError("resource is required")
         cwd = _workspace_cwd(str(kwargs.get("project_id") or ""), str(config.pop("cwd", ".")))
+        # A project-scoped workspace is created lazily.  Subprocess creation
+        # requires its cwd to exist, and the adapter is responsible for
+        # creating any files beneath it.
+        cwd.mkdir(parents=True, exist_ok=True)
         return await _run_configured_adapter(
             "TOOL_INFRA_PROVISION_COMMAND",
             {"resource": resource, "config": config},
@@ -180,6 +184,7 @@ class MonitoringSetupTool(BaseTool):
         rules = kwargs.get("rules", [])
         config = dict(kwargs.get("config") or {})
         cwd = _workspace_cwd(str(kwargs.get("project_id") or ""), str(config.pop("cwd", ".")))
+        cwd.mkdir(parents=True, exist_ok=True)
         return await _run_configured_adapter(
             "TOOL_MONITORING_SETUP_COMMAND",
             {"rules": rules, "config": config},
@@ -312,6 +317,14 @@ class BlobDownloadTool(BaseTool):
 
         if not key:
             raise ValueError("key is required")
+
+        # Document metadata exposes the fully-qualified object key while this
+        # helper traditionally accepted a project-relative key. Accept both
+        # forms so agents can pass a document record directly without creating
+        # an invalid `{project_id}/{project_id}/...` lookup.
+        project_prefix = f"{project_id}/"
+        if key.startswith(project_prefix):
+            key = key[len(project_prefix) :]
 
         blob = await get_blob_client()
         try:

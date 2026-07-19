@@ -38,6 +38,9 @@ def configure_logging(
     """
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
+        # Preserve fields supplied through stdlib ``logging``'s ``extra=``
+        # boundary (the agent runtime uses this for trace/project context).
+        structlog.stdlib.ExtraAdder(),
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
@@ -62,6 +65,11 @@ def configure_logging(
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
+        # stdlib callers use ``logger.info(..., extra=...)`` throughout the
+        # agent runtime.  Apply the same processors to those records so trace,
+        # agent, team, and project fields are retained instead of rendering
+        # only the event name.
+        foreign_pre_chain=shared_processors,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,

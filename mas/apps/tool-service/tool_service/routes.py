@@ -233,6 +233,7 @@ async def get_audit_log(
     request: Request,
     worker_id: str | None = None,
     tool_name: str | None = None,
+    project_id: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
     """Return recent tool-call audit records.
@@ -242,5 +243,10 @@ async def get_audit_log(
     from .registry import ToolRegistry
 
     registry: ToolRegistry = request.app.state.registry
-    records = registry.get_audit_log(worker_id=worker_id, tool_name=tool_name, limit=limit)
+    records = registry.get_audit_log(
+        worker_id=worker_id,
+        tool_name=tool_name,
+        project_id=project_id,
+        limit=limit,
+    )
     return {"records": records, "count": len(records)}

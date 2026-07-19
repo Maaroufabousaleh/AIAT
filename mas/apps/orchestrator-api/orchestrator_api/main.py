@@ -1048,6 +1048,136 @@ class FlowOverrideRequest(BaseModel):
 # ── Event publisher (sends SYSTEM_EVENT via message-router) ──────────────────
 
 
+PROJECT_STAGE_DIRECTIVES: dict[str, tuple[str, str]] = {
+    "PDR_CREATION": ("exec_ceo", "START_PDR"),
+    "CDR_CREATION": ("exec_ceo", "START_CDR"),
+    "RR_CREATION": ("exec_ceo", "START_RR"),
+    "SPRINT_PLANNING": ("exec_coo", "START_SPRINT_PLANNING"),
+    "INFRA_PROVISIONING": ("exec_coo", "START_INFRA"),
+    "IN_PROGRESS": ("exec_coo", "START_EXECUTION"),
+    "RETROSPECTIVE": ("exec_coo", "START_RETROSPECTIVE"),
+    "KPI_PERSISTENCE": ("exec_coo", "START_KPI"),
+}
+
+_ROUTER_ACCEPTED_STATUS_CODES = {200, 201, 409}
+_STAGE_DIRECTIVE_RETRY_SECONDS = 5.0
+_stage_directive_retry_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+
+
+def _build_stage_directive(
+    *,
+    project_id: str,
+    state: str,
+    context: dict[str, Any] | str,
+    parent_id: str | None = None,
+    triggered_by_event: str | None = None,
+) -> dict[str, Any] | None:
+    stage_directive = PROJECT_STAGE_DIRECTIVES.get(state)
+    if stage_directive is None:
+        return None
+    recipient_team, action = stage_directive
+    payload: dict[str, Any] = {
+        "action": action,
+        "state": state,
+        "context": context,
+    }
+    if triggered_by_event:
+        payload["triggered_by_event"] = triggered_by_event
+    directive: dict[str, Any] = {
+        "message_id": str(uuid4()),
+        "correlation_id": project_id,
+        "msg_type": MessageType.DIRECTIVE.value,
+        "sender_id": "orchestrator",
+        "sender_team": "exec_ceo",
+        "sender_role": AgentRole.ORCHESTRATOR.value,
+        "recipient_team": recipient_team,
+        "project_id": project_id,
+        "payload": payload,
+        "created_at": datetime.now(tz=UTC).isoformat(),
+    }
+    if parent_id:
+        directive["parent_id"] = parent_id
+    return directive
+
+
+async def _publish_router_envelope(envelope: dict[str, Any]) -> bool:
+    async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
+        response = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+    if response.status_code in _ROUTER_ACCEPTED_STATUS_CODES:
+        return True
+    logger.warning(
+        "Router returned %s for %s publish: %s",
+        response.status_code,
+        envelope.get("msg_type"),
+        response.text[:200],
+    )
+    return False
+
+
+async def _retry_stage_directive(
+    project_id: str,
+    expected_state: str,
+    directive: dict[str, Any],
+) -> None:
+    """Retry a committed stage's directive until delivered or superseded."""
+    while True:
+        await asyncio.sleep(_STAGE_DIRECTIVE_RETRY_SECONDS)
+        storage = getattr(app.state, "storage", None)
+        if storage is None:
+            return
+        try:
+            project = await storage.get_project(UUID(project_id))
+            if project is None or str(project.get("state") or "") != expected_state:
+                return
+            if await _publish_router_envelope(directive):
+                logger.info(
+                    "Recovered stage directive delivery: project=%s state=%s action=%s",
+                    project_id,
+                    expected_state,
+                    directive["payload"]["action"],
+                )
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Stage directive retry failed: project=%s state=%s",
+                project_id,
+                expected_state,
+            )
+
+
+def _schedule_stage_directive_retry(
+    project_id: str,
+    expected_state: str,
+    directive: dict[str, Any],
+) -> None:
+    key = (project_id, expected_state)
+    existing = _stage_directive_retry_tasks.get(key)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        _retry_stage_directive(project_id, expected_state, directive),
+        name=f"stage-directive-{project_id}-{expected_state}",
+    )
+    _stage_directive_retry_tasks[key] = task
+
+    def _remove(completed: asyncio.Task[None]) -> None:
+        if _stage_directive_retry_tasks.get(key) is completed:
+            _stage_directive_retry_tasks.pop(key, None)
+
+    task.add_done_callback(_remove)
+
+
+def _cancel_project_stage_retries(project_id: str) -> None:
+    """Supersede retries from any earlier transition for this project."""
+    for key, task in list(_stage_directive_retry_tasks.items()):
+        retry_project_id, _ = key
+        if retry_project_id == project_id:
+            _stage_directive_retry_tasks.pop(key, None)
+            task.cancel()
+
+
 async def publish_system_event(
     project_id: str,
     from_state: str,
@@ -1057,12 +1187,13 @@ async def publish_system_event(
     context: dict[str, Any],
 ) -> None:
     """Publish a SYSTEM_EVENT via the message-router HTTP API."""
+    _cancel_project_stage_retries(project_id)
     envelope = {
         "message_id": str(uuid4()),
         "correlation_id": project_id,
         "msg_type": MessageType.SYSTEM_EVENT.value,
         "sender_id": "orchestrator",
-        "sender_team": "orchestrator",
+        "sender_team": "exec_ceo",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": "exec_ceo",
         "project_id": project_id,
@@ -1075,17 +1206,39 @@ async def publish_system_event(
         },
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
+    directive = _build_stage_directive(
+        project_id=project_id,
+        state=to_state,
+        context=context,
+        parent_id=envelope["message_id"],
+        triggered_by_event=event,
+    )
     try:
-        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
-            resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
-            if resp.status_code not in (200, 201, 409):
-                logger.warning(
-                    "Router returned %s for SYSTEM_EVENT publish: %s",
-                    resp.status_code,
-                    resp.text[:200],
-                )
+        await _publish_router_envelope(envelope)
     except Exception:
         logger.exception("Failed to publish SYSTEM_EVENT to router")
+
+    if directive is None:
+        return
+    try:
+        delivered = await _publish_router_envelope(directive)
+    except Exception:
+        delivered = False
+        logger.exception(
+            "Failed to publish stage DIRECTIVE: project=%s state=%s",
+            project_id,
+            to_state,
+        )
+    if delivered:
+        logger.info(
+            "Published stage directive: project=%s state=%s action=%s team=%s",
+            project_id,
+            to_state,
+            directive["payload"]["action"],
+            directive["recipient_team"],
+        )
+    else:
+        _schedule_stage_directive_retry(project_id, to_state, directive)
 
 
 # ── Watchdog background task ─────────────────────────────────────────────────
@@ -1164,55 +1317,134 @@ async def watchdog_loop(
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
-async def run_resume_sequence(storage: AgentStorage) -> int:
-    """Re-publish DIRECTIVE(action=RESUME) for all active projects.
+async def _publish_project_resume(
+    project: dict[str, Any],
+    *,
+    context: str,
+) -> bool:
+    """Publish one exact-project resume directive and report router acceptance."""
+    state_str = str(project.get("state") or "")
+    project_id = str(project["id"])
+    envelope = _build_stage_directive(
+        project_id=project_id,
+        state=state_str,
+        context=context,
+        triggered_by_event="resume",
+    )
+    if envelope is None:
+        envelope = {
+            "message_id": str(uuid4()),
+            "correlation_id": project_id,
+            "msg_type": MessageType.DIRECTIVE.value,
+            "sender_id": "orchestrator",
+            "sender_team": "exec_ceo",
+            "sender_role": AgentRole.ORCHESTRATOR.value,
+            "recipient_team": get_responsible_team(state_str),
+            "project_id": project_id,
+            "payload": {
+                "action": "RESUME",
+                "state": state_str,
+                "context": context,
+            },
+            "created_at": datetime.now(tz=UTC).isoformat(),
+        }
+    try:
+        if await _publish_router_envelope(envelope):
+            return True
+    except Exception:
+        logger.exception("Resume publish error for project=%s", project["id"])
+    return False
 
-    Returns the count of projects resumed.
+
+async def run_resume_sequence(storage: AgentStorage) -> int:
+    """Re-publish DIRECTIVE(action=RESUME) for all non-terminal projects.
+
+    FAILED projects are deliberately excluded: they require an explicit retry
+    decision, while COMPLETED/ARCHIVED projects have no automatic work to
+    resume.  Returns the count of directives accepted by the router.
     """
     projects = await storage.list_projects()
     count = 0
     for project in projects:
-        state_str = project["state"]
         try:
-            state = ProjectState(state_str)
+            state = ProjectState(str(project.get("state") or ""))
         except ValueError:
             continue
 
         if is_terminal_state(state):
             continue
-
-        responsible_team = get_responsible_team(state_str)
-        envelope = {
-            "message_id": str(uuid4()),
-            "correlation_id": str(project["id"]),
-            "msg_type": MessageType.DIRECTIVE.value,
-            "sender_id": "orchestrator",
-            "sender_team": "orchestrator",
-            "sender_role": AgentRole.ORCHESTRATOR.value,
-            "recipient_team": responsible_team,
-            "project_id": str(project["id"]),
-            "payload": {
-                "action": "RESUME",
-                "state": state_str,
-                "context": "System restart — resume from last committed state",
-            },
-            "created_at": datetime.now(tz=UTC).isoformat(),
-        }
-        try:
-            async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
-                resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
-                if resp.status_code in (200, 201, 409):
-                    count += 1
-                else:
-                    logger.warning(
-                        "Resume publish failed for project=%s: %s",
-                        project["id"],
-                        resp.status_code,
-                    )
-        except Exception:
-            logger.exception("Resume publish error for project=%s", project["id"])
+        if await _publish_project_resume(
+            project,
+            context="System restart — resume from last committed state",
+        ):
+            count += 1
 
     return count
+
+
+async def resume_project(project_id: UUID) -> dict[str, Any]:
+    """Retry/resume one project after an explicit CEO-chat confirmation.
+
+    The project is re-read immediately before any mutation.  A FAILED project
+    first follows the durable RETRY transition to its last safe state; active
+    projects receive one RESUME directive.  Terminal projects are reported as
+    a no-op rather than being restarted.
+    """
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    retried = False
+    state_text = str(project.get("state") or "")
+    if state_text == ProjectState.FAILED.value:
+        retry_result = await retry_project(project_id)
+        retried = True
+        refreshed = await storage.get_project(project_id)
+        if refreshed is None:
+            raise HTTPException(409, f"Project {project_id} disappeared during retry")
+        project = refreshed
+        state_text = str(project.get("state") or retry_result.get("next_state") or "")
+
+    try:
+        state = ProjectState(state_text)
+    except ValueError as exc:
+        raise HTTPException(409, f"Project {project_id} has unknown state {state_text!r}") from exc
+
+    if is_terminal_state(state):
+        return {
+            "status": "not_resumed",
+            "project_id": str(project_id),
+            "state": state.value,
+            "projects_resumed": 0,
+            "retried": retried,
+        }
+
+    if retried:
+        # retry_project() transitions through the controller, whose event
+        # publisher already emits the restored state's canonical stage
+        # directive. Publishing RESUME here would create a second message ID
+        # for the same work (and can duplicate provisioning/deployment).
+        return {
+            "status": "resumed",
+            "project_id": str(project_id),
+            "state": state.value,
+            "projects_resumed": 1,
+            "retried": True,
+            "directive_source": "retry_transition",
+        }
+
+    published = await _publish_project_resume(
+        project,
+        context="CEO chat — resume this exact project from its last committed state",
+    )
+    return {
+        "status": "resumed" if published else "resume_publish_failed",
+        "project_id": str(project_id),
+        "state": state.value,
+        "projects_resumed": 1 if published else 0,
+        "retried": retried,
+    }
 
 
 # ── App lifespan ─────────────────────────────────────────────────────────────
@@ -1338,6 +1570,15 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     for task in list(app.state.ceo_command_tasks):
         task.cancel()
+
+    for task in list(_stage_directive_retry_tasks.values()):
+        task.cancel()
+    if _stage_directive_retry_tasks:
+        await asyncio.gather(
+            *_stage_directive_retry_tasks.values(),
+            return_exceptions=True,
+        )
+        _stage_directive_retry_tasks.clear()
 
     if storage is not None:
         await storage.close()
@@ -1526,7 +1767,7 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         "correlation_id": pid,
         "msg_type": MessageType.DIRECTIVE.value,
         "sender_id": "orchestrator",
-        "sender_team": "orchestrator",
+        "sender_team": "exec_ceo",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": "exec_ceo",
         "project_id": pid,
@@ -1666,6 +1907,46 @@ async def _project_audit_events(storage: AgentStorage, project_id: UUID, limit: 
     return events[:limit]
 
 
+async def _project_usage_summary(storage: AgentStorage, project_id: UUID) -> dict[str, Any]:
+    """Read project usage across rolling upgrades of the shared storage package."""
+    instance_reader = getattr(storage, "__dict__", {}).get("get_project_usage")
+    class_reader = getattr(type(storage), "get_project_usage", None)
+    usage_reader = instance_reader or (getattr(storage, "get_project_usage") if class_reader else None)
+    if usage_reader is not None:
+        return await usage_reader(project_id)
+
+    # The SQL fallback lets an older running orchestrator consume the new
+    # migration before its application image is rotated.
+    query = sa.text(
+        """
+        SELECT
+            count(*) FILTER (WHERE event_type = 'llm') AS llm_calls,
+            count(*) FILTER (WHERE event_type = 'tool') AS tool_calls,
+            count(*) FILTER (WHERE status <> 'success') AS failed_calls,
+            COALESCE(sum(prompt_tokens), 0) AS prompt_tokens,
+            COALESCE(sum(completion_tokens), 0) AS completion_tokens,
+            COALESCE(sum(cost_usd), 0) AS total_cost_usd,
+            min(occurred_at) AS first_event_at,
+            max(occurred_at) AS last_event_at
+        FROM project_usage_events
+        WHERE project_id = :project_id
+        """
+    )
+    async with storage.engine.connect() as conn:
+        row = (await conn.execute(query, {"project_id": project_id})).mappings().one()
+    result = dict(row)
+    result["llm_calls"] = int(result["llm_calls"] or 0)
+    result["tool_calls"] = int(result["tool_calls"] or 0)
+    result["failed_calls"] = int(result["failed_calls"] or 0)
+    result["prompt_tokens"] = int(result["prompt_tokens"] or 0)
+    result["completion_tokens"] = int(result["completion_tokens"] or 0)
+    result["total_tokens"] = result["prompt_tokens"] + result["completion_tokens"]
+    result["total_cost_usd"] = float(result["total_cost_usd"] or 0.0)
+    result["available"] = True
+    result["source"] = "project_usage_events"
+    return result
+
+
 @app.get("/projects/{project_id}/artifacts")
 async def list_project_artifacts(
     project_id: UUID,
@@ -1767,6 +2048,17 @@ async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
     audit = await _project_audit_events(storage, project_id, limit=20)
     tasks = await storage.list_task_logs(limit=50)
     workers = await storage.list_workers()
+    try:
+        project_usage = await _project_usage_summary(storage, project_id)
+    except Exception:
+        logger.exception(
+            "project_workspace.usage_unavailable",
+            extra={"project_id": str(project_id)},
+        )
+        project_usage = {
+            "available": False,
+            "reason": "The durable project usage ledger is temporarily unavailable.",
+        }
 
     flow_instance = None
     flow_executions: list[dict[str, Any]] = []
@@ -1825,6 +2117,31 @@ async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
     if not next_actions:
         next_actions.append({"kind": "none", "label": "No operator action required", "severity": "low"})
 
+    # The container-log endpoint is intentionally a separate, allowlisted
+    # operational surface.  For a project workspace, the durable audit
+    # timeline is the reliable project-scoped log source and should be
+    # rendered instead of claiming that no logs exist.
+    project_logs = []
+    for index, event in enumerate(audit):
+        summary = str(event.get("summary") or event.get("event_type") or "Project activity")
+        normalized = summary.upper()
+        level = "error" if "FAILED" in normalized or "VETO" in normalized else (
+            "warning" if "REJECT" in normalized or "REVISION" in normalized else "info"
+        )
+        actor = event.get("actor")
+        message = f"{event.get('event_type') or 'project_event'}: {summary}"
+        if actor:
+            message = f"{message} (actor: {actor})"
+        project_logs.append(
+            {
+                "id": f"project-audit-{index}",
+                "level": level,
+                "message": message,
+                "created_at": event.get("occurred_at"),
+                "source": "audit_timeline",
+            }
+        )
+
     return _serialize(
         {
             "project": project,
@@ -1834,11 +2151,8 @@ async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
             "recent_activity": audit[:10],
             "worker_activity": project_task_rows[:10],
             "artifacts": artifacts,
-            "logs": [],
-            "cost_usage": {
-                "available": False,
-                "reason": "Project-scoped LLM/tool telemetry is not available from current metrics.",
-            },
+            "logs": project_logs[:20],
+            "cost_usage": project_usage,
             "next_actions": next_actions,
         }
     )
@@ -1886,6 +2200,39 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
             409,
             f"Stale state conflict: {e}. Re-read the project and retry.",
         )
+
+    # Keep document lifecycle badges aligned with the workflow transition.
+    # Review aggregation also persists terminal verdicts, while this boundary
+    # covers submissions (including the unreviewed RR handoff).
+    document_status = {
+        WorkflowEvent.PDR_SUBMITTED: "IN_REVIEW",
+        WorkflowEvent.CDR_SUBMITTED: "IN_REVIEW",
+        WorkflowEvent.RR_SUBMITTED: "APPROVED",
+    }.get(event)
+    document_id = (
+        req.context.get("document_id")
+        if isinstance(req.context, dict)
+        else None
+    )
+    if document_status and document_id:
+        try:
+            document = await storage.get_document(UUID(str(document_id)))
+            if document is not None and str(document.get("project_id")) == str(project_id):
+                await storage.update_document_status(
+                    UUID(str(document_id)),
+                    status=document_status,
+                )
+        except Exception:
+            logger.warning(
+                "workflow_document_status_sync_failed",
+                extra={
+                    "project_id": str(project_id),
+                    "document_id": str(document_id),
+                    "status": document_status,
+                    "event": event.value,
+                },
+                exc_info=True,
+            )
 
     # Surface the two built-in human checkpoints through the same approval-gate
     # API used by flow instances.  This is deliberately after the atomic state
@@ -2947,7 +3294,7 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
         "correlation_id": tid,
         "msg_type": MessageType.ADMIN_TASK.value,
         "sender_id": "orchestrator",
-        "sender_team": "orchestrator",
+        "sender_team": "exec_ceo",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": team_id,
         "project_id": project_id,
@@ -3029,7 +3376,7 @@ async def system_shutdown() -> dict[str, Any]:
         "message_id": str(uuid4()),
         "msg_type": MessageType.SHUTDOWN.value,
         "sender_id": "orchestrator",
-        "sender_team": "orchestrator",
+        "sender_team": "exec_ceo",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "payload": {"action": "SHUTDOWN", "timeout_s": _SHUTDOWN_TIMEOUT_S},
         "created_at": datetime.now(tz=UTC).isoformat(),
@@ -5932,6 +6279,8 @@ async def _handle_ceo_confirmation_intent(
         result = await system_shutdown()
     elif action == "system_resume":
         result = await system_resume()
+    elif action == "project_resume":
+        result = await resume_project(UUID(str(target)))
     elif action == "project_archive":
         result = await archive_project(UUID(str(target)))
     elif action == "project_delete":
@@ -5986,7 +6335,370 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
     if "project" not in lowered:
         return None
 
+    # A CSO veto is a recoverable security workflow, not a normal human
+    # approval decision. Require an explicit remediation statement, restore
+    # the state recorded before the veto, then move the design back into its
+    # creation stage so a new immutable document revision can be submitted.
+    security_revision_requested = (
+        re.search(r"\bsecurity\s+(?:blocker|blocked|veto)\b", lowered) is not None
+        and re.search(
+            r"\b(?:resolve|remediate|address|fix|clear|reopen|revise)\b", lowered
+        ) is not None
+        and "override" not in lowered
+    )
+    if security_revision_requested:
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": "project_security_revision",
+                "status": "ambiguous_project" if ambiguous else "needs_project",
+                "response": (
+                    "More than one project matches that security-blocker request; give me the exact project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID for the security-blocker request."
+                ),
+                "trace": ["parsed_security_revision_intent", "project_not_uniquely_identified"],
+            }
+
+        reason_match = re.search(
+            r"\b(?:because|reason|comment|comments|with|after)\s*[:=-]?\s*(.+)$",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+        reason = reason_match.group(1).strip(" .\"'") if reason_match else ""
+        if not reason:
+            return {
+                "type": "project_security_revision",
+                "status": "needs_justification",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project.get('name') or project.get('id')}` has a security blocker. "
+                    "Tell me what remediation was completed (for example: encryption, classification, "
+                    "threat model, compliance, secrets rotation, MCP controls, and sandbox hardening)."
+                ),
+                "trace": ["parsed_security_revision_intent", "required_security_remediation_reason"],
+            }
+
+        if str(project.get("state")) != ProjectState.SECURITY_BLOCKED.value:
+            return {
+                "type": "project_security_revision",
+                "status": "no_security_blocker",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project.get('name') or project.get('id')}` is currently "
+                    f"`{project.get('state')}`; I did not apply a security-blocker recovery."
+                ),
+                "trace": ["parsed_security_revision_intent", "checked_authoritative_project_state"],
+            }
+
+        project_id = UUID(str(project["id"]))
+        restored = await transition_project(
+            project_id,
+            TransitionRequest(
+                event=WorkflowEvent.BLOCKER_RESOLVED.value,
+                actor_id="human_operator",
+                context={"reason": reason, "resolution": "security_remediation_verified"},
+            ),
+        )
+        restored_state = str(restored.get("next_state") or "")
+        revision_event = {
+            ProjectState.PDR_REVIEW.value: WorkflowEvent.PDR_REVISION_REQUESTED.value,
+            ProjectState.CDR_REVIEW.value: WorkflowEvent.CDR_REVISION_REQUESTED.value,
+        }.get(restored_state)
+        if revision_event is None:
+            updated = await storage.get_project(project_id)
+            return {
+                "type": "project_security_revision",
+                "status": "blocker_resolved_no_revision_stage",
+                "project": _serialize(updated or project),
+                "response": (
+                    f"I resolved the security blocker, but the restored project state is `{restored_state}` "
+                    "and has no document-revision route."
+                ),
+                "trace": [
+                    "parsed_security_revision_intent",
+                    "resolved_security_blocker",
+                    "missing_document_revision_route",
+                ],
+            }
+
+        revised = await transition_project(
+            project_id,
+            TransitionRequest(
+                event=revision_event,
+                actor_id="human_operator",
+                context={
+                    "reason": reason,
+                    "resolution": "security_remediation_verified",
+                    "revision_requested": True,
+                },
+            ),
+        )
+        updated = await storage.get_project(project_id)
+        return {
+            "type": "project_security_revision",
+            "status": "revision_requested",
+            "project": _serialize(updated or project),
+            "restored_state": restored_state,
+            "revision_event": revision_event,
+            "response": (
+                f"I recorded the CSO remediation for project `{project.get('name') or project.get('id')}`. "
+                f"The project moved through `{restored_state}` into `{revised.get('next_state')}`; "
+                "the CEO stage directive will create and submit a new durable CDR revision for review."
+            ),
+            "trace": [
+                "parsed_security_revision_intent",
+                "matched_exact_project",
+                "resolved_security_blocker",
+                "requested_immutable_document_revision",
+                "published_stage_directive",
+                "read_authoritative_project_state",
+            ],
+        }
+
+    # A non-veto review can also request a revision (for example, CFO may
+    # require a budget section).  Keep that workflow explicit in CEO chat so
+    # the human can authorize the next immutable revision without relying on
+    # an unhandled DOCUMENT_REVISION message or an LLM-selected transition.
+    document_revision_requested = (
+        re.search(r"\b(?:cdr|pdr|design|document)\b", lowered) is not None
+        and re.search(r"\b(?:revise|revision|redo|rework|update)\b", lowered) is not None
+        and "security blocker" not in lowered
+        and "security blocked" not in lowered
+    )
+    if document_revision_requested:
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": "project_document_revision",
+                "status": "ambiguous_project" if ambiguous else "needs_project",
+                "response": (
+                    "More than one project matches that document-revision request; give me the exact project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID for the document-revision request."
+                ),
+                "trace": ["parsed_document_revision_intent", "project_not_uniquely_identified"],
+            }
+
+        reason_match = re.search(
+            r"\b(?:because|reason|comment|comments|with|after)\s*[:=-]?\s*(.+)$",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+        reason = reason_match.group(1).strip(" .\"'") if reason_match else ""
+        if not reason:
+            return {
+                "type": "project_document_revision",
+                "status": "needs_justification",
+                "project": _serialize(project),
+                "response": (
+                    f"Tell me what must change in project `{project.get('name') or project.get('id')}` "
+                    "before I request a new immutable document revision."
+                ),
+                "trace": ["parsed_document_revision_intent", "required_revision_reason"],
+            }
+
+        revision_event = {
+            ProjectState.PDR_REVIEW.value: WorkflowEvent.PDR_REVISION_REQUESTED.value,
+            ProjectState.CDR_REVIEW.value: WorkflowEvent.CDR_REVISION_REQUESTED.value,
+        }.get(str(project.get("state")))
+        if revision_event is None:
+            return {
+                "type": "project_document_revision",
+                "status": "invalid_revision_stage",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project.get('name') or project.get('id')}` is currently "
+                    f"`{project.get('state')}`; I did not request a document revision."
+                ),
+                "trace": ["parsed_document_revision_intent", "checked_authoritative_project_state"],
+            }
+
+        revised = await transition_project(
+            UUID(str(project["id"])),
+            TransitionRequest(
+                event=revision_event,
+                actor_id="human_operator",
+                context={"reason": reason, "revision_requested": True},
+            ),
+        )
+        updated = await storage.get_project(UUID(str(project["id"])))
+        return {
+            "type": "project_document_revision",
+            "status": "revision_requested",
+            "project": _serialize(updated or project),
+            "revision_event": revision_event,
+            "response": (
+                f"I requested a new immutable revision for `{project.get('name') or project.get('id')}`. "
+                f"The project moved into `{revised.get('next_state')}` for the stage owner to regenerate and review it."
+            ),
+            "trace": [
+                "parsed_document_revision_intent",
+                "matched_exact_project",
+                "requested_immutable_document_revision",
+                "published_stage_directive",
+                "read_authoritative_project_state",
+            ],
+        }
+
+    decision_match = re.search(
+        r"\b(approve|approved|reject|rejected|deny|denied|decline|declined|edit|edits|revise|cancel)\b",
+        lowered,
+    )
+    if decision_match:
+        decision_word = decision_match.group(1)
+        decision = (
+            "APPROVED"
+            if decision_word in {"approve", "approved"}
+            else "REJECTED"
+            if decision_word in {"reject", "rejected", "deny", "denied", "decline", "declined"}
+            else "EDITS"
+            if decision_word in {"edit", "edits", "revise"}
+            else "CANCELLED"
+        )
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": "project_decision",
+                "status": "ambiguous_project" if ambiguous else "needs_project",
+                "response": (
+                    "More than one project matches that request; give me the exact project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID for that decision."
+                ),
+                "trace": ["parsed_project_decision_intent", "project_not_uniquely_identified"],
+            }
+
+        project_id = UUID(str(project["id"]))
+        pending = await storage.list_approval_gates(
+            project_id=project_id,
+            status="PENDING",
+            limit=100,
+        )
+        if not pending:
+            return {
+                "type": "project_decision",
+                "status": "no_pending_decision",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project.get('name') or project.get('id')}` is currently "
+                    f"`{project.get('state')}` and has no pending human approval gate. "
+                    "I did not change its state."
+                ),
+                "trace": [
+                    "parsed_project_decision_intent",
+                    "checked_pending_approval_gates",
+                    "no_pending_gate",
+                ],
+            }
+
+        comments = None
+        reason_match = re.search(
+            r"\b(?:because|reason|comment|comments|with edits?|request)\s*[:=-]?\s*(.+)$",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+        if reason_match:
+            comments = reason_match.group(1).strip(" .\"'") or None
+        if decision in {"REJECTED", "EDITS"} and not comments:
+            selected_gate = pending[0]
+            return {
+                "type": "project_decision",
+                "status": "needs_justification",
+                "project": _serialize(project),
+                "response": (
+                    f"The `{selected_gate.get('gate_type') or 'human'}` gate for project "
+                    f"`{project.get('name') or project.get('id')}` is pending. "
+                    f"Tell me why you want to {decision.lower()} it so I can persist the decision."
+                ),
+                "trace": ["parsed_project_decision_intent", "required_decision_justification"],
+            }
+
+        result = await submit_decision(
+            project_id,
+            DecisionRequest(
+                decision=decision,
+                comments=comments,
+                edits={"request": comments} if decision == "EDITS" and comments else None,
+                decided_by="human_operator",
+            ),
+        )
+        updated_project = await storage.get_project(project_id)
+        selected_gate = pending[0]
+        next_state = result.get("next_state") if isinstance(result, dict) else None
+        state_text = next_state or (updated_project or project).get("state")
+        return {
+            "type": "project_decision",
+            "status": str(result.get("status") or "decision_recorded"),
+            "project": _serialize(updated_project or project),
+            "gate": _serialize(selected_gate),
+            "decision": decision,
+            "result": _serialize(result),
+            "response": (
+                f"I recorded `{decision}` for the `{selected_gate.get('gate_type') or 'human'}` gate on "
+                f"project `{project.get('name') or project.get('id')}`. "
+                f"The project is now `{state_text}`."
+            ),
+            "trace": [
+                "parsed_project_decision_intent",
+                "matched_exact_project",
+                "checked_pending_approval_gates",
+                "persisted_human_decision",
+                "read_authoritative_project_state",
+            ],
+        }
+
     project_id = _extract_uuid_from_text(instruction)
+
+    project_resume_requested = re.search(
+        r"\b(?:resume|retry|restart|continue|rerun|re-run)\b", lowered
+    ) is not None
+    if project_resume_requested:
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": "project_resume",
+                "status": "ambiguous_project" if ambiguous else "needs_project",
+                "response": (
+                    "More than one project matches that recovery request; give me the exact project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID for the recovery request."
+                ),
+                "trace": ["parsed_project_resume_intent", "project_not_uniquely_identified"],
+            }
+
+        state = str(project.get("state") or "")
+        if state in {ProjectState.COMPLETED.value, ProjectState.ARCHIVED.value}:
+            return {
+                "type": "project_resume",
+                "status": "not_resumable",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project.get('name') or project.get('id')}` is already `{state}`. "
+                    "I did not restart it."
+                ),
+                "trace": ["parsed_project_resume_intent", "checked_authoritative_terminal_state"],
+            }
+
+        action_word = "retry" if state == ProjectState.FAILED.value else "resume"
+        return _queue_ceo_confirmation(
+            action="project_resume",
+            target_id=project.get("id"),
+            label=f"{action_word} project {project.get('name') or project.get('id')}",
+            response=(
+                f"I found project `{project.get('name') or project.get('id')}` "
+                f"(`{project.get('id')}`), currently `{state}`. "
+                + (
+                    "Retry will restore its last safe state before publishing one exact-project resume directive."
+                    if state == ProjectState.FAILED.value
+                    else "I will publish one resume directive only for this project."
+                )
+            ),
+        )
 
     destructive_action = None
     if re.search(r"\b(?:delete|remove|purge)\b", lowered):
@@ -6840,12 +7552,28 @@ def _ceo_operator_intent_is_api_owned(
     ):
         return True
     if "project" in lowered:
+        if (
+            re.search(r"\bsecurity\s+(?:blocker|blocked|veto)\b", lowered)
+            and re.search(r"\b(?:resolve|remediate|address|fix|clear|reopen|revise)\b", lowered)
+            and "override" not in lowered
+        ):
+            return True
         if any(
             word in lowered
             for word in (
                 "create", "new", "start", "initialize", "init", "list", "show", "recent",
                 "delete", "remove", "purge", "archive",
             )
+        ):
+            return True
+        if re.search(
+            r"\b(?:resume|retry|restart|continue|rerun|re-run)\b",
+            lowered,
+        ):
+            return True
+        if re.search(
+            r"\b(?:approve|approved|reject|rejected|deny|denied|decline|declined|edit|edits|revise|cancel)\b",
+            lowered,
         ):
             return True
         if any(word in lowered for word in ("status", "state", "progress", "workspace")):
@@ -6908,12 +7636,15 @@ async def _handle_ceo_operator_intent(
     if confirmation is not None:
         return confirmation
     handlers = (
+        # Project security-recovery and decision phrases are scoped by an
+        # exact project target. Run them before broad metadata handlers such
+        # as credentials so remediation text cannot steal the intent.
+        (_handle_ceo_project_intent, False),
         (_handle_ceo_hiring_intent, False),
         (_handle_ceo_hiring_followup_intent, True),
         (_handle_ceo_system_intent, False),
         (_handle_ceo_dead_letter_intent, False),
         (_handle_ceo_credential_intent, False),
-        (_handle_ceo_project_intent, False),
         (_handle_ceo_flow_intent, False),
         (_handle_ceo_readiness_intent, False),
         (_handle_ceo_company_intent, False),
@@ -7226,7 +7957,7 @@ async def operator_send_to_ceo(
         "correlation_id": message_id,
         "msg_type": MessageType.TASK.value,
         "sender_id": "human_operator",
-        "sender_team": "orchestrator",
+        "sender_team": "exec_ceo",
         "sender_role": AgentRole.ORCHESTRATOR.value,
         "recipient_team": "exec_ceo",
         "project_id": "operator-direct",

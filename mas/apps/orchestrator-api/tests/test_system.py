@@ -244,6 +244,19 @@ async def test_project_workspace_groups_operator_state(client):
     )
     storage.list_task_logs = AsyncMock(return_value=[])
     storage.list_workers = AsyncMock(return_value=[])
+    storage.get_project_usage = AsyncMock(
+        return_value={
+            "available": True,
+            "source": "project_usage_events",
+            "llm_calls": 3,
+            "tool_calls": 7,
+            "failed_calls": 1,
+            "prompt_tokens": 1200,
+            "completion_tokens": 300,
+            "total_tokens": 1500,
+            "total_cost_usd": 0.0125,
+        }
+    )
     storage.get_flow_instance_by_project = AsyncMock(return_value=None)
     _patch_state(storage)
 
@@ -255,6 +268,13 @@ async def test_project_workspace_groups_operator_state(client):
     assert data["pending_approvals"][0]["status"] == "PENDING"
     assert data["artifacts"][0]["path"].endswith("test.md")
     assert data["next_actions"][0]["kind"] == "approval"
+    assert data["logs"]
+    assert data["logs"][0]["source"] == "audit_timeline"
+    assert "approval_gate" in data["logs"][0]["message"]
+    assert data["cost_usage"]["available"] is True
+    assert data["cost_usage"]["llm_calls"] == 3
+    assert data["cost_usage"]["tool_calls"] == 7
+    assert data["cost_usage"]["total_tokens"] == 1500
 
 
 @pytest.mark.anyio
@@ -453,9 +473,62 @@ async def test_system_resume_with_active_projects(client):
     data = resp.json()
     assert data["status"] == "resumed"
     assert data["projects_resumed"] == 2
+    published = [call.kwargs["json"] for call in mock_client_instance.post.await_args_list]
+    assert published[0]["recipient_team"] == "exec_coo"
+    assert published[0]["payload"]["action"] == "START_EXECUTION"
+    assert published[1]["payload"]["action"] == "RESUME"
+
+
+@pytest.mark.anyio
+async def test_stage_directive_failure_is_scheduled_for_retry():
+    """A committed transition must not lose its actionable stage directive."""
+    from orchestrator_api.main import publish_system_event
+
+    with (
+        patch(
+            "orchestrator_api.main._publish_router_envelope",
+            new=AsyncMock(side_effect=[RuntimeError("router down"), False]),
+        ),
+        patch("orchestrator_api.main._schedule_stage_directive_retry") as schedule_retry,
+    ):
+        await publish_system_event(
+            "00000000-0000-4000-a000-000000000123",
+            "FEASIBILITY_CHECK",
+            "PDR_CREATION",
+            "feasibility_approved",
+            "ceo",
+            {"approved": True},
+        )
+
+    schedule_retry.assert_called_once()
+    project_id, state, directive = schedule_retry.call_args.args
+    assert project_id == "00000000-0000-4000-a000-000000000123"
+    assert state == "PDR_CREATION"
+    assert directive["recipient_team"] == "exec_ceo"
+    assert directive["payload"]["action"] == "START_PDR"
 
 
 # ── POST /system/shutdown-ack ─────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_system_resume_skips_failed_projects(client):
+    """Failed projects require explicit retry and are not auto-resumed."""
+    projects = [_fake_project("FAILED"), _fake_project("IN_PROGRESS")]
+    _patch_state(_make_storage(projects=projects))
+
+    with patch("httpx.AsyncClient") as mock_http:
+        mock_response = MagicMock(status_code=201)
+        mock_client_instance = MagicMock(post=AsyncMock(return_value=mock_response))
+        mock_http.return_value.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        resp = await client.post("/system/resume")
+
+    assert resp.status_code == 200
+    assert resp.json()["projects_resumed"] == 1
+    published = mock_client_instance.post.await_args.kwargs["json"]
+    assert published["project_id"] == str(projects[1]["id"])
 
 
 @pytest.mark.anyio

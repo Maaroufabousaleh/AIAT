@@ -46,6 +46,8 @@ RUN pip install --no-deps /tmp/mas-core && \
         "semgrep==1.168.0" \
         "docling==2.110.0"
 
+RUN pip install --no-cache-dir "asyncpg==0.31.0"
+
 RUN python -m playwright install --with-deps chromium
 
 RUN chromium_path="$(find /root/.cache/ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \

@@ -170,7 +170,7 @@ def _mock_orchestrator_http(monkeypatch):
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch):
     """Async httpx test client against the FastAPI app.
 
     We use the lifespan context manager to ensure app.state is populated
@@ -182,20 +182,23 @@ async def client():
     from tool_service.config import get_settings
     from tool_service.main import app
 
+    monkeypatch.setenv("TOOL_SECRET", "test-tool-secret")
+    get_settings.cache_clear()
     settings = get_settings()
-    headers = {}
-    if settings.tool_secret:
-        headers["Authorization"] = f"Bearer {settings.tool_secret}"
+    headers = {"Authorization": f"Bearer {settings.tool_secret}"}
 
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://test",
-            headers=headers,
-        ) as ac,
-    ):
-        yield ac
+    try:
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+                headers=headers,
+            ) as ac,
+        ):
+            yield ac
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.fixture

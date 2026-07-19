@@ -285,12 +285,15 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
     environment:
       # Redis ACL: connect as toolcache_user (DB 1 for tool cache)
       REDIS_URL: "redis://toolcache_user:${TOOLCACHE_PASSWORD}@redis:6379/1"
       REDIS_USERNAME: "toolcache_user"
       REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
+      PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       MINIO_ENDPOINT: "http://minio:9000"
       MINIO_ACCESS_KEY: "mas_agent"
       MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"

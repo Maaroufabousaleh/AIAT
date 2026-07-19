@@ -17,12 +17,14 @@ Fixtures:   make_registry (ToolRegistry with no Redis), client (ASGI httpx).
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
 import pytest
+from tool_service.config import Settings
+from tool_service.rate_limiter import RateLimiterPool
+from tool_service.registry import ToolRegistry
+from tool_service.tools.all_tools import get_all_tools
 
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import CircuitState, ToolRequest
@@ -47,6 +49,19 @@ class FakeBrowserTool(BaseTool):
         return {"navigated": True, "url": kwargs.get("url", "https://example.com")}
 
 
+class ProjectContextEchoTool(BaseTool):
+    """Small tool used to verify protocol project context reaches execution."""
+
+    name = "test.project_context"
+    group = ToolGroup.KPI_UTILITY
+    allowed_roles = [AgentRole.WORKER]
+    idempotent = False
+    cache_ttl_seconds = 0
+
+    async def execute(self, **kwargs) -> dict:  # type: ignore[override]
+        return {"project_id": kwargs.get("project_id"), "value": kwargs.get("value")}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures (module-level so they are available to all test classes)
 # ---------------------------------------------------------------------------
@@ -67,7 +82,7 @@ def make_registry_with_browser(make_registry):
 
 
 @pytest.fixture
-async def client_with_browser():
+async def client_with_browser(monkeypatch):
     """ASGI httpx client with FakeBrowserTool injected into the app registry."""
     pytest.importorskip("fastapi")
     import httpx as _httpx
@@ -81,21 +96,24 @@ async def client_with_browser():
         tools.append(FakeBrowserTool())
         return tools
 
+    monkeypatch.setenv("TOOL_SECRET", "test-tool-secret")
+    get_settings.cache_clear()
     settings = get_settings()
-    headers = {}
-    if settings.tool_secret:
-        headers["Authorization"] = f"Bearer {settings.tool_secret}"
+    headers = {"Authorization": f"Bearer {settings.tool_secret}"}
 
-    with patch("tool_service.main.get_all_tools", _patched_get_all_tools):
-        async with (
-            app.router.lifespan_context(app),
-            _httpx.AsyncClient(
-                transport=_httpx.ASGITransport(app=app, raise_app_exceptions=False),
-                base_url="http://test",
-                headers=headers,
-            ) as ac,
-        ):
-            yield ac
+    try:
+        with patch("tool_service.main.get_all_tools", _patched_get_all_tools):
+            async with (
+                app.router.lifespan_context(app),
+                _httpx.AsyncClient(
+                    transport=_httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                    base_url="http://test",
+                    headers=headers,
+                ) as ac,
+            ):
+                yield ac
+    finally:
+        get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +171,21 @@ class TestToolRegistration:
         for name in ALL_TEST_TOOLS:
             assert name in TOOL_MANIFEST, f"Tool '{name}' missing from manifest"
 
+    @pytest.mark.anyio
+    async def test_protocol_project_context_is_forwarded_to_tool_kwargs(self, make_registry):
+        registry = make_registry()
+        registry.register(ProjectContextEchoTool())
+
+        response = await registry.execute(
+            _req(
+                "test.project_context",
+                kwargs={"value": "preserved"},
+            )
+        )
+
+        assert response.success is True
+        assert response.result == {"project_id": PROJECT_ID, "value": "preserved"}
+
     def test_all_six_tools_registered_in_registry(self, make_registry_with_browser):
         registry = make_registry_with_browser()
         names = set(registry.tool_names)
@@ -184,8 +217,8 @@ class TestToolRegistration:
         assert "worker" in role_values
 
     @pytest.mark.anyio
-    async def test_list_tools_http_includes_all_six(self, client):
-        resp = await client.get("/tools")
+    async def test_list_tools_http_includes_all_six(self, client_with_browser):
+        resp = await client_with_browser.get("/tools")
         assert resp.status_code == 200
         names = {t["tool_name"] for t in resp.json()["tools"]}
         for name in ALL_TEST_TOOLS:
@@ -340,11 +373,11 @@ class TestWorkerGrantHTTP:
     @pytest.mark.anyio
     async def test_get_grants_shows_assigned_tools(self, client):
         await client.post(
-            f"/tools/workers/w-list/grants",
+            "/tools/workers/w-list/grants",
             json={"tool_name": SEARCH_TOOL},
         )
         await client.post(
-            f"/tools/workers/w-list/grants",
+            "/tools/workers/w-list/grants",
             json={"tool_name": BLOB_DOWNLOAD_TOOL},
         )
         resp = await client.get("/tools/workers/w-list/grants")
@@ -522,6 +555,27 @@ class TestAuditLog:
         assert all(r["tool_name"] == SEARCH_TOOL for r in logs)
 
     @pytest.mark.anyio
+    async def test_project_usage_is_persisted_and_project_filter_is_scoped(self, make_registry):
+        registry = make_registry()
+        usage_storage = MagicMock()
+        usage_storage.record_project_usage = AsyncMock(return_value={})
+        registry._usage_storage = usage_storage
+        project_id = "00000000-0000-4000-a000-000000000091"
+
+        await registry.execute(
+            _req(SEARCH_TOOL, caller_id="usage-worker", project_id=project_id)
+        )
+
+        persisted = usage_storage.record_project_usage.await_args.kwargs
+        assert str(persisted["project_id"]) == project_id
+        assert persisted["event_type"] == "tool"
+        assert persisted["tool_name"] == SEARCH_TOOL
+        assert persisted["status"] == "success"
+        scoped = registry.get_audit_log(project_id=project_id)
+        assert len(scoped) == 1
+        assert scoped[0]["actor"] == "usage-worker"
+
+    @pytest.mark.anyio
     async def test_audit_http_endpoint_returns_records(self, client):
         worker = "audit-http-w1"
         payload = {
@@ -577,12 +631,6 @@ class TestRateLimiting:
 
     @pytest.mark.anyio
     async def test_rate_limit_exhaustion_returns_rate_limited(self, make_registry):
-        from tool_service.rate_limiter import RateLimiterPool
-        from tool_service.config import Settings
-        from tool_service.registry import ToolRegistry
-        from tool_service.tools.all_tools import get_all_tools
-        from mas_tools_sdk.groups import ToolGroup
-
         # Create a registry with a 1-call-per-minute cap on KPI_UTILITY (web_search group)
         settings = Settings()
         rate_limiter = RateLimiterPool(overrides={ToolGroup.KPI_UTILITY: 1})
@@ -603,9 +651,6 @@ class TestRateLimiting:
     @pytest.mark.anyio
     async def test_rate_limited_response_via_http_returns_429(self, client, monkeypatch):
         """When rate limit is exceeded the HTTP layer wraps the response in 429."""
-        from tool_service.rate_limiter import RateLimiterPool
-        from mas_tools_sdk.groups import ToolGroup
-
         # Exhaust the rate limiter by patching acquire to always deny
         async def deny_acquire(group):
             from datetime import UTC, datetime
@@ -629,12 +674,6 @@ class TestRateLimiting:
 
     @pytest.mark.anyio
     async def test_rate_limit_audit_record_status(self, make_registry):
-        from tool_service.rate_limiter import RateLimiterPool
-        from tool_service.config import Settings
-        from tool_service.registry import ToolRegistry
-        from tool_service.tools.all_tools import get_all_tools
-        from mas_tools_sdk.groups import ToolGroup
-
         settings = Settings()
         rate_limiter = RateLimiterPool(overrides={ToolGroup.KPI_UTILITY: 1})
         registry = ToolRegistry(settings, cache=None, rate_limiter=rate_limiter)

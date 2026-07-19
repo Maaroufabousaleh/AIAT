@@ -13,6 +13,7 @@ import time
 from collections import deque
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import httpx
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
     from .cache import ToolCache
     from .config import Settings
+    from .usage import ProjectUsageWriter
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,13 @@ class ToolRegistry:
         *,
         cache: ToolCache | None = None,
         rate_limiter: RateLimiterPool | None = None,
+        usage_storage: ProjectUsageWriter | None = None,
     ) -> None:
         self._settings = settings
         self._cache = cache
         self._rate_limiter = rate_limiter or RateLimiterPool()
         self._policy = CommunicationPolicy()
+        self._usage_storage = usage_storage
 
         self._tools: dict[str, BaseTool] = {}
         self._breakers: dict[str, CircuitBreaker] = {}
@@ -91,6 +95,10 @@ class ToolRegistry:
     def set_cache(self, cache: ToolCache | None) -> None:
         """Replace the cache backend after Redis reconnects or disconnects."""
         self._cache = cache
+
+    def set_usage_storage(self, usage_storage: ProjectUsageWriter | None) -> None:
+        """Replace the durable usage writer after Postgres recovery."""
+        self._usage_storage = usage_storage
 
     # ------------------------------------------------------------------
     # Per-worker tool grants
@@ -134,34 +142,70 @@ class ToolRegistry:
     # Audit log
     # ------------------------------------------------------------------
 
-    def _record_audit(
+    async def _record_audit(
         self,
         *,
         actor: str,
         project_id: str | None,
         tool_name: str,
         status: str,
+        team_id: str | None = None,
         error: str | None = None,
         duration_ms: float | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> None:
-        """Append an audit record to the in-memory ring buffer."""
+        """Append to the live ring and durably account project-scoped usage."""
+        timestamp = datetime.now(tz=UTC)
         self._audit_log.append(
             {
                 "actor": actor,
                 "project_id": project_id,
                 "tool_name": tool_name,
-                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "timestamp": timestamp.isoformat(),
                 "status": status,
                 "error": error,
                 "duration_ms": duration_ms,
             }
         )
+        if not project_id or self._usage_storage is None:
+            return
+        try:
+            parsed_project_id = UUID(str(project_id))
+        except (TypeError, ValueError):
+            logger.warning(
+                "tool_usage_invalid_project_id",
+                extra={"project_id": project_id, "tool": tool_name},
+            )
+            return
+        try:
+            await self._usage_storage.record_project_usage(
+                project_id=parsed_project_id,
+                event_type="tool",
+                agent_id=actor,
+                team_id=team_id,
+                tool_name=tool_name,
+                status=status,
+                duration_ms=duration_ms,
+                trace_id=trace_id,
+                span_id=span_id,
+                details={"error": error} if error else None,
+                occurred_at=timestamp,
+            )
+        except Exception:
+            # Usage persistence must never turn an otherwise valid tool result
+            # into a failed business operation.
+            logger.exception(
+                "tool_usage_persistence_failed",
+                extra={"project_id": project_id, "tool": tool_name},
+            )
 
     def get_audit_log(
         self,
         *,
         worker_id: str | None = None,
         tool_name: str | None = None,
+        project_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Return recent audit records, optionally filtered."""
@@ -170,6 +214,8 @@ class ToolRegistry:
             records = [r for r in records if r["actor"] == worker_id]
         if tool_name:
             records = [r for r in records if r["tool_name"] == tool_name]
+        if project_id:
+            records = [r for r in records if r["project_id"] == project_id]
         return records[-limit:]
 
     @property
@@ -264,12 +310,15 @@ class ToolRegistry:
                     "reason": result,
                 },
             )
-            self._record_audit(
+            await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
                 tool_name=tool_name,
                 status="forbidden",
+                team_id=request.caller_team,
                 error=f"Access denied: {result}",
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
             return self._error_response(
                 request,
@@ -287,12 +336,15 @@ class ToolRegistry:
                 "tool_worker_grant_denied",
                 extra={"tool": resolved_tool_name, "caller_id": request.caller_id},
             )
-            self._record_audit(
+            await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
                 tool_name=tool_name,
                 status="forbidden",
+                team_id=request.caller_team,
                 error=deny_msg,
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
             return self._error_response(
                 request,
@@ -310,12 +362,15 @@ class ToolRegistry:
                     "circuit_state": breaker.state.value,
                 },
             )
-            self._record_audit(
+            await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
                 tool_name=tool_name,
                 status="circuit_open",
+                team_id=request.caller_team,
                 error=f"Circuit breaker OPEN for '{tool_name}'.",
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
             return self._error_response(
                 request,
@@ -335,12 +390,15 @@ class ToolRegistry:
                         "group": group.value,
                     },
                 )
-                self._record_audit(
+                await self._record_audit(
                     actor=request.caller_id,
                     project_id=request.project_id,
                     tool_name=tool_name,
                     status="rate_limited",
+                    team_id=request.caller_team,
                     error=f"Rate limit exceeded for group '{group.value}'.",
+                    trace_id=request.trace_id,
+                    span_id=request.span_id,
                 )
                 return self._error_response(
                     request,
@@ -353,7 +411,14 @@ class ToolRegistry:
         else:
             remaining, reset_at = None, None
 
-        kwargs = request.tool_kwargs
+        # ``project_id`` is carried in the protocol envelope for audit and
+        # tracing, but older callers did not duplicate it inside tool kwargs.
+        # Make that context available to tools that operate on project-scoped
+        # storage (for example ``blob.download``) without changing the caller
+        # contract.  An explicit tool argument remains authoritative.
+        kwargs = dict(request.tool_kwargs)
+        if request.project_id and "project_id" not in kwargs:
+            kwargs["project_id"] = request.project_id
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
             cached = await self._cache.get(resolved_tool_name, kwargs)
             if cached is not None:
@@ -364,6 +429,16 @@ class ToolRegistry:
                         "tool": resolved_tool_name,
                         "duration_ms": round(duration, 2),
                     },
+                )
+                await self._record_audit(
+                    actor=request.caller_id,
+                    project_id=request.project_id,
+                    tool_name=tool_name,
+                    status="success",
+                    team_id=request.caller_team,
+                    duration_ms=round(duration, 2),
+                    trace_id=request.trace_id,
+                    span_id=request.span_id,
                 )
                 return ToolResponse(
                     tool_name=tool_name,
@@ -406,13 +481,16 @@ class ToolRegistry:
                 },
                 exc_info=True,
             )
-            self._record_audit(
+            await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
                 tool_name=tool_name,
                 status="error",
+                team_id=request.caller_team,
                 error=str(exc),
                 duration_ms=round(duration, 2),
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
             return self._error_response(
                 request,
@@ -450,12 +528,15 @@ class ToolRegistry:
             },
         )
 
-        self._record_audit(
+        await self._record_audit(
             actor=request.caller_id,
             project_id=request.project_id,
             tool_name=tool_name,
             status="success",
+            team_id=request.caller_team,
             duration_ms=round(duration, 2),
+            trace_id=request.trace_id,
+            span_id=request.span_id,
         )
 
         return ToolResponse(

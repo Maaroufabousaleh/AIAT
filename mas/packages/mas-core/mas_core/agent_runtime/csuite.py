@@ -269,6 +269,23 @@ class CSuiteAgent(AdminAgent):
             except Exception:
                 pass  # If we can't check, proceed normally
 
+        # Document-stage directives are control-plane handoffs, not advisory
+        # prompts. Keep them deterministic so an LLM cannot spend its whole
+        # turn retrying legacy transition names before the durable artifact is
+        # created and submitted. The model still reviews the resulting
+        # document through the normal C-Suite fan-out.
+        if self._specialization == "CEO" and action.upper() in {
+            "START_PDR",
+            "START_CDR",
+            "START_RR",
+        }:
+            await self._recover_directive_progress(envelope, action)
+            logger.info(
+                "csuite_directive_deterministic_stage_completed",
+                extra=self._log_extra(action=action, project_id=project_id),
+            )
+            return
+
         # Actions that trigger LLM work
         actionable = {
             "START_FEASIBILITY",
@@ -1182,7 +1199,294 @@ class CSuiteAgent(AdminAgent):
         ]
 
         tools = self._build_workflow_tool_definitions()
-        await self.think(messages=messages, tools=tools)
+        try:
+            await self.think(messages=messages, tools=tools)
+        finally:
+            # A model may spend its budget inspecting aliases or retrying a
+            # failed tool after the durable document has already been created.
+            # Reconcile the stage at the control-plane boundary so a
+            # successful artifact cannot leave the project permanently parked
+            # in its creation state.
+            await self._recover_directive_progress(envelope, action)
+
+    @staticmethod
+    def _financial_evidence(status: dict[str, Any]) -> str:
+        """Render sourced financial inputs without inventing project claims."""
+        config = status.get("config") if isinstance(status.get("config"), dict) else {}
+        model = config.get("financial_model") or config.get("budget") or {}
+        if isinstance(model, dict) and model:
+            rendered = json.dumps(model, indent=2, sort_keys=True, default=str)
+            return (
+                "The following values come from `project.config` and require CFO validation; "
+                "no additional values have been inferred:\n\n"
+                f"```json\n{rendered}\n```\n"
+            )
+        return (
+            "- Implementation estimate: **UNRESOLVED — CFO estimate required**.\n"
+            "- Operating-cost estimate: **UNRESOLVED — CFO estimate required**.\n"
+            "- Expected benefits and measurement baseline: **UNRESOLVED — sponsor/CFO input required**.\n"
+            "- ROI, payback period, contingency, and sprint allocation: **NOT CALCULATED** until "
+            "the preceding sourced inputs are approved.\n"
+        )
+
+    @classmethod
+    def _build_review_document_content(
+        cls,
+        *,
+        doc_type: str,
+        project_id: str,
+        status: dict[str, Any],
+        revision_requested: bool,
+        revision_reason: str,
+    ) -> str:
+        """Build a reviewable stage artifact with explicit evidence gaps."""
+        project_name = str(status.get("name") or project_id)
+        description = str(status.get("description") or "No project description was provided.")
+        stage_focus = {
+            "PDR": "proposed design, scope, feasibility assumptions, and approval criteria",
+            "CDR": "implementation design, interfaces, controls, test strategy, and traceability",
+            "RR": "release evidence, operational readiness, rollback, ownership, and residual risk",
+        }.get(doc_type, "governed project evidence")
+        revision_section = ""
+        if revision_requested:
+            revision_section = (
+                "## Requested remediation\n\n"
+                f"{revision_reason or 'Reviewer-requested changes were not supplied in the directive.'}\n\n"
+                "This section records requested changes only. It does not claim remediation is complete; "
+                "reviewers must verify the evidence below.\n\n"
+            )
+
+        return (
+            f"# {doc_type} — {project_name}\n\n"
+            "## Document purpose and provenance\n\n"
+            f"- Project ID: `{project_id}`\n"
+            f"- Source state: `{status.get('state') or 'UNKNOWN'}`\n"
+            f"- Review focus: {stage_focus}.\n"
+            "- Evidence rule: statements marked REQUIRED, UNRESOLVED, or NOT PROVIDED are review "
+            "gaps, not completed controls.\n\n"
+            "## Objective, scope, and requirements\n\n"
+            f"{description}\n\n"
+            "- In-scope capabilities: derive and approve concrete acceptance criteria from the project "
+            "objective before implementation.\n"
+            "- Out-of-scope items: **UNRESOLVED — sponsor decision required**.\n"
+            "- Functional requirements and traceability: **NOT PROVIDED — requirements owner must attach "
+            "requirement IDs and acceptance tests**.\n"
+            "- Non-functional requirements: security, reliability, performance, accessibility, privacy, "
+            "operability, and recovery targets are **REQUIRED and must be quantified**.\n\n"
+            "## Proposed architecture and interfaces\n\n"
+            "The proposed boundary keeps AIAT as the authority/control plane: orchestrator and router "
+            "coordinate adapter-backed workers through the authenticated tool service; project state, "
+            "documents, reviews, approvals, and telemetry remain durable control-plane records. This is a "
+            "proposal requiring CTO/CIO verification, not evidence of deployment.\n\n"
+            "```mermaid\nflowchart LR\n  Human --> Control[AIAT orchestrator and router]\n  Control --> Tools[Authenticated tool service]\n  Tools --> Workers[Sandboxed adapter-backed workers]\n  Control --> Data[(Project records and artifacts)]\n  Control --> Gates[Review and approval gates]\n```\n\n"
+            "- API/interface contracts: **NOT PROVIDED — schemas, failure modes, idempotency, and versioning "
+            "evidence required**.\n"
+            "- Data model and migration impact: **NOT PROVIDED — ownership, classification, retention, and "
+            "recovery evidence required**.\n"
+            "- Capacity and dependency assumptions: **UNRESOLVED — measured baselines required**.\n\n"
+            "## Security, privacy, and governance requirements\n\n"
+            "- Threat model and trust boundaries: **REQUIRED — CSO-owned assessment and mitigations**.\n"
+            "- Identity, least privilege, secrets, and credential rotation: **REQUIRED — configuration and "
+            "test evidence must be attached**.\n"
+            "- Sandbox and egress policy: **REQUIRED — selected profile, allowlist, and escape-test evidence**.\n"
+            "- Dependency license/provenance and vulnerability scans: **REQUIRED — scanner reports, SBOM, "
+            "and exceptions**.\n"
+            "- Privacy classification, retention, deletion, incident response, and audit ownership: "
+            "**UNRESOLVED until project-specific policy evidence is approved**.\n\n"
+            "## Financial model\n\n"
+            f"{cls._financial_evidence(status)}\n"
+            "## Risks, decisions, and mitigations\n\n"
+            "| Risk/decision | Current evidence | Owner | Exit criterion |\n"
+            "|---|---|---|---|\n"
+            "| Requirements ambiguity | NOT PROVIDED | Production PM | Approved requirements and tests |\n"
+            "| Architecture/interface risk | PROPOSED ONLY | CTO/CIO | Reviewed diagrams and contracts |\n"
+            "| Security/privacy risk | NOT PROVIDED | CSO | Threat model and control evidence |\n"
+            "| Cost/value risk | UNRESOLVED | CFO | Sourced estimate and benefit baseline |\n"
+            "| Delivery/operations risk | NOT PROVIDED | COO/DevOps/QA | Execution, test, rollback, and runbook evidence |\n\n"
+            "## Verification and readiness evidence\n\n"
+            "- Test plan and results: **NOT PROVIDED**.\n"
+            "- Semgrep/SCA, license/provenance, and sandbox results: **NOT PROVIDED**.\n"
+            "- Observability, SLOs, alerts, backup/restore, rollback, and incident runbook: **NOT PROVIDED**.\n"
+            "- Worker outputs and issue completion evidence: **NOT PROVIDED**.\n"
+            "- Human/C-Suite approvals and accepted residual risks: recorded by the durable review and "
+            "approval-gate workflows; this document does not self-approve them.\n\n"
+            f"{revision_section}"
+            "## Reviewer decision checklist\n\n"
+            "Reviewers must reject or request revision when required project-specific evidence remains "
+            "missing; approval must cite the evidence IDs or artifacts relied upon.\n"
+        )
+
+    async def _recover_directive_progress(
+        self,
+        envelope: MessageEnvelope,
+        action: str,
+    ) -> None:
+        """Finish deterministic document handoffs after a directive turn."""
+        action_upper = action.upper()
+        doc_type = {
+            "START_PDR": "PDR",
+            "START_CDR": "CDR",
+            "START_RR": "RR",
+        }.get(action_upper)
+        if doc_type is None:
+            return
+
+        project_id = envelope.project_id or envelope.payload.get("project_id")
+        if not project_id:
+            return
+
+        try:
+            status = await self.execute_tool("project.status", {"project_id": project_id})
+            if not isinstance(status, dict) or status.get("error"):
+                return
+
+            expected_state = {
+                "PDR": "PDR_CREATION",
+                "CDR": "CDR_CREATION",
+                "RR": "RR_CREATION",
+            }[doc_type]
+            current_state = str(status.get("state") or "")
+            review_state = "PDR_REVIEW" if doc_type == "PDR" else "CDR_REVIEW"
+            if current_state not in {expected_state, review_state}:
+                return
+
+            directive_context = envelope.payload.get("context")
+            triggered_by_event = str(
+                envelope.payload.get("triggered_by_event") or ""
+            ).lower()
+            # The transition event is the durable source of truth.  Router
+            # adapters may omit or normalize the optional context object, but
+            # they must preserve the event that caused this directive.  This
+            # also makes a queued/replayed revision directive idempotently
+            # produce the next document version instead of re-submitting the
+            # old artifact.
+            revision_event = {
+                "PDR": "pdr_revision_requested",
+                "CDR": "cdr_revision_requested",
+            }.get(doc_type)
+            revision_requested = (
+                isinstance(directive_context, dict)
+                and bool(directive_context.get("revision_requested"))
+            ) or triggered_by_event == revision_event
+            revision_reason = (
+                str(directive_context.get("reason") or "").strip()
+                if isinstance(directive_context, dict)
+                else ""
+            )
+            if revision_requested and revision_event and current_state == review_state:
+                # A model can submit the old document before the deterministic
+                # recovery runs. Re-open the creation stage once, carrying a
+                # consumed marker so the resulting stage directive cannot
+                # create an unbounded sequence of revisions.
+                reopened = await self.execute_tool(
+                    "project.transition",
+                    {
+                        "project_id": project_id,
+                        "event": revision_event,
+                        "actor_id": self.agent_id,
+                        "context": {
+                            "revision_recovery": "consumed",
+                            "revision_requested": False,
+                            "reason": revision_reason,
+                        },
+                    },
+                )
+                if isinstance(reopened, dict) and reopened.get("error"):
+                    return
+                current_state = expected_state
+            document_content = self._build_review_document_content(
+                doc_type=doc_type,
+                project_id=str(project_id),
+                status=status,
+                revision_requested=revision_requested,
+                revision_reason=revision_reason,
+            )
+
+            latest = await self.execute_tool(
+                "document.get_latest",
+                {"project_id": project_id, "doc_type": doc_type},
+            )
+            if revision_requested and isinstance(latest, dict) and not latest.get("error"):
+                revised = await self.execute_tool(
+                    "document.create_draft",
+                    {
+                        "project_id": project_id,
+                        "doc_type": doc_type,
+                        "title": f"{doc_type} — {status.get('name') or project_id}",
+                        "content": document_content,
+                        "created_by": self.agent_id,
+                    },
+                )
+                if isinstance(revised, dict):
+                    latest = revised.get("document") or revised
+            elif not isinstance(latest, dict) or latest.get("error"):
+                latest = await self.execute_tool(
+                    "document.create_draft",
+                    {
+                        "project_id": project_id,
+                        "doc_type": doc_type,
+                        "title": f"{doc_type} — {status.get('name') or project_id}",
+                        "content": document_content,
+                        "created_by": self.agent_id,
+                    },
+                )
+                if isinstance(latest, dict):
+                    latest = latest.get("document") or latest
+
+            document_id = latest.get("id") if isinstance(latest, dict) else None
+            if not document_id:
+                return
+
+            submitted = False
+            if current_state == expected_state:
+                result = await self.execute_tool(
+                    "document.submit",
+                    {
+                        "project_id": project_id,
+                        "doc_type": doc_type,
+                        "document_id": document_id,
+                        "actor_id": self.agent_id,
+                    },
+                )
+                submitted = not (isinstance(result, dict) and result.get("error"))
+                logger.info(
+                    "csuite_directive_document_reconciled",
+                    extra=self._log_extra(
+                        action=action_upper,
+                        project_id=project_id,
+                        doc_type=doc_type,
+                        document_id=document_id,
+                        submitted=submitted,
+                        revision_requested=revision_requested,
+                        triggered_by_event=triggered_by_event,
+                    ),
+                )
+
+            if doc_type in {"PDR", "CDR"} and (submitted or current_state.endswith("_REVIEW")):
+                review = await self.execute_tool(
+                    "review.start_session",
+                    {
+                        "project_id": project_id,
+                        "document_id": document_id,
+                        "review_type": doc_type,
+                    },
+                )
+                if isinstance(review, dict) and review.get("error"):
+                    logger.warning(
+                        "csuite_directive_review_start_failed",
+                        extra=self._log_extra(
+                            action=action_upper,
+                            project_id=project_id,
+                            doc_type=doc_type,
+                            error=review.get("error"),
+                        ),
+                    )
+        except Exception:
+            logger.warning(
+                "csuite_directive_progress_recovery_failed",
+                extra=self._log_extra(action=action_upper, project_id=project_id),
+                exc_info=True,
+            )
 
     def _build_workflow_tool_definitions(self) -> list[ToolDefinition]:
         """Build ToolDefinition objects from the dynamic runtime catalog."""
@@ -1710,6 +2014,100 @@ class CSuiteAgent(AdminAgent):
         document_id = envelope.payload.get("document_id", "")
         doc_type = envelope.payload.get("doc_type", "")
         document_payload = envelope.payload.get("document_payload", {})
+        if not isinstance(document_payload, dict):
+            document_payload = {}
+        else:
+            document_payload = dict(document_payload)
+
+        # REVIEW_REQUEST contains document metadata, not the document body.
+        # Fetch the durable artifact before asking the C-Suite model to review
+        # it; otherwise reviewers can only react to the submit envelope and
+        # may veto controls that are already present in the stored revision.
+        project_id = envelope.project_id or document_payload.get("project_id")
+        if project_id and self._tool_client:
+            try:
+                document = await self.execute_tool(
+                    "document.get_latest",
+                    {"project_id": project_id, "doc_type": doc_type},
+                )
+                if not isinstance(document, dict) or document.get("error"):
+                    raise RuntimeError("durable document metadata is unavailable")
+                if (
+                    document_id
+                    and document.get("id")
+                    and str(document.get("id")) != str(document_id)
+                ):
+                    # Do not spend an LLM turn on a request for a document
+                    # version already superseded by a newer immutable
+                    # revision.  A lightweight response lets the COO mark
+                    # the old session SUPERSEDED and keeps this stream
+                    # moving toward the current review.
+                    stale_reply = envelope.reply(
+                        msg_type=MessageType.REVIEW_RESPONSE,
+                        sender_id=self.agent_id,
+                        sender_role=self.role,
+                        sender_team=self.team_id,
+                        payload={
+                            "session_id": session_id,
+                            "document_id": document_id,
+                            "reviewer_role": self._specialization,
+                            "verdict": ReviewVerdict.APPROVED.value,
+                            "veto": False,
+                            "comments": [],
+                            "review_text": "Review request superseded by a newer document revision.",
+                        },
+                    )
+                    await self.publish(stale_reply)
+                    logger.info(
+                        "csuite_review_skip_stale_document",
+                        extra=self._log_extra(
+                            project_id=project_id,
+                            session_id=session_id,
+                            document_id=document_id,
+                            latest_document_id=str(document.get("id")),
+                        ),
+                    )
+                    return
+                document_payload["document_metadata"] = {
+                    key: document.get(key)
+                    for key in (
+                        "id",
+                        "version",
+                        "status",
+                        "doc_type",
+                        "blob_bucket",
+                        "blob_key",
+                        "blob_sha256",
+                    )
+                    if document.get(key) is not None
+                }
+                blob_key = document.get("blob_key")
+                if not blob_key:
+                    raise RuntimeError("durable document has no blob key")
+                blob = await self.execute_tool(
+                    "blob.download",
+                    {"project_id": project_id, "key": blob_key},
+                )
+                if (
+                    not isinstance(blob, dict)
+                    or blob.get("error")
+                    or not blob.get("content")
+                ):
+                    raise RuntimeError("durable document content is unavailable")
+                document_payload["document_content"] = str(blob["content"])[:20000]
+            except Exception as exc:
+                logger.warning(
+                    "csuite_review_document_fetch_failed",
+                    extra=self._log_extra(
+                        project_id=project_id,
+                        document_id=document_id,
+                        doc_type=doc_type,
+                    ),
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"Cannot review {doc_type or 'document'} without its durable content"
+                ) from exc
 
         # Build review prompt
         messages = [
@@ -1786,7 +2184,12 @@ class CSuiteAgent(AdminAgent):
 
         task_desc = document_payload.get("task", "")
         summary = document_payload.get("summary", "")
-        content = task_desc or summary or str(document_payload)[:2000]
+        content = (
+            document_payload.get("document_content")
+            or task_desc
+            or summary
+            or str(document_payload)[:2000]
+        )
 
         parts = [
             f"## Review Request — {doc_type}",
@@ -1835,9 +2238,29 @@ class CSuiteAgent(AdminAgent):
         elif "approved" in text_lower and "comment" not in text_lower:
             verdict = ReviewVerdict.APPROVED
 
-        # Detect CSO veto
+        # Detect an affirmative CSO veto.  Merely mentioning the word
+        # "veto" (for example, "no veto is warranted" or "veto threshold")
+        # must not halt a project.
         severity = ReviewSeverity.INFO
-        if self._specialization == "CSO" and "veto" in text_lower:
+        explicit_no_veto = re.search(
+            r"\b(?:no|not|without|none|never|doesn['’]?t|does not)\s+"
+            r"(?:require(?:s)?|need(?:s)?|warrant(?:s)?|justify|constitute)?\s*"
+            r"(?:a\s+)?(?:security\s+)?veto(?:ed|ing)?\b",
+            text_lower,
+        )
+        affirmative_veto = re.search(
+            r"(?:"
+            r"(?:^|\n)\s*veto\s*[.:=-]|"
+            r"\bveto\s*[:=]\s*(?:true|yes|issued|applied)\b|"
+            r"\b(?:i|we)\s+(?:hereby\s+)?veto(?:\s+this|\s+the)?\b|"
+            r"\bveto(?:ed)?\s+(?:this|the|document|project)\b|"
+            r"\b(?:security\s+)?veto\s+(?:is\s+)?(?:issued|applied|active|necessary|warranted)\b|"
+            r"\b(?:recommend(?:ed)?|issue|apply|raise)\s+(?:a\s+)?"
+            r"(?:security\s+)?veto\b"
+            r")",
+            text_lower,
+        )
+        if self._specialization == "CSO" and affirmative_veto and not explicit_no_veto:
             has_veto = True
             severity = ReviewSeverity.BLOCKER
             verdict = ReviewVerdict.REJECTED

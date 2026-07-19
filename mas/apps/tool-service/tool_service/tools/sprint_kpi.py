@@ -60,6 +60,22 @@ class SprintCreateTool(BaseTool):
         return await orch_post("/tasks", body)
 
 
+class SprintListTool(BaseTool):
+    name = "sprint.list"
+    group = ToolGroup.SPRINT_ISSUE
+    description = "List sprints for a project."
+    allowed_roles = _ADMIN
+    cache_ttl_seconds = 0
+
+    async def execute(self, **kwargs: Any) -> Any:
+        project_id = str(kwargs.get("project_id") or "")
+        sprints = await orch_get(f"/projects/{project_id}/sprints")
+        return {
+            "sprints": sprints,
+            "total": len(sprints) if isinstance(sprints, list) else 0,
+        }
+
+
 class SprintActivateTool(BaseTool):
     name = "sprint.activate"
     group = ToolGroup.SPRINT_ISSUE

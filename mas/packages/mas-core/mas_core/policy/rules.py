@@ -158,6 +158,16 @@ EXECUTIVE_TOOLS: tuple[str, ...] = (
     "capability.list_workers",
 )
 
+# The COO owns operational execution after approval. Keep these mutations
+# scoped to the executive team rather than granting them to every executive.
+COO_EXTRA_TOOLS: tuple[str, ...] = (
+    "sprint.*",
+    "issue.*",
+    "kpi.compute",
+    "kpi.compute_project",
+    "retrospective.generate",
+)
+
 C_SUITE_BASE_TOOLS: tuple[str, ...] = (
     "document.get_latest",
     "document.list",

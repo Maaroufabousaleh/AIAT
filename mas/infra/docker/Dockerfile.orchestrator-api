@@ -41,10 +41,15 @@ RUN pip install --no-deps /tmp/mas-core && \
         psycopg2-binary \
         cryptography
 
+RUN python -m venv /opt/semgrep \
+    && /opt/semgrep/bin/pip install --no-cache-dir "semgrep==1.168.0" \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
+
 COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
 COPY workers/ /app/workers/
+COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 
 WORKDIR /app
 

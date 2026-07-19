@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import hashlib
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -135,18 +138,73 @@ class DocumentCreateDraftTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
-        doc_type = kwargs.get("doc_type", "PDR")
-        body = {
-            "team_id": "exec_ceo",
-            "payload": {
-                "action": "CREATE_DOCUMENT",
-                "project_id": project_id,
+        doc_type = str(kwargs.get("doc_type", "PDR")).upper()
+        existing = await orch_get(
+            f"/projects/{project_id}/documents",
+            params={"doc_type": doc_type},
+        )
+        latest = existing[0] if isinstance(existing, list) and existing else None
+        content = str(kwargs.get("content") or "")
+
+        # Recovery directives can be redelivered after a runner restart.  Do
+        # not create a second immutable revision when the requested content is
+        # byte-for-byte identical to the current durable blob.
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest() if content else None
+        if (
+            latest is not None
+            and content_sha256
+            and latest.get("blob_sha256") == content_sha256
+        ):
+            return {"status": "existing", "document": latest}
+
+        # Documents are durable metadata plus an immutable blob reference. The
+        # former implementation only queued CREATE_DOCUMENT to a team stream,
+        # which made the tool report success while the API still had no
+        # document to retrieve or submit for review.
+        blob_ref: dict[str, Any] | None = None
+        # A new content hash is an immutable revision even when the current
+        # document already has a blob.  The old guard only uploaded when the
+        # latest row had no blob, causing every real revision request to
+        # return the previous version and re-submit it unchanged.
+        if content:
+            from .infra import get_blob_client
+
+            safe_type = re.sub(r"[^a-z0-9_-]+", "_", doc_type.lower()).strip("_") or "document"
+            version = int(latest.get("version") or 1) + 1 if latest else 1
+            blob = await get_blob_client()
+            ref = await blob.upload(
+                project_id=str(project_id),
+                key=f"documents/{safe_type}_v{version}.md",
+                data=content.encode("utf-8"),
+                content_type="text/markdown",
+            )
+            blob_ref = ref.to_dict()
+
+        if latest is not None:
+            if blob_ref is None:
+                return {"status": "existing", "document": latest}
+            revised = await orch_post(
+                f"/projects/{project_id}/documents/{latest['id']}/revisions",
+                {
+                    "created_by": kwargs.get("created_by") or kwargs.get("actor_id") or "agent",
+                    "blob_bucket": blob_ref["bucket"],
+                    "blob_key": blob_ref["key"],
+                    "blob_sha256": blob_ref["sha256"],
+                },
+            )
+            return {"status": "revised", "document": revised, "blob": blob_ref}
+
+        document = await orch_post(
+            f"/projects/{project_id}/documents",
+            {
                 "doc_type": doc_type,
-                "title": kwargs.get("title", ""),
-                "content": kwargs.get("content", ""),
+                "created_by": kwargs.get("created_by") or kwargs.get("actor_id") or "agent",
+                "blob_bucket": blob_ref["bucket"] if blob_ref else None,
+                "blob_key": blob_ref["key"] if blob_ref else None,
+                "blob_sha256": blob_ref["sha256"] if blob_ref else None,
             },
-        }
-        return await orch_post("/tasks", body)
+        )
+        return {"status": "created", "document": document, "blob": blob_ref}
 
 
 class DocumentSubmitTool(BaseTool):
@@ -270,18 +328,90 @@ class ReviewStartSessionTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        # Review sessions are managed by the orchestrator
-        body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
+        project_id = str(kwargs.get("project_id") or "")
+        doc_type = str(kwargs.get("review_type") or kwargs.get("doc_type") or "PDR").upper()
+        document_id = kwargs.get("document_id")
+        if not document_id:
+            documents = await orch_get(
+                f"/projects/{project_id}/documents",
+                params={"doc_type": doc_type},
+            )
+            if isinstance(documents, list) and documents:
+                document_id = documents[0].get("id")
+        if not document_id:
+            return {"error": "document_not_found", "project_id": project_id, "doc_type": doc_type}
+
+        resume_session: dict[str, Any] | None = None
+        existing_sessions = await orch_get(
+            f"/projects/{project_id}/review-sessions",
+        )
+        if isinstance(existing_sessions, list):
+            matching = [
+                session
+                for session in existing_sessions
+                if str(session.get("document_id")) == str(document_id)
+            ]
+            active_statuses = {"IN_PROGRESS", "PENDING", "OPEN", "STARTED"}
+            active = [
+                session
+                for session in matching
+                if str(session.get("status") or "").upper() in active_statuses
+            ]
+            if active:
+                # A durable session can outlive the COO runner's in-memory
+                # aggregation map. Re-publish the canonical submit with the
+                # existing session ID so the runner rehydrates responses and
+                # resumes fan-out instead of suppressing all further work.
+                resume_session = active[0]
+            elif matching and str(matching[0].get("status") or "").upper() == "COMPLETED":
+                # Resume reconciliation uses this terminal result to advance
+                # a project whose review completed just before a runner/API
+                # restart. It must not be republished as an active session.
+                return {
+                    "status": "existing",
+                    "session_id": matching[0].get("id"),
+                    "document_id": str(document_id),
+                    "doc_type": doc_type,
+                    "session_status": "COMPLETED",
+                }
+
+        # The COO owns durable review sessions and fan-out. Publish the
+        # canonical DOCUMENT_SUBMIT envelope so ExecutiveAgent can persist the
+        # session and send REVIEW_REQUEST messages to the configured chiefs.
+        envelope = {
+            "message_id": str(uuid4()),
+            "correlation_id": project_id,
+            "msg_type": "DOCUMENT_SUBMIT",
+            "sender_id": "orchestrator",
+            "sender_team": "exec_ceo",
+            "sender_role": AgentRole.ORCHESTRATOR.value,
+            "recipient_team": "exec_coo",
+            "project_id": project_id,
             "payload": {
-                "action": "START_REVIEW",
-                "project_id": kwargs.get("project_id", ""),
-                "document_id": kwargs.get("document_id"),
-                "session_type": kwargs.get("session_type", "PEER_REVIEW"),
-                "reviewer_ids": kwargs.get("reviewer_ids", []),
+                "document_id": str(document_id),
+                "doc_type": doc_type,
+                "session_id": (
+                    str(resume_session.get("id")) if resume_session is not None else None
+                ),
+                "rehydrate_session": resume_session is not None,
+                "document_payload": {
+                    "document_id": str(document_id),
+                    "doc_type": doc_type,
+                    "project_id": project_id,
+                },
             },
+            "created_at": datetime.now(tz=UTC).isoformat(),
         }
-        return await orch_post("/tasks", body)
+        result = await publish_message(envelope)
+        return {
+            "status": "rehydration_published" if resume_session is not None else "published",
+            "message_id": result.get("entry_id"),
+            "session_id": (
+                str(resume_session.get("id")) if resume_session is not None else None
+            ),
+            "document_id": str(document_id),
+            "doc_type": doc_type,
+        }
 
 
 class ReviewSubmitResponseTool(BaseTool):
@@ -479,6 +609,11 @@ class DepartmentTaskTool(BaseTool):
             "payload": {
                 "action": kwargs.get("action", "EXECUTE_TASK"),
                 "description": kwargs.get("description", ""),
+                "task": kwargs.get("description", ""),
+                "context": (
+                    f"Project {kwargs.get('project_id')}; sprint {kwargs.get('sprint_id')}; "
+                    f"issue {kwargs.get('issue_id')}"
+                ),
                 "issue_id": kwargs.get("issue_id"),
                 "sprint_id": kwargs.get("sprint_id"),
             },

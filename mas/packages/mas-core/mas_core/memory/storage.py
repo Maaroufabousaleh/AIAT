@@ -1494,6 +1494,92 @@ class AgentStorage:
             await conn.execute(t.memory.delete().where(t.memory.c.agent_id == agent_id))
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # Durable project usage telemetry
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def record_project_usage(
+        self,
+        *,
+        project_id: UUID | str,
+        event_type: str,
+        agent_id: str | None = None,
+        team_id: str | None = None,
+        model: str | None = None,
+        tool_name: str | None = None,
+        status: str = "success",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost_usd: float = 0.0,
+        duration_ms: float | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        details: dict[str, Any] | None = None,
+        occurred_at: datetime | None = None,
+        event_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Append one immutable, project-scoped LLM or tool usage event."""
+        if event_type not in {"llm", "tool"}:
+            raise ValueError("event_type must be 'llm' or 'tool'")
+        normalized_project_id = (
+            project_id if isinstance(project_id, UUID) else UUID(str(project_id))
+        )
+        values = {
+            "id": event_id or uuid4(),
+            "project_id": normalized_project_id,
+            "event_type": event_type,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "model": model,
+            "tool_name": tool_name,
+            "status": status,
+            "prompt_tokens": max(0, int(prompt_tokens or 0)),
+            "completion_tokens": max(0, int(completion_tokens or 0)),
+            "cost_usd": max(0.0, float(cost_usd or 0.0)),
+            "duration_ms": duration_ms,
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "details": details,
+            "occurred_at": occurred_at or datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_usage_events.insert().values(**values))
+        return values
+
+    async def get_project_usage(self, project_id: UUID) -> dict[str, Any]:
+        """Aggregate durable LLM/tool usage for one project."""
+        event_type = t.project_usage_events.c.event_type
+        status = t.project_usage_events.c.status
+        q = sa.select(
+            sa.func.count().filter(event_type == "llm").label("llm_calls"),
+            sa.func.count().filter(event_type == "tool").label("tool_calls"),
+            sa.func.count().filter(status != "success").label("failed_calls"),
+            sa.func.coalesce(sa.func.sum(t.project_usage_events.c.prompt_tokens), 0).label(
+                "prompt_tokens"
+            ),
+            sa.func.coalesce(sa.func.sum(t.project_usage_events.c.completion_tokens), 0).label(
+                "completion_tokens"
+            ),
+            sa.func.coalesce(sa.func.sum(t.project_usage_events.c.cost_usd), 0).label(
+                "total_cost_usd"
+            ),
+            sa.func.min(t.project_usage_events.c.occurred_at).label("first_event_at"),
+            sa.func.max(t.project_usage_events.c.occurred_at).label("last_event_at"),
+        ).where(t.project_usage_events.c.project_id == project_id)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(q)).mappings().one()
+        result = dict(row)
+        result["llm_calls"] = int(result["llm_calls"] or 0)
+        result["tool_calls"] = int(result["tool_calls"] or 0)
+        result["failed_calls"] = int(result["failed_calls"] or 0)
+        result["prompt_tokens"] = int(result["prompt_tokens"] or 0)
+        result["completion_tokens"] = int(result["completion_tokens"] or 0)
+        result["total_tokens"] = result["prompt_tokens"] + result["completion_tokens"]
+        result["total_cost_usd"] = float(result["total_cost_usd"] or 0.0)
+        result["available"] = True
+        result["source"] = "project_usage_events"
+        return result
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # Task log (task execution audit trail)
     # ═══════════════════════════════════════════════════════════════════════════
 

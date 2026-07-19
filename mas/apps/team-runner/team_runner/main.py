@@ -131,10 +131,17 @@ class RunnerSettings(BaseModel):
 class CheckpointAdapter:
     """Adapter matching the checkpoint API expected by AgentBase."""
 
-    def __init__(self, store: CheckpointStore, agent_id: str, team_id: str) -> None:
+    def __init__(
+        self,
+        store: CheckpointStore,
+        agent_id: str,
+        team_id: str,
+        usage_storage: AgentStorage | None = None,
+    ) -> None:
         self._store = store
         self._agent_id = agent_id
         self._team_id = team_id
+        self._usage_storage = usage_storage
 
     @staticmethod
     def _maybe_uuid(value: str | None) -> UUID | None:
@@ -191,6 +198,12 @@ class CheckpointAdapter:
         if row is None:
             return
         await self._store.delete(agent_id, row["task_message_id"])
+
+    async def record_project_usage(self, **kwargs: Any) -> dict[str, Any] | None:
+        """Expose the shared usage ledger through AgentBase's storage adapter."""
+        if self._usage_storage is None:
+            return None
+        return await self._usage_storage.record_project_usage(**kwargs)
 
 
 class TeamRuntime:
@@ -335,6 +348,7 @@ class TeamRuntime:
                 self.checkpoint_store,
                 agent_id=spec.agent_id,
                 team_id=self.team_config.team_id,
+                usage_storage=self.storage,
             )
 
         system_prompt = self._load_prompt_text(spec.system_prompt_file)

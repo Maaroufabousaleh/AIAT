@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 from typing import TYPE_CHECKING, Any
@@ -785,6 +786,11 @@ async def _check_semgrep(source_repo: str, mirror_path: Path | None) -> dict:
         "scan",
         "--json",
         "--quiet",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--config",
+        os.getenv("AIAT_SEMGREP_CONFIG", "/app/semgrep-default.yml"),
         str(mirror_path),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

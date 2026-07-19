@@ -81,3 +81,7 @@ mas/apps/mas-dashboard/playwright-report/
 mas/apps/mas-dashboard/blob-report/
 mas/apps/mas-dashboard/tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# Generated project runtime previews
+/infra/docker-compose.preview.yml
+/[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*/infra/docker-compose.preview.yml

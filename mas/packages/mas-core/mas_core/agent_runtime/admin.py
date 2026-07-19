@@ -142,6 +142,13 @@ class AdminAgent(AgentBase):
         If the payload contains ``"subtasks"`` (a list), delegate them directly.
         Otherwise, use the think() loop to plan a decomposition.
         """
+        if (
+            self.team_id == "dept_devops"
+            and str(envelope.payload.get("action") or "").upper() == "PROVISION_INFRA"
+        ):
+            await self._handle_infrastructure_provision(envelope)
+            return
+
         subtasks = envelope.payload.get("subtasks")
         if subtasks and isinstance(subtasks, list):
             await self._delegate_subtasks(subtasks, envelope)
@@ -170,6 +177,47 @@ class AdminAgent(AgentBase):
             await self._delegate_single_task(
                 task_desc, context, envelope
             )
+
+    async def _handle_infrastructure_provision(self, envelope: MessageEnvelope) -> None:
+        """Run the governed DevOps adapter and signal readiness on success."""
+        project_id = envelope.project_id or envelope.payload.get("project_id")
+        if not project_id:
+            logger.warning("devops_infra_missing_project", extra=self._log_extra())
+            return
+
+        result = await self.execute_tool(
+            "infra.provision",
+            {
+                "project_id": project_id,
+                "resource": "aiat-project-runtime",
+                "config": {
+                    "target": "local_docker",
+                    "image": "alpine:3.20",
+                    "output": "infra/docker-compose.preview.yml",
+                },
+            },
+        )
+        success = (
+            isinstance(result, dict)
+            and not result.get("error")
+            and result.get("available") is True
+            and result.get("verified") is not False
+        )
+        if not success:
+            logger.error(
+                "devops_infra_provision_failed",
+                extra=self._log_extra(project_id=project_id, result=result),
+            )
+            return
+
+        ready = await self.execute_tool(
+            "infra.ready_signal",
+            {"project_id": project_id, "actor_id": self.agent_id},
+        )
+        logger.info(
+            "devops_infra_ready",
+            extra=self._log_extra(project_id=project_id, result=ready),
+        )
 
     async def _delegate_subtasks(
         self,
@@ -287,6 +335,11 @@ class AdminAgent(AgentBase):
                 "results": results,
                 "aggregated_by": self.agent_id,
                 "result_count": len(results),
+                # Preserve durable work identity so the executive can validate
+                # the returned artifact before changing issue state.
+                "action": parent_envelope.payload.get("action"),
+                "issue_id": parent_envelope.payload.get("issue_id"),
+                "sprint_id": parent_envelope.payload.get("sprint_id"),
             },
         )
         await self.publish(reply)
@@ -346,16 +399,33 @@ class AdminAgent(AgentBase):
     # ------------------------------------------------------------------
 
     async def _handle_directive(self, envelope: MessageEnvelope) -> None:
-        """Forward directives to all workers or handle locally."""
-        action = envelope.payload.get("action", "")
+        """Translate a team directive into a worker task or handle it locally.
+
+        Team streams route ``DIRECTIVE`` messages to the PM first.  Publishing
+        another ``DIRECTIVE`` to that same stream would route it back to the
+        PM and create a loop, so worker fan-out uses the normal ``ADMIN_TASK``
+        path instead.
+        """
+        action = str(envelope.payload.get("action", ""))
         logger.info(
             "admin_directive_%s",
             action.lower(),
             extra=self._log_extra(action=action),
         )
-        # Re-broadcast to the local team
-        directive = MessageEnvelope(
-            msg_type=MessageType.DIRECTIVE,
+
+        # Infrastructure resume is an admin-owned operation: DevOps must run
+        # its governed adapter before it can signal readiness.  Do not send it
+        # through an LLM worker that cannot access the admin-only tool.
+        if (
+            self.team_id == "dept_devops"
+            and action.upper() == "RESUME"
+            and str(envelope.payload.get("state") or "") == "INFRA_PROVISIONING"
+        ):
+            await self._handle_infrastructure_provision(envelope)
+            return
+
+        task = MessageEnvelope(
+            msg_type=MessageType.ADMIN_TASK,
             sender_id=self.agent_id,
             sender_role=self.role,
             sender_team=self.team_id,
@@ -363,9 +433,16 @@ class AdminAgent(AgentBase):
             project_id=envelope.project_id,
             correlation_id=envelope.correlation_id,
             parent_id=envelope.message_id,
-            payload=envelope.payload,
+            payload={
+                "task": str(envelope.payload.get("task") or f"Apply team directive {action}"),
+                "context": envelope.payload.get("context", ""),
+                "action": action,
+                "state": envelope.payload.get("state"),
+                "directive_forwarded": True,
+                "source_directive_id": str(envelope.message_id),
+            },
         )
-        await self.publish(directive)
+        await self.publish(task)
 
     async def _handle_shutdown(self, envelope: MessageEnvelope) -> None:
         """Handle graceful shutdown."""

@@ -275,7 +275,9 @@ async def test_running_state_allows_project_creation(client):
     from orchestrator_api.main import app
 
     storage = MagicMock()
-    storage.create_project = AsyncMock(return_value=_fake_project())
+    project = _fake_project()
+    storage.create_project = AsyncMock(return_value=project)
+    storage.get_project = AsyncMock(return_value=project)
     storage.engine = _mock_engine()
     _patch(storage)
     app.state._cached_system_state = "RUNNING"

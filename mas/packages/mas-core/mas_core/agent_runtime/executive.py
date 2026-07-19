@@ -18,6 +18,7 @@ Extends ``AdminAgent`` with cross-department orchestration:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -94,7 +95,9 @@ class ExecutiveAgent(AdminAgent):
         self._review_sessions: dict[str, ReviewSummary] = {}
         # Map correlation_id → parent envelope (for aggregation callbacks)
         self._review_parents: dict[str, MessageEnvelope] = {}
-        # Track revision counts per document: document_id → count
+        # Track revision counts per project/document type. Immutable document
+        # revisions receive new IDs, so a document-ID key cannot bound the
+        # lineage-wide review loop.
         self._revision_counts: dict[str, int] = {}
 
     async def _persist_review_session(self, summary: ReviewSummary) -> bool:
@@ -158,6 +161,22 @@ class ExecutiveAgent(AdminAgent):
         except Exception:
             logger.warning("executive_review_comment_persist_failed", exc_info=True)
 
+    async def _update_document_status(self, summary: ReviewSummary, status: str) -> None:
+        """Keep the durable document badge synchronized with review state."""
+        if self._review_storage is None:
+            return
+        updater = getattr(self._review_storage, "update_document_status", None)
+        if not callable(updater):
+            return
+        try:
+            result = updater(summary.document_id, status=status)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # Review persistence remains authoritative if this metadata update
+            # is temporarily unavailable.
+            logger.warning("executive_document_status_persist_failed", exc_info=True)
+
     async def _persist_review_status(
         self,
         summary: ReviewSummary,
@@ -176,6 +195,7 @@ class ExecutiveAgent(AdminAgent):
                 "VETOED",
                 "CIRCUIT_OPEN",
                 "TIMED_OUT",
+                "SUPERSEDED",
             }:
                 completed_at = datetime.now(tz=UTC)
             if completed_at is not None:
@@ -183,6 +203,153 @@ class ExecutiveAgent(AdminAgent):
             await self._review_storage.update_review_session(summary.session_id, **updates)
         except Exception:
             logger.warning("executive_review_status_persist_failed", exc_info=True)
+
+        document_status = {
+            "COMPLETED": "APPROVED",
+            "NEEDS_REVISION": "NEEDS_REVISION",
+            "REJECTED": "REJECTED",
+            "VETOED": "REJECTED",
+            "CIRCUIT_OPEN": "NEEDS_REVISION",
+            "TIMED_OUT": "NEEDS_REVISION",
+            "SUPERSEDED": "SUPERSEDED",
+        }.get(status)
+        if document_status:
+            await self._update_document_status(summary, document_status)
+
+    async def _rehydrate_review_session(
+        self,
+        session_id: str,
+        parent_envelope: MessageEnvelope | None = None,
+    ) -> ReviewSummary | None:
+        """Restore one active durable review into the runner's live maps."""
+        if self._review_storage is None:
+            return None
+        try:
+            row = await self._review_storage.get_review_session(UUID(str(session_id)))
+            if row is None or str(row.get("status") or "").upper() not in {
+                "IN_PROGRESS",
+                "PENDING",
+                "OPEN",
+                "STARTED",
+            }:
+                return None
+            document_id = row.get("document_id")
+            project_id = row.get("project_id")
+            if not document_id or not project_id:
+                return None
+
+            reviewer_ids = [str(value) for value in row.get("reviewer_ids") or []]
+            summary = ReviewSummary(
+                session_id=UUID(str(row["id"])),
+                project_id=str(project_id),
+                document_id=UUID(str(document_id)),
+                doc_type=str(row.get("session_type") or "PDR").upper(),
+                reviewer_count=len(reviewer_ids),
+                timeout_count=int(row.get("timeout_count") or 0),
+            )
+            persisted = await self._review_storage.get_review_comments(summary.session_id)
+            for item in persisted:
+                reviewer_id = str(item.get("reviewer_id") or "")
+                if not reviewer_id or reviewer_id in summary.responses:
+                    continue
+                comments: list[ReviewComment] = []
+                for raw_comment in item.get("comments") or []:
+                    if not isinstance(raw_comment, dict):
+                        continue
+                    payload = dict(raw_comment)
+                    payload.setdefault("reviewer_id", reviewer_id)
+                    payload.setdefault(
+                        "reviewer_team",
+                        str(payload.get("reviewer_team") or item.get("reviewer_role") or reviewer_id),
+                    )
+                    try:
+                        comments.append(ReviewComment.model_validate(payload))
+                    except Exception:
+                        logger.warning(
+                            "executive_review_comment_rehydrate_skipped",
+                            extra=self._log_extra(session_id=session_id, reviewer=reviewer_id),
+                        )
+                try:
+                    verdict = ReviewVerdict(str(item.get("verdict") or "APPROVED"))
+                except ValueError:
+                    verdict = ReviewVerdict.APPROVED
+                response = ReviewResponse(
+                    reviewer_id=reviewer_id,
+                    reviewer_role=str(item.get("reviewer_role") or "reviewer"),
+                    reviewer_team=(
+                        comments[0].reviewer_team if comments else str(item.get("reviewer_role") or reviewer_id)
+                    ),
+                    verdict=verdict,
+                    comments=comments,
+                    veto=bool(item.get("veto")),
+                    submitted_at=item.get("submitted_at") or datetime.now(tz=UTC),
+                )
+                summary.responses[reviewer_id] = response
+                summary.comments.extend(comments)
+            summary.responses_received = len(summary.responses)
+
+            if parent_envelope is None:
+                parent_envelope = MessageEnvelope(
+                    msg_type=MessageType.DOCUMENT_SUBMIT,
+                    sender_id="orchestrator",
+                    sender_role=AgentRole.ORCHESTRATOR,
+                    sender_team="exec_ceo",
+                    recipient_team=self.team_id,
+                    project_id=str(project_id),
+                    payload={
+                        "document_id": str(document_id),
+                        "doc_type": str(row.get("session_type") or "PDR").upper(),
+                        "session_id": session_id,
+                        "rehydrated": True,
+                    },
+                )
+            self._review_sessions[session_id] = summary
+            self._review_parents[session_id] = parent_envelope
+            logger.info(
+                "executive_review_session_rehydrated",
+                extra=self._log_extra(
+                    session_id=session_id,
+                    document_id=str(document_id),
+                    responses_received=summary.responses_received,
+                ),
+            )
+            return summary
+        except Exception:
+            logger.warning(
+                "executive_review_session_rehydrate_failed",
+                extra=self._log_extra(session_id=session_id),
+                exc_info=True,
+            )
+            return None
+
+    async def _publish_review_requests(
+        self,
+        *,
+        session_id: str,
+        document_id: str,
+        doc_type: str,
+        parent_envelope: MessageEnvelope,
+        reviewer_teams: list[str] | None = None,
+    ) -> None:
+        """Publish idempotent reviewer work for a new or rehydrated session."""
+        for team_id in reviewer_teams or self._reviewer_teams:
+            review_env = MessageEnvelope(
+                msg_type=MessageType.REVIEW_REQUEST,
+                sender_id=self.agent_id,
+                sender_role=self.role,
+                sender_team=self.team_id,
+                recipient_team=team_id,
+                project_id=parent_envelope.project_id,
+                correlation_id=parent_envelope.correlation_id,
+                parent_id=parent_envelope.message_id,
+                payload={
+                    "session_id": session_id,
+                    "document_id": document_id,
+                    "doc_type": doc_type,
+                    "document_payload": parent_envelope.payload,
+                },
+            )
+            await self.publish(review_env)
 
     def _default_system_prompt(self) -> str:
         return (
@@ -204,6 +371,8 @@ class ExecutiveAgent(AdminAgent):
             MessageType.DOCUMENT_SUBMIT: self._handle_document_submit,
             MessageType.REVIEW_RESPONSE: self._handle_review_response,
             MessageType.DOCUMENT_REVISION: self._handle_document_revision,
+            MessageType.ADMIN_REPLY: self._handle_execution_reply,
+            MessageType.RESULT: self._handle_execution_reply,
             MessageType.APPROVAL_RESPONSE: self._handle_approval_response,
             MessageType.INFRA_READY: self._handle_infra_ready,
             MessageType.SPRINT_REPORT: self._handle_sprint_report,
@@ -211,6 +380,51 @@ class ExecutiveAgent(AdminAgent):
             MessageType.SYSTEM_EVENT: self._handle_system_event,
         }
         return executive_handlers.get(msg_type) or super()._get_handler(msg_type)
+
+    async def _handle_execution_reply(self, envelope: MessageEnvelope) -> None:
+        """Accept issue completion only when a dispatched worker returned output."""
+        if str(envelope.payload.get("action") or "").upper() != "EXECUTE_ISSUE":
+            await super()._handle_admin_reply(envelope)
+            return
+
+        issue_id = envelope.payload.get("issue_id")
+        results = envelope.payload.get("results")
+        valid_results = (
+            isinstance(results, list)
+            and bool(results)
+            and all(
+                isinstance(item, dict) and bool(str(item.get("result") or "").strip())
+                for item in results
+            )
+        )
+        if not issue_id or not valid_results or not envelope.project_id:
+            logger.warning(
+                "executive_issue_completion_rejected",
+                extra=self._log_extra(
+                    issue_id=issue_id,
+                    reason="missing_issue_identity_or_worker_output",
+                ),
+            )
+            return
+
+        updated = await self.execute_tool(
+            "issue.update_status",
+            {
+                "project_id": envelope.project_id,
+                "issue_id": issue_id,
+                "status": "DONE",
+            },
+        )
+        if not isinstance(updated, dict) or updated.get("error"):
+            logger.warning(
+                "executive_issue_completion_persist_failed",
+                extra=self._log_extra(issue_id=issue_id),
+            )
+            return
+
+        # Reconcile against authoritative issue/sprint state. This closes and
+        # advances only when every issue has independently completed.
+        await self._recover_directive_progress(envelope, "START_EXECUTION")
 
     async def _handle_admin_task(self, envelope: MessageEnvelope) -> None:
         """Handle generic executive tasks directly.
@@ -220,6 +434,28 @@ class ExecutiveAgent(AdminAgent):
         ``exec_coo`` where the same COO consumes it again. Execute one bounded
         reasoning pass and return the result to the upstream team instead.
         """
+        action = str(envelope.payload.get("action") or "").upper()
+        if action == "START_REVIEW":
+            # Older CEO turns may have queued START_REVIEW as an ADMIN_TASK.
+            # This is a durable workflow handoff, not an open-ended reasoning
+            # task; process it without blocking the COO stream on an LLM call.
+            doc_type = str(
+                envelope.payload.get("doc_type")
+                or envelope.payload.get("session_type")
+                or "CDR"
+            ).upper()
+            if doc_type not in {"PDR", "CDR", "RR"}:
+                doc_type = "CDR"
+            document_id = str(envelope.payload.get("document_id") or "")
+            if document_id:
+                await self._start_review_fanout(
+                    session_id=str(envelope.payload.get("session_id") or uuid4()),
+                    document_id=document_id,
+                    doc_type=doc_type,
+                    parent_envelope=envelope,
+                )
+            return
+
         task = str(envelope.payload.get("task") or "")
         context = str(envelope.payload.get("context") or "")
         messages = [
@@ -297,9 +533,32 @@ class ExecutiveAgent(AdminAgent):
             "START_CDR",
             "START_RR",
             "START_SPRINT_PLANNING",
+            "START_INFRA",
+            "START_EXECUTION",
             "START_RETROSPECTIVE",
+            "START_KPI",
         }
         if action.upper() in actionable:
+            # Resume is a delivery/reconciliation operation. Running an
+            # open-ended LLM turn here can block the team's ordered stream
+            # while newer DOCUMENT_SUBMIT or review responses wait behind it.
+            if action.upper() == "RESUME":
+                await self._recover_directive_progress(envelope, action)
+                return
+            # The post-review delivery stages are governed state-machine
+            # handoffs. Their tool calls and transition events are fully
+            # deterministic, so an LLM must not be able to hold the ordered
+            # team stream open while it decides whether to perform them.
+            deterministic_actions = {
+                "START_SPRINT_PLANNING",
+                "START_INFRA",
+                "START_EXECUTION",
+                "START_RETROSPECTIVE",
+                "START_KPI",
+            }
+            if action.upper() in deterministic_actions:
+                await self._recover_directive_progress(envelope, action)
+                return
             await self._directive_think(envelope, action)
         else:
             # Unknown actions — broadcast to team (default AdminAgent behaviour)
@@ -343,10 +602,25 @@ class ExecutiveAgent(AdminAgent):
                 "Work with the CTO to create the sprint plan, then call `project.transition` "
                 "with `event=sprints_created` once the plan is ready."
             ),
+            "START_INFRA": (
+                "Coordinate governed infrastructure provisioning with the DevOps department.\n\n"
+                "Dispatch the infrastructure task to `dept_devops`; it must run the configured "
+                "adapter and signal `infra_ready` only after verification."
+            ),
+            "START_EXECUTION": (
+                "Execute every planned sprint through the governed sprint and issue tools.\n\n"
+                "For each open sprint, activate it, complete its ready issues, and close it. "
+                "Transition with `event=all_sprints_done` only after re-reading the sprint list "
+                "and verifying that every sprint is closed."
+            ),
             "START_RETROSPECTIVE": (
                 "Facilitate the **Retrospective** review.\n\n"
                 "Gather KPI data and team feedback, then call `project.transition` with "
                 "`event=retrospective_done` to complete the retrospective."
+            ),
+            "START_KPI": (
+                "Persist the final project KPI snapshot with `kpi.compute_project`, then call "
+                "`project.transition` with `event=kpi_saved`."
             ),
         }
 
@@ -372,7 +646,368 @@ class ExecutiveAgent(AdminAgent):
         ]
 
         tools = self._build_workflow_tool_definitions()
-        await self.think(messages=messages, tools=tools)
+        try:
+            await self.think(messages=messages, tools=tools)
+        finally:
+            await self._recover_directive_progress(envelope, action)
+
+    async def _recover_directive_progress(
+        self,
+        envelope: MessageEnvelope,
+        action: str,
+    ) -> None:
+        """Complete deterministic COO handoffs after a bounded LLM turn."""
+        project_id = envelope.project_id or envelope.payload.get("project_id")
+        if not project_id:
+            return
+
+        action_upper = action.upper()
+        try:
+            status = await self.execute_tool("project.status", {"project_id": project_id})
+            if not isinstance(status, dict) or status.get("error"):
+                return
+            state = str(status.get("state") or "")
+
+            if action_upper == "RESUME":
+                creation_actions = {
+                    "PDR_CREATION": "START_PDR",
+                    "CDR_CREATION": "START_CDR",
+                    "RR_CREATION": "START_RR",
+                    "SPRINT_PLANNING": "START_SPRINT_PLANNING",
+                    "INFRA_PROVISIONING": "START_INFRA",
+                    "IN_PROGRESS": "START_EXECUTION",
+                    "RETROSPECTIVE": "START_RETROSPECTIVE",
+                    "KPI_PERSISTENCE": "START_KPI",
+                }
+                if state in creation_actions:
+                    await self._recover_directive_progress(
+                        envelope,
+                        creation_actions[state],
+                    )
+                    return
+
+                review_doc_type = {
+                    "PDR_REVIEW": "PDR",
+                    "CDR_REVIEW": "CDR",
+                }.get(state)
+                if review_doc_type:
+                    latest = await self.execute_tool(
+                        "document.get_latest",
+                        {"project_id": project_id, "doc_type": review_doc_type},
+                    )
+                    document_id = latest.get("id") if isinstance(latest, dict) else None
+                    if document_id:
+                        review_result = await self.execute_tool(
+                            "review.start_session",
+                            {
+                                "project_id": project_id,
+                                "document_id": document_id,
+                                "review_type": review_doc_type,
+                            },
+                        )
+                        if (
+                            isinstance(review_result, dict)
+                            and review_result.get("session_status") == "COMPLETED"
+                        ):
+                            completed_event = {
+                                "PDR": "all_reviews_in",
+                                "CDR": "cdr_presented",
+                            }[review_doc_type]
+                            await self._transition_if_current(
+                                project_id,
+                                state,
+                                completed_event,
+                                "RESUME",
+                            )
+                return
+
+            if action_upper == "START_SPRINT_PLANNING" and state == "SPRINT_PLANNING":
+                listed = await self.execute_tool("sprint.list", {"project_id": project_id})
+                sprints = listed.get("sprints", []) if isinstance(listed, dict) else []
+                if not sprints:
+                    created = await self.execute_tool(
+                        "sprint.create",
+                        {
+                            "project_id": project_id,
+                            "team_id": "exec_coo",
+                            "sprint_number": 1,
+                            "goal": "Deliver the smallest verified project increment.",
+                            "planned_story_points": 1,
+                            "estimated_hours": 1,
+                        },
+                    )
+                    if isinstance(created, dict) and created.get("error"):
+                        logger.warning(
+                            "executive_sprint_create_failed",
+                            extra=self._log_extra(
+                                project_id=project_id,
+                                error=created.get("error"),
+                            ),
+                        )
+                        return
+                await self._transition_if_current(
+                    project_id,
+                    state,
+                    "sprints_created",
+                    action_upper,
+                )
+                return
+
+            if action_upper == "START_INFRA" and state == "INFRA_PROVISIONING":
+                result = await self.execute_tool(
+                    "department_task",
+                    {
+                        "team": "dept_devops",
+                        "project_id": project_id,
+                        "action": "PROVISION_INFRA",
+                        "description": "Provision and verify the project runtime infrastructure.",
+                    },
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    logger.warning(
+                        "executive_infra_dispatch_failed",
+                        extra=self._log_extra(
+                            project_id=project_id,
+                            error=result.get("error"),
+                        ),
+                    )
+                return
+
+            if action_upper == "START_EXECUTION" and state == "IN_PROGRESS":
+                listed = await self.execute_tool("sprint.list", {"project_id": project_id})
+                if not isinstance(listed, dict) or listed.get("error"):
+                    return
+                sprints = listed.get("sprints", []) if isinstance(listed, dict) else []
+                if not sprints:
+                    return
+                closed_statuses = {"CLOSED", "COMPLETED"}
+                for sprint in sprints:
+                    sprint_id = sprint.get("id") if isinstance(sprint, dict) else None
+                    if not sprint_id:
+                        return
+                    sprint_status = str(sprint.get("status") or "").upper()
+                    if sprint_status in closed_statuses:
+                        continue
+
+                    issues_result = await self.execute_tool(
+                        "issue.list",
+                        {"project_id": project_id, "sprint_id": sprint_id},
+                    )
+                    if not isinstance(issues_result, dict) or issues_result.get("error"):
+                        return
+                    issues = issues_result.get("issues", [])
+                    if not isinstance(issues, list):
+                        return
+                    if not issues:
+                        created_result = await self.execute_tool(
+                            "issue.create",
+                            {
+                                "project_id": project_id,
+                                "sprint_id": sprint_id,
+                                "title": (
+                                    "Complete controlled execution verification "
+                                    f"(Sprint {sprint.get('sprint_number', '?')})"
+                                ),
+                                "description": "Verify the governed end-to-end project path.",
+                                "issue_type": "TEST",
+                                "priority": "P1",
+                                "story_points": 1,
+                                "estimated_hours": 1,
+                            },
+                        )
+                        if not isinstance(created_result, dict) or created_result.get("error"):
+                            return
+                        created_issue = created_result.get("result")
+                        if not isinstance(created_issue, dict) or not created_issue.get("id"):
+                            return
+                        issues = [created_issue]
+
+                    if sprint_status != "IN_PROGRESS":
+                        activated = await self.execute_tool(
+                            "sprint.activate",
+                            {"project_id": project_id, "sprint_id": sprint_id},
+                        )
+                        if isinstance(activated, dict) and activated.get("error"):
+                            return
+                    dispatched_work = False
+                    for issue in issues:
+                        if not isinstance(issue, dict):
+                            return
+                        issue_id = issue.get("id")
+                        issue_status = str(issue.get("status") or "").upper()
+                        if not issue_id:
+                            return
+                        if issue_status in {"DONE", "COMPLETED", "CLOSED"}:
+                            continue
+                        # An in-progress or blocked issue is owned by an
+                        # execution worker. A replayed stage directive must
+                        # wait for durable completion evidence, not dispatch a
+                        # duplicate task or manufacture a DONE result.
+                        if issue_status in {"IN_PROGRESS", "BLOCKED"}:
+                            continue
+
+                        issue_type = str(issue.get("issue_type") or "TASK").upper()
+                        default_team = {
+                            "BUG": "dept_qa",
+                            "TEST": "dept_qa",
+                            "QA": "dept_qa",
+                            "INFRA": "dept_devops",
+                            "DEVOPS": "dept_devops",
+                            "DOCUMENTATION": "dept_system",
+                            "ARCHITECTURE": "dept_system",
+                        }.get(issue_type, "dept_production")
+                        target_team = str(issue.get("assigned_team") or default_team)
+                        dispatched = await self.execute_tool(
+                            "department_task",
+                            {
+                                "team": target_team,
+                                "project_id": project_id,
+                                "action": "EXECUTE_ISSUE",
+                                "issue_id": issue_id,
+                                "sprint_id": sprint_id,
+                                "description": str(
+                                    issue.get("description")
+                                    or issue.get("title")
+                                    or f"Execute issue {issue_id}"
+                                ),
+                            },
+                        )
+                        if not isinstance(dispatched, dict) or dispatched.get("error"):
+                            return
+                        updated = await self.execute_tool(
+                            "issue.update_status",
+                            {
+                                "project_id": project_id,
+                                "issue_id": issue_id,
+                                "status": "IN_PROGRESS",
+                            },
+                        )
+                        if isinstance(updated, dict) and updated.get("error"):
+                            return
+                        dispatched_work = True
+
+                    # A successful dispatch proves only that work was queued.
+                    # Completion, actual hours, and output validation belong
+                    # to the worker/issue completion path. Reconcile on a
+                    # later directive after those durable updates arrive.
+                    if dispatched_work:
+                        continue
+
+                    refreshed_issues = await self.execute_tool(
+                        "issue.list",
+                        {"project_id": project_id, "sprint_id": sprint_id},
+                    )
+                    if not isinstance(refreshed_issues, dict) or refreshed_issues.get("error"):
+                        return
+                    authoritative_issues = refreshed_issues.get("issues", [])
+                    if not isinstance(authoritative_issues, list) or not authoritative_issues:
+                        return
+                    if any(
+                        str(item.get("status") or "").upper()
+                        not in {"DONE", "COMPLETED", "CLOSED"}
+                        for item in authoritative_issues
+                        if isinstance(item, dict)
+                    ):
+                        continue
+                    closed = await self.execute_tool(
+                        "sprint.close",
+                        {"project_id": project_id, "sprint_id": sprint_id},
+                    )
+                    if isinstance(closed, dict) and closed.get("error"):
+                        return
+
+                # Tool responses can be accepted asynchronously.  Re-read the
+                # authoritative list before advancing the workflow, so a
+                # second/planned sprint can never be skipped by a stale local
+                # list or a partial close.
+                final_listed = await self.execute_tool(
+                    "sprint.list", {"project_id": project_id}
+                )
+                if not isinstance(final_listed, dict) or final_listed.get("error"):
+                    return
+                final_sprints = final_listed.get("sprints", [])
+                if not isinstance(final_sprints, list) or not final_sprints:
+                    return
+                if any(
+                    str(sprint.get("status") or "").upper() not in closed_statuses
+                    for sprint in final_sprints
+                    if isinstance(sprint, dict)
+                ):
+                    return
+                await self._transition_if_current(
+                    project_id,
+                    state,
+                    "all_sprints_done",
+                    action_upper,
+                )
+                return
+
+            if action_upper == "START_RETROSPECTIVE" and state == "RETROSPECTIVE":
+                listed = await self.execute_tool("sprint.list", {"project_id": project_id})
+                sprints = listed.get("sprints", []) if isinstance(listed, dict) else []
+                for sprint in sprints:
+                    if sprint.get("id") and str(sprint.get("status") or "").upper() == "CLOSED":
+                        await self.execute_tool(
+                            "retrospective.generate",
+                            {
+                                "project_id": project_id,
+                                "sprint_id": sprint["id"],
+                                "agent_id": self.agent_id,
+                            },
+                        )
+                await self._transition_if_current(
+                    project_id,
+                    state,
+                    "retrospective_done",
+                    action_upper,
+                )
+                return
+
+            if action_upper == "START_KPI" and state == "KPI_PERSISTENCE":
+                result = await self.execute_tool(
+                    "kpi.compute_project",
+                    {"project_id": project_id},
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    return
+                await self._transition_if_current(
+                    project_id,
+                    state,
+                    "kpi_saved",
+                    action_upper,
+                )
+        except Exception:
+            logger.warning(
+                "executive_directive_progress_recovery_failed",
+                extra=self._log_extra(project_id=project_id, action=action_upper),
+                exc_info=True,
+            )
+
+    async def _transition_if_current(
+        self,
+        project_id: str,
+        expected_state: str,
+        event: str,
+        action: str,
+    ) -> None:
+        result = await self.execute_tool(
+            "project.transition",
+            {
+                "project_id": project_id,
+                "event": event,
+                "actor_id": self.agent_id,
+                "context": {"directive": action, "expected_state": expected_state},
+            },
+        )
+        if isinstance(result, dict) and result.get("error"):
+            logger.warning(
+                "executive_project_transition_failed",
+                extra=self._log_extra(
+                    project_id=project_id,
+                    event=event,
+                    error=result.get("error"),
+                ),
+            )
 
     def _build_workflow_tool_definitions(self) -> list[ToolDefinition]:
         """Build ToolDefinition objects from the dynamic runtime catalog."""
@@ -517,7 +1152,7 @@ class ExecutiveAgent(AdminAgent):
         )
 
         # Start review fan-out
-        session_id = str(uuid4())
+        session_id = str(envelope.payload.get("session_id") or uuid4())
         await self._start_review_fanout(
             session_id=session_id,
             document_id=document_id,
@@ -534,6 +1169,63 @@ class ExecutiveAgent(AdminAgent):
         parent_envelope: MessageEnvelope,
     ) -> None:
         """Fan-out REVIEW_REQUEST to all configured reviewer teams."""
+        if self._review_storage is not None and parent_envelope.project_id:
+            try:
+                active_statuses = {
+                    "IN_PROGRESS",
+                    "PENDING",
+                    "OPEN",
+                    "STARTED",
+                }
+                sessions = await self._review_storage.list_review_sessions(
+                    UUID(parent_envelope.project_id),
+                    limit=100,
+                )
+                active = next((
+                    session
+                    for session in sessions
+                    if str(session.get("document_id")) == str(document_id)
+                    and str(session.get("status") or "").upper() in active_statuses
+                ), None)
+                if active is not None:
+                    active_session_id = str(active.get("id"))
+                    if active_session_id in self._review_sessions:
+                        logger.info(
+                            "executive_review_fanout_duplicate_suppressed",
+                            extra=self._log_extra(document_id=document_id),
+                        )
+                        return
+                    summary = await self._rehydrate_review_session(
+                        active_session_id,
+                        parent_envelope,
+                    )
+                    if summary is None:
+                        logger.error(
+                            "executive_review_fanout_rehydrate_failed",
+                            extra=self._log_extra(
+                                session_id=active_session_id,
+                                document_id=document_id,
+                            ),
+                        )
+                        return
+                    await self._publish_review_requests(
+                        session_id=active_session_id,
+                        document_id=document_id,
+                        doc_type=doc_type,
+                        parent_envelope=parent_envelope,
+                        reviewer_teams=[str(value) for value in active.get("reviewer_ids") or []],
+                    )
+                    logger.info(
+                        "executive_review_fanout_rehydrated",
+                        extra=self._log_extra(
+                            session_id=active_session_id,
+                            document_id=document_id,
+                        ),
+                    )
+                    return
+            except Exception:
+                logger.warning("executive_review_duplicate_check_failed", exc_info=True)
+
         summary = ReviewSummary(
             session_id=UUID(session_id) if len(session_id) == 36 else uuid4(),
             project_id=parent_envelope.project_id or "",
@@ -555,24 +1247,14 @@ class ExecutiveAgent(AdminAgent):
             )
             return
 
-        for team_id in self._reviewer_teams:
-            review_env = MessageEnvelope(
-                msg_type=MessageType.REVIEW_REQUEST,
-                sender_id=self.agent_id,
-                sender_role=self.role,
-                sender_team=self.team_id,
-                recipient_team=team_id,
-                project_id=parent_envelope.project_id,
-                correlation_id=parent_envelope.correlation_id,
-                parent_id=parent_envelope.message_id,
-                payload={
-                    "session_id": session_id,
-                    "document_id": document_id,
-                    "doc_type": doc_type,
-                    "document_payload": parent_envelope.payload,
-                },
-            )
-            await self.publish(review_env)
+        await self._update_document_status(summary, "IN_REVIEW")
+
+        await self._publish_review_requests(
+            session_id=session_id,
+            document_id=document_id,
+            doc_type=doc_type,
+            parent_envelope=parent_envelope,
+        )
 
         logger.info(
             "executive_review_fanout_started",
@@ -589,8 +1271,10 @@ class ExecutiveAgent(AdminAgent):
 
     async def _handle_review_response(self, envelope: MessageEnvelope) -> None:
         """Aggregate a C-Suite reviewer's response."""
-        session_id = envelope.payload.get("session_id", "")
+        session_id = str(envelope.payload.get("session_id") or "")
         summary = self._review_sessions.get(session_id)
+        if summary is None and session_id:
+            summary = await self._rehydrate_review_session(session_id)
         if summary is None:
             logger.warning(
                 "executive_review_response_for_unknown_session",
@@ -598,8 +1282,53 @@ class ExecutiveAgent(AdminAgent):
             )
             return
 
+        # A revision can supersede an in-flight review of the prior document.
+        # Ignore late responses from that stale session so they cannot advance
+        # the workflow for the newer revision.
+        if self._tool_client is not None:
+            try:
+                doc_type = getattr(summary.doc_type, "value", str(summary.doc_type))
+                latest = await self.execute_tool(
+                    "document.get_latest",
+                    {"project_id": summary.project_id, "doc_type": doc_type},
+                )
+                if (
+                    isinstance(latest, dict)
+                    and latest.get("id")
+                    and str(latest.get("id")) != str(summary.document_id)
+                ):
+                    summary.completed_at = datetime.now(tz=UTC)
+                    await self._persist_review_status(
+                        summary,
+                        "SUPERSEDED",
+                        completed_at=summary.completed_at,
+                    )
+                    self._review_sessions.pop(session_id, None)
+                    self._review_parents.pop(session_id, None)
+                    logger.info(
+                        "executive_review_response_ignored_stale_document",
+                        extra=self._log_extra(
+                            session_id=session_id,
+                            document_id=str(summary.document_id),
+                            latest_document_id=str(latest.get("id")),
+                        ),
+                    )
+                    return
+            except Exception:
+                logger.warning(
+                    "executive_review_stale_document_check_failed",
+                    extra=self._log_extra(session_id=session_id),
+                    exc_info=True,
+                )
+
         # Parse reviewer response
         reviewer_id = envelope.sender_id
+        if reviewer_id in summary.responses:
+            logger.info(
+                "executive_review_response_duplicate_suppressed",
+                extra=self._log_extra(session_id=session_id, reviewer=reviewer_id),
+            )
+            return
         verdict_str = envelope.payload.get("verdict", "APPROVED")
         try:
             verdict = ReviewVerdict(verdict_str)
@@ -693,6 +1422,36 @@ class ExecutiveAgent(AdminAgent):
             veto_comments=[c.body for c in response.comments if c.veto],
         )
 
+        # ``_emit_event`` notifies the CEO stream, but the orchestrator API is
+        # the sole writer of project state and does not consume that stream.
+        # Persist the security transition through the governed tool boundary
+        # as part of the veto handoff; otherwise a veto could be durable only
+        # in review metadata while the project remains in CDR_REVIEW.
+        if project_id:
+            transition = await self.execute_tool(
+                "project.transition",
+                {
+                    "project_id": project_id,
+                    "event": "cso_veto",
+                    "actor_id": self.agent_id,
+                    "context": {
+                        "session_id": session_id,
+                        "document_id": document_id,
+                        "reviewer_id": response.reviewer_id,
+                        "veto_comments": [c.body for c in response.comments if c.veto],
+                    },
+                },
+            )
+            if isinstance(transition, dict) and transition.get("error"):
+                logger.error(
+                    "executive_cso_veto_transition_failed",
+                    extra=self._log_extra(
+                        project_id=project_id,
+                        session_id=session_id,
+                        error=transition.get("error"),
+                    ),
+                )
+
         # Clean up session
         if summary is not None:
             summary.completed_at = datetime.now(tz=UTC)
@@ -757,6 +1516,38 @@ class ExecutiveAgent(AdminAgent):
                 session_id=session_id,
                 verdict=overall.value,
             )
+            # The API is the sole workflow-state writer. Complete the
+            # document-review handoff here rather than relying on a second
+            # free-form LLM turn to notice the review result.
+            doc_type_value = getattr(summary.doc_type, "value", str(summary.doc_type)).upper()
+            transition_event = {
+                "PDR": "all_reviews_in",
+                "CDR": "cdr_presented",
+            }.get(doc_type_value)
+            if transition_event:
+                result = await self.execute_tool(
+                    "project.transition",
+                    {
+                        "project_id": project_id,
+                        "event": transition_event,
+                        "actor_id": self.agent_id,
+                        "context": {
+                            "session_id": session_id,
+                            "document_id": document_id,
+                            "aggregate_verdict": overall.value,
+                        },
+                    },
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    logger.warning(
+                        "executive_review_transition_failed",
+                        extra=self._log_extra(
+                            session_id=session_id,
+                            project_id=project_id,
+                            event=transition_event,
+                            error=result.get("error"),
+                        ),
+                    )
         elif overall == ReviewVerdict.NEEDS_REVISION:
             await self._request_revision(summary, parent)
         elif overall == ReviewVerdict.REJECTED:
@@ -771,6 +1562,36 @@ class ExecutiveAgent(AdminAgent):
     # Revision loop
     # ------------------------------------------------------------------
 
+    async def _next_revision_count(self, summary: ReviewSummary) -> tuple[str, int]:
+        """Return the next lineage-wide revision number, including durable history."""
+        doc_type = getattr(summary.doc_type, "value", str(summary.doc_type)).upper()
+        lineage_key = f"{summary.project_id}:{doc_type}"
+        memory_count = self._revision_counts.get(lineage_key, 0)
+        durable_count = 0
+        if self._review_storage is not None:
+            try:
+                sessions = await self._review_storage.list_review_sessions(
+                    UUID(summary.project_id),
+                    limit=1000,
+                )
+                durable_count = sum(
+                    1
+                    for session in sessions
+                    if str(session.get("session_type") or "").upper() == doc_type
+                    and str(session.get("status") or "").upper() == "NEEDS_REVISION"
+                )
+            except Exception:
+                logger.warning(
+                    "executive_revision_history_read_failed",
+                    extra=self._log_extra(project_id=summary.project_id, doc_type=doc_type),
+                    exc_info=True,
+                )
+        # The current session is persisted as NEEDS_REVISION before this
+        # method runs, so durable_count already represents this request.
+        revision_count = max(memory_count + 1, durable_count)
+        self._revision_counts[lineage_key] = revision_count
+        return lineage_key, revision_count
+
     async def _request_revision(
         self,
         summary: ReviewSummary,
@@ -778,8 +1599,7 @@ class ExecutiveAgent(AdminAgent):
     ) -> None:
         """Request document revision from the originating team."""
         document_id = str(summary.document_id)
-        rev_count = self._revision_counts.get(document_id, 0) + 1
-        self._revision_counts[document_id] = rev_count
+        lineage_key, rev_count = await self._next_revision_count(summary)
 
         if rev_count > self._max_revisions:
             logger.warning(
@@ -795,8 +1615,52 @@ class ExecutiveAgent(AdminAgent):
                 document_id=document_id,
                 reason="max_revisions_exceeded",
             )
-            self._revision_counts.pop(document_id, None)
+            # Keep the exhausted lineage terminal in memory. Dropping the key
+            # would let another late response restart the loop at revision 1.
+            self._revision_counts[lineage_key] = rev_count
             return
+
+        # Persist the revision loop in the workflow controller as well as in
+        # the legacy DOCUMENT_REVISION notification.  The controller emits a
+        # fresh stage directive, so a revision cannot depend on the CEO
+        # choosing a free-form transition tool (and the originating team does
+        # not need to implement an otherwise unhandled message type).
+        doc_type_value = getattr(summary.doc_type, "value", str(summary.doc_type)).upper()
+        revision_event = {
+            "PDR": "pdr_revision_requested",
+            "CDR": "cdr_revision_requested",
+        }.get(doc_type_value)
+        if revision_event and self._tool_client is not None:
+            reason_parts = [
+                str(comment.body).strip()
+                for comment in summary.comments
+                if str(comment.body).strip()
+            ]
+            transition = await self.execute_tool(
+                "project.transition",
+                {
+                    "project_id": summary.project_id,
+                    "event": revision_event,
+                    "actor_id": self.agent_id,
+                    "context": {
+                        "session_id": summary.session_id,
+                        "document_id": document_id,
+                        "revision_requested": True,
+                        "revision_number": rev_count,
+                        "reason": "\n\n".join(reason_parts)[:4000],
+                    },
+                },
+            )
+            if isinstance(transition, dict) and transition.get("error"):
+                logger.warning(
+                    "executive_revision_transition_failed",
+                    extra=self._log_extra(
+                        project_id=summary.project_id,
+                        document_id=document_id,
+                        event=revision_event,
+                        error=transition.get("error"),
+                    ),
+                )
 
         # Send DOCUMENT_REVISION back to the originating team
         target_team = parent_envelope.sender_team if parent_envelope else self.team_id

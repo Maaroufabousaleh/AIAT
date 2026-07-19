@@ -93,6 +93,7 @@ from .sprint_kpi import (
     SprintActivateTool,
     SprintCloseTool,
     SprintCreateTool,
+    SprintListTool,
     VelocityReportTool,
 )
 from .time import TimeNowTool
@@ -158,6 +159,7 @@ def get_all_tools() -> list[BaseTool]:
         FlowAssignTool(),
         # SPRINT_KPI
         SprintCreateTool(),
+        SprintListTool(),
         SprintActivateTool(),
         SprintCloseTool(),
         IssueCreateTool(),

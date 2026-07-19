@@ -114,6 +114,9 @@ transitions:
     event: pdr_submitted
     to: PDR_REVIEW
   - from: PDR_REVIEW
+    event: pdr_revision_requested
+    to: PDR_CREATION
+  - from: PDR_REVIEW
     event: all_reviews_in
     to: CDR_CREATION
   - from: PDR_REVIEW
@@ -128,6 +131,9 @@ transitions:
   - from: CDR_CREATION
     event: cdr_submitted
     to: CDR_REVIEW
+  - from: CDR_REVIEW
+    event: cdr_revision_requested
+    to: CDR_CREATION
   - from: CDR_REVIEW
     event: cdr_presented
     to: HUMAN_APPROVAL

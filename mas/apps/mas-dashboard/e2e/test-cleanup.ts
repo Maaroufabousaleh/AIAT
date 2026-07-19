@@ -4,10 +4,14 @@ type ApiRecord = {
   worker_id?: string;
 };
 
-const ORCHESTRATOR_URL =
-  process.env.E2E_ORCHESTRATOR_URL ??
-  process.env.ORCHESTRATOR_URL ??
-  "http://127.0.0.1:8000";
+import { setTimeout as delay } from "node:timers/promises";
+import { runtimeEnv } from "./runtime-env";
+
+const ORCHESTRATOR_URL = runtimeEnv(
+  "E2E_ORCHESTRATOR_URL",
+  "http://127.0.0.1:8000",
+);
+const API_KEY = runtimeEnv("MAS_API_KEY");
 
 const PROJECT_PATTERNS = [
   /^aiat_smoke_[a-z0-9_]+$/i,
@@ -17,7 +21,14 @@ const PROJECT_PATTERNS = [
   /^Test Project \d+$/,
   /^proj-\d+$/,
   /^live_probe_\d+_[a-f0-9]+$/,
+  /^rebuilt_probe_\d+_[a-f0-9]+$/,
   /^Live infra-ready audit \d+$/,
+  /^AIAT live tool audit [a-f0-9]+$/,
+  /^[CDF]-\d{3}(?:[ -/]|$)/,
+  /^G(?:-chief-scenarios-|\d{3} live trace$)/,
+  /^live-(?:i003-|context-|chunk-ledger$)/,
+  /^tmp$/,
+  /^ceo_live_project_\d+$/,
 ];
 
 const WORKER_PATTERNS = [
@@ -44,7 +55,13 @@ function matchesAny(value: unknown, patterns: RegExp[]): boolean {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
-  const response = await fetch(`${ORCHESTRATOR_URL}${path}`, init);
+  const response = await fetch(`${ORCHESTRATOR_URL}${path}`, {
+    ...init,
+    headers: {
+      "X-API-Key": API_KEY,
+      ...(init?.headers ?? {}),
+    },
+  });
   if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(`${init?.method ?? "GET"} ${path} failed with HTTP ${response.status}`);
@@ -86,11 +103,15 @@ export async function cleanupE2EArtifacts(): Promise<void> {
     }
   }
 
-  await run("projects", async () => {
+  const cleanupProjects = async (): Promise<number> => {
     const projects = (await api<ApiRecord[]>("/projects?limit=1000")) ?? [];
-    await deleteMatching("test projects", projects, PROJECT_PATTERNS, (project) =>
+    return deleteMatching("test projects", projects, PROJECT_PATTERNS, (project) =>
       project.id ? `/projects/${project.id}` : null,
     );
+  };
+
+  await run("projects", async () => {
+    await cleanupProjects();
   });
 
   await run("workers", async () => {
@@ -113,6 +134,24 @@ export async function cleanupE2EArtifacts(): Promise<void> {
       credential.name ? `/credentials/${encodeURIComponent(credential.name)}` : null,
     );
   });
+
+  // A worker can finish publishing a test project while the first cleanup
+  // pass is listing records. Re-scan after worker/flow cleanup to close that
+  // race without broadening the fixture-name allowlist.
+  let lateProjectsDeleted = 0;
+  await run("late projects", async () => {
+    lateProjectsDeleted = await cleanupProjects();
+  });
+  if (lateProjectsDeleted > 0) {
+    let stablePasses = 0;
+    for (let pass = 1; pass <= 30 && stablePasses < 10; pass += 1) {
+      await delay(1_000);
+      await run(`late projects pass ${pass + 1}`, async () => {
+        const deleted = await cleanupProjects();
+        stablePasses = deleted === 0 ? stablePasses + 1 : 0;
+      });
+    }
+  }
 
   if (errors.length > 0) {
     console.warn(`[e2e cleanup] skipped some cleanup: ${errors.join("; ")}`);

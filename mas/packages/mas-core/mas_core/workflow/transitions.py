@@ -25,6 +25,7 @@ TRANSITIONS: dict[ProjectState, dict[WorkflowEvent, TransitionTarget]] = {
     },
     ProjectState.PDR_REVIEW: {
         WorkflowEvent.ALL_REVIEWS_IN: ProjectState.CDR_CREATION,
+        WorkflowEvent.PDR_REVISION_REQUESTED: ProjectState.PDR_CREATION,
         WorkflowEvent.CSO_VETO: ProjectState.SECURITY_BLOCKED,
     },
     ProjectState.SECURITY_BLOCKED: {
@@ -36,6 +37,7 @@ TRANSITIONS: dict[ProjectState, dict[WorkflowEvent, TransitionTarget]] = {
     },
     ProjectState.CDR_REVIEW: {
         WorkflowEvent.CDR_PRESENTED: ProjectState.HUMAN_APPROVAL,
+        WorkflowEvent.CDR_REVISION_REQUESTED: ProjectState.CDR_CREATION,
         WorkflowEvent.CSO_VETO: ProjectState.SECURITY_BLOCKED,
     },
     ProjectState.HUMAN_APPROVAL: {
@@ -91,4 +93,6 @@ def resolve_transition(current_state: ProjectState, event: WorkflowEvent) -> Tra
 def is_terminal_state(state: ProjectState) -> bool:
     """Terminal project states."""
 
-    return state in {ProjectState.ARCHIVED, ProjectState.COMPLETED}
+    # FAILED is terminal for automatic resume.  It has an explicit manual
+    # RETRY transition, so startup/system resume must not silently re-run it.
+    return state in {ProjectState.COMPLETED, ProjectState.ARCHIVED, ProjectState.FAILED}

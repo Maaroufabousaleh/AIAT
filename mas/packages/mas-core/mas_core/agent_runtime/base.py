@@ -31,6 +31,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import UUID
 
 from ..llm_gateway.client import LLMGatewayClient
 from ..llm_gateway.models import ToolDefinition
@@ -405,6 +406,62 @@ class AgentBase(ABC):
     # think() loop
     # ------------------------------------------------------------------
 
+    async def _record_llm_usage(
+        self,
+        *,
+        model: str,
+        status: str,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost_usd: float = 0.0,
+        error: Exception | None = None,
+        iteration: int | None = None,
+    ) -> None:
+        """Persist one project-scoped LLM attempt without masking execution."""
+        usage_writer = getattr(self._storage, "record_project_usage", None)
+        envelope = self._current_envelope
+        if usage_writer is None or envelope is None or not envelope.project_id:
+            return
+        try:
+            project_id = UUID(str(envelope.project_id))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Skipping LLM usage with invalid project_id",
+                extra=self._log_extra(iteration=iteration, project_id=envelope.project_id),
+            )
+            return
+
+        details = None
+        if error is not None:
+            details = {
+                "error_type": type(error).__name__,
+                "error": str(error)[:1000],
+            }
+        try:
+            usage_result = usage_writer(
+                project_id=project_id,
+                event_type="llm",
+                agent_id=self.agent_id,
+                team_id=self.team_id,
+                model=model,
+                status=status,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+                trace_id=(
+                    str(envelope.correlation_id) if envelope.correlation_id is not None else None
+                ),
+                span_id=str(envelope.message_id),
+                details=details,
+            )
+            if inspect.isawaitable(usage_result):
+                await usage_result
+        except Exception:
+            logger.exception(
+                "Failed to persist project LLM usage",
+                extra=self._log_extra(iteration=iteration),
+            )
+
     async def think(
         self,
         *,
@@ -480,32 +537,46 @@ class AgentBase(ABC):
                         pass
                     break
 
-                if self.config.llm_use_fallback:
-                    response = await self._llm.chat_completion_with_fallback(
-                        messages,
-                        task=self.config.llm_fallback_task,
-                        model=model or self.config.llm_model,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        max_tokens=max_tokens or self.config.llm_max_tokens,
-                        temperature=(
-                            self.config.llm_temperature if temperature is None else temperature
-                        ),
-                        stream=self.config.llm_stream if stream is None else stream,
-                        needs_tools=bool(tools),
-                        chain_length=self.config.llm_fallback_chain_length,
+                requested_model = model or self.config.llm_model
+                try:
+                    if self.config.llm_use_fallback:
+                        response = await self._llm.chat_completion_with_fallback(
+                            messages,
+                            task=self.config.llm_fallback_task,
+                            model=requested_model,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            max_tokens=max_tokens or self.config.llm_max_tokens,
+                            temperature=(
+                                self.config.llm_temperature
+                                if temperature is None
+                                else temperature
+                            ),
+                            stream=self.config.llm_stream if stream is None else stream,
+                            needs_tools=bool(tools),
+                            chain_length=self.config.llm_fallback_chain_length,
+                        )
+                    else:
+                        response = await self._llm.chat_completion(
+                            messages,
+                            model=requested_model,
+                            tools=tools,
+                            max_tokens=max_tokens or self.config.llm_max_tokens,
+                            temperature=(
+                                self.config.llm_temperature
+                                if temperature is None
+                                else temperature
+                            ),
+                            stream=self.config.llm_stream if stream is None else stream,
+                        )
+                except Exception as exc:
+                    await self._record_llm_usage(
+                        model=requested_model,
+                        status="error",
+                        error=exc,
+                        iteration=iteration,
                     )
-                else:
-                    response = await self._llm.chat_completion(
-                        messages,
-                        model=model or self.config.llm_model,
-                        tools=tools,
-                        max_tokens=max_tokens or self.config.llm_max_tokens,
-                        temperature=(
-                            self.config.llm_temperature if temperature is None else temperature
-                        ),
-                        stream=self.config.llm_stream if stream is None else stream,
-                    )
+                    raise
 
                 # Phase 12: LLM call metric
                 try:
@@ -515,6 +586,18 @@ class AgentBase(ABC):
                     ).inc()
                 except Exception:
                     pass  # metrics are best-effort
+
+                # Prometheus is fleet-scoped. Persist the response's actual
+                # project, model, tokens, and estimated cost for workspace
+                # accounting before budget enforcement can end the loop.
+                await self._record_llm_usage(
+                    model=response.model or requested_model,
+                    status="success",
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    cost_usd=response.usage.estimated_cost_usd,
+                    iteration=iteration,
+                )
 
                 try:
                     budget.consume_llm_call(

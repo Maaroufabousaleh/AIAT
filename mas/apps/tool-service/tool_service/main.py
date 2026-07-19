@@ -46,6 +46,7 @@ from .tools.all_tools import get_all_tools
 logger = logging.getLogger(__name__)
 
 _CACHE_RECONNECT_INTERVAL_SECONDS = 5.0
+_USAGE_RECONNECT_INTERVAL_SECONDS = 5.0
 
 
 async def _connect_cache(settings: Settings) -> tuple[aioredis.Redis, ToolCache]:
@@ -96,6 +97,44 @@ async def _recover_cache(
         logger.info("Redis cache connection recovered")
 
 
+async def _connect_usage(settings: Settings):  # noqa: ANN202
+    """Create the project usage writer without making startup depend on Postgres."""
+    from .usage import ProjectUsageWriter
+
+    return await ProjectUsageWriter.connect(settings.pgbouncer_dsn)
+
+
+async def _recover_usage(
+    app: FastAPI,
+    registry: ToolRegistry,
+    settings: Settings,
+) -> None:
+    """Reconnect durable usage accounting after startup or runtime DB outages."""
+    while True:
+        await asyncio.sleep(_USAGE_RECONNECT_INTERVAL_SECONDS)
+        current = getattr(app.state, "usage_storage", None)
+        if current is not None:
+            try:
+                if await current.healthcheck():
+                    continue
+            except Exception:
+                logger.warning("Project usage storage healthcheck failed", exc_info=True)
+            with suppress(Exception):
+                await current.close()
+            app.state.usage_storage = None
+            registry.set_usage_storage(None)
+
+        try:
+            usage_storage = await _connect_usage(settings)
+        except Exception:
+            logger.warning("Project usage storage reconnect failed", exc_info=True)
+            continue
+
+        app.state.usage_storage = usage_storage
+        registry.set_usage_storage(usage_storage)
+        logger.info("Project usage storage connection recovered")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start-up: Redis, cache, rate limiter, registry.  Shutdown: clean up."""
@@ -104,6 +143,7 @@ async def lifespan(app: FastAPI):
 
     redis_client: aioredis.Redis | None = None
     cache: ToolCache | None = None
+    usage_storage = None
 
     try:
         redis_client, cache = await _connect_cache(settings)
@@ -115,6 +155,14 @@ async def lifespan(app: FastAPI):
 
     rate_limiter = RateLimiterPool()
 
+    if settings.pgbouncer_dsn:
+        try:
+            usage_storage = await _connect_usage(settings)
+            logger.info("Project usage storage connected")
+        except Exception:
+            logger.warning("Project usage storage unavailable", exc_info=True)
+            usage_storage = None
+
     try:
         from .tools.browser import close_browser_pool
     except ModuleNotFoundError:  # pragma: no cover - optional local dependency
@@ -125,7 +173,12 @@ async def lifespan(app: FastAPI):
     from .tools.infra import close_blob_client
     from .tools.memory import close_shared_memory_redis
 
-    registry = ToolRegistry(settings, cache=cache, rate_limiter=rate_limiter)
+    registry = ToolRegistry(
+        settings,
+        cache=cache,
+        rate_limiter=rate_limiter,
+        usage_storage=usage_storage,
+    )
     registry.register_all(get_all_tools())
     TOOL_INVOCATIONS_TOTAL.labels(tool_name="_startup", status="success").inc(0)
     TOOL_ERRORS_TOTAL.labels(tool_name="_startup", error_code="none").inc(0)
@@ -135,21 +188,36 @@ async def lifespan(app: FastAPI):
     app.state.registry = registry
     app.state.cache = cache
     app.state.redis = redis_client
+    app.state.usage_storage = usage_storage
 
     cache_recovery_task = asyncio.create_task(
         _recover_cache(app, registry, settings),
         name="tool-cache-recovery",
     )
+    usage_recovery_task = None
+    if settings.pgbouncer_dsn:
+        usage_recovery_task = asyncio.create_task(
+            _recover_usage(app, registry, settings),
+            name="project-usage-recovery",
+        )
 
     yield
 
     cache_recovery_task.cancel()
     with suppress(asyncio.CancelledError):
         await cache_recovery_task
+    if usage_recovery_task is not None:
+        usage_recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await usage_recovery_task
 
     await close_browser_pool()
     await close_blob_client()
     await close_shared_memory_redis()
+
+    active_usage_storage = getattr(app.state, "usage_storage", None)
+    if active_usage_storage is not None:
+        await active_usage_storage.close()
 
     active_redis = getattr(app.state, "redis", None)
     if active_redis:
