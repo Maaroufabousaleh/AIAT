@@ -137,6 +137,97 @@ async def test_list_context_items(client):
 
 
 @pytest.mark.anyio
+async def test_list_context_includes_latest_generated_documents(client):
+    """Formal PDR/CDR rows are visible in context without duplicating storage rows."""
+    lineage_id = uuid4()
+    pdr_v1_id = uuid4()
+    pdr_v2_id = uuid4()
+    cdr_id = uuid4()
+    storage = MagicMock()
+    storage.list_context_items = AsyncMock(return_value=[_context_item()])
+    storage.list_documents = AsyncMock(
+        return_value=[
+            {
+                "id": pdr_v1_id,
+                "project_id": PROJECT_ID,
+                "lineage_id": lineage_id,
+                "doc_type": "PDR",
+                "version": 1,
+                "status": "SUPERSEDED",
+                "blob_bucket": "mas-agents",
+                "blob_key": "documents/pdr_v1.md",
+                "created_by": "cto",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            },
+            {
+                "id": pdr_v2_id,
+                "project_id": PROJECT_ID,
+                "lineage_id": lineage_id,
+                "doc_type": "PDR",
+                "version": 2,
+                "status": "APPROVED",
+                "blob_bucket": "mas-agents",
+                "blob_key": "documents/pdr_v2.md",
+                "created_by": "cto",
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+            },
+            {
+                "id": cdr_id,
+                "project_id": PROJECT_ID,
+                "lineage_id": cdr_id,
+                "doc_type": "CDR",
+                "version": 1,
+                "status": "IN_REVIEW",
+                "blob_bucket": "mas-agents",
+                "blob_key": "documents/cdr_v1.md",
+                "created_by": "system_architect",
+                "created_at": "2026-01-03T00:00:00+00:00",
+                "updated_at": "2026-01-03T00:00:00+00:00",
+            },
+        ]
+    )
+    _patch(storage)
+
+    r = await client.get(f"/projects/{PROJECT_ID}/context")
+
+    assert r.status_code == 200
+    data = r.json()
+    generated = [item for item in data if item.get("source") == "document"]
+    assert {item["name"] for item in generated} == {"PDR v2", "CDR v1"}
+    assert all(item["read_only"] is True for item in generated)
+    assert all(item["item_type"] == "DOCUMENT" for item in generated)
+
+
+@pytest.mark.anyio
+async def test_generated_document_context_is_read_only(client):
+    """The context facade can read a document but refuses attachment deletion."""
+    document = {
+        "id": ITEM_ID,
+        "project_id": PROJECT_ID,
+        "lineage_id": ITEM_ID,
+        "doc_type": "PDR",
+        "version": 1,
+        "status": "APPROVED",
+        "blob_key": "documents/pdr_v1.md",
+        "created_by": "cto",
+        "created_at": NOW_ISO,
+    }
+    storage = MagicMock()
+    storage.get_context_item = AsyncMock(return_value=None)
+    storage.get_document = AsyncMock(return_value=document)
+    _patch(storage)
+
+    read = await client.get(f"/projects/{PROJECT_ID}/context/{ITEM_ID}")
+    delete = await client.delete(f"/projects/{PROJECT_ID}/context/{ITEM_ID}")
+
+    assert read.status_code == 200
+    assert read.json()["source"] == "document"
+    assert delete.status_code == 405
+
+
+@pytest.mark.anyio
 async def test_get_context_item(client):
     storage = MagicMock()
     storage.get_context_item = AsyncMock(return_value=_context_item())

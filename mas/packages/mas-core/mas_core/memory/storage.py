@@ -40,6 +40,78 @@ _AGENT_PROFILE_NUMERIC_MIN = Decimal("-9.9999")
 _AGENT_PROFILE_NUMERIC_MAX = Decimal("9.9999")
 
 
+def document_to_context_item(document: dict[str, Any]) -> dict[str, Any]:
+    """Project a canonical document row into the project-context shape.
+
+    Documents intentionally remain the source of truth for lifecycle and
+    revision state.  This read-model projection lets project workspaces expose
+    generated documents alongside uploaded files and notes without copying
+    document rows into ``project_context_items`` or making them deletable as
+    ordinary context attachments.
+    """
+    document_id = document.get("id")
+    doc_type = str(document.get("doc_type") or "DOCUMENT").upper()
+    try:
+        version = int(document.get("version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    status = str(document.get("status") or "DRAFT").upper()
+    blob_key = document.get("blob_key")
+    blob_key_text = str(blob_key or "").lower()
+    mime_type = {
+        ".md": "text/markdown",
+        ".markdown": "text/markdown",
+        ".json": "application/json",
+        ".pdf": "application/pdf",
+        ".html": "text/html",
+        ".txt": "text/plain",
+    }.get(
+        next(
+            (suffix for suffix in (".md", ".markdown", ".json", ".pdf", ".html", ".txt") if blob_key_text.endswith(suffix)),
+            "",
+        ),
+        "application/octet-stream",
+    )
+    lineage_id = document.get("lineage_id") or document_id
+
+    return {
+        "id": document_id,
+        "project_id": document.get("project_id"),
+        "item_type": "DOCUMENT",
+        "name": f"{doc_type} v{version}",
+        "description": (
+            f"Generated {doc_type} document · revision {version} · "
+            f"{status.replace('_', ' ').lower()}"
+        ),
+        "mime_type": mime_type,
+        "size_bytes": None,
+        "blob_bucket": document.get("blob_bucket"),
+        "blob_key": blob_key,
+        "blob_sha256": document.get("blob_sha256"),
+        "url": None,
+        "content_text": None,
+        "metadata": {
+            "source": "document",
+            "document_id": document_id,
+            "lineage_id": lineage_id,
+            "doc_type": doc_type,
+            "version": version,
+            "status": status,
+        },
+        "tags": [doc_type.lower(), "generated", "document"],
+        "created_by": document.get("created_by") or "orchestrator",
+        "created_at": document.get("created_at"),
+        "updated_at": document.get("updated_at") or document.get("created_at"),
+        "source": "document",
+        "read_only": True,
+        "document_id": document_id,
+        "doc_type": doc_type,
+        "version": version,
+        "status": status,
+        "lineage_id": lineage_id,
+    }
+
+
 class AgentStorage:
     """Async Postgres storage layer using SQLAlchemy Core.
 
@@ -107,9 +179,15 @@ class AgentStorage:
         created_by: str,
         human_requester: str | None = None,
         config: dict | None = None,
+        initial_context: list[dict[str, Any]] | None = None,
         project_id: UUID | None = None,
     ) -> dict[str, Any]:
-        """Insert a new project row. Returns the full row as a dict."""
+        """Insert a project and optional starter context atomically.
+
+        Keeping the initial brief/links in the same transaction means the CEO
+        feasibility directive can immediately see the project context and a
+        failed context insert cannot leave a half-initialized project behind.
+        """
         pid = project_id or uuid4()
         now = datetime.now(tz=UTC)
         values = {
@@ -125,6 +203,26 @@ class AgentStorage:
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.projects.insert().values(**values))
+            for seed in initial_context or []:
+                context_values = {
+                    "id": seed.get("id") or uuid4(),
+                    "project_id": pid,
+                    "item_type": seed.get("item_type") or "TEXT",
+                    "name": seed.get("name") or "Project context",
+                    "description": seed.get("description"),
+                    "mime_type": seed.get("mime_type"),
+                    "size_bytes": seed.get("size_bytes"),
+                    "blob_bucket": seed.get("blob_bucket"),
+                    "blob_key": seed.get("blob_key"),
+                    "blob_sha256": seed.get("blob_sha256"),
+                    "url": seed.get("url"),
+                    "content_text": seed.get("content_text"),
+                    "metadata": seed.get("metadata"),
+                    "tags": seed.get("tags") or [],
+                    "created_by": seed.get("created_by") or created_by,
+                    "created_at": now,
+                }
+                await conn.execute(t.project_context_items.insert().values(**context_values))
         return {**values, "failure_reason": None, "failed_from_state": None}
 
     async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
@@ -136,6 +234,23 @@ class AgentStorage:
                 .first()
             )
         return dict(row) if row else None
+
+    async def update_project_config(
+        self,
+        project_id: UUID,
+        *,
+        config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Replace project configuration and return the refreshed project row."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.projects.update()
+                .where(t.projects.c.id == project_id)
+                .values(config=config, updated_at=datetime.now(tz=UTC))
+            )
+            if result.rowcount == 0:
+                return None
+        return await self.get_project(project_id)
 
     async def delete_project(self, project_id: UUID) -> bool:
         """Delete a project and project-owned records.
@@ -557,6 +672,62 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def list_project_context(
+        self,
+        project_id: UUID,
+        *,
+        item_type: str | None = None,
+        tags: list[str] | None = None,
+        include_document_revisions: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List user context plus generated document read models.
+
+        Formal documents use the ``documents`` table because their lifecycle
+        is versioned and approval-controlled.  They are still project context
+        from an operator/agent perspective, so this method joins both sources
+        at the storage boundary.  By default only the latest row in each
+        document lineage is shown; callers can request historical revisions
+        when they need the complete audit trail.
+        """
+        items = await self.list_context_items(project_id, item_type=item_type, tags=tags)
+
+        # A non-document filter cannot match formal document projections.
+        if item_type and item_type.upper() != "DOCUMENT":
+            return items
+
+        documents = await self.list_documents(project_id)
+        if not include_document_revisions:
+            latest_by_lineage: dict[str, dict[str, Any]] = {}
+            for document in documents:
+                lineage_key = str(document.get("lineage_id") or document.get("id"))
+                current = latest_by_lineage.get(lineage_key)
+                try:
+                    version = int(document.get("version") or 1)
+                except (TypeError, ValueError):
+                    version = 1
+                try:
+                    current_version = int(current.get("version") or 1) if current else -1
+                except (TypeError, ValueError):
+                    current_version = -1
+                if current is None or version >= current_version:
+                    latest_by_lineage[lineage_key] = document
+            documents = list(latest_by_lineage.values())
+
+        document_items = [document_to_context_item(document) for document in documents]
+        if tags:
+            requested_tags = {tag.strip().lower() for tag in tags if tag.strip()}
+            document_items = [
+                item
+                for item in document_items
+                if requested_tags.intersection(str(tag).lower() for tag in item.get("tags") or [])
+            ]
+
+        return sorted(
+            [*items, *document_items],
+            key=lambda item: str(item.get("created_at") or ""),
+            reverse=True,
+        )
 
     async def delete_context_item(self, item_id: UUID) -> bool:
         """Delete a context item. Returns True if deleted, False if not found."""

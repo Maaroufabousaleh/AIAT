@@ -72,6 +72,7 @@ from .project import (
     HumanNotifyTool,
     ProjectCreateTool,
     ProjectListTool,
+    ProjectRepositoryTool,
     ProjectStatusTool,
     ProjectTransitionTool,
     ReviewAggregateTool,
@@ -134,6 +135,7 @@ def get_all_tools() -> list[BaseTool]:
         SharedMemoryWriteTool(),
         # PROJECT
         ProjectCreateTool(),
+        ProjectRepositoryTool(),
         ProjectStatusTool(),
         ProjectTransitionTool(),
         ProjectListTool(),

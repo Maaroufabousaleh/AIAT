@@ -71,6 +71,11 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newInitialContext, setNewInitialContext] = useState("");
+  const [newRepositoryUrl, setNewRepositoryUrl] = useState("");
+  const [newGitMode, setNewGitMode] = useState<"clone" | "init">("clone");
+  const [newGitBranch, setNewGitBranch] = useState("");
+  const [newTags, setNewTags] = useState("");
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [error, setError] = useState("");
   const [bulkArchiving, setBulkArchiving] = useState(false);
@@ -119,39 +124,83 @@ export default function ProjectsPage() {
 
   useEffect(() => { load(); }, []);
 
+  function resetCreateForm() {
+    setNewName("");
+    setNewDesc("");
+    setNewInitialContext("");
+    setNewRepositoryUrl("");
+    setNewGitMode("clone");
+    setNewGitBranch("");
+    setNewTags("");
+    setSelectedFlowId("");
+    setError("");
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setCreating(true);
     setError("");
     try {
+      const tags = newTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      const config: Record<string, unknown> = {};
+      if (newRepositoryUrl.trim()) config.repository_url = newRepositoryUrl.trim();
+      if (tags.length > 0) config.tags = tags;
+      const repositoryUrl = newRepositoryUrl.trim();
+      const workspaceMode = repositoryUrl ? newGitMode : "init";
+      const initialContext: Record<string, unknown>[] = [];
+      if (newDesc.trim()) {
+        initialContext.push({
+          item_type: "TEXT",
+          name: "Project goal",
+          content_text: newDesc.trim(),
+          tags: ["project-goal", ...tags],
+        });
+      }
+      if (newInitialContext.trim()) {
+        initialContext.push({
+          item_type: "TEXT",
+          name: "Initial project context",
+          content_text: newInitialContext.trim(),
+          tags: ["project-brief", ...tags],
+        });
+      }
+      if (repositoryUrl) {
+        initialContext.push({
+          item_type: "URL",
+          name: "Source repository",
+          url: repositoryUrl,
+          tags: ["repository", ...tags],
+        });
+      }
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, description: newDesc }),
+        body: JSON.stringify({
+          name: newName.trim(),
+          description: newDesc.trim() || null,
+          config: Object.keys(config).length > 0 ? config : undefined,
+          workspace: {
+            mode: workspaceMode,
+            repository_url: repositoryUrl || undefined,
+            branch: newGitBranch.trim() || undefined,
+            remote_name: "origin",
+          },
+          flow_id: selectedFlowId || undefined,
+          initial_context: initialContext,
+        }),
       });
       if (res.ok) {
-        const project = await res.json();
-        
-        if (selectedFlowId) {
-          try {
-            await fetch("/api/flows/instances", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ flow_id: selectedFlowId, project_id: project.id }),
-            });
-          } catch {
-            console.error("Failed to attach flow to project");
-          }
-        }
-        
+        await res.json();
         setShowCreate(false);
-        setNewName("");
-        setNewDesc("");
-        setSelectedFlowId("");
+        resetCreateForm();
         await load();
       } else {
-        const d = await res.json();
-        setError(d.error ?? "Failed to create project");
+        const d = await res.json().catch(() => null);
+        setError(projectActionError(d, "Failed to create project"));
       }
     } finally {
       setCreating(false);
@@ -461,15 +510,20 @@ export default function ProjectsPage() {
       {/* Create modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="dashboard-surface-strong p-6 w-full max-w-md shadow-2xl">
+          <div className="dashboard-surface-strong p-6 w-full max-w-xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h2 className="text-lg font-semibold text-white">New Project</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Create a project and optionally attach a flow.</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Give the teams a useful starting brief, context, and workflow.
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setShowCreate(false)}
+                onClick={() => {
+                  setShowCreate(false);
+                  resetCreateForm();
+                }}
                 className="p-1 text-slate-500 hover:text-slate-200 rounded"
               >
                 <X size={16} />
@@ -487,7 +541,7 @@ export default function ProjectsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-slate-300 mb-1.5">Description</label>
+                <label className="block text-sm text-slate-300 mb-1.5">Goal / scope</label>
                 <textarea
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
@@ -495,6 +549,73 @@ export default function ProjectsPage() {
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   placeholder="What should the agents build?"
                 />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-300 mb-1.5">
+                  Initial context <span className="text-slate-600">(optional)</span>
+                </label>
+                <textarea
+                  value={newInitialContext}
+                  onChange={(e) => setNewInitialContext(e.target.value)}
+                  rows={4}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y"
+                  placeholder="Requirements, constraints, users, risks, or notes the teams should read first..."
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Saved as project context immediately, so feasibility and future workers can use it.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1.5">
+                    Git repository URL <span className="text-slate-600">(optional)</span>
+                  </label>
+                  <input
+                    value={newRepositoryUrl}
+                    onChange={(e) => setNewRepositoryUrl(e.target.value)}
+                    type="url"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="https://github.com/org/repo"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1.5">Workspace mode</label>
+                  <select
+                    value={newGitMode}
+                    onChange={(e) => setNewGitMode(e.target.value as "clone" | "init")}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="clone">Clone repository into project workspace</option>
+                    <option value="init">Initialize a new Git repository</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1.5">
+                    Branch / ref <span className="text-slate-600">(optional)</span>
+                  </label>
+                  <input
+                    value={newGitBranch}
+                    onChange={(e) => setNewGitBranch(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="default branch (clone) or main (new repo)"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    The workspace is created at the tool-service project boundary and is Git-managed.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-300 mb-1.5">
+                    Tags <span className="text-slate-600">(comma-separated)</span>
+                  </label>
+                  <input
+                    value={newTags}
+                    onChange={(e) => setNewTags(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="product, web, priority"
+                  />
+                </div>
               </div>
               {flows.length > 0 && (
                 <div>
@@ -520,14 +641,17 @@ export default function ProjectsPage() {
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => setShowCreate(false)}
+                  onClick={() => {
+                    setShowCreate(false);
+                    resetCreateForm();
+                  }}
                   className="flex-1 px-3 py-2 border border-slate-700 rounded-lg text-sm text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-800 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={creating}
+                  disabled={creating || !newName.trim()}
                   className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   {creating ? "Creating…" : "Create"}

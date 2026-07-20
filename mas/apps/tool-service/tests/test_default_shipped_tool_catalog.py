@@ -12,6 +12,7 @@ from mas_tools_sdk.manifest import TOOL_MANIFEST, resolve_tool_name
 
 DOCUMENTED_DEFAULT_TOOLS = {
     "project.create",
+    "project.repository",
     "project.status",
     "project.transition",
     "project.list",
@@ -582,6 +583,31 @@ async def test_infra_provision_creates_project_workspace(make_registry, monkeypa
     assert response.result["verified"] is True
     assert captured["cwd"] == tmp_path / "project-1"
     assert (tmp_path / "project-1").is_dir()
+
+
+@pytest.mark.anyio
+async def test_project_repository_initializes_and_reports_git_workspace(
+    make_registry, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="orchestrator",
+            caller_role=AgentRole.ORCHESTRATOR,
+            caller_team="exec_ceo",
+            project_id="project-1",
+            tool_name="project.repository",
+            kwargs={"operation": "init", "branch": "main"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["initialized"] is True
+    assert response.result["branch"] == "main"
+    assert response.result["clean"] is True
+    assert response.result["workspace_relative_path"] == "project-1"
+    assert (tmp_path / "project-1" / ".git").is_dir()
+    assert (tmp_path / "project-1" / ".aiat" / "project.json").is_file()
 
 
 @pytest.mark.anyio

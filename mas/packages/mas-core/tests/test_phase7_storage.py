@@ -311,6 +311,29 @@ class TestAgentStorageCRUD:
         conn.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_create_project_with_initial_context_is_atomic(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+
+        result = await storage.create_project(
+            name="Context Project",
+            description="A project with a starter brief",
+            created_by="human",
+            initial_context=[
+                {
+                    "item_type": "TEXT",
+                    "name": "Project goal",
+                    "content_text": "Build the workspace",
+                    "tags": ["goal"],
+                }
+            ],
+        )
+
+        assert result["name"] == "Context Project"
+        assert conn.execute.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_create_project_with_explicit_id(self):
         storage, engine = self._make_storage()
         conn = engine._mock_conn

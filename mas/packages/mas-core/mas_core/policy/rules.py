@@ -145,6 +145,7 @@ EXECUTIVE_TOOLS: tuple[str, ...] = (
     "document.*",
     "review.*",
     "project.status",
+    "project.repository",
     "project.transition",
     "project.list",
     "blob.*",
@@ -206,6 +207,7 @@ CTO_EXTRA_TOOLS: tuple[str, ...] = (
 )
 
 ADMIN_BASE_TOOLS: tuple[str, ...] = (
+    "project.repository",
     "document.create_draft",
     "document.submit",
     "document.revise",

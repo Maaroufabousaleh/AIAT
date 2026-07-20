@@ -74,6 +74,14 @@ _register(
         idempotent=False,
     ),
     _entry(
+        name="project.repository",
+        group=ToolGroup.WORKFLOW,
+        description="Create and manage a project Git workspace.",
+        allowed_roles=[AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.ADMIN],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
         name="project.status",
         group=ToolGroup.WORKFLOW,
         description="Get the current project status.",

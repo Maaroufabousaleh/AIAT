@@ -7,12 +7,15 @@ all persistence atomically via AgentStorage + WorkflowController.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
-import hashlib
+import shutil
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -22,6 +25,11 @@ from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
 from ._orch_client import orch_get, orch_post
+from .adapters import _run_process
+from .file import _workspace_root
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 MESSAGE_ROUTER_URL = os.getenv("MESSAGE_ROUTER_URL") or os.getenv(
@@ -47,6 +55,254 @@ async def publish_message(envelope: dict[str, Any]) -> dict[str, Any]:
 # ── Project ────────────────────────────────────────────────────────────────
 
 
+_GIT_OPERATIONS = {"init", "clone", "status", "sync", "commit", "push", "remove"}
+_GIT_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$")
+_GIT_REMOTE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,62}$")
+_GIT_SCP_RE = re.compile(r"^git@(?P<host>[A-Za-z0-9.-]+):(?P<path>[^\s]+)$")
+
+
+def _git_allowed_hosts() -> set[str]:
+    raw = os.getenv("TOOL_GIT_ALLOWED_HOSTS", "github.com")
+    return {host.strip().lower() for host in raw.split(",") if host.strip()}
+
+
+def _validate_git_url(value: str | None) -> str | None:
+    """Allow configured Git hosts while rejecting credential-bearing URLs."""
+    if value is None or not value.strip():
+        return None
+    url = value.strip()
+    allowed_hosts = _git_allowed_hosts()
+    scp_match = _GIT_SCP_RE.fullmatch(url)
+    if scp_match:
+        host = scp_match.group("host").lower()
+        if host not in allowed_hosts:
+            raise ValueError(f"Git host is not allowlisted: {host}")
+        return url
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https", "ssh", "git"} or not parsed.hostname:
+        raise ValueError("repository_url must be an HTTPS, SSH, or Git URL")
+    if parsed.username or parsed.password:
+        raise ValueError("repository_url must not contain credentials")
+    host = parsed.hostname.lower()
+    if host not in allowed_hosts:
+        raise ValueError(f"Git host is not allowlisted: {host}")
+    if not parsed.path or parsed.path == "/":
+        raise ValueError("repository_url must identify a repository")
+    return url
+
+
+def _validate_git_options(
+    *,
+    branch: str,
+    remote_name: str,
+    project_id: str,
+) -> tuple[str, str, str]:
+    if not project_id or project_id in {".", ".."} or "/" in project_id or "\\" in project_id:
+        raise ValueError("project_id must be a single workspace directory name")
+    normalized_branch = branch.strip() or "main"
+    if not _GIT_BRANCH_RE.fullmatch(normalized_branch) or normalized_branch.startswith(
+        ("/", "-")) or ".." in normalized_branch:
+        raise ValueError("branch must be a safe Git ref")
+    normalized_remote = remote_name.strip() or "origin"
+    if not _GIT_REMOTE_RE.fullmatch(normalized_remote):
+        raise ValueError("remote_name must be a safe Git remote name")
+    return project_id, normalized_branch, normalized_remote
+
+
+async def _git_command(
+    argv: list[str],
+    *,
+    cwd: Path,
+    timeout: float = 120,
+) -> dict[str, Any]:
+    result = await _run_process(
+        ["git", *argv],
+        cwd=cwd,
+        timeout=timeout,
+        max_output_bytes=256_000,
+    )
+    if not result.get("available"):
+        raise RuntimeError("git is not installed in the tool-service runtime")
+    if result.get("returncode") != 0:
+        detail = (result.get("stderr") or result.get("stdout") or "git command failed").strip()
+        raise ValueError(detail[:2_000])
+    return result
+
+
+async def _git_status(*, workspace: Path, project_id: str, remote_name: str) -> dict[str, Any]:
+    if not (workspace / ".git").exists():
+        return {
+            "initialized": False,
+            "project_id": project_id,
+            "workspace_path": str(workspace),
+            "workspace_relative_path": project_id,
+            "remote": None,
+            "branch": None,
+            "head": None,
+            "clean": None,
+        }
+
+    branch_result = await _git_command(["branch", "--show-current"], cwd=workspace)
+    head_result = await _git_command(["rev-parse", "HEAD"], cwd=workspace)
+    remote_result = await _run_process(
+        ["git", "remote", "get-url", remote_name],
+        cwd=workspace,
+        timeout=30,
+        max_output_bytes=8_000,
+    )
+    if not remote_result.get("available"):
+        raise RuntimeError("git is not installed in the tool-service runtime")
+    remote_url = (
+        remote_result.get("stdout", "").strip()
+        if remote_result.get("returncode") == 0
+        else None
+    )
+    porcelain_result = await _git_command(["status", "--porcelain"], cwd=workspace)
+    return {
+        "initialized": True,
+        "project_id": project_id,
+        "workspace_path": str(workspace),
+        "workspace_relative_path": project_id,
+        "remote": remote_url or None,
+        "remote_name": remote_name,
+        "branch": branch_result.get("stdout", "").strip() or None,
+        "head": head_result.get("stdout", "").strip() or None,
+        "clean": not bool(porcelain_result.get("stdout", "").strip()),
+        "changes": [
+            line
+            for line in (porcelain_result.get("stdout", "") or "").splitlines()
+            if line.strip()
+        ][:100],
+    }
+
+
+class ProjectRepositoryTool(BaseTool):
+    name = "project.repository"
+    group = ToolGroup.WORKFLOW
+    description = "Create and manage the project Git workspace through a bounded adapter."
+    allowed_roles = [AgentRole.ORCHESTRATOR, AgentRole.EXECUTIVE, AgentRole.ADMIN]
+    cache_ttl_seconds = 0
+    idempotent = False
+    max_concurrency = 2
+
+    async def execute(self, **kwargs: Any) -> Any:
+        operation = str(kwargs.get("operation") or "status").strip().lower()
+        if operation not in _GIT_OPERATIONS:
+            raise ValueError(f"operation must be one of {', '.join(sorted(_GIT_OPERATIONS))}")
+
+        requested_branch = str(kwargs.get("branch") or "").strip()
+        project_id, branch, remote_name = _validate_git_options(
+            branch=requested_branch or "main",
+            remote_name=str(kwargs.get("remote_name") or "origin"),
+            project_id=str(kwargs.get("project_id") or ""),
+        )
+        repository_url = _validate_git_url(kwargs.get("repository_url"))
+        root = _workspace_root()
+        root.mkdir(parents=True, exist_ok=True)
+        workspace = (root / project_id).resolve()
+        workspace.relative_to(root)
+
+        if operation == "remove":
+            if workspace.exists():
+                shutil.rmtree(workspace)
+            return {
+                "initialized": False,
+                "removed": True,
+                "project_id": project_id,
+                "workspace_relative_path": project_id,
+                "workspace_path": str(workspace),
+            }
+
+        if operation == "clone":
+            if repository_url is None:
+                raise ValueError("repository_url is required for clone")
+            if (workspace / ".git").exists():
+                return await _git_status(
+                    workspace=workspace,
+                    project_id=project_id,
+                    remote_name=remote_name,
+                )
+            if workspace.exists() and any(workspace.iterdir()):
+                raise ValueError("project workspace is not empty and is not a Git repository")
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            clone_args = ["clone", "--origin", remote_name]
+            if requested_branch:
+                clone_args.extend(["--branch", branch])
+            clone_args.extend([repository_url, str(workspace)])
+            await _git_command(clone_args, cwd=root, timeout=900)
+
+        elif operation == "init":
+            if (workspace / ".git").exists():
+                return await _git_status(
+                    workspace=workspace,
+                    project_id=project_id,
+                    remote_name=remote_name,
+                )
+            if workspace.exists() and any(workspace.iterdir()):
+                raise ValueError("project workspace is not empty and is not a Git repository")
+            workspace.mkdir(parents=True, exist_ok=True)
+            await _git_command(["init", "-b", branch], cwd=workspace)
+            await _git_command(["config", "user.name", "AIAT"], cwd=workspace)
+            await _git_command(["config", "user.email", "aiat@local.invalid"], cwd=workspace)
+            if repository_url:
+                await _git_command(["remote", "add", remote_name, repository_url], cwd=workspace)
+            manifest = workspace / ".aiat" / "project.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "project_id": project_id,
+                        "managed_by": "AIAT",
+                        "repository_url": repository_url,
+                        "branch": branch,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            await _git_command(["add", ".aiat/project.json"], cwd=workspace)
+            await _git_command(["commit", "-m", "Initialize AIAT project workspace"], cwd=workspace)
+
+        elif operation == "sync":
+            if not (workspace / ".git").exists():
+                raise ValueError("project workspace is not initialized as a Git repository")
+            await _git_command(["fetch", "--prune", remote_name], cwd=workspace, timeout=900)
+            await _git_command(["pull", "--ff-only", remote_name, branch], cwd=workspace, timeout=900)
+
+        elif operation == "commit":
+            if not (workspace / ".git").exists():
+                raise ValueError("project workspace is not initialized as a Git repository")
+            message = str(kwargs.get("message") or "").strip()
+            if not message or len(message) > 200:
+                raise ValueError("commit message is required and must be at most 200 characters")
+            await _git_command(["add", "-A"], cwd=workspace)
+            commit = await _run_process(
+                ["git", "commit", "-m", message],
+                cwd=workspace,
+                timeout=120,
+                max_output_bytes=256_000,
+            )
+            if not commit.get("available"):
+                raise RuntimeError("git is not installed in the tool-service runtime")
+            if commit.get("returncode") != 0 and "nothing to commit" not in (
+                commit.get("stdout", "") + commit.get("stderr", "")
+            ).lower():
+                raise ValueError((commit.get("stderr") or commit.get("stdout") or "git commit failed")[:2_000])
+
+        elif operation == "push":
+            if not (workspace / ".git").exists():
+                raise ValueError("project workspace is not initialized as a Git repository")
+            await _git_command(["push", remote_name, branch], cwd=workspace, timeout=900)
+
+        return await _git_status(
+            workspace=workspace,
+            project_id=project_id,
+            remote_name=remote_name,
+        )
+
+
 class ProjectCreateTool(BaseTool):
     name = "project.create"
     group = ToolGroup.WORKFLOW
@@ -63,6 +319,12 @@ class ProjectCreateTool(BaseTool):
             "human_requester": kwargs.get("human_requester"),
             "config": kwargs.get("config"),
         }
+        if kwargs.get("flow_id"):
+            body["flow_id"] = kwargs["flow_id"]
+        if kwargs.get("workspace"):
+            body["workspace"] = kwargs["workspace"]
+        if kwargs.get("initial_context"):
+            body["initial_context"] = kwargs["initial_context"]
         return await orch_post("/projects", body)
 
 

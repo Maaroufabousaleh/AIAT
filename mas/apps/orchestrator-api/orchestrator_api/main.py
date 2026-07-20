@@ -25,7 +25,7 @@ import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -37,8 +37,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel, Field, field_validator
 
-from mas_core.memory.storage import AgentStorage
 from mas_core.llm_gateway.client import LLMGatewayClient
+from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import MAS_PROJECT_STATE
 from mas_core.observability.tracing import bind_trace_id, new_trace_id
@@ -128,6 +128,7 @@ PGBOUNCER_DSN = os.getenv(
     "postgresql+asyncpg://mas_user:mas_pass@localhost:6432/mas",
 )
 ROUTER_URL = os.getenv("ROUTER_URL", "http://message-router:8001")
+TOOL_SERVICE_URL = os.getenv("TOOL_SERVICE_URL", "http://tool-service:8002")
 WATCHDOG_INTERVAL_S = int(os.getenv("WATCHDOG_INTERVAL_S", "60"))
 WATCHDOG_GRACE_S = int(os.getenv("WATCHDOG_GRACE_S", "300"))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8000")
@@ -808,12 +809,68 @@ async def _org_graph_read_model(storage: AgentStorage) -> dict[str, Any]:
 # ── Pydantic request/response models ─────────────────────────────────────────
 
 
+class ProjectContextSeedRequest(BaseModel):
+    """A context item created with the project in one transaction."""
+
+    item_type: str = Field(default="TEXT", min_length=1, max_length=20)
+    name: str = Field(default="Project brief", min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=4000)
+    mime_type: str | None = Field(default=None, max_length=200)
+    size_bytes: int | None = Field(default=None, ge=0)
+    blob_bucket: str | None = None
+    blob_key: str | None = None
+    blob_sha256: str | None = None
+    url: str | None = None
+    content_text: str | None = Field(default=None, max_length=100_000)
+    metadata: dict[str, Any] | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("item_type")
+    @classmethod
+    def normalize_item_type(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name must not be blank")
+        return normalized
+
+
+class ProjectWorkspaceRequest(BaseModel):
+    """How project source code should be provisioned in the tool workspace."""
+
+    mode: Literal["init", "clone", "none"] = "init"
+    repository_url: str | None = Field(default=None, max_length=1000)
+    branch: str | None = Field(default=None, max_length=200)
+    remote_name: str = Field(default="origin", min_length=1, max_length=64)
+
+
+class ProjectRepositoryActionRequest(BaseModel):
+    """An operator action against an already configured project repository."""
+
+    operation: Literal["status", "sync", "commit", "push"] = "status"
+    message: str | None = Field(default=None, max_length=200)
+
+
 class CreateProjectRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=20_000)
     human_requester: str | None = None
     config: dict[str, Any] | None = None
     flow_id: UUID | None = None
+    workspace: ProjectWorkspaceRequest | None = None
+    initial_context: list[ProjectContextSeedRequest] = Field(default_factory=list, max_length=25)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name must not be blank")
+        return normalized
 
 
 # ── Credentials Manager request models ──────────────────────────────────────
@@ -1071,8 +1128,9 @@ def _build_stage_directive(
     context: dict[str, Any] | str,
     parent_id: str | None = None,
     triggered_by_event: str | None = None,
+    directive_override: tuple[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    stage_directive = PROJECT_STAGE_DIRECTIVES.get(state)
+    stage_directive = directive_override or PROJECT_STAGE_DIRECTIVES.get(state)
     if stage_directive is None:
         return None
     recipient_team, action = stage_directive
@@ -1717,6 +1775,78 @@ async def health() -> dict[str, str]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+def _tool_service_auth_headers() -> dict[str, str]:
+    secret = os.getenv("TOOL_SECRET")
+    if not secret:
+        raise RuntimeError("TOOL_SECRET must be configured for project workspace management")
+    return {"Authorization": f"Bearer {secret}"}
+
+
+async def _invoke_project_repository_tool(
+    *,
+    project_id: UUID,
+    operation: str,
+    repository_url: str | None = None,
+    branch: str | None = None,
+    remote_name: str = "origin",
+    message: str | None = None,
+) -> dict[str, Any]:
+    """Run the bounded Git adapter in tool-service as the control-plane identity."""
+    kwargs: dict[str, Any] = {
+        "operation": operation,
+        "remote_name": remote_name,
+    }
+    if repository_url:
+        kwargs["repository_url"] = repository_url
+    if branch:
+        kwargs["branch"] = branch
+    if message:
+        kwargs["message"] = message
+
+    body = {
+        "caller_id": "orchestrator-api",
+        "caller_role": AgentRole.ORCHESTRATOR.value,
+        "caller_team": "exec_ceo",
+        "project_id": str(project_id),
+        "tool_name": "project.repository",
+        "kwargs": kwargs,
+    }
+    async with httpx.AsyncClient(
+        timeout=900,
+        headers=_tool_service_auth_headers(),
+    ) as client:
+        response = await client.post(
+            f"{TOOL_SERVICE_URL}/tools/project.repository/run",
+            json=body,
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    if not payload.get("success"):
+        raise RuntimeError(payload.get("error") or "project.repository failed")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("project.repository returned an invalid result")
+    return result
+
+
+async def _persist_project_workspace(
+    storage: AgentStorage,
+    project: dict[str, Any],
+    workspace: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist workspace/Git metadata without assuming lightweight test doubles."""
+    config = dict(project.get("config") or {})
+    config["workspace"] = workspace
+    project["config"] = config
+    writer = getattr(storage, "update_project_config", None)
+    if inspect.iscoroutinefunction(writer):
+        refreshed = await writer(project["id"], config=config)
+        if refreshed is not None:
+            return refreshed
+    return project
+
+
 @app.post("/projects", status_code=201)
 async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     """Human creates a project request. Triggers CEO via SYSTEM_EVENT."""
@@ -1730,16 +1860,75 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         if flow_for_instance is None:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
 
+    project_config = dict(req.config or {})
+    requested_workspace: dict[str, Any] | None = None
+    if req.workspace is not None:
+        requested_workspace = {
+            "provider": "tool-service",
+            "mode": req.workspace.mode,
+            "repository_url": req.workspace.repository_url,
+            "branch": req.workspace.branch,
+            "remote_name": req.workspace.remote_name,
+            "status": "DISABLED" if req.workspace.mode == "none" else "PROVISIONING",
+        }
+        project_config["workspace"] = requested_workspace
+        if req.workspace.repository_url:
+            # Keep this compatibility key for existing workers and context
+            # readers; the workspace block is the canonical source metadata.
+            project_config.setdefault("repository_url", req.workspace.repository_url)
+
     # Create project
     project = await storage.create_project(
         name=req.name,
         description=req.description,
         created_by=req.human_requester or "human",
         human_requester=req.human_requester,
-        config=req.config,
+        config=project_config or None,
+        initial_context=[
+            {
+                **seed.model_dump(exclude_none=True),
+                "created_by": req.human_requester or "human",
+            }
+            for seed in req.initial_context
+        ],
     )
 
     pid = str(project["id"])
+
+    if requested_workspace is not None and requested_workspace["status"] != "DISABLED":
+        try:
+            repository = await _invoke_project_repository_tool(
+                project_id=UUID(pid),
+                operation=requested_workspace["mode"],
+                repository_url=requested_workspace.get("repository_url"),
+                branch=requested_workspace.get("branch"),
+                remote_name=requested_workspace["remote_name"],
+            )
+        except Exception as exc:
+            logger.exception("Failed to provision project workspace %s", pid)
+            requested_workspace = {
+                **requested_workspace,
+                "status": "ERROR",
+                "error": "Git workspace provisioning failed",
+            }
+            await _persist_project_workspace(storage, project, requested_workspace)
+            raise HTTPException(
+                503,
+                {
+                    "message": "Project was created, but its Git workspace could not be provisioned.",
+                    "project_id": pid,
+                    "workspace_status": "ERROR",
+                    "detail": str(exc)[:500],
+                },
+            ) from exc
+
+        requested_workspace = {
+            **requested_workspace,
+            **repository,
+            "status": "READY",
+        }
+        project = await _persist_project_workspace(storage, project, requested_workspace)
+
     MAS_PROJECT_STATE.labels(project_id=pid, state="INIT").set(1)
     projects_created_total.inc()
 
@@ -1757,32 +1946,33 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
 
     # Return the authoritative post-transition row rather than the INSERT
     # snapshot, so callers never observe a stale INIT state.
-    refreshed_project = await storage.get_project(UUID(pid))
-    if refreshed_project is not None:
-        project = refreshed_project
+    project_reader = getattr(storage, "get_project", None)
+    if inspect.iscoroutinefunction(project_reader):
+        refreshed_project = await project_reader(UUID(pid))
+        if refreshed_project is not None:
+            project = refreshed_project
 
-    # Publish a DIRECTIVE to CEO to start feasibility
-    envelope = {
-        "message_id": str(uuid4()),
-        "correlation_id": pid,
-        "msg_type": MessageType.DIRECTIVE.value,
-        "sender_id": "orchestrator",
-        "sender_team": "exec_ceo",
-        "sender_role": AgentRole.ORCHESTRATOR.value,
-        "recipient_team": "exec_ceo",
-        "project_id": pid,
-        "payload": {
-            "action": "START_FEASIBILITY",
-            "project_name": req.name,
-            "description": req.description,
-        },
-        "created_at": datetime.now(tz=UTC).isoformat(),
-    }
+    # Publish a DIRECTIVE to CEO to start feasibility. Keep the original
+    # project fields in the payload for the CEO prompt, while using the
+    # shared stage publisher so rejected/unavailable router responses retry.
+    directive = _build_stage_directive(
+        project_id=pid,
+        state="FEASIBILITY_CHECK",
+        context={"project_name": req.name, "description": req.description},
+        triggered_by_event=WorkflowEvent.PROJECT_CREATED.value,
+        directive_override=("exec_ceo", "START_FEASIBILITY"),
+    )
+    assert directive is not None
+    directive["payload"].update(
+        {"project_name": req.name, "description": req.description}
+    )
     try:
-        async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
-            await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
+        delivered = await _publish_router_envelope(directive)
     except Exception:
+        delivered = False
         logger.exception("Failed to publish project start directive")
+    if not delivered:
+        _schedule_stage_directive_retry(pid, "FEASIBILITY_CHECK", directive)
 
     if req.flow_id is not None and flow_for_instance is not None:
         try:
@@ -1823,8 +2013,26 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
 
 @app.delete("/projects/{project_id}")
 async def delete_project(project_id: UUID) -> dict[str, str]:
-    """Permanently delete a project and its project-owned records."""
+    """Permanently delete a project, its records, and its managed workspace."""
     storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    configured_workspace = (project.get("config") or {}).get("workspace")
+    if isinstance(configured_workspace, dict) and configured_workspace.get("mode") != "none":
+        try:
+            await _invoke_project_repository_tool(
+                project_id=project_id,
+                operation="remove",
+                remote_name=str(configured_workspace.get("remote_name") or "origin"),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                502,
+                f"Project workspace cleanup failed; project was not deleted: {str(exc)[:500]}",
+            ) from exc
+
     deleted = await storage.delete_project(project_id)
     if not deleted:
         raise HTTPException(404, f"Project {project_id} not found")
@@ -2145,6 +2353,7 @@ async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
     return _serialize(
         {
             "project": project,
+            "repository": (project.get("config") or {}).get("workspace"),
             "flow_instance": flow_instance,
             "pending_approvals": pending,
             "recent_decisions": [a for a in audit if a["event_type"] == "approval_gate"][:5],
@@ -2154,6 +2363,99 @@ async def get_project_workspace(project_id: UUID) -> dict[str, Any]:
             "logs": project_logs[:20],
             "cost_usage": project_usage,
             "next_actions": next_actions,
+        }
+    )
+
+
+@app.get("/projects/{project_id}/repository")
+async def get_project_repository(project_id: UUID) -> dict[str, Any]:
+    """Return the configured project workspace and current Git status."""
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    configured = (project.get("config") or {}).get("workspace")
+    if not isinstance(configured, dict):
+        return {
+            "configured": False,
+            "project_id": str(project_id),
+            "message": "This project has no managed Git workspace.",
+        }
+    if configured.get("mode") == "none":
+        return {"configured": False, "project_id": str(project_id), "workspace": configured}
+
+    try:
+        repository = await _invoke_project_repository_tool(
+            project_id=project_id,
+            operation="status",
+            repository_url=configured.get("repository_url"),
+            branch=configured.get("branch"),
+            remote_name=str(configured.get("remote_name") or "origin"),
+        )
+    except Exception as exc:
+        logger.warning("Could not refresh Git status for project %s", project_id, exc_info=True)
+        return _serialize(
+            {
+                "configured": True,
+                "project_id": project_id,
+                "workspace": {**configured, "status": "UNAVAILABLE"},
+                "error": str(exc)[:500],
+            }
+        )
+
+    workspace = {
+        **configured,
+        **repository,
+        "status": "READY" if repository.get("initialized") else "PROVISIONING",
+    }
+    refreshed = await _persist_project_workspace(storage, project, workspace)
+    return _serialize(
+        {
+            "configured": True,
+            "project_id": project_id,
+            "workspace": (refreshed.get("config") or {}).get("workspace", workspace),
+        }
+    )
+
+
+@app.post("/projects/{project_id}/repository")
+async def manage_project_repository(
+    project_id: UUID,
+    req: ProjectRepositoryActionRequest,
+) -> dict[str, Any]:
+    """Run a controlled Git status/sync/commit/push action for a project."""
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    configured = (project.get("config") or {}).get("workspace")
+    if not isinstance(configured, dict) or configured.get("mode") == "none":
+        raise HTTPException(409, "Project has no managed Git workspace")
+
+    try:
+        repository = await _invoke_project_repository_tool(
+            project_id=project_id,
+            operation=req.operation,
+            repository_url=configured.get("repository_url"),
+            branch=configured.get("branch"),
+            remote_name=str(configured.get("remote_name") or "origin"),
+            message=req.message,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Git operation {req.operation} failed: {str(exc)[:500]}") from exc
+
+    workspace = {
+        **configured,
+        **repository,
+        "status": "READY" if repository.get("initialized") else "PROVISIONING",
+        "last_operation": req.operation,
+    }
+    refreshed = await _persist_project_workspace(storage, project, workspace)
+    return _serialize(
+        {
+            "project_id": project_id,
+            "workspace": (refreshed.get("config") or {}).get("workspace", workspace),
         }
     )
 
@@ -2720,16 +3022,98 @@ class CreateContextItemRequest(BaseModel):
     generate_embeddings: bool = False
 
 
+def _latest_document_rows(
+    documents: list[dict[str, Any]],
+    *,
+    include_revisions: bool,
+) -> list[dict[str, Any]]:
+    """Keep the context read model focused on current document revisions."""
+    if include_revisions:
+        return documents
+
+    latest_by_lineage: dict[str, dict[str, Any]] = {}
+    for document in documents:
+        lineage_key = str(document.get("lineage_id") or document.get("id"))
+        current = latest_by_lineage.get(lineage_key)
+        try:
+            version = int(document.get("version") or 1)
+        except (TypeError, ValueError):
+            version = 1
+        try:
+            current_version = int(current.get("version") or 1) if current else -1
+        except (TypeError, ValueError):
+            current_version = -1
+        if current is None or version >= current_version:
+            latest_by_lineage[lineage_key] = document
+    return list(latest_by_lineage.values())
+
+
+async def _list_project_context_read_model(
+    storage: AgentStorage,
+    project_id: UUID,
+    *,
+    item_type: str | None = None,
+    tags: list[str] | None = None,
+    include_revisions: bool = False,
+) -> list[dict[str, Any]]:
+    """Read context attachments and generated-document projections together.
+
+    The fallback keeps lightweight route test doubles and older storage
+    adapters compatible while the canonical ``AgentStorage`` method owns the
+    production implementation.
+    """
+    reader = getattr(storage, "list_project_context", None)
+    if inspect.iscoroutinefunction(reader):
+        return await reader(
+            project_id,
+            item_type=item_type,
+            tags=tags,
+            include_document_revisions=include_revisions,
+        )
+
+    items = await storage.list_context_items(project_id, item_type=item_type, tags=tags)
+    if item_type and item_type.upper() != "DOCUMENT":
+        return items
+
+    document_reader = getattr(storage, "list_documents", None)
+    if not inspect.iscoroutinefunction(document_reader):
+        return items
+    documents = await document_reader(project_id)
+    document_items = [
+        document_to_context_item(document)
+        for document in _latest_document_rows(documents, include_revisions=include_revisions)
+    ]
+    if tags:
+        requested_tags = {tag.strip().lower() for tag in tags if tag.strip()}
+        document_items = [
+            item
+            for item in document_items
+            if requested_tags.intersection(str(tag).lower() for tag in item.get("tags") or [])
+        ]
+    return sorted(
+        [*items, *document_items],
+        key=lambda item: str(item.get("created_at") or ""),
+        reverse=True,
+    )
+
+
 @app.get("/projects/{project_id}/context")
 async def list_project_context(
     project_id: UUID,
     item_type: str | None = None,
     tags: str | None = None,
+    include_revisions: bool = False,
 ) -> list[dict[str, Any]]:
-    """List all context items (attachments, URLs, text notes) for a project."""
+    """List project context, including current generated document revisions."""
     storage = _storage()
-    tag_list = tags.split(",") if tags else None
-    items = await storage.list_context_items(project_id, item_type=item_type, tags=tag_list)
+    tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else None
+    items = await _list_project_context_read_model(
+        storage,
+        project_id,
+        item_type=item_type,
+        tags=tag_list,
+        include_revisions=include_revisions,
+    )
     return [_serialize(item) for item in items]
 
 
@@ -2780,7 +3164,7 @@ async def search_project_context(
     a vector database. Currently provides keyword-based filtering.
     """
     storage = _storage()
-    items = await storage.list_context_items(project_id)
+    items = await _list_project_context_read_model(storage, project_id)
 
     query_lower = req.query.lower()
     results = []
@@ -2941,12 +3325,19 @@ async def get_project_context_item(
     project_id: UUID,
     item_id: UUID,
 ) -> dict[str, Any]:
-    """Get a specific context item."""
+    """Get a specific attachment, note, or generated document projection."""
     storage = _storage()
     item = await storage.get_context_item(item_id)
-    if item is None or item.get("project_id") != project_id:
-        raise HTTPException(404, f"Context item {item_id} not found")
-    return _serialize(item)
+    if item is not None and item.get("project_id") == project_id:
+        return _serialize(item)
+
+    document_reader = getattr(storage, "get_document", None)
+    if inspect.iscoroutinefunction(document_reader):
+        document = await document_reader(item_id)
+        if document is not None and document.get("project_id") == project_id:
+            return _serialize(document_to_context_item(document))
+
+    raise HTTPException(404, f"Context item {item_id} not found")
 
 
 @app.delete("/projects/{project_id}/context/{item_id}")
@@ -2957,7 +3348,17 @@ async def delete_project_context_item(
     """Delete a context item."""
     storage = _storage()
     item = await storage.get_context_item(item_id)
-    if item is None or item.get("project_id") != project_id:
+    if item is None:
+        document_reader = getattr(storage, "get_document", None)
+        if inspect.iscoroutinefunction(document_reader):
+            document = await document_reader(item_id)
+            if document is not None and document.get("project_id") == project_id:
+                raise HTTPException(
+                    405,
+                    "Generated documents are read-only context. Use the document revision/status APIs.",
+                )
+        raise HTTPException(404, f"Context item {item_id} not found")
+    if item.get("project_id") != project_id:
         raise HTTPException(404, f"Context item {item_id} not found")
     deleted = await storage.delete_context_item(item_id)
     if not deleted:

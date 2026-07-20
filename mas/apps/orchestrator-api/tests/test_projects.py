@@ -121,6 +121,116 @@ async def test_create_project_minimal_payload(client):
     assert resp.status_code == 201
 
 
+@pytest.mark.anyio
+async def test_create_project_retries_feasibility_when_router_rejects(client):
+    """A rejected initial directive is retained for state-scoped delivery retry."""
+    storage = _make_storage(project=_fake_project("FEASIBILITY_CHECK"))
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    with (
+        patch(
+            "orchestrator_api.main._publish_router_envelope",
+            new=AsyncMock(return_value=False),
+        ) as publish,
+        patch("orchestrator_api.main._schedule_stage_directive_retry") as schedule_retry,
+    ):
+        resp = await client.post(
+            "/projects",
+            json={"name": "Retry me", "description": "Router may be unavailable"},
+        )
+
+    assert resp.status_code == 201
+    publish.assert_awaited_once()
+    directive = publish.await_args.args[0]
+    assert directive["payload"]["action"] == "START_FEASIBILITY"
+    assert directive["payload"]["project_name"] == "Retry me"
+    assert directive["payload"]["description"] == "Router may be unavailable"
+    schedule_retry.assert_called_once_with(
+        str(PROJECT_ID), "FEASIBILITY_CHECK", directive
+    )
+
+
+@pytest.mark.anyio
+async def test_create_project_persists_initial_context_and_flow(client):
+    """Creation forwards the starter brief and selected flow atomically."""
+    storage = _make_storage()
+    flow_id = UUID("00000000-0000-4000-a000-0000000000b1")
+    storage.get_flow = AsyncMock(return_value={"id": flow_id, "version": 3})
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    with patch("httpx.AsyncClient") as mock_http:
+        mock_http.return_value.__aenter__ = AsyncMock(
+            return_value=MagicMock(post=AsyncMock(return_value=MagicMock(status_code=201)))
+        )
+        mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        resp = await client.post(
+            "/projects",
+            json={
+                "name": "  Context-rich project  ",
+                "flow_id": str(flow_id),
+                "config": {"repository_url": "https://github.com/org/repo"},
+                "initial_context": [
+                    {
+                        "item_type": "text",
+                        "name": "Requirements",
+                        "content_text": "Build a safe project workspace.",
+                        "tags": ["requirements"],
+                    }
+                ],
+            },
+        )
+
+    assert resp.status_code == 201
+    request = storage.create_project.await_args.kwargs
+    assert request["name"] == "Context-rich project"
+    assert request["initial_context"][0]["item_type"] == "TEXT"
+    assert request["initial_context"][0]["created_by"] == "human"
+    assert request["config"]["repository_url"].endswith("/repo")
+
+
+@pytest.mark.anyio
+async def test_create_project_provisions_managed_git_workspace(client):
+    """Creation provisions the project-scoped Git workspace before the workflow starts."""
+    storage = _make_storage()
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+    provision = AsyncMock(
+        return_value={
+            "initialized": True,
+            "workspace_path": "/workspace/project-1",
+            "workspace_relative_path": "project-1",
+            "branch": "main",
+            "head": "abc123",
+            "remote": None,
+            "clean": True,
+        }
+    )
+
+    with patch("orchestrator_api.main._invoke_project_repository_tool", provision), patch(
+        "httpx.AsyncClient"
+    ) as mock_http:
+        mock_http.return_value.__aenter__ = AsyncMock(
+            return_value=MagicMock(post=AsyncMock(return_value=MagicMock(status_code=201)))
+        )
+        mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        resp = await client.post(
+            "/projects",
+            json={
+                "name": "Git project",
+                "workspace": {"mode": "init", "branch": "main"},
+            },
+        )
+
+    assert resp.status_code == 201
+    provision.assert_awaited_once()
+    assert provision.await_args.kwargs["operation"] == "init"
+    assert storage.create_project.await_args.kwargs["config"]["workspace"]["status"] == "PROVISIONING"
+
+
 # ── GET /projects ──────────────────────────────────────────────────────────────
 
 
@@ -447,6 +557,29 @@ async def test_delete_project_happy_path(client):
     assert resp.status_code == 200
     assert resp.json()["status"] == "deleted"
     storage.delete_project.assert_awaited_once_with(PROJECT_ID)
+
+
+@pytest.mark.anyio
+async def test_delete_project_cleans_up_managed_workspace(client):
+    """Deleting a project removes its project-scoped Git workspace first."""
+    project = _fake_project("ARCHIVED")
+    project["config"] = {
+        "workspace": {
+            "mode": "init",
+            "workspace_relative_path": str(PROJECT_ID),
+            "remote_name": "origin",
+        }
+    }
+    storage = _make_storage(project=project)
+    _patch_state(storage)
+    cleanup = AsyncMock(return_value={"removed": True})
+
+    with patch("orchestrator_api.main._invoke_project_repository_tool", cleanup):
+        resp = await client.delete(f"/projects/{PROJECT_ID}")
+
+    assert resp.status_code == 200
+    cleanup.assert_awaited_once()
+    assert cleanup.await_args.kwargs["operation"] == "remove"
 
 
 @pytest.mark.anyio

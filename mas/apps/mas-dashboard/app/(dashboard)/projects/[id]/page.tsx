@@ -96,7 +96,7 @@ interface Decision {
 interface ContextItem {
   id: string;
   project_id: string;
-  item_type: "FILE" | "URL" | "TEXT" | "DOCUMENT";
+  item_type: string;
   name: string;
   description?: string;
   mime_type?: string;
@@ -109,6 +109,14 @@ interface ContextItem {
   tags?: string[];
   created_by: string;
   created_at: string;
+  updated_at?: string;
+  source?: "context" | "document" | string;
+  read_only?: boolean;
+  document_id?: string;
+  doc_type?: string;
+  version?: number;
+  status?: string;
+  lineage_id?: string;
 }
 
 interface Project {
@@ -120,7 +128,24 @@ interface Project {
   updated_at: string;
 }
 
+interface RepositorySummary {
+  status?: string;
+  mode?: "clone" | "init" | "none" | string;
+  repository_url?: string;
+  workspace_path?: string;
+  workspace_relative_path?: string;
+  initialized?: boolean;
+  remote?: string | null;
+  remote_name?: string;
+  branch?: string | null;
+  head?: string | null;
+  clean?: boolean | null;
+  changes?: string[];
+  error?: string;
+}
+
 interface WorkspaceSummary {
+  repository?: RepositorySummary | null;
   next_actions: Array<{ kind: string; label: string; severity: string }>;
   pending_approvals: Decision[];
   recent_activity: Array<{
@@ -240,6 +265,7 @@ export default function ProjectDetailPage() {
   >("activity");
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(
     null,
@@ -271,10 +297,14 @@ export default function ProjectDetailPage() {
   const [bulkContextError, setBulkContextError] = useState("");
 
   const contextItemIds = useMemo(
-    () => contextItems.map((c) => c.id),
+    () => contextItems.filter((c) => !c.read_only).map((c) => c.id),
     [contextItems],
   );
   const contextSelection = useBulkSelection(contextItemIds);
+  const generatedDocumentCount = useMemo(
+    () => contextItems.filter((item) => item.read_only).length,
+    [contextItems],
+  );
   useEffect(() => {
     contextSelection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -398,9 +428,16 @@ export default function ProjectDetailPage() {
   const loadWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
-      const res = await fetch(`/api/projects/${id}/workspace`);
+      const [res, repositoryRes] = await Promise.all([
+        fetch(`/api/projects/${id}/workspace`),
+        fetch(`/api/projects/${id}/repository`),
+      ]);
       if (res.ok) {
         const data = await res.json();
+        if (repositoryRes.ok) {
+          const repositoryData = await repositoryRes.json();
+          data.repository = repositoryData.workspace ?? null;
+        }
         // Validate workspace data structure - ensure required fields exist
         if (data && typeof data === "object" && "recent_activity" in data) {
           setWorkspace(data);
@@ -418,6 +455,28 @@ export default function ProjectDetailPage() {
       setWorkspaceLoading(false);
     }
   }, [id]);
+
+  async function handleRepositoryAction(operation: "sync" | "status") {
+    setActionLoading(`repository-${operation}`);
+    setRepositoryError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/repository`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRepositoryError(data.error || `Git ${operation} failed`);
+      } else {
+        await loadWorkspace();
+      }
+    } catch {
+      setRepositoryError(`Git ${operation} failed`);
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   const completedNodeIds = useMemo(
     () =>
@@ -1198,6 +1257,72 @@ export default function ProjectDetailPage() {
 
           {workspaceSubTab === "resources" && (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="dashboard-surface p-4 md:col-span-2">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <h2 className="text-sm font-medium text-white">
+                      Git Workspace
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Source code lives in the project-scoped tool workspace and is managed through the Git adapter.
+                    </p>
+                  </div>
+                  {workspace?.repository && (
+                    <button
+                      type="button"
+                      onClick={() => handleRepositoryAction("sync")}
+                      disabled={
+                        !!actionLoading ||
+                        !workspace.repository.initialized ||
+                        !workspace.repository.remote
+                      }
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-300 border border-blue-700/60 bg-blue-500/10 rounded-lg hover:bg-blue-500/20 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} />
+                      {actionLoading === "repository-sync" ? "Syncing…" : "Sync"}
+                    </button>
+                  )}
+                </div>
+                {repositoryError && (
+                  <div className="mb-3 rounded-lg border border-rose-800/70 bg-rose-950/30 px-3 py-2 text-xs text-rose-200">
+                    {repositoryError}
+                  </div>
+                )}
+                {!workspace?.repository ? (
+                  <div className="text-xs text-slate-500">
+                    No managed Git workspace is configured for this project.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-slate-500">Location</div>
+                      <div className="text-slate-200 mt-1 break-all">
+                        {workspace.repository.workspace_path || workspace.repository.workspace_relative_path || "pending"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Status</div>
+                      <div className="text-slate-200 mt-1">
+                        {workspace.repository.status || "unknown"}
+                        {workspace.repository.clean === false && " · uncommitted changes"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Remote</div>
+                      <div className="text-slate-200 mt-1 break-all">
+                        {workspace.repository.remote || workspace.repository.repository_url || "local repository"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500">Branch / commit</div>
+                      <div className="text-slate-200 mt-1 break-all">
+                        {workspace.repository.branch || "unknown"}
+                        {workspace.repository.head ? ` · ${workspace.repository.head.slice(0, 12)}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="dashboard-surface p-4">
                 <h2 className="text-sm font-medium text-white mb-3">
                   Artifacts
@@ -2091,8 +2216,14 @@ export default function ProjectDetailPage() {
               <div className="text-sm text-slate-400">
                 {contextItems.length} context item
                 {contextItems.length === 1 ? "" : "s"} attached to this project
+                {generatedDocumentCount > 0 && (
+                  <span className="text-xs text-slate-500">
+                    · {generatedDocumentCount} generated document
+                    {generatedDocumentCount === 1 ? "" : "s"}
+                  </span>
+                )}
               </div>
-              {contextItems.length > 0 && (
+              {contextItemIds.length > 0 && (
                 <button
                   type="button"
                   onClick={contextSelection.toggleAll}
@@ -2122,7 +2253,7 @@ export default function ProjectDetailPage() {
           {contextSelection.selectedCount > 0 && (
             <BulkActionBar
               selectedCount={contextSelection.selectedCount}
-              totalCount={contextItems.length}
+              totalCount={contextItemIds.length}
               loading={bulkContextDeleting}
               action="delete"
               onAction={handleBulkDeleteContextItems}
@@ -2253,37 +2384,50 @@ export default function ProjectDetailPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {contextItems.map((item) => {
                 const isSelected = contextSelection.selected.has(item.id);
+                const itemType = String(item.item_type || "TEXT").toUpperCase();
+                const isGeneratedDocument = Boolean(item.read_only || item.source === "document");
                 return (
                   <div
                     key={item.id}
                     className={clsx(
                       "bg-slate-900 border rounded-xl p-4 transition-colors",
+                      isGeneratedDocument && "border-indigo-800/80 bg-indigo-950/10",
                       isSelected
                         ? "border-blue-500/60 bg-blue-950/30"
-                        : "border-slate-800",
+                        : !isGeneratedDocument && "border-slate-800",
                     )}
                   >
                     <div className="flex items-start gap-3">
                       <div className="pt-1">
-                        <RowCheckbox
-                          checked={isSelected}
-                          onChange={() => contextSelection.toggle(item.id)}
-                          ariaLabel={`Select ${item.name}`}
-                        />
+                        {isGeneratedDocument ? (
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center text-indigo-400"
+                            title="Generated documents are read-only here"
+                            aria-label="Generated document"
+                          >
+                            <FileText size={14} />
+                          </span>
+                        ) : (
+                          <RowCheckbox
+                            checked={isSelected}
+                            onChange={() => contextSelection.toggle(item.id)}
+                            ariaLabel={`Select ${item.name}`}
+                          />
+                        )}
                       </div>
                       <div
                         className={clsx(
                           "p-2 rounded-lg",
-                          item.item_type === "FILE"
+                          itemType === "DOCUMENT"
+                            ? "bg-indigo-900/30 text-indigo-300"
+                            : itemType === "FILE"
                             ? "bg-blue-900/30 text-blue-400"
-                            : item.item_type === "URL"
+                            : itemType === "URL"
                               ? "bg-purple-900/30 text-purple-400"
                               : "bg-amber-900/30 text-amber-400",
                         )}
                       >
-                        {item.item_type === "FILE" ? (
-                          <FileText size={16} />
-                        ) : item.item_type === "URL" ? (
+                        {itemType === "URL" ? (
                           <LinkIcon size={16} />
                         ) : (
                           <FileText size={16} />
@@ -2294,9 +2438,16 @@ export default function ProjectDetailPage() {
                           {item.name}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
-                          {item.item_type}
+                          {isGeneratedDocument
+                            ? `${item.doc_type || itemType} · v${item.version || 1}`
+                            : itemType}
                           {item.size_bytes &&
                             ` · ${(item.size_bytes / 1024).toFixed(1)} KB`}
+                          {isGeneratedDocument && item.status && (
+                            <span className="ml-2 rounded bg-indigo-900/40 px-1.5 py-0.5 text-indigo-300">
+                              {item.status.replace(/_/g, " ")}
+                            </span>
+                          )}
                         </div>
                         {item.description && (
                           <div className="text-xs text-slate-400 mt-1 line-clamp-2">
@@ -2315,15 +2466,22 @@ export default function ProjectDetailPage() {
                             ))}
                           </div>
                         )}
+                        {isGeneratedDocument && item.blob_key && (
+                          <div className="mt-2 truncate text-xxs text-indigo-300/70" title={item.blob_key}>
+                            {item.blob_key}
+                          </div>
+                        )}
                       </div>
-                      <button
-                        onClick={() => handleDeleteContextItem(item.id)}
-                        disabled={actionLoading === `delete-${item.id}`}
-                        title="Delete"
-                        className="p-1 text-slate-500 hover:text-red-400"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {!isGeneratedDocument && (
+                        <button
+                          onClick={() => handleDeleteContextItem(item.id)}
+                          disabled={actionLoading === `delete-${item.id}`}
+                          title="Delete"
+                          className="p-1 text-slate-500 hover:text-red-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
