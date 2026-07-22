@@ -804,20 +804,6 @@ async def test_worker_full_lifecycle(client):
     assert resp7.json()[0]["status"] == "ACTIVE"
 
 
-# ── 14. TODO: Forbidden tool policy (production gap) ──────────────────────────
-
-
-@pytest.mark.skip(
-    reason=(
-        "TODO: No tool policy enforcement exists in the worker registration path. "
-        "The API currently accepts any capability regardless of risk_level or required_role. "
-        "Production gap: POST /capabilities/workers should reject capabilities with "
-        "risk_level='critical' unless the worker has an approved evaluation_status, "
-        "or tools that are in a platform-level denylist. "
-        "Implement WorkerToolPolicy validation in RegisterWorkerRequest handling "
-        "and add a test asserting 422/403 for disallowed tool assignments."
-    )
-)
 @pytest.mark.anyio
 async def test_assigning_forbidden_tool_is_rejected(client):
     """Registering a worker with a tool in the forbidden-tools denylist → 422/403."""
@@ -831,9 +817,10 @@ async def test_assigning_forbidden_tool_is_rejected(client):
         json={
             "name": "rogue_worker",
             "adapter_type": "process",
-            "capability_ids": [],  # would reference a critical-risk capability
-            "forbidden_tool": "system.exec",  # placeholder for policy enforcement
+            "capability_ids": [],
+            "required_tools": ["project.create"],
         },
     )
-    # When implemented, this should return 422 or 403
-    assert resp.status_code in (422, 403)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "WORKER_TOOL_GRANT_FORBIDDEN"
+    storage.register_worker.assert_not_awaited()

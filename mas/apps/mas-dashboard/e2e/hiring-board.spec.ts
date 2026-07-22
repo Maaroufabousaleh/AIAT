@@ -21,6 +21,7 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
   await page
     .getByPlaceholder("https://github.com/org/repo")
     .fill("https://github.com/octocat/Hello-World");
+  await page.getByTestId("worker-version-pin").fill("v1.0.0");
   await page.getByPlaceholder("WorkerAgent").fill("adapter.main:E2EWorker");
   await page
     .getByRole("button", { name: /^register worker$/i })
@@ -47,10 +48,9 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
 
   await row.getByRole("button", { name: `Activate ${candidateId}` }).click();
   await expect(
-    page.getByText(
-      "External worker activation is blocked until evaluation is approved",
-    ),
+    page.getByText("Worker activation requires current governed records"),
   ).toBeVisible();
+  await expect(page.getByText("missing active immutable WorkerShell")).toBeVisible();
 
   await page.goto("/ceo/chat");
   const ceoInput = page.getByRole("textbox");

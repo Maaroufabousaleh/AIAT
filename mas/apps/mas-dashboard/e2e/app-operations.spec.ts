@@ -189,6 +189,12 @@ test.describe("Operational UI smoke flows", () => {
     ]) {
       await expect(page.getByText(label, { exact: true })).toBeVisible();
     }
+
+    await page.getByTestId("project-tab-evidence").click();
+    await expect(
+      page.getByRole("heading", { name: "Completion Evidence" }),
+    ).toBeVisible();
+    await expect(page.getByText(/worker runs terminal/i)).toBeVisible();
   });
 
   test("system, logs, metrics, and DLQ pages load operational controls", async ({

@@ -3133,6 +3133,33 @@ class AgentStorage:
             await conn.execute(t.worker_shell_versions.insert().values(**values))
         return values
 
+    async def get_worker_shell_version(self, shell_version_id: UUID) -> dict[str, Any] | None:
+        """Return an immutable Specialist Shell version by its selected ID."""
+        return await self._get_table_row(
+            t.worker_shell_versions,
+            t.worker_shell_versions.c.id,
+            shell_version_id,
+        )
+
+    async def get_worker_shell_version_by_version(
+        self,
+        worker_id: UUID,
+        version: str,
+    ) -> dict[str, Any] | None:
+        """Return one immutable shell using its worker-scoped version."""
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.worker_shell_versions.select().where(
+                        sa.and_(
+                            t.worker_shell_versions.c.worker_id == worker_id,
+                            t.worker_shell_versions.c.version == version,
+                        )
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row else None
+
     async def create_runtime_adapter(self, *, worker_id: UUID, version: str, adapter_type: str, transport_type: str, content_hash: str, runtime_api_version: str | None = None, implementation_ref: str | None = None, capabilities: dict[str, Any] | None = None, conformance_status: str = "pending", conformance: dict[str, Any] | None = None, status: str = "candidate") -> dict[str, Any]:
         values = {
             "id": uuid4(),
@@ -3363,6 +3390,21 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             row = (await conn.execute(query)).mappings().first()
         return dict(row) if row else None
+
+    async def list_skill_bundles(
+        self,
+        worker_id: UUID,
+        *,
+        steward_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """List immutable bundle versions for controlled candidate recovery."""
+        query = t.skill_bundles.select().where(t.skill_bundles.c.worker_id == worker_id)
+        if steward_id is not None:
+            query = query.where(t.skill_bundles.c.steward_id == steward_id)
+        query = query.order_by(t.skill_bundles.c.created_at.desc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     async def create_skill_bundle_candidate(self, *, candidate_id: UUID, skill_bundle_id: UUID, worker_id: UUID, adapter_id: UUID | None, intake_status: str, diff: dict[str, Any], evidence: dict[str, Any], certification_run_id: UUID | None = None, approval_record_id: UUID | None = None, candidate_json: dict[str, Any] | None = None) -> dict[str, Any]:
         evidence_json = dict(evidence)
@@ -3751,6 +3793,25 @@ class AgentStorage:
             ).mappings().first()
             if candidate is None or candidate["approval_record_id"] is None:
                 return None
+            candidate_evidence = dict(candidate.get("evidence_json") or {})
+            shell_version_raw = candidate_evidence.get("worker_shell_version_id")
+            try:
+                shell_version_id = UUID(str(shell_version_raw))
+            except (TypeError, ValueError):
+                return None
+            shell = (
+                await conn.execute(
+                    t.worker_shell_versions.select()
+                    .where(t.worker_shell_versions.c.id == shell_version_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                shell is None
+                or shell["worker_id"] != worker_id
+                or shell["status"] != "active"
+            ):
+                return None
             steward = (
                 await conn.execute(
                     t.steward_agents.select()
@@ -3797,6 +3858,7 @@ class AgentStorage:
                 t.worker_registry.update()
                 .where(t.worker_registry.c.id == worker_id)
                 .values(
+                    active_shell_version_id=shell_version_id,
                     active_adapter_id=candidate["adapter_id"],
                     active_skill_bundle_id=candidate["skill_bundle_id"],
                     updated_at=datetime.now(tz=UTC),
@@ -3886,7 +3948,7 @@ class AgentStorage:
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        allowed = {"CREATED": {"VALIDATING", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSING": {"PAUSED", "FAILED", "CANCELLED"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
+        allowed = {"CREATED": {"VALIDATING", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             current = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == run_id).with_for_update())).mappings().first()

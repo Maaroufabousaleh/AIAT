@@ -58,6 +58,38 @@ interface FlowTemplate {
   edges: Array<{ sourceIndex: number; targetIndex: number; label?: string }>;
 }
 
+interface FlowDryRunResult {
+  valid: boolean;
+  errors: Array<{ code: string; message: string; node_id?: string }>;
+  warnings: Array<{ code: string; message: string; node_id?: string }>;
+}
+
+interface GovernedWorkerOption {
+  id: string;
+  name: string;
+  status?: string;
+  model_mode?: string;
+  model_profile_id?: string | null;
+  adapter_type?: string;
+  active_adapter_id?: string | null;
+  active_skill_bundle_id?: string | null;
+}
+
+interface GovernedModelProfile {
+  profile_id: string;
+  status?: string;
+  purpose?: string;
+  versions?: Array<{ version?: string; status?: string }>;
+}
+
+function csvValues(value: unknown): string {
+  return Array.isArray(value) ? value.join(", ") : "";
+}
+
+function parseCsv(value: string): string[] {
+  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
 const FLOW_TEMPLATES: FlowTemplate[] = [
   {
     id: "blank",
@@ -205,11 +237,46 @@ export default function NewFlowPage() {
   const [showConfig, setShowConfig] = useState(false);
   const [nodeConfig, setNodeConfig] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [dryRunning, setDryRunning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<FlowDryRunResult | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [rawSwitchCases, setRawSwitchCases] = useState("");
   const [showTemplates, setShowTemplates] = useState(true);
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
+  const [governedWorkers, setGovernedWorkers] = useState<GovernedWorkerOption[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
+  const [governanceLoading, setGovernanceLoading] = useState(true);
+  const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadGovernanceOptions() {
+      setGovernanceLoading(true);
+      try {
+        const [workersResponse, profilesResponse] = await Promise.all([
+          fetch("/api/workers", { signal: controller.signal }),
+          fetch("/api/governance/model-profiles", { signal: controller.signal }),
+        ]);
+        if (!workersResponse.ok || !profilesResponse.ok) {
+          throw new Error("The worker registry or Model Profile catalog is unavailable");
+        }
+        const workers = await workersResponse.json();
+        const profiles = await profilesResponse.json();
+        setGovernedWorkers(Array.isArray(workers) ? workers : []);
+        setModelProfiles(Array.isArray(profiles) ? profiles : []);
+        setGovernanceLoadError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setGovernanceLoadError(error instanceof Error ? error.message : "Could not load governed worker options");
+        }
+      } finally {
+        if (!controller.signal.aborted) setGovernanceLoading(false);
+      }
+    }
+    void loadGovernanceOptions();
+    return () => controller.abort();
+  }, []);
 
   /**
    * Apply a template by replacing the current canvas with the template's
@@ -401,6 +468,41 @@ export default function NewFlowPage() {
     }
   };
 
+  const handleDryRun = async () => {
+    if (nodes.length === 0) {
+      setValidationError("Add at least one node before validating the flow");
+      return;
+    }
+    setValidationError(null);
+    setDryRunResult(null);
+    setDryRunning(true);
+    try {
+      const definition = convertReactFlowToFlow(nodes, edges);
+      const response = await fetch("/api/flows/dry-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ definition_json: definition }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload) {
+        setValidationError(payload?.error || payload?.detail || "Could not validate the flow");
+        return;
+      }
+      const result = payload as FlowDryRunResult;
+      setDryRunResult(result);
+      if (!result.valid) {
+        setValidationError(
+          result.errors.map((error) => error.message).join("; ") ||
+            "The flow is not ready to run",
+        );
+      }
+    } catch {
+      setValidationError("Network error while validating the flow");
+    } finally {
+      setDryRunning(false);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col dashboard-page">
       <div className="px-4 pt-4 pb-3">
@@ -453,6 +555,21 @@ export default function NewFlowPage() {
                 />
                 Active
               </label>
+              <button
+                onClick={handleDryRun}
+                disabled={dryRunning}
+                aria-busy={dryRunning}
+                data-testid="flow-dry-run-button"
+                className={clsx(
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+                  dryRunning
+                    ? "border-slate-700 text-slate-500 cursor-wait"
+                    : "border-slate-600 text-slate-200 hover:text-white hover:border-slate-400 hover:bg-slate-800"
+                )}
+              >
+                <ShieldCheck size={14} aria-hidden="true" />
+                {dryRunning ? "Validating…" : "Validate readiness"}
+              </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
@@ -619,8 +736,18 @@ export default function NewFlowPage() {
 
       {validationError && (
         <div className="px-4 pb-3">
-          <ErrorBanner tone="error" title="Cannot create flow">
+          <ErrorBanner tone="error" title={dryRunResult ? "Flow is not ready" : "Cannot create flow"}>
             {validationError}
+          </ErrorBanner>
+        </div>
+      )}
+
+      {dryRunResult && !validationError && (
+        <div className="px-4 pb-3" data-testid="flow-dry-run-result">
+          <ErrorBanner tone="info" icon={ShieldCheck} title="Flow is ready to run">
+            {dryRunResult.warnings.length > 0
+              ? `${dryRunResult.warnings.length} compatibility warning${dryRunResult.warnings.length === 1 ? "" : "s"} recorded.`
+              : "Topology, assignments, certified adapters, capabilities, checkpoints, and model policy passed the dry run."}
           </ErrorBanner>
         </div>
       )}
@@ -708,6 +835,101 @@ export default function NewFlowPage() {
 
             {selectedNode.data.type === "task" && (
               <>
+                <div className="rounded-md border border-blue-900/70 bg-blue-950/20 p-2.5 text-xs text-blue-100">
+                  <div className="font-medium">Governed worker assignment</div>
+                  <p className="mt-1 text-blue-200/70 leading-relaxed">
+                    Select a certified worker and Model Profile. Readiness validation checks the selected immutable runtime records before this flow can run.
+                  </p>
+                </div>
+                {governanceLoadError && (
+                  <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200">
+                    {governanceLoadError}. You can still enter a legacy team/action assignment, but it cannot pass governed readiness.
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Assigned Worker</label>
+                  <select
+                    value={(nodeConfig.worker_id as string) || ""}
+                    onChange={(event) => {
+                      const selected = governedWorkers.find((worker) => worker.id === event.target.value);
+                      const next: Record<string, unknown> = {
+                        ...nodeConfig,
+                        worker_id: event.target.value || undefined,
+                        team_id: undefined,
+                      };
+                      if (selected?.model_mode) next.model_mode = selected.model_mode;
+                      if (selected?.model_profile_id) next.model_profile_id = selected.model_profile_id;
+                      updateNodeConfig(next);
+                    }}
+                    disabled={governanceLoading}
+                    data-testid="task-worker-select"
+                    className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white transition-colors"
+                  >
+                    <option value="">{governanceLoading ? "Loading workers…" : "Select a governed worker"}</option>
+                    {governedWorkers.map((worker) => (
+                      <option key={worker.id} value={worker.id}>
+                        {worker.name} · {worker.status || "UNKNOWN"} · {worker.adapter_type || "runtime"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Model Mode</label>
+                  <select
+                    value={(nodeConfig.model_mode as string) || "aiat_gateway"}
+                    onChange={(event) => updateNodeConfig({ ...nodeConfig, model_mode: event.target.value, ...(event.target.value === "none" ? { model_profile_id: undefined } : {}) })}
+                    data-testid="task-model-mode-select"
+                    className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white transition-colors"
+                  >
+                    <option value="aiat_gateway">AIAT gateway</option>
+                    <option value="certified_external_runtime">Certified external runtime</option>
+                    <option value="hybrid">Hybrid</option>
+                    <option value="none">No model</option>
+                  </select>
+                </div>
+                {(nodeConfig.model_mode as string || "aiat_gateway") !== "none" && (
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Model Profile</label>
+                    <select
+                      value={(nodeConfig.model_profile_id as string) || ""}
+                      onChange={(event) => updateNodeConfig({ ...nodeConfig, model_profile_id: event.target.value || undefined })}
+                      disabled={governanceLoading}
+                      data-testid="task-model-profile-select"
+                      className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white transition-colors"
+                    >
+                      <option value="">Select approved Model Profile</option>
+                      {modelProfiles.filter((profile) => profile.status === "approved").map((profile) => (
+                        <option key={profile.profile_id} value={profile.profile_id}>
+                          {profile.profile_id}{profile.purpose ? ` · ${profile.purpose}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Task Type</label>
+                  <input value={(nodeConfig.task_type as string) || ""} onChange={(e) => updateNodeConfig({ ...nodeConfig, task_type: e.target.value })} placeholder="code_review" data-testid="task-type-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Required Capabilities</label>
+                  <input value={csvValues(nodeConfig.required_capabilities)} onChange={(e) => updateNodeConfig({ ...nodeConfig, required_capabilities: parseCsv(e.target.value) })} placeholder="qa.test_execute, artifact.capture" data-testid="task-capabilities-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Workspace Mode</label>
+                  <select value={(nodeConfig.project_workspace_mode as string) || "isolated"} onChange={(e) => updateNodeConfig({ ...nodeConfig, project_workspace_mode: e.target.value })} data-testid="task-workspace-mode-select" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white transition-colors">
+                    <option value="isolated">Isolated</option>
+                    <option value="shared_readonly">Shared read-only</option>
+                    <option value="approved_write">Approved write</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Permission Requirements</label>
+                  <input value={csvValues(nodeConfig.permission_requirements)} onChange={(e) => updateNodeConfig({ ...nodeConfig, permission_requirements: parseCsv(e.target.value) })} placeholder="repository.read" data-testid="task-permissions-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Tool Grants</label>
+                  <input value={csvValues(nodeConfig.tool_grants)} onChange={(e) => updateNodeConfig({ ...nodeConfig, tool_grants: parseCsv(e.target.value) })} placeholder="opencode.workspace_read" data-testid="task-tool-grants-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Team ID</label>
                   <input value={(nodeConfig.team_id as string) || ""} onChange={(e) => updateNodeConfig({ ...nodeConfig, team_id: e.target.value })} placeholder="office_cto" data-testid="task-team-id-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
@@ -722,7 +944,75 @@ export default function NewFlowPage() {
                 </div>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Retries</label>
-                  <input type="number" value={Number(nodeConfig.retries) || 0} onChange={(e) => updateNodeConfig({ ...nodeConfig, retries: parseInt(e.target.value) || 0 })} placeholder="3" data-testid="task-retries-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                  <input type="number" min="0" value={Number(nodeConfig.retries) || 0} onChange={(e) => {
+                    const retries = Math.max(0, parseInt(e.target.value, 10) || 0);
+                    const current = (nodeConfig.retry_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, retries, retry_policy: { ...current, max_attempts: retries + 1 } });
+                  }} placeholder="3" data-testid="task-retries-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                  <p className="mt-1 text-xxs text-slate-500">Retries are persisted as a governed retry policy with the same immutable run idempotency scope.</p>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Retry Strategies</label>
+                  <input value={csvValues((nodeConfig.retry_policy as { strategies?: string[] } | undefined)?.strategies)} onChange={(e) => {
+                    const current = (nodeConfig.retry_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, retry_policy: { ...current, strategies: parseCsv(e.target.value) } });
+                  }} placeholder="same_version, checkpoint" data-testid="task-retry-strategies-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Retry Backoff (seconds)</label>
+                  <input type="number" min="0" value={Number((nodeConfig.retry_policy as { backoff_seconds?: number } | undefined)?.backoff_seconds) || ""} onChange={(e) => {
+                    const current = (nodeConfig.retry_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, retry_policy: { ...current, backoff_seconds: Math.max(0, Number(e.target.value) || 0) } });
+                  }} placeholder="15" data-testid="task-retry-backoff-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Budget Limit (USD)</label>
+                  <input type="number" min="0" step="0.01" value={Number((nodeConfig.budget as { max_cost_usd?: number } | undefined)?.max_cost_usd) || ""} onChange={(e) => {
+                    const current = (nodeConfig.budget as Record<string, number> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, budget: { ...current, max_cost_usd: Math.max(0, Number(e.target.value) || 0) } });
+                  }} placeholder="5.00" data-testid="task-budget-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Checkpoint Mode</label>
+                  <select value={(nodeConfig.checkpoint_policy as { mode?: string } | undefined)?.mode || "unsupported"} onChange={(e) => {
+                    const current = (nodeConfig.checkpoint_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, checkpoint_policy: { ...current, mode: e.target.value } });
+                  }} data-testid="task-checkpoint-mode-select" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white transition-colors">
+                    <option value="unsupported">Unsupported</option>
+                    <option value="restart_only">Restart only</option>
+                    <option value="wrapper">Adapter wrapper</option>
+                    <option value="native">Native checkpoint</option>
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={Boolean((nodeConfig.checkpoint_policy as { required?: boolean } | undefined)?.required)} onChange={(e) => {
+                    const current = (nodeConfig.checkpoint_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, checkpoint_policy: { ...current, required: e.target.checked } });
+                  }} data-testid="task-checkpoint-required" />
+                  Require a checkpoint before completion
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={(nodeConfig.cancellation_policy as { cooperative?: boolean } | undefined)?.cooperative !== false} onChange={(e) => {
+                    const current = (nodeConfig.cancellation_policy as Record<string, unknown> | undefined) || {};
+                    updateNodeConfig({ ...nodeConfig, cancellation_policy: { ...current, cooperative: e.target.checked } });
+                  }} data-testid="task-cooperative-cancel" />
+                  Require cooperative cancellation
+                </label>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Force Cancellation After (seconds)</label>
+                  <input type="number" min="1" value={Number((nodeConfig.cancellation_policy as { force_after_seconds?: number } | undefined)?.force_after_seconds) || ""} onChange={(e) => {
+                    const current = (nodeConfig.cancellation_policy as Record<string, unknown> | undefined) || {};
+                    const value = parseInt(e.target.value, 10);
+                    updateNodeConfig({ ...nodeConfig, cancellation_policy: { ...current, force_after_seconds: Number.isFinite(value) && value > 0 ? value : undefined } });
+                  }} placeholder="60" data-testid="task-force-cancel-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Required Artifacts</label>
+                  <input value={csvValues(((nodeConfig.artifact_expectations as Array<{ name?: string }> | undefined) || []).map((artifact) => artifact.name || ""))} onChange={(e) => updateNodeConfig({ ...nodeConfig, artifact_expectations: parseCsv(e.target.value).map((name) => ({ name, required: true })) })} placeholder="test-report.xml, coverage.json" data-testid="task-artifacts-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Completion Criterion</label>
+                  <input value={String((nodeConfig.completion_criteria as { required_output?: string } | undefined)?.required_output || "")} onChange={(e) => updateNodeConfig({ ...nodeConfig, completion_criteria: { required_output: e.target.value } })} placeholder="all required tests pass" data-testid="task-completion-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
                 </div>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Escalate To Team</label>

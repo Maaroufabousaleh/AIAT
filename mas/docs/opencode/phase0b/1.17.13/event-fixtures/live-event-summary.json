@@ -1,0 +1,29 @@
+{
+  "capture_kind": "normalized_live_event_summary",
+  "event_types": {
+    "coding": [
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "server.connected",
+      "session.diff",
+      "session.status",
+      "session.updated",
+      "sync"
+    ],
+    "tool_mediation": [
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "server.connected",
+      "session.diff",
+      "session.status",
+      "session.updated",
+      "sync"
+    ]
+  },
+  "headers_persisted": false,
+  "payload_content_persisted": false,
+  "release": "1.17.13",
+  "schema_version": "1.0"
+}

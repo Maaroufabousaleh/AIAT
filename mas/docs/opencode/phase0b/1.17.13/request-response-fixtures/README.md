@@ -1,6 +1,7 @@
 # OpenCode request/response fixtures
 
-This directory is reserved for sanitized session, prompt, permission, and
-artifact request/response fixtures captured by a future fully approved live
-certification. Credentials, prompts, source files, and unredacted headers are
-never committed.
+`live-interface-summary.json` is emitted only by the successful Phase 0B live
+certifier. It records sanitized operation status and bridge behavior, never
+request/response bodies, prompts, source files, unredacted headers, or
+credentials. Its SHA-256 is bound into `live-certification-evidence.json` and
+checked by the verifier before the interface report can be approved.

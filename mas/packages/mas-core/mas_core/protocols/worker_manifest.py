@@ -32,7 +32,7 @@ class WorkerMetadata(BaseModel):
 
 
 class WorkerRuntime(BaseModel):
-    transport: Literal["process", "http", "oci", "mcp", "human"] = "process"
+    transport: Literal["native", "process", "http", "oci", "mcp", "opencode", "human"] = "process"
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=300, ge=1)
     stop_grace_seconds: int = Field(default=60, ge=1)
@@ -47,7 +47,7 @@ class WorkerIntegration(BaseModel):
     # langgraph/crewai/autogen/letta: Epsilon advanced runtime modes
     isolation_mode: Literal[
         "native", "wrapper", "fork",
-        "langgraph", "crewai", "autogen", "letta",
+        "langgraph", "crewai", "autogen", "letta", "opencode",
     ] = "native"
     contract_version: str = "aiat.worker.v1"
     adapter_api_version: str = "aiat.adapter.v1"

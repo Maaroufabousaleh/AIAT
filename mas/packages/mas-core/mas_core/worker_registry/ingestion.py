@@ -178,7 +178,8 @@ async def check_for_updates(
         {"has_updates": bool, "latest_commit": str, "current_commit": str}
     """
     ref = current_revision or "HEAD"
-    output = await _run_git("ls-remote", source_repo, ref)
+    # ``--`` prevents an untrusted source string from becoming a git option.
+    output = await _run_git("ls-remote", "--", source_repo, ref)
     if not output:
         raise RuntimeError(f"git ls-remote returned no output for {source_repo}")
     latest_commit = output.split()[0]

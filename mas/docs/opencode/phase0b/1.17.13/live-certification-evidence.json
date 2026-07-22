@@ -10,7 +10,7 @@
     "missing_grant_status": 403,
     "tampered_grant_status": 403
   },
-  "captured_at": "2026-07-22T00:07:36.737757+00:00",
+  "captured_at": "2026-07-22T03:43:12.282342+00:00",
   "cleanup": {
     "workspace_removed": true
   },
@@ -37,7 +37,7 @@
     "native_tool_calls": 0,
     "pytest_exit_code": 0,
     "pytest_passed": 2,
-    "session_id": "ses_078dc04c0ffepv82Ks7giVgESI",
+    "session_id": "ses_07815a50effeQbnKJJP750wmqf",
     "traversal_probe_rejected": true,
     "workspace_pytest_calls": 1,
     "workspace_read_calls": 1,
@@ -58,6 +58,16 @@
     "model_version_status": "approved",
     "unsafe_active_external_workers": 0
   },
+  "fixtures": {
+    "refs": [
+      "event-fixtures/live-event-summary.json",
+      "request-response-fixtures/live-interface-summary.json"
+    ],
+    "sha256": {
+      "event-fixtures/live-event-summary.json": "23bdd391c1f48ecc58d19a7886e5dc807e208e331776b37374448d0fb6742143",
+      "request-response-fixtures/live-interface-summary.json": "dd8ad620012f485b056c28820b96ab3a672fa3fe063044d6d0d4aec20132b16b"
+    }
+  },
   "gates": {
     "allowed_tool": true,
     "authentication": true,
@@ -77,8 +87,8 @@
     "unsafe_worker_count": true
   },
   "migration": {
-    "live_database_head": "0018_ext_provenance_unique",
-    "source_head": "0018_ext_provenance_unique"
+    "live_database_head": "0019_block_universal_contract",
+    "source_head": "0019_block_universal_contract"
   },
   "pins": {
     "binary_sha256": "f8c45bae73a8f1e2088023fdd34dc2fe0a7f93f505f073e0703e4e1a19afe8ff",
@@ -111,7 +121,7 @@
       "sync"
     ],
     "native_tool_calls": 0,
-    "session_id": "ses_078dcdc9affeWjqPEwJa8ABvst"
+    "session_id": "ses_078163863ffel3EET4fD37EUvP"
   },
   "workspace_contents_persisted": false
 }

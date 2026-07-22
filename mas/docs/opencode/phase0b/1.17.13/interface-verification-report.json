@@ -1,5 +1,5 @@
 {
-  "approval_record_id": "phase0b-live-dfe247b189f8009427fa",
+  "approval_record_id": "phase0b-live-7555568979b9d06cd846",
   "approval_status": "APPROVED",
   "approved": true,
   "auth_mode": "aiat_gateway",
@@ -119,22 +119,28 @@
     "all_mandatory_live_gates_passed": true,
     "binary_provenance": "binary-provenance.json",
     "capability_matrix": "capability-matrix.json",
-    "captured_at": "2026-07-22T00:32:20.186246+00:00",
+    "captured_at": "2026-07-22T03:47:10.362774+00:00",
     "credentials_written": false,
     "discovery_route": "/doc",
     "endpoint_override_allowed": false,
     "endpoint_paths_derived_from_live_openapi": true,
     "health_route": "/global/health",
     "live_certification": "live-certification-evidence.json",
-    "live_evidence_sha256": "dfe247b189f8009427fac6db8bc0670724e7e81fd2ac9274d19509798add8294"
+    "live_evidence_sha256": "7555568979b9d06cd846842b33578b27b84b5ed4b85d14d1be8c89aadc9d9287"
   },
   "fixture_refs": [
     "openapi.sanitized.json",
     "endpoint-manifest.json",
     "capability-matrix.json",
     "binary-provenance.json",
+    "event-fixtures/live-event-summary.json",
+    "request-response-fixtures/live-interface-summary.json",
     "live-certification-evidence.json"
   ],
+  "fixture_sha256": {
+    "event-fixtures/live-event-summary.json": "23bdd391c1f48ecc58d19a7886e5dc807e208e331776b37374448d0fb6742143",
+    "request-response-fixtures/live-interface-summary.json": "dd8ad620012f485b056c28820b96ab3a672fa3fe063044d6d0d4aec20132b16b"
+  },
   "openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
   "release": "1.17.13",
   "report_id": "opencode-phase0b-1.17.13",

@@ -11,8 +11,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from .adapters import WorkerAdapter
+from .adapters import BaseWorkerAdapter, WorkerAdapter
 from .models import (
+    CheckpointMode,
     EventType,
     WorkerCancellation,
     WorkerEvent,
@@ -36,7 +37,10 @@ RUN_TRANSITIONS: dict[str, frozenset[str]] = {
     "READY": frozenset({"DISPATCHING", "FAILED", "CANCELLED"}),
     "DISPATCHING": frozenset({"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}),
     "RUNNING": frozenset({"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}),
-    "PAUSING": frozenset({"PAUSED", "FAILED", "CANCELLED"}),
+    # The adapter may finish after a pause request has atomically claimed the
+    # run but before it has acknowledged the pause.  A terminal result is
+    # authoritative in that race and must not be discarded.
+    "PAUSING": frozenset({"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}),
     "PAUSED": frozenset({"RESUMING", "FAILED", "CANCELLED"}),
     "RESUMING": frozenset({"RUNNING", "FAILED", "CANCELLED"}),
     "SUCCEEDED": frozenset(),
@@ -370,6 +374,14 @@ class WorkerRunController:
         result: WorkerResult | None = None
         try:
             await self.transition(request.run_id, "VALIDATING", expected="CREATED")
+            if (
+                bool((request.checkpoint_policy or {}).get("required"))
+                and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
+            ):
+                raise WorkerRunError(
+                    "CHECKPOINT_UNSUPPORTED",
+                    "worker run requires checkpoints but the adapter declares them unsupported",
+                )
             readiness = await adapter.readiness(request)
             if not readiness.ready:
                 raise WorkerRunError("NOT_READY", "; ".join(readiness.blockers), details={"blockers": readiness.blockers})
@@ -436,22 +448,35 @@ class WorkerRunController:
             terminal = "SUCCEEDED" if result.success else "CANCELLED" if result.error and result.error.code == "CANCELLED" else "FAILED"
             if terminal != "CANCELLED":
                 await self._persist_result_evidence(request, result)
+            terminal_kwargs = {
+                "result": result.model_dump(mode="json"),
+                "error": None if result.success else result.error.model_dump(mode="json") if result.error else None,
+                "replay_metadata": result.replay_metadata,
+                "reason": "worker emitted a normalized terminal result",
+                "correlation_id": request.idempotency_key,
+            }
             persisted_terminal = await self.transition(
                 request.run_id,
                 terminal,
                 expected="RUNNING",
-                result=result.model_dump(mode="json"),
-                error=None if result.success else result.error.model_dump(mode="json") if result.error else None,
-                replay_metadata=result.replay_metadata,
-                reason="worker emitted a normalized terminal result",
-                correlation_id=request.idempotency_key,
+                **terminal_kwargs,
             )
+            # A pause request owns RUNNING -> PAUSING, but it does not make a
+            # concurrently emitted terminal result disappear.  Allow the
+            # result to settle the run from PAUSING before pause can write
+            # PAUSED, preserving one coherent durable state and result.
+            if persisted_terminal is None:
+                persisted_terminal = await self.transition(
+                    request.run_id,
+                    terminal,
+                    expected="PAUSING",
+                    **terminal_kwargs,
+                )
             if persisted_terminal is None:
                 current = await self.get_run(request.run_id)
                 current_state = str((current or {}).get("state") or terminal)
-                if current_state in TERMINAL_RUN_STATES:
-                    return WorkerRunOutcome(run_id=request.run_id, state=current_state, accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
-            return WorkerRunOutcome(run_id=request.run_id, state=terminal, accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
+                return WorkerRunOutcome(run_id=request.run_id, state=current_state, accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
+            return WorkerRunOutcome(run_id=request.run_id, state=str(persisted_terminal["state"]), accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
         except TimeoutError:
             await adapter.cancel(WorkerCancellation(run_id=request.run_id, reason="worker run timed out", requested_by="worker-run-controller", force=True))
             await self.transition(request.run_id, "TIMED_OUT", expected="RUNNING", error={"code": "TIMEOUT", "message": "worker run exceeded timeout"})
@@ -488,17 +513,105 @@ class WorkerRunController:
         return await self.get_run(run_id)
 
     async def pause(self, run_id: UUID, adapter: WorkerAdapter, *, reason: str, requested_by: str) -> dict[str, Any] | None:
+        checkpoint_mode = adapter.capabilities.checkpoint_mode
+        if checkpoint_mode == CheckpointMode.UNSUPPORTED:
+            raise WorkerRunError(
+                "UNSUPPORTED_CAPABILITY",
+                "worker adapter does not support pause/checkpoint control",
+            )
+        if checkpoint_mode == CheckpointMode.RESTART_ONLY:
+            raise WorkerRunError(
+                "CHECKPOINT_RESTART_ONLY",
+                "worker adapter supports restart from a safe point, not in-place pause",
+            )
+        if isinstance(adapter, BaseWorkerAdapter) and type(adapter).pause is BaseWorkerAdapter.pause:
+            raise WorkerRunError(
+                "UNSUPPORTED_CAPABILITY",
+                "worker adapter has no in-place pause implementation",
+            )
         row = await self.get_run(run_id)
-        if row is None or row.get("state") != "RUNNING":
+        if row is None:
             return row
-        await self.transition(run_id, "PAUSING", expected="RUNNING")
-        await adapter.pause(WorkerPause(run_id=run_id, reason=reason, requested_by=requested_by))
-        return await self.transition(run_id, "PAUSED", expected="PAUSING")
+        if row.get("state") != "RUNNING":
+            raise WorkerRunError(
+                "RUN_NOT_PAUSABLE",
+                f"worker run is {row.get('state')}, not RUNNING",
+                details={"state": row.get("state")},
+            )
+        pausing = await self.transition(
+            run_id,
+            "PAUSING",
+            expected="RUNNING",
+            actor=requested_by,
+            reason=reason,
+        )
+        if pausing is None:
+            raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed before it could be paused")
+        try:
+            await adapter.pause(WorkerPause(run_id=run_id, reason=reason, requested_by=requested_by))
+        except Exception as exc:
+            # A failed pause leaves the runtime's exact state uncertain.  Do
+            # not silently return it to RUNNING and risk duplicate effects.
+            await self.transition(
+                run_id,
+                "FAILED",
+                expected="PAUSING",
+                error={"code": "PAUSE_FAILED", "message": str(exc)},
+                actor=requested_by,
+                reason=reason,
+            )
+            raise WorkerRunError("PAUSE_FAILED", str(exc)) from exc
+        paused = await self.transition(
+            run_id,
+            "PAUSED",
+            expected="PAUSING",
+            actor=requested_by,
+            reason=reason,
+        )
+        if paused is None:
+            raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed while pause was acknowledged")
+        return paused
 
     async def resume(self, run_id: UUID, adapter: WorkerAdapter, *, requested_by: str, checkpoint_id: UUID | None = None) -> dict[str, Any] | None:
         row = await self.get_run(run_id)
-        if row is None or row.get("state") != "PAUSED":
+        if row is None:
             return row
-        await self.transition(run_id, "RESUMING", expected="PAUSED")
-        await adapter.resume(WorkerResume(run_id=run_id, requested_by=requested_by, checkpoint_id=checkpoint_id))
-        return await self.transition(run_id, "RUNNING", expected="RESUMING")
+        if row.get("state") != "PAUSED":
+            raise WorkerRunError(
+                "RUN_NOT_RESUMABLE",
+                f"worker run is {row.get('state')}, not PAUSED",
+                details={"state": row.get("state")},
+            )
+        resuming = await self.transition(
+            run_id,
+            "RESUMING",
+            expected="PAUSED",
+            actor=requested_by,
+            reason="operator requested resume",
+            transition_metadata={"checkpoint_id": str(checkpoint_id) if checkpoint_id else None},
+        )
+        if resuming is None:
+            raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed before it could be resumed")
+        try:
+            await adapter.resume(WorkerResume(run_id=run_id, requested_by=requested_by, checkpoint_id=checkpoint_id))
+        except Exception as exc:
+            await self.transition(
+                run_id,
+                "FAILED",
+                expected="RESUMING",
+                error={"code": "RESUME_FAILED", "message": str(exc)},
+                actor=requested_by,
+                reason="resume command failed",
+            )
+            raise WorkerRunError("RESUME_FAILED", str(exc)) from exc
+        resumed = await self.transition(
+            run_id,
+            "RUNNING",
+            expected="RESUMING",
+            actor=requested_by,
+            reason="runtime acknowledged resume",
+            transition_metadata={"checkpoint_id": str(checkpoint_id) if checkpoint_id else None},
+        )
+        if resumed is None:
+            raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed while resume was acknowledged")
+        return resumed

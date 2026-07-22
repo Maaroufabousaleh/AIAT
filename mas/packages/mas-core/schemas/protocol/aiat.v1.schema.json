@@ -2318,7 +2318,8 @@
                 "langgraph",
                 "crewai",
                 "autogen",
-                "letta"
+                "letta",
+                "opencode"
               ],
               "title": "Isolation Mode",
               "type": "string"
@@ -2552,10 +2553,12 @@
             "transport": {
               "default": "process",
               "enum": [
+                "native",
                 "process",
                 "http",
                 "oci",
                 "mcp",
+                "opencode",
                 "human"
               ],
               "title": "Transport",

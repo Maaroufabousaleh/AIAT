@@ -3,24 +3,42 @@ metadata:
   name: Tester
   version: "1.0"
   description: QA worker for Playwright, pytest, OpenCode, and OpenHands-core test execution.
-  source_repo: local
-  source_revision: working-tree
+  source_repo: https://github.com/anomalyco/opencode
+  source_revision: v1.17.13
+  version_pin: "1.17.13"
   tags: [worker, dept_qa]
   update_policy: manual
   evaluation_status: approved
 runtime:
-  transport: process
+  transport: opencode
   adapter_config:
-    entrypoint: WorkerAgent
-    coding_stack: [opencode, openhands-core, playwright, pytest]
+    entrypoint: OpenCodeAdapter
+    base_url: http://opencode-runtime:4096
+    interface_verification:
+      report_id: opencode-phase0b-1.17.13
+    coding_stack: [opencode, playwright, pytest]
+    optional_external_adapters: [openhands-core]
 integration:
-  adapter_entrypoint: WorkerAgent
-  isolation_mode: wrapper
+  adapter_entrypoint: OpenCodeAdapter
+  isolation_mode: opencode
+  certified_adapter_version: "1.0.0"
 runtime_tier: external
+model_mode: aiat_gateway
+model_profile_id: opencode-phase0b-coding
+certification_status: approved
+permission_grants: [repository.read, repository.write, tests.execute]
+tool_grants: [opencode.workspace_read, opencode.workspace_write, opencode.workspace_pytest]
+source_provenance:
+  source_provider: github
+  exact_release: "1.17.13"
+  transport_type: opencode
+  license_id: MIT
+  redistribution_status: approved
+  security_scan_status: pending
 capabilities:
   - name: qa.test_execute
     description: Execute focused tests, browser checks, and verification commands.
-    required_tools: [file_read, file_write, browser_navigate, browser_screenshot, blob.upload]
+    required_tools: [opencode.workspace_read, opencode.workspace_write, opencode.workspace_pytest, blob.upload]
 sandbox:
   profile: gvisor
   network_mode: egress-allowlist

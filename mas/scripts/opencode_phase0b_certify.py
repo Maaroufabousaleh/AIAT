@@ -20,7 +20,7 @@ from typing import Any
 
 PINNED_BINARY_SHA256 = "f8c45bae73a8f1e2088023fdd34dc2fe0a7f93f505f073e0703e4e1a19afe8ff"
 PINNED_OPENAPI_SHA256 = "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78"
-EXPECTED_MIGRATION_HEAD = "0018_ext_provenance_unique"
+EXPECTED_MIGRATION_HEAD = "0019_block_universal_contract"
 SENSITIVE = re.compile(
     r"(?:password|secret|token|authorization|cookie|api[_-]?key|private[_-]?key|credential)",
     re.I,
@@ -106,6 +106,13 @@ def _assert_sanitized(value: Any) -> None:
     ]
     if any(re.search(pattern, encoded) for pattern in forbidden):
         raise RuntimeError("sanitized evidence contains a forbidden secret or workspace-content pattern")
+
+
+def _write_json(path: Path, value: Any) -> None:
+    """Write cross-platform deterministic JSON without leaking runtime payloads."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes((json.dumps(value, indent=2, sort_keys=True) + "\n").encode())
 
 
 RUNTIME_CERTIFIER = r'''
@@ -598,14 +605,70 @@ def main() -> int:
             "workspace_contents_persisted": False,
         }
     )
+    # Commit stable compatibility evidence, not raw prompts, headers,
+    # messages, tool arguments, or workspace files.  These summaries prove
+    # the event/request shapes seen by the live gate while keeping its
+    # disposable coding workspace and secret boundary non-persistent.
+    evidence_root = args.output.parent
+    event_fixture = evidence_root / "event-fixtures" / "live-event-summary.json"
+    interface_fixture = evidence_root / "request-response-fixtures" / "live-interface-summary.json"
+    _write_json(
+        event_fixture,
+        _sanitize(
+            {
+                "schema_version": "1.0",
+                "release": "1.17.13",
+                "capture_kind": "normalized_live_event_summary",
+                "event_types": {
+                    "tool_mediation": sorted(set(runtime["tool_mediation"]["event_types"])),
+                    "coding": sorted(set(runtime["coding"]["event_types"])),
+                },
+                "payload_content_persisted": False,
+                "headers_persisted": False,
+            }
+        ),
+    )
+    _write_json(
+        interface_fixture,
+        _sanitize(
+            {
+                "schema_version": "1.0",
+                "release": "1.17.13",
+                "capture_kind": "sanitized_live_request_response_summary",
+                "operations": {
+                    "health": {"authenticated_status": runtime["authentication"]["authenticated_health"]},
+                    "openapi": {"authenticated_status": runtime["authentication"]["authenticated_openapi"]},
+                    "mcp_bridge": {
+                        "missing_grant_status": runtime["bridge_boundary"]["missing_grant_status"],
+                        "tampered_grant_status": runtime["bridge_boundary"]["tampered_grant_status"],
+                    },
+                    "workspace_pytest": {
+                        "exit_code": runtime["coding"]["pytest_exit_code"],
+                        "passed": runtime["coding"]["pytest_passed"],
+                    },
+                },
+                "request_bodies_persisted": False,
+                "response_bodies_persisted": False,
+                "headers_persisted": False,
+            }
+        ),
+    )
+    evidence["fixtures"] = {
+        "refs": [
+            "event-fixtures/live-event-summary.json",
+            "request-response-fixtures/live-interface-summary.json",
+        ],
+        "sha256": {
+            "event-fixtures/live-event-summary.json": _sha256_file(event_fixture),
+            "request-response-fixtures/live-interface-summary.json": _sha256_file(interface_fixture),
+        },
+    }
     _assert_sanitized(evidence)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Evidence is committed cross-platform; write exact LF bytes so Windows
     # newline translation cannot turn every JSON line into trailing whitespace
     # under Git's repository normalization rules.
-    args.output.write_bytes(
-        (json.dumps(evidence, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    )
+    _write_json(args.output, evidence)
     print(json.dumps({"all_gates_passed": True, "gate_count": len(gates), "output": str(args.output)}, sort_keys=True))
     return 0
 

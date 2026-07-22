@@ -405,6 +405,29 @@ async def test_state_history_503_no_storage(client):
     assert resp.status_code == 503
 
 
+# ── GET /projects/{id}/evidence ───────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_project_evidence_uses_project_scoped_approval_gates(client):
+    """Evidence remains available for a freshly created, incomplete project."""
+    storage = _make_storage(project=_fake_project("FEASIBILITY_CHECK"))
+    storage.list_documents = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(return_value=None)
+    _patch_state(storage)
+
+    resp = await client.get(f"/projects/{PROJECT_ID}/evidence")
+
+    assert resp.status_code == 200
+    assert resp.json()["policy_id"] == "manual"
+    assert resp.json()["status"] == "incomplete"
+    storage.list_approval_gates.assert_awaited_once_with(project_id=PROJECT_ID)
+
+
 # ── POST /projects/{id}/retry ─────────────────────────────────────────────────
 
 

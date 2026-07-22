@@ -607,10 +607,39 @@ class OpenCodeInterfaceVerification:
             raise ValueError("OpenCode release must match the approved interface report")
         if configured.get("commit_sha") and configured["commit_sha"] != report.get("commit_sha"):
             raise ValueError("OpenCode commit must match the approved interface report")
-        required_evidence = {"approval_record_id", "config_schema_sha256", "openapi_sha256", "fixture_refs"}
-        missing = sorted(key for key in required_evidence if not report.get(key))
-        if missing:
-            raise ValueError(f"OpenCode interface report is missing required evidence: {', '.join(missing)}")
+        fixture_hashes: dict[str, Any] = {}
+        approval_ready = bool(report.get("approved")) and report.get("approval_status") == "APPROVED"
+        if approval_ready:
+            required_evidence = {
+                "approval_record_id",
+                "config_schema_sha256",
+                "openapi_sha256",
+                "fixture_refs",
+                "fixture_sha256",
+            }
+            missing = sorted(key for key in required_evidence if not report.get(key))
+            if missing:
+                raise ValueError(f"OpenCode interface report is missing required evidence: {', '.join(missing)}")
+            required_sanitized_fixtures = {
+                "event-fixtures/live-event-summary.json",
+                "request-response-fixtures/live-interface-summary.json",
+            }
+            fixture_refs = set(report.get("fixture_refs") or ())
+            raw_fixture_hashes = report.get("fixture_sha256")
+            if not required_sanitized_fixtures <= fixture_refs or not isinstance(raw_fixture_hashes, dict):
+                raise ValueError("OpenCode interface report is missing required sanitized live fixtures")
+            invalid_fixture_hashes = sorted(
+                reference
+                for reference in required_sanitized_fixtures
+                if not isinstance(raw_fixture_hashes.get(reference), str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", raw_fixture_hashes[reference])
+            )
+            if invalid_fixture_hashes:
+                raise ValueError(
+                    "OpenCode interface report has invalid sanitized fixture hashes: "
+                    + ", ".join(invalid_fixture_hashes)
+                )
+            fixture_hashes = dict(raw_fixture_hashes)
         raw_endpoints = dict(report.get("endpoints") or {})
         endpoints = {
             key: (value.get("path") if isinstance(value, dict) else value)
@@ -634,6 +663,7 @@ class OpenCodeInterfaceVerification:
                 "report_id": report_id,
                 "approval_record_id": report["approval_record_id"],
                 "fixture_refs": list(report["fixture_refs"]),
+                "fixture_sha256": dict(fixture_hashes),
             },
         )
 

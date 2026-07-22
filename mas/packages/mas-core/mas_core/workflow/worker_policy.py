@@ -97,6 +97,8 @@ class TaskNodePolicy(BaseModel):
             raise ValueError("invalid task model_mode")
         if self.model_mode != "none" and self.worker_id and not self.model_profile_id:
             raise ValueError("model-governed task workers require model_profile_id")
+        if self.model_mode == "none" and self.model_profile_id:
+            raise ValueError("model_mode none does not allow a model_profile_id")
         forbidden_raw = {"model", "model_id", "raw_model", "provider_model"}
         present = forbidden_raw & set(self.model_extra or {})
         if present:

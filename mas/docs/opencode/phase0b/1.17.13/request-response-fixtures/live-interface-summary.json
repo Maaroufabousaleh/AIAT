@@ -1,0 +1,24 @@
+{
+  "capture_kind": "sanitized_live_request_response_summary",
+  "headers_persisted": false,
+  "operations": {
+    "health": {
+      "authenticated_status": 200
+    },
+    "mcp_bridge": {
+      "missing_grant_status": 403,
+      "tampered_grant_status": 403
+    },
+    "openapi": {
+      "authenticated_status": 200
+    },
+    "workspace_pytest": {
+      "exit_code": 0,
+      "passed": 2
+    }
+  },
+  "release": "1.17.13",
+  "request_bodies_persisted": false,
+  "response_bodies_persisted": false,
+  "schema_version": "1.0"
+}

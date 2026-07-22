@@ -12,8 +12,27 @@ export type FlowInstanceStatus =
 export type FlowExecutionStatus = "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED" | "RETRYING";
 
 export interface FlowNodeConfig {
+  worker_id?: string;
   action?: string;
   team_id?: string;
+  runtime_type?: string;
+  adapter_version?: string;
+  steward_id?: string;
+  skill_bundle_version?: string;
+  model_profile_id?: string;
+  model_mode?: "none" | "aiat_gateway" | "certified_external_runtime" | "hybrid";
+  task_type?: string;
+  required_capabilities?: string[];
+  permission_requirements?: string[];
+  project_workspace_mode?: "isolated" | "shared_readonly" | "approved_write";
+  tool_grants?: string[];
+  budget?: Record<string, number>;
+  retry_policy?: { max_attempts?: number; backoff_seconds?: number; strategies?: string[] };
+  cancellation_policy?: { cooperative?: boolean; force_after_seconds?: number };
+  checkpoint_policy?: { mode?: string; required?: boolean; resume_from_last_safe_node?: boolean };
+  artifact_expectations?: Array<{ name: string; kind?: string; required?: boolean }>;
+  completion_criteria?: Record<string, unknown>;
+  runtime_extensions?: Record<string, unknown>;
   approver_role?: string;
   approver_user?: string;
   expression?: string;

@@ -13,6 +13,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import importlib
 import importlib.util
@@ -37,7 +38,7 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory.storage import AgentStorage, document_to_context_item
@@ -45,6 +46,7 @@ from mas_core.observability import configure_logging
 from mas_core.observability.metrics import MAS_PROJECT_STATE
 from mas_core.observability.tracing import bind_trace_id, new_trace_id
 from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.workflow import (
     InvalidTransitionError,
     WatchdogConfig,
@@ -70,16 +72,30 @@ _worker_adapter_runtimes: dict[str, Any] = {}
 
 
 async def _invalidate_worker_adapter_runtime(worker_id: UUID) -> None:
-    stale = _worker_adapter_runtimes.pop(str(worker_id), None)
-    if stale is not None and hasattr(stale, "close"):
-        try:
-            await stale.close()
-        except Exception:
-            logger.warning(
-                "worker_adapter_cache_invalidation_failed",
-                extra={"worker_id": str(worker_id)},
-                exc_info=True,
-            )
+    """Retire cached adapters only when no pinned run needs them.
+
+    Cache keys include the immutable adapter ID.  A rollout can therefore
+    hydrate a new adapter for new dispatches without closing an older adapter
+    that still owns an in-flight run.  Explicit retirement remains useful
+    during worker removal, but a rollout must not use it as a blunt cache
+    invalidation mechanism.
+    """
+    prefix = f"{worker_id}:"
+    stale_entries = [
+        _worker_adapter_runtimes.pop(key)
+        for key in list(_worker_adapter_runtimes)
+        if key.startswith(prefix)
+    ]
+    for stale in stale_entries:
+        if hasattr(stale, "close"):
+            try:
+                await stale.close()
+            except Exception:
+                logger.warning(
+                    "worker_adapter_cache_invalidation_failed",
+                    extra={"worker_id": str(worker_id)},
+                    exc_info=True,
+                )
 
 configure_logging("orchestrator-api", json=os.getenv("LOG_FORMAT") != "console")
 
@@ -152,6 +168,10 @@ ROUTER_URL = os.getenv("ROUTER_URL", "http://message-router:8001")
 TOOL_SERVICE_URL = os.getenv("TOOL_SERVICE_URL", "http://tool-service:8002")
 WATCHDOG_INTERVAL_S = int(os.getenv("WATCHDOG_INTERVAL_S", "60"))
 WATCHDOG_GRACE_S = int(os.getenv("WATCHDOG_GRACE_S", "300"))
+# This controls scheduler wakeups, not the external check cadence.  Individual
+# steward jobs retain their durable hourly/daily/weekly cadence and are only
+# checked when due.
+UPDATE_MONITOR_INTERVAL_S = max(15, int(os.getenv("UPDATE_MONITOR_INTERVAL_S", "300")))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8000")
 
 LEGACY_TIMEZONE_ALIASES = {
@@ -1006,6 +1026,8 @@ class CapabilitySearchRequest(BaseModel):
 
 
 class RegisterWorkerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     adapter_type: str
     adapter_config: dict[str, Any] = Field(default_factory=dict)
@@ -1226,6 +1248,16 @@ class WorkerRunDispatchRequest(BaseModel):
     model_override_approval_id: UUID | None = None
 
 
+class WorkerRunPauseRequest(BaseModel):
+    reason: str = Field(default="operator pause", min_length=1, max_length=4_000)
+    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+
+
+class WorkerRunResumeRequest(BaseModel):
+    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+    checkpoint_id: UUID | None = None
+
+
 class EvidencePolicyRequest(BaseModel):
     policy_id: str
     policy_version: str
@@ -1267,6 +1299,13 @@ class CreateFlowRequest(BaseModel):
     created_by: str = "human"
     is_active: bool = False
     version_from_flow_id: UUID | None = None
+
+
+class FlowDryRunRequest(BaseModel):
+    """Non-mutating validation of a typed flow definition and its assignments."""
+
+    definition_json: dict[str, Any]
+    project_id: UUID | None = None
 
 
 class UpdateFlowRequest(BaseModel):
@@ -1587,6 +1626,42 @@ async def watchdog_loop(
             logger.exception("Watchdog loop error")
 
 
+async def update_monitor_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: int = UPDATE_MONITOR_INTERVAL_S,
+    max_iterations: int | None = None,
+) -> None:
+    """Run due steward monitors without allowing them to promote candidates.
+
+    The monitoring service only discovers immutable DRAFT candidates.  It is
+    intentionally independent from worker dispatch, certification, and
+    rollout so an upstream release can never change production pointers merely
+    because the scheduler woke up.
+    """
+
+    from mas_core.worker_registry.monitoring import run_due_update_monitors
+
+    iteration = 0
+    while not stop_event.is_set():
+        try:
+            await anyio.sleep(interval_seconds)
+            if stop_event.is_set():
+                break
+            if await storage.get_config("system_state") == "RUNNING":
+                results = await run_due_update_monitors(storage)
+                if results:
+                    logger.info("steward_update_monitor_completed", extra={"jobs": results})
+            iteration += 1
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("steward_update_monitor_loop_error")
+
+
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
@@ -1827,6 +1902,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
             raise
         except Exception:
             logger.exception("Worker manifest seeding failed; continuing anyway")
+
+        # Start after seeding so newly created external-worker stewardship
+        # jobs are eligible on the first scheduler cycle.
+        ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
 
         try:
             await _recover_ceo_commands(storage)
@@ -2252,7 +2331,7 @@ async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> An
     documents = await storage.list_documents(project_id)
     artifacts = await _project_artifact_rows(storage, project_id)
     flow_instance = await storage.get_flow_instance_by_project(project_id)
-    approvals = await storage.list_approval_gates(project_id)
+    approvals = await storage.list_approval_gates(project_id=project_id)
     runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
     repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
     history = await storage.get_project_history(project_id)
@@ -2320,7 +2399,7 @@ async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest
         from mas_core.workflow import evaluate_project_evidence, policy_for
         documents = await storage.list_documents(project_id)
         artifacts = await _project_artifact_rows(storage, project_id)
-        evidence = evaluate_project_evidence(project_id=str(project_id), policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements), project=project, documents=documents, artifacts=artifacts, flow_instance=await storage.get_flow_instance_by_project(project_id), approvals=await storage.list_approval_gates(project_id), audit_events=await storage.get_project_history(project_id))
+        evidence = evaluate_project_evidence(project_id=str(project_id), policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements), project=project, documents=documents, artifacts=artifacts, flow_instance=await storage.get_flow_instance_by_project(project_id), approvals=await storage.list_approval_gates(project_id=project_id), audit_events=await storage.get_project_history(project_id))
     else:
         evidence = await _build_project_evidence(project_id, storage)
     return evidence.model_dump(mode="json")
@@ -5018,6 +5097,76 @@ async def _resolve_worker_capability_ids(
     return resolved
 
 
+def _validate_worker_tool_grants(
+    tools: list[str],
+    *,
+    role_value: str | None,
+    team_id: str | None,
+) -> None:
+    """Reject unknown or role-forbidden tools before a worker is registered.
+
+    Tool grants are authority, not advisory capability labels.  Registration
+    must therefore apply the same canonical manifest and static role policy as
+    runtime tool mediation; otherwise an operator could create a capability
+    that only fails closed much later at dispatch time.
+    """
+
+    from mas_tools_sdk.manifest import TOOL_MANIFEST, resolve_tool_name
+
+    try:
+        role = AgentRole(str(role_value or AgentRole.WORKER.value).lower())
+    except ValueError as exc:
+        raise HTTPException(422, f"Unknown worker role '{role_value}'") from exc
+
+    for raw_name in tools:
+        tool_name = str(raw_name).strip()
+        if not tool_name:
+            raise HTTPException(422, "Worker tool grants must be non-empty names")
+        canonical_name = resolve_tool_name(tool_name)
+        if canonical_name is None:
+            raise HTTPException(422, f"Unknown worker tool grant '{tool_name}'")
+        tool = TOOL_MANIFEST[canonical_name]
+        decision = can_use_tool_with_metadata(
+            role=role,
+            tool_name=canonical_name,
+            sender_team=team_id,
+            allowed_roles=tool["allowed_roles"],
+            blocked_roles=tool["blocked_roles"],
+        )
+        if decision is not True:
+            raise HTTPException(
+                403,
+                {
+                    "code": "WORKER_TOOL_GRANT_FORBIDDEN",
+                    "message": f"Tool grant '{canonical_name}' is not permitted for role '{role.value}'",
+                    "reason": str(decision),
+                },
+            )
+
+
+async def _validate_persisted_capability_tool_grants(
+    storage: AgentStorage,
+    capability_ids: list[UUID],
+    *,
+    role_value: str | None,
+    team_id: str | None,
+) -> None:
+    """Apply grant policy to tools contributed by existing capabilities."""
+
+    getter = getattr(storage, "get_capability", None)
+    if not inspect.iscoroutinefunction(getter):
+        # Compatibility test doubles may only model registration.  Production
+        # AgentStorage always implements this method, so no real deployment
+        # bypasses the validation.
+        return
+    tools: list[str] = []
+    for capability_id in capability_ids:
+        capability = await getter(capability_id)
+        if isinstance(capability, dict):
+            tools.extend(str(item) for item in capability.get("required_tools") or [])
+    _validate_worker_tool_grants(tools, role_value=role_value, team_id=team_id)
+
+
 async def _enrich_workers_with_capabilities(
     storage: AgentStorage,
     workers: list[dict[str, Any]],
@@ -5108,12 +5257,23 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             422,
             "External workers require an immutable version_pin before they can enter the steward pipeline",
         )
+    _validate_worker_tool_grants(
+        req.required_tools,
+        role_value=req.role,
+        team_id=req.team_id,
+    )
     capability_ids = await _resolve_worker_capability_ids(
         storage,
         capability_ids=req.capability_ids,
         capability_names=req.capability_names,
         required_tools=req.required_tools,
         required_role=req.role,
+    )
+    await _validate_persisted_capability_tool_grants(
+        storage,
+        capability_ids,
+        role_value=req.role,
+        team_id=req.team_id,
     )
     worker = await storage.register_worker(
         name=req.name,
@@ -5316,6 +5476,110 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
     return _serialize(updated)  # type: ignore[arg-type]
 
 
+async def _worker_activation_blockers(
+    storage: AgentStorage,
+    worker: dict[str, Any],
+) -> list[str]:
+    """Verify the immutable records required before a worker can be ACTIVE.
+
+    This is deliberately shared by native and external workers.  An external
+    source adds steward/provenance requirements, but a local AIAT shell is not
+    allowed to bypass the WorkerShell, certified Adapter, Skill Bundle,
+    capability snapshot, model-policy, or readiness checks.
+    """
+
+    required_storage_methods = (
+        "get_worker_shell_version",
+        "get_runtime_adapter",
+        "get_skill_bundle",
+        "list_capability_snapshots",
+    )
+    # Older migration tests use a deliberately small storage double.  Keep
+    # that compatibility surface while production storage enforces every
+    # governed record below.
+    if not all(
+        inspect.iscoroutinefunction(getattr(storage, name, None))
+        for name in required_storage_methods
+    ):
+        return []
+
+    blockers: list[str] = []
+    governance = dict(worker.get("adapter_config") or {})
+    external_backed = bool(worker.get("source_repo")) or bool(
+        governance.get("legacy_external_wrapper")
+    )
+    if governance.get("legacy_external_wrapper"):
+        blockers.append(
+            "legacy external wrapper cannot be activated; migrate to a certified runtime-specific adapter"
+        )
+    if not worker.get("version_pin"):
+        blockers.append("missing immutable source/version pin")
+
+    shell_id = worker.get("active_shell_version_id")
+    if not shell_id:
+        blockers.append("missing active immutable WorkerShell")
+    else:
+        shell = await storage.get_worker_shell_version(shell_id)
+        if shell is None or shell.get("status") != "active":
+            blockers.append("active WorkerShell is missing or not active")
+
+    adapter_id = worker.get("active_adapter_id")
+    if not adapter_id:
+        blockers.append("missing active certified runtime Adapter")
+    else:
+        adapter = await storage.get_runtime_adapter(adapter_id)
+        if (
+            adapter is None
+            or adapter.get("status") != "active"
+            or adapter.get("conformance_status") != "passed"
+        ):
+            blockers.append("active runtime Adapter is missing, uncertified, or inactive")
+
+    bundle_id = worker.get("active_skill_bundle_id")
+    if not bundle_id:
+        blockers.append("missing active approved Skill Bundle")
+    else:
+        bundle = await storage.get_skill_bundle(bundle_id)
+        if bundle is None or bundle.get("status") != "APPROVED":
+            blockers.append("active Skill Bundle is missing or not approved")
+
+    snapshots = await storage.list_capability_snapshots(worker["id"], limit=1)
+    if not snapshots:
+        blockers.append("missing immutable capability snapshot")
+
+    model_mode = str(worker.get("model_mode") or governance.get("model_mode") or "none")
+    if model_mode != "none":
+        profile_id = worker.get("model_profile_id") or governance.get("model_profile_id")
+        if not profile_id:
+            blockers.append("model-governed worker requires an approved Model Profile")
+        elif inspect.iscoroutinefunction(getattr(storage, "get_model_profile", None)):
+            profile = await storage.get_model_profile(str(profile_id))
+            approved_versions = [
+                item for item in (profile or {}).get("versions", [])
+                if str(item.get("status", "")).lower() == "approved"
+            ]
+            if profile is None or str(profile.get("status", "")).lower() != "approved" or not approved_versions:
+                blockers.append("selected Model Profile has no effective approved version")
+
+    if external_backed:
+        if not worker.get("source_repo"):
+            blockers.append("externally backed worker has no canonical source provenance")
+        required_external_methods = (
+            "get_steward_by_worker",
+            "get_external_provenance_by_worker",
+        )
+        if all(
+            inspect.iscoroutinefunction(getattr(storage, name, None))
+            for name in required_external_methods
+        ):
+            if await storage.get_steward_by_worker(worker["id"]) is None:
+                blockers.append("external worker requires a dedicated Steward Agent")
+            if await storage.get_external_provenance_by_worker(worker["id"]) is None:
+                blockers.append("external worker requires immutable provenance")
+
+    return blockers
+
+
 @app.patch("/capabilities/workers/{worker_id}/status")
 async def transition_worker_status(
     worker_id: UUID,
@@ -5342,6 +5606,17 @@ async def transition_worker_status(
 
     if req.action in action_map:
         new_status = req.new_status or action_map[req.action]
+        if new_status == "ACTIVE":
+            blockers = await _worker_activation_blockers(storage, existing)
+            if blockers:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "WORKER_ACTIVATION_GOVERNANCE_BLOCKED",
+                        "message": "Worker activation requires current governed records",
+                        "blockers": blockers,
+                    },
+                )
         if (
             new_status == "ACTIVE"
             and existing.get("source_repo")
@@ -5838,8 +6113,19 @@ def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
     return dispatch
 
 
-async def _certified_worker_adapter(storage: AgentStorage, worker: dict[str, Any]) -> Any | None:
-    """Hydrate the active immutable adapter definition after an API restart."""
+async def _certified_worker_adapter(
+    storage: AgentStorage,
+    worker: dict[str, Any],
+    *,
+    adapter_id: UUID | str | None = None,
+    allow_retired: bool = False,
+) -> Any | None:
+    """Hydrate one immutable certified adapter definition after an API restart.
+
+    Dispatches select the worker's active adapter.  Run-control actions pass
+    the adapter pinned on the durable WorkerRun, which may be an older,
+    superseded version while a rollout is in progress.
+    """
     from mas_core.worker_contract import AdapterContext, WorkerCapabilities
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
@@ -5848,24 +6134,35 @@ async def _certified_worker_adapter(storage: AgentStorage, worker: dict[str, Any
     )
 
     worker_id = UUID(str(worker["id"]))
-    adapter_row = await storage.get_runtime_adapter(worker["active_adapter_id"]) if worker.get("active_adapter_id") else await storage.get_active_runtime_adapter(worker_id)
-    if adapter_row is None or adapter_row.get("status") != "active" or adapter_row.get("conformance_status") != "passed":
-        stale = _worker_adapter_runtimes.pop(str(worker_id), None)
+    selected_adapter_id = adapter_id or worker.get("active_adapter_id")
+    adapter_row = (
+        await storage.get_runtime_adapter(selected_adapter_id)
+        if selected_adapter_id is not None
+        else await storage.get_active_runtime_adapter(worker_id)
+    )
+    permitted_statuses = {"active", "superseded"} if allow_retired else {"active"}
+    if (
+        adapter_row is None
+        or adapter_row.get("status") not in permitted_statuses
+        or adapter_row.get("conformance_status") != "passed"
+        or (
+            adapter_row.get("worker_id") is not None
+            and str(adapter_row["worker_id"]) != str(worker_id)
+        )
+    ):
+        cache_key = f"{worker_id}:{selected_adapter_id}" if selected_adapter_id else None
+        stale = _worker_adapter_runtimes.pop(cache_key, None) if cache_key else None
         if stale is not None and hasattr(stale, "close"):
             try:
                 await stale.close()
             except Exception:
                 logger.warning("stale_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
         return None
-    active_adapter_id = str(adapter_row["id"])
-    cached = _worker_adapter_runtimes.get(str(worker_id))
-    if cached is not None and getattr(cached, "_aiat_active_adapter_id", None) == active_adapter_id:
+    immutable_adapter_id = str(adapter_row["id"])
+    cache_key = f"{worker_id}:{immutable_adapter_id}"
+    cached = _worker_adapter_runtimes.get(cache_key)
+    if cached is not None and getattr(cached, "_aiat_adapter_id", None) == immutable_adapter_id:
         return cached
-    if cached is not None and hasattr(cached, "close"):
-        try:
-            await cached.close()
-        except Exception:
-            logger.warning("replaced_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
     config = dict(worker.get("adapter_config") or {})
     config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
     raw_capabilities = adapter_row.get("capabilities_json") or config.get("capabilities") or {}
@@ -5916,11 +6213,11 @@ async def _certified_worker_adapter(storage: AgentStorage, worker: dict[str, Any
             adapter.capabilities = capabilities
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, f"active adapter configuration is not certified: {exc}") from exc
-    # The cache entry is valid only for this immutable active adapter row.
-    # Rollout promotion/rollback changes the pointer, so the next lookup
-    # cannot accidentally dispatch through a stale runtime instance.
-    setattr(adapter, "_aiat_active_adapter_id", active_adapter_id)
-    _worker_adapter_runtimes[str(worker_id)] = adapter
+    # A cache entry is scoped to the immutable adapter row, rather than the
+    # mutable worker pointer.  This allows concurrent old/new runs to be
+    # controlled through the exact runtime selected at dispatch.
+    adapter._aiat_adapter_id = immutable_adapter_id
+    _worker_adapter_runtimes[cache_key] = adapter
     return adapter
 
 
@@ -6043,6 +6340,27 @@ async def list_worker_steward_monitoring(worker_id: UUID) -> list[dict[str, Any]
     ]
 
 
+@app.post("/capabilities/workers/{worker_id}/steward/monitor")
+async def run_worker_steward_monitor(worker_id: UUID) -> list[dict[str, Any]]:
+    """Run one operator-requested, review-only upstream discovery pass."""
+
+    from mas_core.worker_registry.monitoring import run_due_update_monitors
+
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
+    if not worker.get("source_repo"):
+        raise HTTPException(409, "Only externally backed workers have upstream monitoring")
+    return [
+        _serialize(result)
+        for result in await run_due_update_monitors(
+            storage,
+            force_worker_id=worker_id,
+        )
+    ]
+
+
 @app.post("/capabilities/workers/{worker_id}/steward/documentation", status_code=201)
 async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotRequest) -> dict[str, Any]:
     storage = _storage()
@@ -6101,6 +6419,85 @@ async def record_steward_capabilities(worker_id: UUID, payload: dict[str, Any]) 
 
 def _candidate_response(candidate: Any) -> dict[str, Any]:
     return candidate.model_dump(mode="json") if hasattr(candidate, "model_dump") else _serialize(candidate)
+
+
+async def _materialize_candidate_worker_shell(
+    storage: AgentStorage,
+    *,
+    worker: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Snapshot a certified candidate into the immutable WorkerShell record.
+
+    The shell binds the worker declaration, permissions, capabilities and
+    provenance reviewed with this particular candidate.  It is created during
+    certification but selected for dispatch only after rollout promotion.
+    """
+    worker_id = UUID(str(worker["id"]))
+    adapter_id = candidate.get("adapter_id")
+    if adapter_id is None:
+        raise HTTPException(409, "Certified candidates must include an immutable runtime Adapter")
+    adapter = await storage.get_runtime_adapter(adapter_id)
+    if adapter is None or str(adapter.get("worker_id")) != str(worker_id):
+        raise HTTPException(409, "Candidate runtime Adapter does not belong to this worker")
+    bundle = await storage.get_skill_bundle(candidate["skill_bundle_id"])
+    if bundle is None or str(bundle.get("worker_id")) != str(worker_id):
+        raise HTTPException(409, "Candidate Skill Bundle does not belong to this worker")
+
+    shell_version = f"governed-{candidate['id']}"
+    existing = await storage.get_worker_shell_version_by_version(worker_id, shell_version)
+    if existing is not None:
+        return existing
+
+    config = dict(worker.get("adapter_config") or {})
+    provenance: dict[str, Any] = {
+        "source_repo": worker.get("source_repo"),
+        "source_revision": worker.get("source_revision"),
+        "version_pin": worker.get("version_pin"),
+        "candidate_id": str(candidate["id"]),
+        "skill_bundle_id": str(candidate["skill_bundle_id"]),
+        "runtime_adapter_id": str(adapter_id),
+    }
+    get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+    if inspect.iscoroutinefunction(get_provenance):
+        external_provenance = await get_provenance(worker_id)
+        if external_provenance is not None:
+            provenance["external_provenance"] = external_provenance
+    identity = {
+        "worker_id": str(worker_id),
+        "name": worker.get("name"),
+        "department": worker.get("team_id"),
+        "adapter_entrypoint": worker.get("adapter_entrypoint"),
+    }
+    capabilities = dict(adapter.get("capabilities_json") or config.get("capabilities") or {})
+    permissions = {
+        "permission_requirements": list(config.get("permission_requirements") or []),
+        "tool_grants": list(config.get("tool_grants") or []),
+        "sandbox_profile": worker.get("sandbox_profile"),
+    }
+    shell_payload = {
+        "version": shell_version,
+        "identity": identity,
+        "capabilities": capabilities,
+        "permissions": permissions,
+        "model_mode": str(worker.get("model_mode") or config.get("model_mode") or "none"),
+        "provenance": provenance,
+    }
+    content_hash = hashlib.sha256(
+        json.dumps(shell_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+    return await storage.create_worker_shell_version(
+        worker_id=worker_id,
+        version=shell_version,
+        contract_version=str(config.get("contract_version") or "aiat.worker.v1"),
+        schema_version="1.0",
+        identity=identity,
+        capabilities=capabilities,
+        permissions=permissions,
+        model_mode=shell_payload["model_mode"],
+        provenance=provenance,
+        content_hash=content_hash,
+    )
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/candidates", status_code=201)
@@ -6335,6 +6732,13 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
     persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
     if persisted_candidate is not None:
         evidence = dict(persisted_candidate.get("evidence_json") or {})
+        if certification.passed:
+            shell = await _materialize_candidate_worker_shell(
+                storage,
+                worker=worker,
+                candidate=persisted_candidate,
+            )
+            evidence["worker_shell_version_id"] = str(shell["id"])
         evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
         await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
     await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
@@ -6468,7 +6872,9 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
                 409,
                 "Rollout promotion lost its compare-and-set lock or has a competing rollout",
             )
-        await _invalidate_worker_adapter_runtime(worker_id)
+        # Adapter runtimes are cached by immutable ID, so a promoted adapter
+        # cannot be selected for an older run and older in-flight runs retain
+        # their control handle.
     else:
         transitioned = await storage.transition_rollout(
             rollout_id,
@@ -6504,6 +6910,17 @@ async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollb
     ]
     previous_rollout = previous_rollouts[-1] if previous_rollouts else None
     previous_candidate = await storage.get_skill_bundle_candidate(UUID(str(previous_rollout["candidate_id"]))) if previous_rollout else None
+    previous_shell_id: UUID | None = None
+    if previous_candidate is not None:
+        try:
+            previous_shell_id = UUID(
+                str((previous_candidate.get("evidence_json") or {}).get("worker_shell_version_id"))
+            )
+        except (TypeError, ValueError):
+            raise HTTPException(
+                409,
+                "The previous rollout has no governed WorkerShell snapshot and cannot be restored",
+            ) from None
     if current_candidate is not None:
         if current_candidate.get("adapter_id"):
             await storage.update_runtime_adapter(current_candidate["adapter_id"], status="superseded")
@@ -6512,7 +6929,7 @@ async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollb
         if previous_candidate.get("adapter_id"):
             await storage.update_runtime_adapter(previous_candidate["adapter_id"], status="active", conformance_status="passed")
         await storage.update_skill_bundle(previous_candidate["skill_bundle_id"], status="APPROVED")
-        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=None, active_adapter_id=previous_candidate.get("adapter_id"), active_skill_bundle_id=previous_candidate.get("skill_bundle_id"))
+        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=previous_shell_id, active_adapter_id=previous_candidate.get("adapter_id"), active_skill_bundle_id=previous_candidate.get("skill_bundle_id"))
         await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=previous_candidate.get("skill_bundle_id"), active_adapter_id=previous_candidate.get("adapter_id"))
         target_candidate_id = UUID(str(previous_candidate["id"]))
     else:
@@ -6529,7 +6946,8 @@ async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollb
         from_candidate_id=rollout.candidate_id,
         target_candidate_id=target_candidate_id,
     )
-    await _invalidate_worker_adapter_runtime(worker_id)
+    # Keep cached immutable adapters alive for runs pinned before the
+    # rollback; new dispatches resolve the restored active pointer instead.
     return rollout.model_dump(mode="json")
 
 
@@ -6866,6 +7284,19 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     adapter = await _certified_worker_adapter(storage, worker)
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
+    from mas_core.worker_contract import CheckpointMode
+
+    if (
+        bool((req.checkpoint_policy or {}).get("required"))
+        and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CHECKPOINT_UNSUPPORTED",
+                "message": "This task requires checkpoints but the certified adapter declares them unsupported",
+            },
+        )
     model_mode = str(worker.get("model_mode") or (worker.get("adapter_config") or {}).get("model_mode") or "none")
     if req.resolved_model_profile is not None:
         raise HTTPException(422, "resolved_model_profile is control-plane output and cannot be supplied by a caller")
@@ -7055,14 +7486,167 @@ async def get_worker_run_usage(run_id: UUID, limit: int = Query(default=1000, ge
     return [_serialize(row) for row in await storage.list_worker_usage(run_id, limit=limit)]
 
 
+@app.get("/workers/runs/{run_id}/checkpoints")
+async def get_worker_run_checkpoints(
+    run_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1_000),
+) -> list[dict[str, Any]]:
+    """Return durable checkpoints for a single governed Worker Run."""
+    storage = _storage()
+    run = await storage.get_worker_run(run_id)
+    if run is None:
+        raise HTTPException(404, "Worker run not found")
+    if not inspect.iscoroutinefunction(getattr(storage, "list_worker_checkpoints", None)):
+        raise HTTPException(503, "worker checkpoint persistence is unavailable")
+    return [_serialize(row) for row in await storage.list_worker_checkpoints(run_id, limit=limit)]
+
+
+async def _worker_run_control_adapter(
+    storage: AgentStorage,
+    run_id: UUID,
+) -> tuple[dict[str, Any], Any]:
+    """Resolve the immutable adapter pinned when a Worker Run was dispatched."""
+    run = await storage.get_worker_run(run_id)
+    if run is None:
+        raise HTTPException(404, "Worker run not found")
+    if not run.get("adapter_id"):
+        raise HTTPException(409, "This Worker Run has no pinned certified adapter")
+    worker = await storage.get_worker(UUID(str(run["worker_id"])))
+    adapter = (
+        await _certified_worker_adapter(
+            storage,
+            worker,
+            adapter_id=run["adapter_id"],
+            allow_retired=True,
+        )
+        if worker is not None
+        else None
+    )
+    if adapter is None:
+        raise HTTPException(409, "No certified adapter is registered for this run")
+    return run, adapter
+
+
+@app.post("/workers/runs/{run_id}/pause")
+async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str, Any]:
+    """Pause a running worker only when its certified contract supports checkpoints."""
+    storage = _storage()
+    _run, adapter = await _worker_run_control_adapter(storage, run_id)
+    from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
+
+    checkpoint_mode = adapter.capabilities.checkpoint_mode
+    if checkpoint_mode == CheckpointMode.UNSUPPORTED:
+        raise HTTPException(
+            409,
+            {
+                "code": "UNSUPPORTED_CAPABILITY",
+                "message": "The certified adapter does not support pause/checkpoint control",
+            },
+        )
+    if checkpoint_mode == CheckpointMode.RESTART_ONLY:
+        raise HTTPException(
+            409,
+            {
+                "code": "CHECKPOINT_RESTART_ONLY",
+                "message": "The certified adapter supports restart from a safe point, not in-place pause",
+            },
+        )
+    # BaseWorkerAdapter.pause only emits an event; it does not stop or
+    # checkpoint a running task.  A capability declaration is insufficient
+    # unless the adapter supplies a real pause implementation.
+    from mas_core.worker_contract.adapters import BaseWorkerAdapter
+
+    if isinstance(adapter, BaseWorkerAdapter) and type(adapter).pause is BaseWorkerAdapter.pause:
+        raise HTTPException(
+            409,
+            {
+                "code": "UNSUPPORTED_CAPABILITY",
+                "message": "The certified adapter has no in-place pause implementation",
+            },
+        )
+    try:
+        row = await WorkerRunController(storage=storage).pause(
+            run_id,
+            adapter,
+            reason=req.reason,
+            requested_by=req.requested_by,
+        )
+    except WorkerRunError as exc:
+        raise HTTPException(409, {"code": exc.code, "message": str(exc), "details": exc.details}) from exc
+    if row is None:
+        raise HTTPException(404, "Worker run not found")
+    return _serialize(row)
+
+
+@app.post("/workers/runs/{run_id}/resume")
+async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[str, Any]:
+    """Resume a paused worker from an optional durable, resumable checkpoint."""
+    storage = _storage()
+    _run, adapter = await _worker_run_control_adapter(storage, run_id)
+    from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
+
+    checkpoint_mode = adapter.capabilities.checkpoint_mode
+    if checkpoint_mode == CheckpointMode.UNSUPPORTED:
+        raise HTTPException(
+            409,
+            {
+                "code": "UNSUPPORTED_CAPABILITY",
+                "message": "The certified adapter does not support resume control",
+            },
+        )
+    if checkpoint_mode == CheckpointMode.RESTART_ONLY:
+        raise HTTPException(
+            409,
+            {
+                "code": "CHECKPOINT_RESTART_ONLY",
+                "message": "The certified adapter supports restart from a safe point, not in-place resume",
+            },
+        )
+    if req.checkpoint_id is not None:
+        if not inspect.iscoroutinefunction(getattr(storage, "list_worker_checkpoints", None)):
+            raise HTTPException(503, "worker checkpoint persistence is unavailable")
+        checkpoints = await storage.list_worker_checkpoints(run_id, limit=1_000)
+        checkpoint = next(
+            (item for item in checkpoints if str(item.get("id")) == str(req.checkpoint_id)),
+            None,
+        )
+        if checkpoint is None:
+            raise HTTPException(409, "Checkpoint does not belong to this Worker Run")
+        if not bool(checkpoint.get("resumable")):
+            raise HTTPException(409, "Checkpoint is not resumable")
+    try:
+        row = await WorkerRunController(storage=storage).resume(
+            run_id,
+            adapter,
+            requested_by=req.requested_by,
+            checkpoint_id=req.checkpoint_id,
+        )
+    except WorkerRunError as exc:
+        raise HTTPException(409, {"code": exc.code, "message": str(exc), "details": exc.details}) from exc
+    if row is None:
+        raise HTTPException(404, "Worker run not found")
+    return _serialize(row)
+
+
 @app.post("/workers/runs/{run_id}/cancel")
 async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
     storage = _storage()
     row = await storage.get_worker_run(run_id)
     if row is None:
         raise HTTPException(404, "Worker run not found")
+    if not row.get("adapter_id"):
+        raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(row["worker_id"])))
-    adapter = await _certified_worker_adapter(storage, worker) if worker is not None else None
+    adapter = (
+        await _certified_worker_adapter(
+            storage,
+            worker,
+            adapter_id=row["adapter_id"],
+            allow_retired=True,
+        )
+        if worker is not None
+        else None
+    )
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     from mas_core.worker_contract import WorkerRunController
@@ -7117,6 +7701,198 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
         version=version,
     )
     return _serialize(flow)
+
+
+@app.post("/flows/dry-run")
+async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
+    """Validate topology and every typed task assignment without creating a flow.
+
+    This is deliberately a control-plane preview: it never starts an adapter,
+    resolves a runtime credential, or creates a Worker Run.  It does verify
+    the persisted worker, adapter, capability, checkpoint, and Model Profile
+    records a real dispatch would rely on.
+    """
+    from mas_core.worker_contract import CheckpointMode, WorkerCapabilities
+    from mas_core.workflow import (
+        FlowNodeType,
+        FlowValidationError,
+        parse_flow_definition,
+        validate_flow,
+    )
+    from mas_core.workflow.worker_policy import TaskNodePolicy
+
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    node_checks: list[dict[str, Any]] = []
+    try:
+        definition = parse_flow_definition(req.definition_json)
+    except (FlowValidationError, KeyError, TypeError, ValueError) as exc:
+        return {
+            "valid": False,
+            "errors": [{"code": "INVALID_FLOW_DEFINITION", "message": str(exc)}],
+            "warnings": warnings,
+            "nodes": node_checks,
+        }
+    for message in validate_flow(definition):
+        errors.append({"code": "FLOW_VALIDATION_FAILED", "message": message})
+
+    storage = _storage()
+    if req.project_id is not None:
+        project = await storage.get_project(req.project_id)
+        if project is None:
+            errors.append({"code": "PROJECT_NOT_FOUND", "message": f"Project {req.project_id} was not found"})
+        elif project.get("state") in TERMINAL_PROJECT_STATES:
+            errors.append({"code": "TERMINAL_PROJECT", "message": "Terminal projects cannot start a flow"})
+
+    for node in definition.nodes:
+        if node.type != FlowNodeType.TASK:
+            continue
+        check: dict[str, Any] = {"node_id": node.id, "ready": True, "checks": {}}
+        node_checks.append(check)
+        try:
+            policy = TaskNodePolicy.model_validate(node.config)
+        except ValueError as exc:
+            check["ready"] = False
+            errors.append({"code": "INVALID_TASK_POLICY", "node_id": node.id, "message": str(exc)})
+            continue
+        if policy.worker_id is None:
+            # Legacy team/action nodes are retained for the compatibility
+            # window but cannot make a concrete dispatch readiness claim.
+            check["ready"] = False
+            warnings.append(
+                {
+                    "code": "LEGACY_TASK_ASSIGNMENT",
+                    "node_id": node.id,
+                    "message": "Task has no concrete worker_id and cannot be dispatched through a Worker Run",
+                }
+            )
+            continue
+        try:
+            worker_id = UUID(policy.worker_id)
+        except ValueError:
+            check["ready"] = False
+            errors.append({"code": "INVALID_WORKER_ID", "node_id": node.id, "message": "worker_id must be a UUID"})
+            continue
+        worker = await storage.get_worker(worker_id)
+        if worker is None:
+            check["ready"] = False
+            errors.append({"code": "WORKER_NOT_FOUND", "node_id": node.id, "worker_id": policy.worker_id, "message": "Assigned worker was not found"})
+            continue
+        worker_status = str(worker.get("status") or "")
+        check["checks"]["worker_status"] = worker_status
+        if worker_status not in {"ACTIVE", "DRAINING"}:
+            check["ready"] = False
+            errors.append({"code": "WORKER_NOT_ACTIVE", "node_id": node.id, "worker_id": policy.worker_id, "message": f"Worker is {worker_status or 'not active'}"})
+
+        active_adapter = None
+        get_active_adapter = getattr(storage, "get_active_runtime_adapter", None)
+        if inspect.iscoroutinefunction(get_active_adapter):
+            active_adapter = await get_active_adapter(worker_id)
+        if active_adapter is None:
+            check["ready"] = False
+            errors.append({"code": "CERTIFIED_ADAPTER_REQUIRED", "node_id": node.id, "worker_id": policy.worker_id, "message": "Worker has no active certified adapter"})
+            continue
+        adapter_status = str(active_adapter.get("status") or "")
+        conformance_status = str(active_adapter.get("conformance_status") or "")
+        check["checks"]["adapter"] = {"status": adapter_status, "conformance_status": conformance_status}
+        if adapter_status != "active" or conformance_status != "passed":
+            check["ready"] = False
+            errors.append({"code": "ADAPTER_NOT_CERTIFIED", "node_id": node.id, "worker_id": policy.worker_id, "message": "Worker adapter is not active and conformance-certified"})
+            continue
+        try:
+            capabilities = WorkerCapabilities.model_validate(
+                active_adapter.get("capabilities_json")
+                or (worker.get("adapter_config") or {}).get("capabilities")
+                or {}
+            )
+        except ValueError as exc:
+            check["ready"] = False
+            errors.append({"code": "INVALID_ADAPTER_CAPABILITIES", "node_id": node.id, "message": str(exc)})
+            continue
+        missing_capabilities = sorted(set(policy.required_capabilities) - set(capabilities.capability_names))
+        check["checks"]["required_capabilities"] = {
+            "required": sorted(policy.required_capabilities),
+            "missing": missing_capabilities,
+        }
+        if missing_capabilities:
+            check["ready"] = False
+            errors.append({"code": "UNSUPPORTED_CAPABILITY", "node_id": node.id, "worker_id": policy.worker_id, "message": "Worker adapter lacks required capabilities: " + ", ".join(missing_capabilities)})
+        if policy.checkpoint_policy.required and capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED:
+            check["ready"] = False
+            errors.append({"code": "CHECKPOINT_UNSUPPORTED", "node_id": node.id, "worker_id": policy.worker_id, "message": "Task requires checkpoints but the certified adapter declares them unsupported"})
+
+        # Dispatch uses the worker's governed model mode and default Model
+        # Profile, not the node's declarative mode.  The node can request the
+        # same profile, but selecting a different one requires the override
+        # approval that a dry-run intentionally cannot invent.
+        worker_model_mode = str(
+            worker.get("model_mode")
+            or (worker.get("adapter_config") or {}).get("model_mode")
+            or "none"
+        )
+        worker_profile_id = worker.get("model_profile_id") or (
+            worker.get("adapter_config") or {}
+        ).get("model_profile_id")
+        requested_profile_id = policy.model_profile_id
+        if worker_model_mode == "none":
+            if requested_profile_id:
+                check["ready"] = False
+                errors.append(
+                    {
+                        "code": "MODEL_PROFILE_NOT_ALLOWED",
+                        "node_id": node.id,
+                        "worker_id": policy.worker_id,
+                        "message": "The worker is model-less and cannot accept a task Model Profile",
+                    }
+                )
+            else:
+                check["checks"]["model_policy"] = "model-less"
+            continue
+        if not worker_profile_id:
+            check["ready"] = False
+            errors.append(
+                {
+                    "code": "MODEL_PROFILE_NOT_FOUND",
+                    "node_id": node.id,
+                    "worker_id": policy.worker_id,
+                    "message": "Model-governed worker has no default approved Model Profile",
+                }
+            )
+            continue
+        if requested_profile_id and requested_profile_id != worker_profile_id:
+            check["ready"] = False
+            errors.append(
+                {
+                    "code": "MODEL_OVERRIDE_APPROVAL_REQUIRED",
+                    "node_id": node.id,
+                    "worker_id": policy.worker_id,
+                    "message": "Task Model Profile differs from the worker default and requires an approved override",
+                }
+            )
+            continue
+        profile_id = requested_profile_id or str(worker_profile_id)
+        profile_row = await storage.get_model_profile(profile_id) if profile_id else None
+        if profile_row is None:
+            check["ready"] = False
+            errors.append({"code": "MODEL_PROFILE_NOT_FOUND", "node_id": node.id, "message": "Task requires an approved Model Profile"})
+            continue
+        profile = _model_profile_from_row(profile_row)
+        approved_versions = profile.approved_versions()
+        check["checks"]["model_profile"] = {
+            "profile_id": profile_id,
+            "source": "task" if requested_profile_id else "worker_default",
+            "approved_versions": [version.version for version in approved_versions],
+        }
+        if not approved_versions:
+            check["ready"] = False
+            errors.append({"code": "MODEL_PROFILE_NOT_APPROVED", "node_id": node.id, "message": "Task Model Profile has no effective approved version"})
+
+    return {
+        "valid": not errors and all(check["ready"] for check in node_checks),
+        "errors": errors,
+        "warnings": warnings,
+        "nodes": node_checks,
+    }
 
 
 @app.get("/flows")

@@ -12,6 +12,7 @@ function normalizeWorker(worker: Record<string, unknown>) {
     name: worker.display_name ?? worker.worker_name ?? worker.name,
     transport_mode: worker.transport_mode ?? worker.adapter_type,
     adapter_entrypoint: worker.adapter_entrypoint ?? adapterConfig.entrypoint,
+    version: worker.version ?? worker.version_pin,
   };
 }
 
@@ -38,12 +39,23 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    // The dashboard form uses display-oriented aliases.  Translate them at
+    // this boundary and never forward UI-only fields to the strict governed
+    // registration schema.
+    const {
+      worker_id,
+      transport_mode,
+      adapter_entrypoint,
+      description: _description,
+      evaluation_status: _evaluationStatus,
+      ...canonical
+    } = body;
     const payload = {
-      ...body,
-      name: body.worker_id ?? body.name,
-      adapter_type: body.adapter_type ?? body.transport_mode,
-      adapter_config: body.adapter_config ?? {
-        ...(body.adapter_entrypoint ? { entrypoint: body.adapter_entrypoint } : {}),
+      ...canonical,
+      name: worker_id ?? canonical.name,
+      adapter_type: canonical.adapter_type ?? transport_mode,
+      adapter_config: canonical.adapter_config ?? {
+        ...(adapter_entrypoint ? { entrypoint: adapter_entrypoint } : {}),
       },
     };
     const worker = await orchestratorFetch("/capabilities/workers", {

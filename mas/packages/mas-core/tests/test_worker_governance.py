@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import sys
 from uuid import uuid4
 
@@ -136,6 +137,18 @@ def test_opencode_requires_a_committed_phase_0b_report() -> None:
     assert pending.approved is False
     with pytest.raises(ValueError, match="not committed"):
         OpenCodeInterfaceVerification.from_report({"report_id": "made-up-report"})
+
+    verified = OpenCodeInterfaceVerification.from_report(
+        {"report_id": "opencode-phase0b-1.17.13"}
+    )
+    assert {
+        "event-fixtures/live-event-summary.json",
+        "request-response-fixtures/live-interface-summary.json",
+    } <= set(verified.evidence["fixture_refs"])
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", digest)
+        for digest in verified.evidence["fixture_sha256"].values()
+    )
 
 
 def test_opencode_tool_grant_is_short_lived_and_tamper_evident() -> None:
@@ -472,6 +485,60 @@ async def test_controller_preserves_cancelled_terminal_state_when_adapter_finish
     outcome = await asyncio.wait_for(execution, timeout=5)
     assert outcome.state == "CANCELLED"
     assert (await controller.get_run(request.run_id))["state"] == "CANCELLED"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_completion_wins_over_an_inflight_pause() -> None:
+    terminal_gate = asyncio.Event()
+    pause_started = asyncio.Event()
+    release_pause = asyncio.Event()
+
+    async def worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+        await terminal_gate.wait()
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output="completed while pause was being acknowledged",
+        )
+
+    class PauseGateAdapter(NativeWorkerAdapter):
+        async def pause(self, _request) -> None:
+            pause_started.set()
+            await release_pause.wait()
+
+    adapter = PauseGateAdapter(worker, worker_id="pause-race")
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key="pause-race-1",
+        worker_id="pause-race",
+        task_type="slow",
+    )
+    execution = asyncio.create_task(controller.execute(request, adapter))
+    for _ in range(50):
+        if (await controller.get_run(request.run_id) or {}).get("state") == "RUNNING":
+            break
+        await asyncio.sleep(0.01)
+
+    pause = asyncio.create_task(
+        controller.pause(
+            request.run_id,
+            adapter,
+            reason="operator review",
+            requested_by="operator",
+        )
+    )
+    await asyncio.wait_for(pause_started.wait(), timeout=2)
+    terminal_gate.set()
+
+    outcome = await asyncio.wait_for(execution, timeout=2)
+    assert outcome.state == "SUCCEEDED"
+    assert (await controller.get_run(request.run_id))["state"] == "SUCCEEDED"
+
+    release_pause.set()
+    with pytest.raises(WorkerRunError, match="state changed"):
+        await asyncio.wait_for(pause, timeout=2)
     await adapter.close()
 
 

@@ -128,6 +128,23 @@ interface Project {
   updated_at: string;
 }
 
+interface EvidenceCheck {
+  name: string;
+  required: boolean;
+  passed: boolean;
+  reason?: string | null;
+  evidence_refs: string[];
+}
+
+interface ProjectEvidence {
+  policy_id: string;
+  policy_version: string;
+  status: string;
+  completeness_score: number;
+  checks: EvidenceCheck[];
+  evidence_refs: Record<string, string[]>;
+}
+
 interface RepositorySummary {
   status?: string;
   mode?: "clone" | "init" | "none" | string;
@@ -255,7 +272,7 @@ export default function ProjectDetailPage() {
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<
-    "workspace" | "workflow" | "flow" | "context"
+    "workspace" | "workflow" | "flow" | "context" | "evidence"
   >("workspace");
   // Sub-tabs within the workspace view let operators jump between the most
   // important slices (next action, project activity, live resources, spend)
@@ -283,6 +300,8 @@ export default function ProjectDetailPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
+  const [evidence, setEvidence] = useState<ProjectEvidence | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [showContextUpload, setShowContextUpload] = useState(false);
   const [newContextName, setNewContextName] = useState("");
   const [newContextType, setNewContextType] = useState<"FILE" | "URL" | "TEXT">(
@@ -425,6 +444,18 @@ export default function ProjectDetailPage() {
     }
   }, [id]);
 
+  const loadEvidence = useCallback(async () => {
+    setEvidenceLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${id}/evidence`);
+      setEvidence(response.ok ? await response.json() : null);
+    } catch {
+      setEvidence(null);
+    } finally {
+      setEvidenceLoading(false);
+    }
+  }, [id]);
+
   const loadWorkspace = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
@@ -563,6 +594,12 @@ export default function ProjectDetailPage() {
       loadContextData();
     }
   }, [activeTab, loadContextData]);
+
+  useEffect(() => {
+    if (activeTab === "evidence") {
+      loadEvidence();
+    }
+  }, [activeTab, loadEvidence]);
 
   useEffect(() => {
     if (!project || TERMINAL_STATES.includes(project.state)) return;
@@ -879,10 +916,11 @@ export default function ProjectDetailPage() {
     if (activeTab === "flow") return loadFlowData();
     if (activeTab === "workspace") return loadWorkspace();
     if (activeTab === "context") return loadContextData();
+    if (activeTab === "evidence") return loadEvidence();
     return load();
   };
   const isRefreshing =
-    loading || flowLoading || workspaceLoading || contextLoading;
+    loading || flowLoading || workspaceLoading || contextLoading || evidenceLoading;
 
   return (
     <div className="dashboard-page">
@@ -1018,6 +1056,31 @@ export default function ProjectDetailPage() {
           {contextItems.length > 0 && (
             <span className="px-1.5 py-0.5 rounded text-xxs bg-slate-700 text-slate-200">
               {contextItems.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("evidence")}
+          data-testid="project-tab-evidence"
+          role="tab"
+          aria-selected={activeTab === "evidence"}
+          aria-controls="project-panel-evidence"
+          className={clsx(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            activeTab === "evidence"
+              ? "border-blue-400 text-blue-300"
+              : "border-transparent text-slate-400 hover:text-slate-200",
+          )}
+        >
+          Evidence
+          {evidence && (
+            <span className={clsx(
+              "px-1.5 py-0.5 rounded text-xxs",
+              evidence.status === "complete"
+                ? "bg-emerald-950/60 text-emerald-300"
+                : "bg-amber-950/60 text-amber-300",
+            )}>
+              {Math.round(evidence.completeness_score * 100)}%
             </span>
           )}
         </button>
@@ -1471,6 +1534,74 @@ export default function ProjectDetailPage() {
                 />
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "evidence" && (
+        <div
+          id="project-panel-evidence"
+          role="tabpanel"
+          aria-labelledby="project-tab-evidence"
+          className="space-y-4"
+        >
+          {evidenceLoading && (
+            <div className="dashboard-surface p-6 text-center text-sm text-slate-500">
+              Loading immutable evidence policy checks…
+            </div>
+          )}
+          {!evidenceLoading && evidence === null && (
+            <ErrorBanner tone="error" title="Evidence data unavailable">
+              The evidence service did not return a project-scoped policy result.
+            </ErrorBanner>
+          )}
+          {evidence && (
+            <>
+              <div className="dashboard-surface p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-medium text-white">Completion Evidence</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Policy {evidence.policy_id} v{evidence.policy_version} · {Math.round(evidence.completeness_score * 100)}% complete
+                  </p>
+                </div>
+                <span className={clsx(
+                  "rounded-full border px-3 py-1 text-xs font-medium",
+                  evidence.status === "complete"
+                    ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
+                    : "border-amber-700/70 bg-amber-950/40 text-amber-200",
+                )}>
+                  {evidence.status}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {evidence.checks.map((check) => (
+                  <div key={check.name} className={clsx(
+                    "dashboard-surface flex items-start gap-3 p-4",
+                    check.required && !check.passed && "border-amber-800/70",
+                  )}>
+                    {check.passed ? (
+                      <CheckCircle size={18} className="mt-0.5 shrink-0 text-emerald-400" />
+                    ) : (
+                      <XCircle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-100">
+                        {check.name.replace(/_/g, " ")}
+                        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xxs font-normal text-slate-400">
+                          {check.required ? "required" : "optional"}
+                        </span>
+                      </div>
+                      {check.reason && <p className="mt-1 text-xs text-amber-200">{check.reason}</p>}
+                      {check.evidence_refs.length > 0 && (
+                        <p className="mt-2 break-all text-xxs text-slate-500">
+                          Evidence: {check.evidence_refs.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}

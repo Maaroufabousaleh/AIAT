@@ -44,7 +44,7 @@ ENDPOINT_OPERATIONS = {
     "mcp_status": "mcp.status",
 }
 PINNED_BINARY_SHA256 = "f8c45bae73a8f1e2088023fdd34dc2fe0a7f93f505f073e0703e4e1a19afe8ff"
-EXPECTED_MIGRATION_HEAD = "0018_ext_provenance_unique"
+EXPECTED_MIGRATION_HEAD = "0019_block_universal_contract"
 REQUIRED_LIVE_GATES = {
     "services_healthy",
     "migration_head",
@@ -154,6 +154,19 @@ def _validated_live_evidence(output: Path, *, binary_sha256: str, openapi_sha256
     invalid = sorted(name for name, passed in required_facts.items() if not passed)
     if invalid:
         raise SystemExit(f"live-certification evidence facts do not match the pinned runtime: {', '.join(invalid)}")
+    fixtures = evidence.get("fixtures") if isinstance(evidence, dict) else None
+    required_fixture_paths = {
+        "event-fixtures/live-event-summary.json",
+        "request-response-fixtures/live-interface-summary.json",
+    }
+    fixture_hashes = fixtures.get("sha256") if isinstance(fixtures, dict) else None
+    if not isinstance(fixtures, dict) or set(fixtures.get("refs") or ()) != required_fixture_paths or not isinstance(fixture_hashes, dict):
+        raise SystemExit("live-certification evidence is missing the required sanitized fixture set")
+    for relative_path in sorted(required_fixture_paths):
+        path = output / relative_path
+        expected_hash = fixture_hashes.get(relative_path)
+        if not path.is_file() or not isinstance(expected_hash, str) or _sha256_file(path) != expected_hash:
+            raise SystemExit(f"live-certification fixture integrity failed: {relative_path}")
     encoded = json.dumps(evidence, sort_keys=True)
     forbidden = [
         r"(?i)authorization",
@@ -174,15 +187,28 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("mas/docs/opencode/phase0b/1.17.13"))
     parser.add_argument("--release", default="1.17.13")
     parser.add_argument("--commit-sha", required=True)
-    parser.add_argument("--binary", required=True)
+    parser.add_argument("--binary")
+    parser.add_argument(
+        "--binary-sha256",
+        help="SHA-256 measured from the already-running pinned binary when its host path is unavailable.",
+    )
     parser.add_argument("--expected-binary-sha256", default=os.getenv("OPENCODE_BINARY_SHA256", ""))
     parser.add_argument("--config-sha256", required=True)
     parser.add_argument("--container-image-digest", default=os.getenv("OPENCODE_CONTAINER_IMAGE_DIGEST", ""))
     args = parser.parse_args()
-    binary_path = Path(args.binary)
-    if not binary_path.is_file():
-        raise SystemExit("the pinned OpenCode binary path does not exist")
-    binary_sha256 = _sha256_file(binary_path)
+    if not args.binary and not args.binary_sha256:
+        raise SystemExit("either --binary or --binary-sha256 is required")
+    if args.binary:
+        binary_path = Path(args.binary)
+        if not binary_path.is_file():
+            raise SystemExit("the pinned OpenCode binary path does not exist")
+        binary_sha256 = _sha256_file(binary_path)
+        if args.binary_sha256 and binary_sha256.lower() != args.binary_sha256.lower():
+            raise SystemExit("the supplied OpenCode binary hash does not match the binary path")
+    else:
+        binary_sha256 = str(args.binary_sha256).lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", binary_sha256):
+            raise SystemExit("--binary-sha256 must be a SHA-256 hex digest")
     expected_binary_sha256 = args.expected_binary_sha256 or (PINNED_BINARY_SHA256 if args.release == "1.17.13" else "")
     if expected_binary_sha256 and binary_sha256.lower() != expected_binary_sha256.lower():
         raise SystemExit("the OpenCode binary hash does not match the pinned Phase 0B hash")
@@ -234,14 +260,14 @@ def main() -> int:
     provenance = {
         "release": args.release,
         "package": "opencode-ai",
-        "binary": args.binary,
+        "binary": args.binary or "runtime-verified-binary",
         "commit_sha": args.commit_sha,
         "binary_sha256": binary_sha256,
         "config_sha256": args.config_sha256,
         "os": platform.platform(),
         "architecture": platform.machine(),
         "auth_mode": "native_basic_auth",
-        "launch_command": [str(args.binary), "serve", "--hostname", "127.0.0.1", "--port", "8091"],
+        "launch_command": [args.binary or "runtime-verified-binary", "serve", "--hostname", "127.0.0.1", "--port", "8091"],
         "working_directory": "disposable_phase0b_workspace",
         "configuration": {
             "hostname": "127.0.0.1",
@@ -288,7 +314,10 @@ def main() -> int:
             "endpoint-manifest.json",
             "capability-matrix.json",
             "binary-provenance.json",
+            "event-fixtures/live-event-summary.json",
+            "request-response-fixtures/live-interface-summary.json",
         ],
+        "fixture_sha256": dict((live_evidence.get("fixtures") or {}).get("sha256") or {}),
     }
     if (args.output / "live-certification-evidence.json").exists():
         report["evidence"]["live_certification"] = "live-certification-evidence.json"

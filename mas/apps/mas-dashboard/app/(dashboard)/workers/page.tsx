@@ -54,6 +54,7 @@ interface Worker {
   adapter_entrypoint?: string;
   source_repo?: string;
   source_revision?: string;
+  version_pin?: string;
   evaluation_status?: string;
   status: string;
   capability_ids?: string[];
@@ -145,6 +146,22 @@ const EVAL_COLORS: Record<string, string> = {
   unknown: "text-slate-400",
 };
 
+function apiErrorMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== "object") return fallback;
+  const body = payload as Record<string, unknown>;
+  const detail = body.error ?? body.detail;
+  if (typeof detail === "string") return detail;
+  if (!detail || typeof detail !== "object") return fallback;
+
+  const governed = detail as Record<string, unknown>;
+  const message =
+    typeof governed.message === "string" ? governed.message : fallback;
+  const blockers = Array.isArray(governed.blockers)
+    ? governed.blockers.filter((blocker): blocker is string => typeof blocker === "string")
+    : [];
+  return blockers.length > 0 ? `${message}: ${blockers.join("; ")}` : message;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.INACTIVE;
   const Icon = cfg.icon;
@@ -221,9 +238,7 @@ function WorkerRow({
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        setActionError(
-          payload.error ?? payload.detail ?? "Status transition failed",
-        );
+        setActionError(apiErrorMessage(payload, "Status transition failed"));
         return;
       }
       onStatusChange();
@@ -243,7 +258,7 @@ function WorkerRow({
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        setActionError(payload.error ?? payload.detail ?? "Drain failed");
+        setActionError(apiErrorMessage(payload, "Drain failed"));
         return;
       }
       onStatusChange();
@@ -263,7 +278,7 @@ function WorkerRow({
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        setActionError(payload.error ?? payload.detail ?? "Evaluation failed");
+        setActionError(apiErrorMessage(payload, "Evaluation failed"));
         return;
       }
       await loadEvaluations();
@@ -321,7 +336,7 @@ function WorkerRow({
           </span>
         </td>
         <td className="px-4 py-3 text-xs text-slate-400 font-mono">
-          {worker.version ?? "—"}
+          {worker.version ?? worker.version_pin ?? "—"}
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
@@ -426,7 +441,7 @@ function WorkerRow({
                 <div className="flex justify-between">
                   <span className="text-slate-500">Revision</span>
                   <span className="text-white font-mono text-xs">
-                    {worker.source_revision ?? "—"}
+                    {worker.source_revision ?? worker.version_pin ?? "—"}
                   </span>
                 </div>
                 {worker.capability_ids && worker.capability_ids.length > 0 && (
@@ -615,10 +630,10 @@ function RegisterWorkerModal({
     description: "",
     team_id: "",
     source_repo: "",
+    version_pin: "",
     transport_mode: "process",
     adapter_entrypoint: "",
     sandbox_profile: "restricted",
-    evaluation_status: "pending",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -626,6 +641,10 @@ function RegisterWorkerModal({
   async function submit() {
     if (!form.worker_id || !form.name) {
       setError("Worker ID and name are required");
+      return;
+    }
+    if (form.source_repo.trim() && !form.version_pin.trim()) {
+      setError("External workers require an immutable version pin");
       return;
     }
     setLoading(true);
@@ -758,6 +777,24 @@ function RegisterWorkerModal({
             <p className="text-xs text-slate-500 mt-1">
               Optional. Upstream repo will be evaluated for provenance, scans,
               sandbox policy, and compatibility before activation.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">
+              Immutable Version Pin
+            </label>
+            <input
+              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              value={form.version_pin}
+              onChange={(e) =>
+                setForm({ ...form, version_pin: e.target.value })
+              }
+              placeholder="v1.2.3 or a full commit SHA"
+              data-testid="worker-version-pin"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Required for an external repository. This pin becomes immutable
+              provenance; later upgrades use the Steward candidate workflow.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">

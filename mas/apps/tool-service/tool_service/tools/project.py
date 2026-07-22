@@ -115,16 +115,24 @@ async def _git_command(
     *,
     cwd: Path,
     timeout: float = 120,
+    check: bool = True,
 ) -> dict[str, Any]:
+    # Project workspaces are often backed by a Docker Desktop bind mount.  The
+    # container user can legitimately differ from the mount owner, which makes
+    # modern Git reject the repository as "dubious ownership".  Scope trust to
+    # exactly this governed workspace for this invocation; do not mutate the
+    # service user's global Git configuration or trust the entire workspace
+    # root.
+    safe_cwd = cwd.resolve()
     result = await _run_process(
-        ["git", *argv],
-        cwd=cwd,
+        ["git", "-c", f"safe.directory={safe_cwd}", *argv],
+        cwd=safe_cwd,
         timeout=timeout,
         max_output_bytes=256_000,
     )
     if not result.get("available"):
         raise RuntimeError("git is not installed in the tool-service runtime")
-    if result.get("returncode") != 0:
+    if check and result.get("returncode") != 0:
         detail = (result.get("stderr") or result.get("stdout") or "git command failed").strip()
         raise ValueError(detail[:2_000])
     return result
@@ -145,14 +153,12 @@ async def _git_status(*, workspace: Path, project_id: str, remote_name: str) -> 
 
     branch_result = await _git_command(["branch", "--show-current"], cwd=workspace)
     head_result = await _git_command(["rev-parse", "HEAD"], cwd=workspace)
-    remote_result = await _run_process(
-        ["git", "remote", "get-url", remote_name],
+    remote_result = await _git_command(
+        ["remote", "get-url", remote_name],
         cwd=workspace,
         timeout=30,
-        max_output_bytes=8_000,
+        check=False,
     )
-    if not remote_result.get("available"):
-        raise RuntimeError("git is not installed in the tool-service runtime")
     remote_url = (
         remote_result.get("stdout", "").strip()
         if remote_result.get("returncode") == 0
@@ -278,14 +284,11 @@ class ProjectRepositoryTool(BaseTool):
             if not message or len(message) > 200:
                 raise ValueError("commit message is required and must be at most 200 characters")
             await _git_command(["add", "-A"], cwd=workspace)
-            commit = await _run_process(
-                ["git", "commit", "-m", message],
+            commit = await _git_command(
+                ["commit", "-m", message],
                 cwd=workspace,
-                timeout=120,
-                max_output_bytes=256_000,
+                check=False,
             )
-            if not commit.get("available"):
-                raise RuntimeError("git is not installed in the tool-service runtime")
             if commit.get("returncode") != 0 and "nothing to commit" not in (
                 commit.get("stdout", "") + commit.get("stderr", "")
             ).lower():
