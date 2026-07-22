@@ -1,0 +1,117 @@
+{
+  "authentication": {
+    "authenticated_health": 200,
+    "authenticated_openapi": 200,
+    "invalid_auth_health": 401,
+    "unauthenticated_health": 401
+  },
+  "bridge_boundary": {
+    "connected": true,
+    "missing_grant_status": 403,
+    "tampered_grant_status": 403
+  },
+  "captured_at": "2026-07-22T00:07:36.737757+00:00",
+  "cleanup": {
+    "workspace_removed": true
+  },
+  "coding": {
+    "absolute_path_probe_rejected": true,
+    "artifact_count": 2,
+    "artifact_sha256": {
+      "solution.py": "b414e3e8a1cc84d091471727544c353f60db59fc2bea10ee562ece77410915be",
+      "test_solution.py": "a151c63ef48bf1895f322b897add879ea8ba67b2316da9a1a6c6bc1db133cc68"
+    },
+    "bridge_tool_calls": 4,
+    "containment_bridge_tool_calls": 2,
+    "event_types": [
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "server.connected",
+      "session.diff",
+      "session.status",
+      "session.updated",
+      "sync"
+    ],
+    "message_count": 12,
+    "native_tool_calls": 0,
+    "pytest_exit_code": 0,
+    "pytest_passed": 2,
+    "session_id": "ses_078dc04c0ffepv82Ks7giVgESI",
+    "traversal_probe_rejected": true,
+    "workspace_pytest_calls": 1,
+    "workspace_read_calls": 1,
+    "workspace_write_calls": 2
+  },
+  "containment": {
+    "absolute_path_rejected": true,
+    "artifacts_within_run_directory": true,
+    "native_tools_denied": true,
+    "run_directory_is_uuid": true,
+    "traversal_rejected": true
+  },
+  "database": {
+    "model_exact_id": "aiat/omniroute-coding",
+    "model_profile_id": "opencode-phase0b-coding",
+    "model_status": "approved",
+    "model_version": "1",
+    "model_version_status": "approved",
+    "unsafe_active_external_workers": 0
+  },
+  "gates": {
+    "allowed_tool": true,
+    "authentication": true,
+    "binary_pin": true,
+    "bridge_boundary": true,
+    "cleanup": true,
+    "coding": true,
+    "containment": true,
+    "denied_tool": true,
+    "event_evidence": true,
+    "image_pin": true,
+    "migration_head": true,
+    "model_governance": true,
+    "native_tool_bypass": true,
+    "openapi_pin": true,
+    "services_healthy": true,
+    "unsafe_worker_count": true
+  },
+  "migration": {
+    "live_database_head": "0018_ext_provenance_unique",
+    "source_head": "0018_ext_provenance_unique"
+  },
+  "pins": {
+    "binary_sha256": "f8c45bae73a8f1e2088023fdd34dc2fe0a7f93f505f073e0703e4e1a19afe8ff",
+    "openapi_path_count": 162,
+    "openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+    "running_image_digest": "sha256:bd64816da38e55bf184585dc826d39245e6d59c0e19536e6ca879b17610e7249",
+    "tagged_image_digest": "sha256:bd64816da38e55bf184585dc826d39245e6d59c0e19536e6ca879b17610e7249"
+  },
+  "release": "1.17.13",
+  "schema_version": "1.0",
+  "sensitive_values_persisted": false,
+  "services": {
+    "opencode-runtime": "healthy",
+    "orchestrator-api": "healthy",
+    "postgres": "healthy",
+    "tool-service": "healthy"
+  },
+  "tool_mediation": {
+    "allowed_repo_read": true,
+    "bridge_tool_calls": 2,
+    "denied_repo_search": true,
+    "event_types": [
+      "message.part.delta",
+      "message.part.updated",
+      "message.updated",
+      "server.connected",
+      "session.diff",
+      "session.status",
+      "session.updated",
+      "sync"
+    ],
+    "native_tool_calls": 0,
+    "session_id": "ses_078dcdc9affeWjqPEwJa8ABvst"
+  },
+  "workspace_contents_persisted": false
+}

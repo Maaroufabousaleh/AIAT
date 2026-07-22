@@ -1,0 +1,51 @@
+{
+  "cancellation": {
+    "mode": "cooperative",
+    "operation": "abort",
+    "status": "certified_interface"
+  },
+  "checkpoint": {
+    "mode": "restart_only",
+    "status": "certified"
+  },
+  "coding_task": {
+    "status": "certified",
+    "test_count": 2
+  },
+  "diff_artifacts": {
+    "operations": [
+      "diff",
+      "file_content",
+      "vcs_diff"
+    ],
+    "status": "certified_interface"
+  },
+  "events": {
+    "mode": "sse",
+    "operation": "events",
+    "status": "certified_interface"
+  },
+  "model_governance": {
+    "mode": "aiat_gateway",
+    "status": "certified"
+  },
+  "native_permissions": {
+    "mode": "deny_native_allow_governed_mcp",
+    "operation": "permission_reply",
+    "status": "certified"
+  },
+  "session": {
+    "operations": [
+      "session_create",
+      "session_get",
+      "session_delete",
+      "messages",
+      "prompt_async"
+    ],
+    "status": "certified_interface"
+  },
+  "tool_mediation": {
+    "mode": "aiat_mediated",
+    "status": "certified"
+  }
+}

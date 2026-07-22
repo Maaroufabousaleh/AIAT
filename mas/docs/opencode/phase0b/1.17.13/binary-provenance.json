@@ -1,0 +1,29 @@
+{
+  "architecture": "x86_64",
+  "auth_mode": "native_basic_auth",
+  "binary": "/tmp/opencode.exe",
+  "binary_sha256": "f8c45bae73a8f1e2088023fdd34dc2fe0a7f93f505f073e0703e4e1a19afe8ff",
+  "commit_sha": "F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+  "config_sha256": "63d2788bb9968a9fab410d9a590e0adedc4b7f7ccbc09d4a52b91b9a0f46bc9e",
+  "configuration": {
+    "hostname": "127.0.0.1",
+    "password_env": "OPENCODE_SERVER_PASSWORD",
+    "port": 8091,
+    "username_env": "OPENCODE_SERVER_USERNAME"
+  },
+  "container_image": "mas/opencode-runtime:1.17.13",
+  "container_image_digest": "sha256:bd64816da38e55bf184585dc826d39245e6d59c0e19536e6ca879b17610e7249",
+  "credential_recorded": false,
+  "launch_command": [
+    "/tmp/opencode.exe",
+    "serve",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "8091"
+  ],
+  "os": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "package": "opencode-ai",
+  "release": "1.17.13",
+  "working_directory": "disposable_phase0b_workspace"
+}

@@ -1,0 +1,112 @@
+{
+  "endpoints": {
+    "abort": {
+      "method": "POST",
+      "operationId": "session.abort",
+      "path": "/session/{sessionID}/abort"
+    },
+    "diff": {
+      "method": "GET",
+      "operationId": "session.diff",
+      "path": "/session/{sessionID}/diff"
+    },
+    "events": {
+      "method": "GET",
+      "operationId": "global.event",
+      "path": "/global/event"
+    },
+    "file_content": {
+      "method": "GET",
+      "operationId": "file.read",
+      "path": "/file/content"
+    },
+    "file_status": {
+      "method": "GET",
+      "operationId": "file.status",
+      "path": "/file/status"
+    },
+    "health": {
+      "method": "GET",
+      "operationId": "global.health",
+      "path": "/global/health"
+    },
+    "mcp_add": {
+      "method": "POST",
+      "operationId": "mcp.add",
+      "path": "/mcp"
+    },
+    "mcp_status": {
+      "method": "GET",
+      "operationId": "mcp.status",
+      "path": "/mcp"
+    },
+    "messages": {
+      "method": "GET",
+      "operationId": "session.messages",
+      "path": "/session/{sessionID}/message"
+    },
+    "openapi": {
+      "method": "GET",
+      "operationId": null,
+      "path": "/doc",
+      "source": "runtime-documentation-route"
+    },
+    "permission_reply": {
+      "method": "POST",
+      "operationId": "permission.respond",
+      "path": "/session/{sessionID}/permissions/{permissionID}"
+    },
+    "project_current": {
+      "method": "GET",
+      "operationId": "project.current",
+      "path": "/project/current"
+    },
+    "prompt": {
+      "method": "POST",
+      "operationId": "session.prompt",
+      "path": "/session/{sessionID}/message"
+    },
+    "prompt_async": {
+      "method": "POST",
+      "operationId": "session.prompt_async",
+      "path": "/session/{sessionID}/prompt_async"
+    },
+    "session_create": {
+      "method": "POST",
+      "operationId": "session.create",
+      "path": "/session"
+    },
+    "session_delete": {
+      "method": "DELETE",
+      "operationId": "session.delete",
+      "path": "/session/{sessionID}"
+    },
+    "session_get": {
+      "method": "GET",
+      "operationId": "session.get",
+      "path": "/session/{sessionID}"
+    },
+    "session_list": {
+      "method": "GET",
+      "operationId": "session.list",
+      "path": "/session"
+    },
+    "session_status": {
+      "method": "GET",
+      "operationId": "session.status",
+      "path": "/session/status"
+    },
+    "vcs_diff": {
+      "method": "GET",
+      "operationId": "vcs.diff",
+      "path": "/vcs/diff"
+    },
+    "vcs_status": {
+      "method": "GET",
+      "operationId": "vcs.status",
+      "path": "/vcs/status"
+    }
+  },
+  "openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+  "release": "1.17.13"
+}
