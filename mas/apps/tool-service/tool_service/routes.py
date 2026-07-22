@@ -38,6 +38,10 @@ class ToolRunRequest(BaseModel):
         serialization_alias="sender_team",
     )
     project_id: str | None = None
+    worker_run_id: str | None = None
+    permission_scope: list[str] = Field(default_factory=list)
+    budget_snapshot: dict[str, Any] | None = None
+    audit_context: dict[str, Any] = Field(default_factory=dict)
     tool_name: str | None = None
     tool_kwargs: dict[str, Any] = Field(
         default_factory=dict,

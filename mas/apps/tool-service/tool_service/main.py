@@ -38,6 +38,7 @@ from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_T
 
 from .cache import ToolCache
 from .config import Settings, get_settings
+from .opencode_mcp import create_opencode_mcp_app
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
 from .routes import router
@@ -201,7 +202,12 @@ async def lifespan(app: FastAPI):
             name="project-usage-recovery",
         )
 
-    yield
+    bridge_lifespan = getattr(app.state, "opencode_mcp_lifespan", None)
+    if bridge_lifespan is None:
+        yield
+    else:
+        async with bridge_lifespan():
+            yield
 
     cache_recovery_task.cancel()
     with suppress(asyncio.CancelledError):
@@ -232,6 +238,9 @@ app = FastAPI(
 )
 
 app.include_router(router)
+_opencode_mcp_app = create_opencode_mcp_app(app)
+app.state.opencode_mcp_lifespan = _opencode_mcp_app.aiat_lifespan
+app.mount("/opencode", _opencode_mcp_app)
 
 _prom_app = prometheus_client.make_asgi_app()
 

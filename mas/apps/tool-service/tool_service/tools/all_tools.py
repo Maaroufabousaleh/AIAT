@@ -60,6 +60,7 @@ from .infra import (
     SecretsManageTool,
 )
 from .memory import SharedMemoryReadTool, SharedMemoryWriteTool
+from .opencode_workspace import OpenCodeWorkspacePytestTool, OpenCodeWorkspaceReadTool, OpenCodeWorkspaceWriteTool
 from .project import (
     ApprovalOverrideCSOTool,
     DepartmentTaskTool,
@@ -114,6 +115,9 @@ def get_all_tools() -> list[BaseTool]:
         FileReadTool(),
         FileWriteTool(),
         FilePatchTool(),
+        OpenCodeWorkspaceReadTool(),
+        OpenCodeWorkspaceWriteTool(),
+        OpenCodeWorkspacePytestTool(),
         RepoReadTool(),
         RepoSearchTool(),
         CommandRunSafeTool(),

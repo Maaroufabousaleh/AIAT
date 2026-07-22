@@ -45,6 +45,7 @@ from mas_core.worker_contract import (
     WorkerToolRequest,
     WorkerToolResponse,
     WorkerUsage,
+    issue_opencode_tool_grant,
 )
 
 logger = logging.getLogger(__name__)
@@ -567,7 +568,7 @@ class OpenCodeInterfaceVerification:
         required_endpoints = {
             "health", "openapi", "project_current", "session_list", "session_create", "session_get",
             "session_delete", "session_status", "messages", "prompt_async", "events",
-            "abort", "diff", "permission_reply",
+            "abort", "diff", "permission_reply", "mcp_add", "mcp_status",
         }
         if self.endpoints is None:
             object.__setattr__(self, "endpoints", {})
@@ -648,6 +649,7 @@ class OpenCodeAdapter(HTTPAdapter):
     """
 
     runtime_type = "opencode"
+    _MCP_BRIDGE_URL = "http://tool-service:8002/opencode/mcp"
 
     def __init__(
         self,
@@ -694,6 +696,7 @@ class OpenCodeAdapter(HTTPAdapter):
         self._idle: dict[UUID, bool] = {}
         self._terminal_error: dict[UUID, bool] = {}
         self._stop_events: dict[UUID, bool] = {}
+        self._mcp_by_run: dict[UUID, str] = {}
         super().__init__(
             base_url,
             worker_id=worker_id,
@@ -818,6 +821,7 @@ class OpenCodeAdapter(HTTPAdapter):
         existing = self._session_by_key.get(request.idempotency_key)
         if existing:
             return existing
+        bridge_name = await self._configure_tool_bridge(request)
         client = await self._get_client()
         # A persisted session ID may only come from the control-plane adapter
         # context (for restart reconciliation), never from task JSON or user
@@ -859,7 +863,17 @@ class OpenCodeAdapter(HTTPAdapter):
             # tool bridge.  Start every session deny-by-default; a certified
             # run-scoped MCP bridge may be added by the immutable runtime
             # config and will still surface permission requests to AIAT.
-            "permission": [{"permission": "*", "pattern": "*", "action": "deny"}],
+            # OpenCode resolves the last matching permission rule.  Native
+            # tools remain denied while the single run-scoped MCP facade is
+            # explicitly allowed.
+            "permission": [
+                {"permission": "*", "pattern": "*", "action": "deny"},
+                {
+                    "permission": f"{bridge_name}_aiat_tool",
+                    "pattern": "*",
+                    "action": "allow",
+                },
+            ],
         }
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else None
         if model_id:
@@ -877,6 +891,57 @@ class OpenCodeAdapter(HTTPAdapter):
         self._session_by_key[request.idempotency_key] = session_id
         self._session_by_run[request.run_id] = session_id
         return session_id
+
+    async def _configure_tool_bridge(self, request: WorkerRunRequest) -> str:
+        """Install the fixed endpoint with a short-lived run capability.
+
+        The runtime configuration cannot supply either the endpoint or the
+        bearer token.  The latter remains in the server-side request only and
+        never reaches task input, adapter configuration, events, or evidence.
+        """
+        if request.run_id in self._mcp_by_run:
+            return self._mcp_by_run[request.run_id]
+        signing_secret = str(self.context.secrets.get("tool_secret") or "")
+        grant = issue_opencode_tool_grant(
+            signing_secret,
+            worker_id=self.worker_id,
+            run_id=request.run_id,
+            project_id=request.project_id,
+            tool_names=request.tool_grants,
+        )
+        name = f"aiat-{request.run_id.hex}"
+        client = await self._get_client()
+        response = await client.post(
+            self._endpoint("mcp_add"),
+            params=self._query(request),
+            json={
+                "name": name,
+                "config": {
+                    "type": "remote",
+                    "url": self._MCP_BRIDGE_URL,
+                    "headers": {"X-AIAT-OpenCode-Grant": grant},
+                    "oauth": False,
+                    "enabled": True,
+                    "timeout": 60_000,
+                },
+            },
+        )
+        response.raise_for_status()
+        for _ in range(60):
+            status_response = await client.get(
+                self._endpoint("mcp_status"),
+                params=self._query(request),
+            )
+            status_response.raise_for_status()
+            states = status_response.json()
+            state = states.get(name) if isinstance(states, dict) else None
+            if isinstance(state, dict) and state.get("status") == "connected":
+                break
+            await asyncio.sleep(0.25)
+        else:
+            raise RuntimeError("OpenCode run-scoped MCP bridge did not connect")
+        self._mcp_by_run[request.run_id] = name
+        return name
 
     async def start(self, request: WorkerRunRequest) -> Any:
         existing = self._accepted_by_key.get(request.idempotency_key)

@@ -23,14 +23,7 @@ ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
 RUN pip install --no-cache-dir uv==0.4.*
 
-COPY packages/mas-core/ /tmp/mas-core/
-COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
-COPY apps/tool-service/ /tmp/tool-service/
-
-RUN pip install --no-deps /tmp/mas-core && \
-    pip install --no-deps /tmp/mas-tools-sdk && \
-    pip install /tmp/tool-service && \
-    pip install \
+RUN pip install \
         uvicorn \
         httpx \
         fastapi \
@@ -40,6 +33,8 @@ RUN pip install --no-deps /tmp/mas-core && \
         structlog \
         psutil \
         aiolimiter \
+        playwright \
+        prometheus-fastapi-instrumentator \
         "mcp==1.23.3" \
         "pytest>=8,<9" \
         "ruff>=0.12,<1" \
@@ -53,6 +48,14 @@ RUN python -m playwright install --with-deps chromium
 RUN chromium_path="$(find /root/.cache/ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \
     && test -n "$chromium_path" \
     && ln -s "$chromium_path" /usr/local/bin/chromium
+
+# Keep application source after the heavyweight, pinned dependency layers so
+# a bridge or route fix does not re-download Docling and Playwright.
+COPY packages/mas-core/ /tmp/mas-core/
+COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
+COPY apps/tool-service/ /tmp/tool-service/
+
+RUN pip install /tmp/mas-core /tmp/mas-tools-sdk /tmp/tool-service
 
 COPY apps/tool-service/tool_service/ /app/tool_service/
 COPY infra/docker/puppeteer-config.json /app/puppeteer-config.json

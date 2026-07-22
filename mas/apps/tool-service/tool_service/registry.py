@@ -443,6 +443,7 @@ class ToolRegistry:
                 return ToolResponse(
                     tool_name=tool_name,
                     idempotency_key=request.idempotency_key,
+                    worker_run_id=request.worker_run_id,
                     success=True,
                     result=cached,
                     cached=True,
@@ -542,6 +543,7 @@ class ToolRegistry:
         return ToolResponse(
             tool_name=tool_name,
             idempotency_key=request.idempotency_key,
+            worker_run_id=request.worker_run_id,
             success=True,
             result=result_val,
             cached=False,
@@ -649,6 +651,7 @@ class ToolRegistry:
         return ToolResponse(
             tool_name=request.tool_name,
             idempotency_key=request.idempotency_key,
+            worker_run_id=request.worker_run_id,
             success=False,
             error=error,
             error_code=error_code,

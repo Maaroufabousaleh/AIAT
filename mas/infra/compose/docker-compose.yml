@@ -310,9 +310,11 @@ services:
       TOOL_WORKSPACE_ROOT: "/workspace"
       AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
       PYTHONPATH: "/app"
+      OPENCODE_WORKSPACE_ROOT: "/opencode-workspace"
       LOG_LEVEL: "INFO"
     volumes:
       - ${AIAT_WORKSPACE_ROOT:-../../..}:/workspace
+      - opencode_workspace:/opencode-workspace
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -498,6 +500,7 @@ services:
       WORKER_MIRROR_DIR: "/data/worker-mirrors"
     volumes:
       - worker_mirrors:/data/worker-mirrors
+      - opencode_workspace:/workspace
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:

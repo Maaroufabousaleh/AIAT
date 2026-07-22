@@ -66,6 +66,12 @@ from .controller import (
     WorkerRunError,
     WorkerRunOutcome,
 )
+from .opencode_bridge import (
+    OpenCodeToolGrant,
+    OpenCodeToolGrantError,
+    issue_opencode_tool_grant,
+    verify_opencode_tool_grant,
+)
 
 __all__ = [
     "ADAPTER_API_VERSION",
@@ -117,9 +123,13 @@ __all__ = [
     "WorkerRunError",
     "WorkerRunRequest",
     "WorkerRunOutcome",
+    "OpenCodeToolGrant",
+    "OpenCodeToolGrantError",
     "WorkerToolRequest",
     "WorkerToolResponse",
     "WorkerUsage",
     "WorkspaceMode",
     "negotiate_protocol",
+    "issue_opencode_tool_grant",
+    "verify_opencode_tool_grant",
 ]

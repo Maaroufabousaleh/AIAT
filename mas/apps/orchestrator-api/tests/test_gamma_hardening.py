@@ -42,7 +42,10 @@ def test_egress_and_scoped_workspace_are_preserved() -> None:
     assert "public" in compose["services"]["orchestrator-api"]["networks"]
     tool = compose["services"]["tool-service"]
     assert tool["environment"]["TOOL_WORKSPACE_ROOT"] == "/workspace"
-    assert tool["volumes"] == ["${AIAT_WORKSPACE_ROOT:-../../..}:/workspace"]
+    assert tool["volumes"] == [
+        "${AIAT_WORKSPACE_ROOT:-../../..}:/workspace",
+        "opencode_workspace:/opencode-workspace",
+    ]
 
 
 def test_prometheus_uses_orchestrator_api_secret() -> None:
