@@ -3309,6 +3309,27 @@ class AgentStorage:
             await conn.execute(t.documentation_snapshots.insert().values(**values))
         return values
 
+    async def list_documentation_snapshots(self, steward_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
+        query = (
+            sa.select(
+                t.documentation_snapshots,
+                t.documentation_sources.c.uri.label("source_uri"),
+                t.documentation_sources.c.source_type.label("source_type"),
+                t.documentation_sources.c.trusted_for_provenance.label("source_trusted"),
+                t.documentation_sources.c.allowed_domains.label("source_allowed_domains"),
+            )
+            .join(
+                t.documentation_sources,
+                t.documentation_sources.c.id == t.documentation_snapshots.c.source_id,
+            )
+            .where(t.documentation_sources.c.steward_id == steward_id)
+            .order_by(t.documentation_snapshots.c.captured_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def create_capability_snapshot(self, *, worker_id: UUID, version: str, capabilities: dict[str, Any], steward_id: UUID | None = None, evidence_refs: list[str] | None = None) -> dict[str, Any]:
         values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "version": version, "capabilities_json": capabilities, "evidence_refs": evidence_refs or []}
         async with self.engine.begin() as conn:
@@ -3502,7 +3523,22 @@ class AgentStorage:
         return [dict(row) for row in rows]
 
     async def get_model_profile(self, logical_profile_id: str) -> dict[str, Any] | None:
-        return await self._get_table_row(t.model_profiles, t.model_profiles.c.logical_profile_id, logical_profile_id)
+        profile = await self._get_table_row(
+            t.model_profiles,
+            t.model_profiles.c.logical_profile_id,
+            logical_profile_id,
+        )
+        if profile is None:
+            return None
+        async with self.engine.connect() as conn:
+            versions = (
+                await conn.execute(
+                    t.model_profile_versions.select()
+                    .where(t.model_profile_versions.c.profile_id == profile["id"])
+                    .order_by(t.model_profile_versions.c.version.desc())
+                )
+            ).mappings().all()
+        return {**profile, "versions": [dict(row) for row in versions]}
 
     async def list_model_profiles(self) -> list[dict[str, Any]]:
         async with self.engine.connect() as conn:

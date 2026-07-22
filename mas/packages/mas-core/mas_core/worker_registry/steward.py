@@ -438,6 +438,16 @@ class ExternalWorkerSteward:
         candidate = self._candidate(candidate_id)
         if candidate.intake_status != CandidateIntakeStatus.APPROVED:
             raise StewardTransitionError("only approved candidates may enter rollout")
+        if any(record.candidate_id == candidate_id for record in self.rollouts.values()):
+            # A rollout is immutable evidence for one exact candidate.  Retrying
+            # that candidate would collide with the persisted
+            # (worker_id, candidate_id) uniqueness contract and, more
+            # importantly, would erase the distinction between a rolled-back
+            # artifact and a newly reviewed one.  A retry therefore requires a
+            # new immutable candidate.
+            raise StewardTransitionError(
+                "candidate already has rollout history; generate and approve a new immutable candidate"
+            )
         if any(record.status in {RolloutStatus.PENDING, RolloutStatus.SHADOW, RolloutStatus.CANARY, RolloutStatus.PROMOTING} for record in self.rollouts.values()):
             raise StewardTransitionError("another rollout is already in progress for this worker")
         rollout = RolloutRecord(

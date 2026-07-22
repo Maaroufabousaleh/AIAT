@@ -5130,13 +5130,23 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             import json as _json_module
             from mas_core.worker_registry.steward import ExternalProvenance
 
+            provenance_evidence = dict(req.adapter_config.get("provenance") or {})
             provenance = ExternalProvenance(
                 canonical_source_repository=req.source_repo,
-                source_provider="github" if "github.com" in req.source_repo else "external",
-                exact_release=req.version_pin,
+                source_provider=str(provenance_evidence.get("source_provider") or ("github" if "github.com" in req.source_repo else "external")),
+                exact_release=str(provenance_evidence.get("exact_release") or req.version_pin),
+                commit_sha=provenance_evidence.get("commit_sha"),
+                package_version=provenance_evidence.get("package_version"),
+                oci_image_digest=provenance_evidence.get("oci_image_digest"),
+                dependency_lock_hash=provenance_evidence.get("dependency_lock_hash"),
                 transport_type=req.adapter_type,
                 adapter_version=str(req.adapter_config.get("adapter_version") or "1.0.0"),
-                protocol_api_version="aiat.worker.v1",
+                protocol_api_version=str(provenance_evidence.get("protocol_api_version") or "aiat.worker.v1"),
+                runtime_fingerprint=provenance_evidence.get("runtime_fingerprint"),
+                license_id=provenance_evidence.get("license_id"),
+                redistribution_status=str(provenance_evidence.get("redistribution_status") or "pending"),
+                security_scan_status=str(provenance_evidence.get("security_scan_status") or "pending"),
+                documentation_snapshot_version=provenance_evidence.get("documentation_snapshot_version"),
             )
             provenance_hash = sha256(_json_module.dumps(provenance.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
             get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
@@ -5624,6 +5634,8 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         CandidateRecord,
         CapabilitySnapshot,
         CertificationRun,
+        DocumentationSnapshot,
+        DocumentationSource,
         ExternalProvenance,
         ExternalWorkerSteward,
         RolloutRecord,
@@ -5649,6 +5661,33 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         provenance=ExternalProvenance.model_validate(provenance_row),
         status=status,
     )
+    if inspect.iscoroutinefunction(getattr(storage, "list_documentation_snapshots", None)):
+        for row in await storage.list_documentation_snapshots(steward.steward_id):
+            try:
+                source = DocumentationSource(
+                    source_id=UUID(str(row["source_id"])),
+                    uri=str(row["source_uri"]),
+                    source_type=str(row.get("source_type") or "official"),
+                    trusted=bool(row.get("source_trusted", False)),
+                    allowed_domains=tuple(row.get("source_allowed_domains") or []),
+                )
+                if not any(existing.source_id == source.source_id for existing in steward.documentation_sources):
+                    steward.documentation_sources.append(source)
+                steward.add_documentation_snapshot(
+                    DocumentationSnapshot(
+                        snapshot_id=UUID(str(row["id"])),
+                        source=source,
+                        version=str(row["version"]),
+                        content_sha256=str(row["content_sha256"]),
+                        captured_at=row.get("captured_at") or datetime.now(UTC),
+                        content_ref=row.get("content_ref"),
+                        extracted_interfaces=row.get("extracted_interfaces") or {},
+                        security_findings=tuple(row.get("security_findings") or []),
+                        untrusted=bool(row.get("untrusted", True)),
+                    )
+                )
+            except (KeyError, ValueError):
+                logger.warning("steward_documentation_snapshot_rehydrate_failed", extra={"snapshot_id": str(row.get("id"))})
     if inspect.iscoroutinefunction(getattr(storage, "list_capability_snapshots", None)):
         for row in await storage.list_capability_snapshots(worker_id, steward_id=steward.steward_id):
             try:
@@ -5838,7 +5877,16 @@ async def _certified_worker_adapter(storage: AgentStorage, worker: dict[str, Any
             password = os.getenv(password_env)
             if not password:
                 raise ValueError(f"OpenCode secret environment {password_env!r} is not configured")
-            context.secrets.update({"opencode_password": password, "opencode_username": os.getenv(username_env, "opencode")})
+            tool_secret = os.getenv("TOOL_SECRET")
+            if not tool_secret:
+                raise ValueError("OpenCode tool bridge requires TOOL_SECRET from the secret boundary")
+            context.secrets.update(
+                {
+                    "opencode_password": password,
+                    "opencode_username": os.getenv(username_env, "opencode"),
+                    "tool_secret": tool_secret,
+                }
+            )
             adapter = OpenCodeAdapter(
                 verification,
                 base_url=str(config["base_url"]),
@@ -6203,6 +6251,10 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
             if not password:
                 raise ValueError(f"OpenCode secret environment {password_env!r} is not configured")
             context.secrets.update({"opencode_password": password, "opencode_username": os.getenv(username_env, "opencode")})
+            tool_secret = os.getenv("TOOL_SECRET")
+            if not tool_secret:
+                raise ValueError("OpenCode tool bridge secret is not configured")
+            context.secrets["tool_secret"] = tool_secret
             adapter = OpenCodeAdapter(
                 verification,
                 base_url=str(config["base_url"]),
@@ -6219,11 +6271,29 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
                 context=context,
             )
             adapter.capabilities = capabilities
+        resolved_model_profile = None
+        if transport == "opencode":
+            profile_id = str(worker.get("model_profile_id") or "")
+            profile_row = await storage.get_model_profile(profile_id) if profile_id else None
+            if profile_row is None:
+                raise ValueError("OpenCode certification requires a persisted Model Profile")
+            approved_versions = _model_profile_from_row(profile_row).approved_versions()
+            if len(approved_versions) != 1:
+                raise ValueError("OpenCode certification requires exactly one effective approved model version")
+            from mas_core.worker_contract import ModelProfileReference
+
+            resolved_version = approved_versions[0]
+            resolved_model_profile = ModelProfileReference(
+                profile_id=profile_id,
+                version=resolved_version.version,
+                exact_model_id=resolved_version.exact_model_id,
+            )
         try:
-            conformance = await ConformanceRunner().run(
+            conformance = await ConformanceRunner(timeout_seconds=180.0 if transport == "opencode" else 10.0).run(
                 adapter,
                 worker_id=str(worker_id),
                 include_cancellation=True,
+                resolved_model_profile=resolved_model_profile,
             )
         finally:
             await adapter.close()
@@ -6300,7 +6370,20 @@ async def approve_steward_candidate(
     await storage.update_skill_bundle_candidate(candidate_id, intake_status=candidate.intake_status.value, evidence=evidence, approval_record_id=candidate.approval_record_id)
     await storage.update_skill_bundle(persisted_candidate["skill_bundle_id"], status="APPROVED")
     if persisted_candidate.get("adapter_id"):
-        await storage.update_runtime_adapter(persisted_candidate["adapter_id"], status="approved", conformance_status="passed")
+        current_adapter = await storage.get_runtime_adapter(persisted_candidate["adapter_id"])
+        # Replaying an idempotent approval after rollout must never demote the
+        # currently active immutable adapter back to merely approved.
+        adapter_status = "active" if current_adapter and current_adapter.get("status") == "active" else "approved"
+        await storage.update_runtime_adapter(
+            persisted_candidate["adapter_id"],
+            status=adapter_status,
+            conformance_status="passed",
+        )
+    # The server-run conformance result plus this independent approval are
+    # the authoritative external-worker evaluation.  Activation consumes the
+    # worker-level projection, so update it here rather than requiring a
+    # weaker legacy evaluation workflow after steward approval.
+    await storage.update_worker_config(worker_id, evaluation_status="approved")
     return _candidate_response(candidate)
 
 
@@ -6310,9 +6393,24 @@ async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> di
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
-    candidate_id = next((candidate.candidate_id for candidate in steward.candidates.values() if candidate.intake_status.value == "APPROVED"), None)
+    prior_rollout_candidate_ids = {
+        UUID(str(record["candidate_id"]))
+        for record in await storage.list_rollout_records(worker_id)
+    }
+    candidate_id = next(
+        (
+            candidate.candidate_id
+            for candidate in steward.candidates.values()
+            if candidate.intake_status.value == "APPROVED"
+            and candidate.candidate_id not in prior_rollout_candidate_ids
+        ),
+        None,
+    )
     if candidate_id is None:
-        raise HTTPException(409, "No approved candidate is available for rollout")
+        raise HTTPException(
+            409,
+            "No approved candidate without immutable rollout history is available for rollout",
+        )
     try:
         rollout = steward.start_rollout(candidate_id, actor=req.actor, eligible_task_classes=req.eligible_task_classes)
     except Exception as exc:
