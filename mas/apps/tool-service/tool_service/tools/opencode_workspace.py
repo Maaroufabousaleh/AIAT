@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +13,7 @@ from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
+from .adapters import _run_sandboxed_process
 
 _ALLOWED_ROLES = [AgentRole.WORKER]
 
@@ -107,32 +106,42 @@ class OpenCodeWorkspacePytestTool(BaseTool):
         if not test_path.is_file() or test_path.suffix != ".py":
             raise ValueError("OpenCode pytest target must be an existing Python file")
 
-        def run() -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", test_path.name],
-                cwd=run_root,
-                env={
-                    **os.environ,
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-                },
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=30,
-                check=False,
-            )
-
-        completed = await asyncio.to_thread(run)
+        completed = await _run_sandboxed_process(
+            [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", test_path.name],
+            cwd=run_root,
+            workspace_root=run_root,
+            workspace_read_only=True,
+            timeout=30,
+            max_output_bytes=64_000,
+        )
+        if not completed.get("available"):
+            return {
+                "path": test_path.name,
+                "exit_code": None,
+                "certification_status": "SANDBOX_UNAVAILABLE",
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "sandbox_profile": "gvisor",
+                "reason": str(completed.get("reason") or completed.get("error") or "sandbox unavailable"),
+            }
+        output = "\n".join(
+            value
+            for value in (completed.get("stdout"), completed.get("stderr"))
+            if isinstance(value, str)
+        )
         counts = {
-            name: int(match.group(1)) if (match := re.search(rf"(\d+) {name}", completed.stdout)) else 0
+            name: int(match.group(1)) if (match := re.search(rf"(\d+) {name}", output)) else 0
             for name in ("passed", "failed", "skipped")
         }
+        exit_code = completed.get("returncode")
         return {
             "path": test_path.name,
-            "exit_code": completed.returncode,
+            "exit_code": exit_code,
             "certification_status": "PASSED"
-            if completed.returncode == 0 and counts["passed"] > 0 and counts["failed"] == 0
+            if exit_code == 0 and counts["passed"] > 0 and counts["failed"] == 0
             else "FAILED",
             **counts,
+            "sandbox_profile": "gvisor",
+            "network_mode": "egress-deny-all",
         }

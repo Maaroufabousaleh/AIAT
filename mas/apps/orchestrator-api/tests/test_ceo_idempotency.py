@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 
 
 @pytest.mark.anyio
-async def test_deduplicated_async_ceo_request_is_still_scheduled(client, monkeypatch) -> None:
+@pytest.mark.parametrize("anyio_backend", ["asyncio", "trio"])
+async def test_deduplicated_async_ceo_request_is_still_scheduled(
+    client, monkeypatch, anyio_backend: str
+) -> None:
     from orchestrator_api import main
 
     monkeypatch.setenv("ROUTER_SECRET", "test-router-secret")
@@ -64,6 +67,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(client, monkeyp
     monkeypatch.setattr(main, "_handle_ceo_operator_intent", handle)
     monkeypatch.setattr(main, "_publish_ceo_chat_progress", AsyncMock())
     monkeypatch.setattr(main, "_publish_ceo_chat_response", AsyncMock())
+    assert anyio_backend in {"asyncio", "trio"}
 
     response = await client.post(
         "/ceo/message",
@@ -99,10 +103,9 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(client, monkeyp
         context_worker_id=None,
         context_confirmation_token=None,
     )
-    await main._recover_ceo_commands(main.app.state.storage)
-    tasks = list(main.app.state.ceo_command_tasks)
-    if tasks:
-        await asyncio.gather(*tasks)
+    async with anyio.create_task_group() as task_group:
+        monkeypatch.setattr(main.app.state, "ceo_command_task_group", task_group)
+        await main._recover_ceo_commands(main.app.state.storage)
 
     recovered = await main._load_ceo_command(main.app.state.storage, recovered_id)
     assert recovered is not None

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import hashlib
 import json
+import sys
 from uuid import uuid4
 
 import httpx
@@ -38,7 +38,12 @@ from mas_core.worker_contract import (
     issue_opencode_tool_grant,
     verify_opencode_tool_grant,
 )
-from mas_core.worker_registry.runtime_adapters import OCIAdapter, OpenCodeAdapter, OpenCodeInterfaceVerification, ProcessAdapter
+from mas_core.worker_registry.runtime_adapters import (
+    OCIAdapter,
+    OpenCodeAdapter,
+    OpenCodeInterfaceVerification,
+    ProcessAdapter,
+)
 from mas_core.worker_registry.steward import (
     BundleStatus,
     CandidateIntakeStatus,
@@ -285,6 +290,93 @@ async def test_opencode_session_adapter_maps_live_lifecycle_and_basic_auth() -> 
     assert any(event.event_type == EventType.RESULT and event.result and event.result.output == "done" for event in events)
     assert any(req.headers.get("Authorization", "").startswith("Basic ") for req in seen)
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_opencode_bridge_refreshes_expiring_grant_with_same_name() -> None:
+    endpoints = {
+        "health": "/global/health",
+        "openapi": "/doc",
+        "project_current": "/project/current",
+        "session_list": "/session",
+        "session_create": "/session",
+        "session_get": "/session/{sessionID}",
+        "session_delete": "/session/{sessionID}",
+        "session_status": "/session/status",
+        "messages": "/session/{sessionID}/message",
+        "prompt_async": "/session/{sessionID}/prompt_async",
+        "events": "/global/event",
+        "abort": "/session/{sessionID}/abort",
+        "diff": "/session/{sessionID}/diff",
+        "permission_reply": "/session/{sessionID}/permissions/{permissionID}",
+        "mcp_add": "/mcp",
+        "mcp_status": "/mcp",
+    }
+    verification = OpenCodeInterfaceVerification(
+        release="1.17.13",
+        commit_sha="F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+        report_version="2",
+        approved=True,
+        openapi_sha256="a" * 64,
+        config_schema_sha256="b" * 64,
+        endpoints=endpoints,
+        evidence={"approval_record_id": "test", "fixture_refs": ["test"]},
+    )
+    bridge_configs: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/mcp" and request.method == "POST":
+            config = json.loads(request.content)
+            bridge_configs.append(config)
+            return httpx.Response(200, json={config["name"]: {"status": "connected"}}, request=request)
+        if request.url.path == "/mcp" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={bridge_configs[-1]["name"]: {"status": "connected"}},
+                request=request,
+            )
+        return httpx.Response(404, request=request)
+
+    adapter = OpenCodeAdapter(
+        verification,
+        base_url="http://opencode.test",
+        worker_id="opencode-test",
+        client=httpx.AsyncClient(base_url="http://opencode.test", transport=httpx.MockTransport(handler)),
+        context=AdapterContext(
+            secrets={
+                "opencode_password": "test-password",
+                "tool_secret": "test-tool-secret",
+            }
+        ),
+    )
+    request = WorkerRunRequest(
+        idempotency_key="opencode-grant-refresh",
+        worker_id="opencode-test",
+        task_type="test",
+        tool_grants=["opencode.workspace_read"],
+    )
+    adapter._MCP_GRANT_TTL_SECONDS = 2
+    adapter._MCP_GRANT_REFRESH_LEEWAY_SECONDS = 1
+
+    try:
+        name = await adapter._configure_tool_bridge(request)
+        first_grant = bridge_configs[-1]["config"]["headers"]["X-AIAT-OpenCode-Grant"]
+        adapter._ensure_mcp_grant_refresher(request)
+        for _ in range(60):
+            if len(bridge_configs) == 2:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("OpenCode MCP grant was not refreshed before expiry")
+
+        refreshed_name = bridge_configs[-1]["name"]
+        refreshed_grant = bridge_configs[-1]["config"]["headers"]["X-AIAT-OpenCode-Grant"]
+
+        assert refreshed_name == name
+        assert len(bridge_configs) == 2
+        assert refreshed_grant != first_grant
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio

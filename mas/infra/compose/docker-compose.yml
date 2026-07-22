@@ -85,6 +85,24 @@ volumes:
 
 services:
 
+  # ── OpenCode workspace ownership ──────────────────────────────────────────
+  # Docker creates named volumes as root. The OpenCode runtime deliberately
+  # runs as UID 10001, so prepare the shared volume before either service can
+  # create a run workspace.
+  opencode-workspace-init:
+    image: alpine:3.21.3
+    restart: "no"
+    user: "0:0"
+    network_mode: "none"
+    volumes:
+      - opencode_workspace:/workspace
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /workspace
+        chown -R 10001:10001 /workspace
+
   # ── 0. Redis ACL Init (one-time setup) ──────────────────────────────────────
   # Runs once to configure ACL users. Can be removed after first run.
   redis-acl-init:
@@ -282,6 +300,8 @@ services:
     # No host port in production — only team-runners (on workers) need it.
     # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
+      opencode-workspace-init:
+        condition: service_completed_successfully
       redis-acl-init:
         condition: service_completed_successfully
       redis:
@@ -418,6 +438,9 @@ services:
     env_file:
       - path: ../../../.env
         format: raw
+    depends_on:
+      opencode-workspace-init:
+        condition: service_completed_successfully
     environment:
       OPENCODE_SERVER_USERNAME: "${OPENCODE_SERVER_USERNAME:-aiat-opencode-runtime}"
       OPENCODE_SERVER_PASSWORD: "${OPENCODE_SERVER_PASSWORD:?OPENCODE_SERVER_PASSWORD must be configured}"

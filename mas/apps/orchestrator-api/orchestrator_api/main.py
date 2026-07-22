@@ -25,10 +25,12 @@ import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
+from functools import partial
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import anyio
 import httpx
 import prometheus_client
 import sqlalchemy as sa
@@ -1322,7 +1324,7 @@ PROJECT_STAGE_DIRECTIVES: dict[str, tuple[str, str]] = {
 
 _ROUTER_ACCEPTED_STATUS_CODES = {200, 201, 409}
 _STAGE_DIRECTIVE_RETRY_SECONDS = 5.0
-_stage_directive_retry_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+_stage_directive_retry_scopes: dict[tuple[str, str], anyio.CancelScope] = {}
 
 
 def _build_stage_directive(
@@ -1383,7 +1385,7 @@ async def _retry_stage_directive(
 ) -> None:
     """Retry a committed stage's directive until delivered or superseded."""
     while True:
-        await asyncio.sleep(_STAGE_DIRECTIVE_RETRY_SECONDS)
+        await anyio.sleep(_STAGE_DIRECTIVE_RETRY_SECONDS)
         storage = getattr(app.state, "storage", None)
         if storage is None:
             return
@@ -1399,8 +1401,6 @@ async def _retry_stage_directive(
                     directive["payload"]["action"],
                 )
                 return
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception(
                 "Stage directive retry failed: project=%s state=%s",
@@ -1415,29 +1415,40 @@ def _schedule_stage_directive_retry(
     directive: dict[str, Any],
 ) -> None:
     key = (project_id, expected_state)
-    existing = _stage_directive_retry_tasks.get(key)
-    if existing is not None and not existing.done():
+    if key in _stage_directive_retry_scopes:
         return
-    task = asyncio.create_task(
-        _retry_stage_directive(project_id, expected_state, directive),
-        name=f"stage-directive-{project_id}-{expected_state}",
-    )
-    _stage_directive_retry_tasks[key] = task
+    task_group = app.state.ceo_command_task_group
+    if task_group is None:
+        # A real ASGI server owns this task group for its full lifespan.  A
+        # caller outside that lifecycle has no backend-neutral way to detach
+        # work, so leave the durable project state unchanged rather than
+        # invoking an asyncio-only scheduler or risking a duplicate command.
+        logger.warning(
+            "Stage directive retry deferred because the application scheduler is unavailable",
+            extra={"project_id": project_id, "state": expected_state},
+        )
+        return
+    scope = anyio.CancelScope()
+    _stage_directive_retry_scopes[key] = scope
 
-    def _remove(completed: asyncio.Task[None]) -> None:
-        if _stage_directive_retry_tasks.get(key) is completed:
-            _stage_directive_retry_tasks.pop(key, None)
+    async def run_retry() -> None:
+        try:
+            with scope:
+                await _retry_stage_directive(project_id, expected_state, directive)
+        finally:
+            if _stage_directive_retry_scopes.get(key) is scope:
+                _stage_directive_retry_scopes.pop(key, None)
 
-    task.add_done_callback(_remove)
+    task_group.start_soon(run_retry)
 
 
 def _cancel_project_stage_retries(project_id: str) -> None:
     """Supersede retries from any earlier transition for this project."""
-    for key, task in list(_stage_directive_retry_tasks.items()):
+    for key, scope in list(_stage_directive_retry_scopes.items()):
         retry_project_id, _ = key
         if retry_project_id == project_id:
-            _stage_directive_retry_tasks.pop(key, None)
-            task.cancel()
+            _stage_directive_retry_scopes.pop(key, None)
+            scope.cancel()
 
 
 async def publish_system_event(
@@ -1511,7 +1522,7 @@ async def watchdog_loop(
     controller: WorkflowController,
     config: WatchdogConfig,
     boot_at: datetime,
-    stop_event: asyncio.Event,
+    stop_event: Any,
     *,
     max_iterations: int | None = None,
 ) -> None:
@@ -1519,7 +1530,7 @@ async def watchdog_loop(
     iteration = 0
     while not stop_event.is_set():
         try:
-            await asyncio.sleep(WATCHDOG_INTERVAL_S)
+            await anyio.sleep(WATCHDOG_INTERVAL_S)
             if stop_event.is_set():
                 break
 
@@ -1716,6 +1727,14 @@ async def resume_project(project_id: UUID) -> dict[str, Any]:
 async def lifespan(app: FastAPI):  # noqa: ANN001
     """Startup: connect to DB, run resume, start watchdog. Shutdown: cleanup."""
 
+    # The recovery queue must work under every ASGI/AnyIO backend we support.
+    # Keeping one task group alive for the application lifespan gives restart
+    # recovery the same detached execution semantics as the normal background
+    # task path without relying on asyncio.create_task().
+    ceo_command_task_group = anyio.create_task_group()
+    await ceo_command_task_group.__aenter__()
+    app.state.ceo_command_task_group = ceo_command_task_group
+
     # Initialize storage
     storage = AgentStorage(dsn=PGBOUNCER_DSN)
     for attempt in range(1, 11):
@@ -1737,7 +1756,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Initialize watchdog config
     watchdog_config = WatchdogConfig()
     boot_at = datetime.now(tz=UTC)
-    stop_event = asyncio.Event()
+    stop_event = anyio.Event()
 
     # Create workflow controller with storage + event publisher
     controller = WorkflowController(
@@ -1770,9 +1789,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
             except Exception:
                 pass
 
-        # Start watchdog
-        app.state.watchdog_task = asyncio.create_task(
-            watchdog_loop(storage, controller, watchdog_config, boot_at, stop_event)
+        # Start watchdog in the application-owned AnyIO task group so the
+        # lifecycle path stays valid for every supported ASGI backend.
+        ceo_command_task_group.start_soon(
+            watchdog_loop, storage, controller, watchdog_config, boot_at, stop_event
         )
 
         # Seed workers from YAML manifests
@@ -1817,12 +1837,6 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     # Shutdown
     stop_event.set()
-    if app.state.watchdog_task is not None:
-        app.state.watchdog_task.cancel()
-        try:
-            await app.state.watchdog_task
-        except (asyncio.CancelledError, Exception):
-            pass
 
     if app.state.scheduler is not None:
         try:
@@ -1830,17 +1844,13 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             pass
 
-    for task in list(app.state.ceo_command_tasks):
-        task.cancel()
+    ceo_command_task_group.cancel_scope.cancel()
+    await ceo_command_task_group.__aexit__(None, None, None)
+    app.state.ceo_command_task_group = None
 
-    for task in list(_stage_directive_retry_tasks.values()):
-        task.cancel()
-    if _stage_directive_retry_tasks:
-        await asyncio.gather(
-            *_stage_directive_retry_tasks.values(),
-            return_exceptions=True,
-        )
-        _stage_directive_retry_tasks.clear()
+    for scope in list(_stage_directive_retry_scopes.values()):
+        scope.cancel()
+    _stage_directive_retry_scopes.clear()
 
     if storage is not None:
         await storage.close()
@@ -1889,9 +1899,10 @@ app.state.storage = None
 app.state.controller = WorkflowController(storage=None, event_publisher=publish_system_event)
 app.state.watchdog_config = WatchdogConfig()
 app.state.boot_at = datetime.now(tz=UTC)
-app.state.stop_event = asyncio.Event()
+app.state.stop_event = anyio.Event()
 app.state.watchdog_task = None
 app.state.ceo_command_tasks = set()
+app.state.ceo_command_task_group = None
 
 # ── LLM Gateway compatibility router (OpenAI-compatible) ─────────────────────
 from orchestrator_api.llm_gateway_compat import router as llm_compat_router  # noqa: E402
@@ -10256,10 +10267,16 @@ async def _transition_ceo_command(
     )
 
 
-def _track_ceo_command_task(task: asyncio.Task[None]) -> None:
-    tasks: set[asyncio.Task[None]] = app.state.ceo_command_tasks
-    tasks.add(task)
-    task.add_done_callback(tasks.discard)
+async def _run_recovered_ceo_command(command: Any) -> None:
+    """Execute a recovered command without letting one failure stop recovery."""
+    try:
+        await command()
+    except BaseException as exc:
+        # Cancellation is control flow on both asyncio and Trio.  It must
+        # propagate to the lifespan task group during application shutdown.
+        if isinstance(exc, anyio.get_cancelled_exc_class()):
+            raise
+        logger.exception("Recovered CEO command failed")
 
 
 async def _recover_ceo_commands(storage: AgentStorage) -> None:
@@ -10286,21 +10303,27 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
                 continue
         elif status != "PENDING":
             continue
-        task = asyncio.create_task(
-            _process_ceo_operator_intent(
-                instruction=str(record["instruction"]),
-                context_worker_id=(
-                    UUID(record["context_worker_id"]) if record.get("context_worker_id") else None
-                ),
-                context_confirmation_token=(
-                    UUID(record["context_confirmation_token"])
-                    if record.get("context_confirmation_token")
-                    else None
-                ),
-                message_id=message_id,
-            )
+        command = partial(
+            _process_ceo_operator_intent,
+            instruction=str(record["instruction"]),
+            context_worker_id=(
+                UUID(record["context_worker_id"]) if record.get("context_worker_id") else None
+            ),
+            context_confirmation_token=(
+                UUID(record["context_confirmation_token"])
+                if record.get("context_confirmation_token")
+                else None
+            ),
+            message_id=message_id,
         )
-        _track_ceo_command_task(task)
+        task_group = app.state.ceo_command_task_group
+        if task_group is None:
+            # Direct callers (maintenance commands and focused tests) have no
+            # application lifespan to own detached work.  Completing recovery
+            # inline preserves the durable idempotency contract on any backend.
+            await _run_recovered_ceo_command(command)
+        else:
+            task_group.start_soon(_run_recovered_ceo_command, command)
 
 
 async def _process_ceo_operator_intent(

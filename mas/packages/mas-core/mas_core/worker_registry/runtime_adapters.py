@@ -13,13 +13,11 @@ import hashlib
 import importlib
 import json
 import logging
-import time
 import re
-from collections.abc import Awaitable, Callable
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
@@ -34,8 +32,8 @@ from mas_core.worker_contract import (
     NativeWorkerAdapter,
     StreamingMode,
     ToolMode,
-    WorkerCapabilities,
     WorkerCancellation,
+    WorkerCapabilities,
     WorkerError,
     WorkerEvent,
     WorkerHealth,
@@ -49,6 +47,10 @@ from mas_core.worker_contract import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from uuid import UUID
 
 
 def _sanitize_openapi_value(value: Any, key: str = "") -> Any:
@@ -582,7 +584,7 @@ class OpenCodeInterfaceVerification:
             object.__setattr__(self, "evidence", {})
 
     @classmethod
-    def from_report(cls, configured: dict[str, Any]) -> "OpenCodeInterfaceVerification":
+    def from_report(cls, configured: dict[str, Any]) -> OpenCodeInterfaceVerification:
         """Load only a committed Phase 0B report, never an inline claim.
 
         ``approved`` is controlled by the reviewed report fixture.  Runtime
@@ -650,6 +652,9 @@ class OpenCodeAdapter(HTTPAdapter):
 
     runtime_type = "opencode"
     _MCP_BRIDGE_URL = "http://tool-service:8002/opencode/mcp"
+    _MCP_GRANT_TTL_SECONDS = 300
+    _MCP_GRANT_REFRESH_LEEWAY_SECONDS = 30
+    _MCP_GRANT_REFRESH_RETRY_SECONDS = 5
 
     def __init__(
         self,
@@ -697,6 +702,9 @@ class OpenCodeAdapter(HTTPAdapter):
         self._terminal_error: dict[UUID, bool] = {}
         self._stop_events: dict[UUID, bool] = {}
         self._mcp_by_run: dict[UUID, str] = {}
+        self._mcp_grant_expires_at: dict[UUID, float] = {}
+        self._mcp_refresh_tasks: dict[UUID, asyncio.Task[None]] = {}
+        self._mcp_locks: dict[UUID, asyncio.Lock] = {}
         super().__init__(
             base_url,
             worker_id=worker_id,
@@ -892,56 +900,125 @@ class OpenCodeAdapter(HTTPAdapter):
         self._session_by_run[request.run_id] = session_id
         return session_id
 
-    async def _configure_tool_bridge(self, request: WorkerRunRequest) -> str:
+    async def _configure_tool_bridge(
+        self,
+        request: WorkerRunRequest,
+        *,
+        force_refresh: bool = False,
+    ) -> str:
         """Install the fixed endpoint with a short-lived run capability.
 
         The runtime configuration cannot supply either the endpoint or the
         bearer token.  The latter remains in the server-side request only and
         never reaches task input, adapter configuration, events, or evidence.
         """
-        if request.run_id in self._mcp_by_run:
-            return self._mcp_by_run[request.run_id]
-        signing_secret = str(self.context.secrets.get("tool_secret") or "")
-        grant = issue_opencode_tool_grant(
-            signing_secret,
-            worker_id=self.worker_id,
-            run_id=request.run_id,
-            project_id=request.project_id,
-            tool_names=request.tool_grants,
-        )
-        name = f"aiat-{request.run_id.hex}"
-        client = await self._get_client()
-        response = await client.post(
-            self._endpoint("mcp_add"),
-            params=self._query(request),
-            json={
-                "name": name,
-                "config": {
-                    "type": "remote",
-                    "url": self._MCP_BRIDGE_URL,
-                    "headers": {"X-AIAT-OpenCode-Grant": grant},
-                    "oauth": False,
-                    "enabled": True,
-                    "timeout": 60_000,
-                },
-            },
-        )
-        response.raise_for_status()
-        for _ in range(60):
-            status_response = await client.get(
-                self._endpoint("mcp_status"),
-                params=self._query(request),
+        lock = self._mcp_locks.setdefault(request.run_id, asyncio.Lock())
+        async with lock:
+            name = self._mcp_by_run.get(request.run_id)
+            expires_at = self._mcp_grant_expires_at.get(request.run_id, 0)
+            if (
+                name is not None
+                and not force_refresh
+                and time.time() < expires_at - self._MCP_GRANT_REFRESH_LEEWAY_SECONDS
+            ):
+                return name
+
+            # Re-posting the same MCP server name replaces its connection in
+            # OpenCode, so its next request carries the newly issued grant
+            # without changing the permission name pinned into the session.
+            issued_at = int(time.time())
+            signing_secret = str(self.context.secrets.get("tool_secret") or "")
+            grant = issue_opencode_tool_grant(
+                signing_secret,
+                worker_id=self.worker_id,
+                run_id=request.run_id,
+                project_id=request.project_id,
+                tool_names=request.tool_grants,
+                ttl_seconds=self._MCP_GRANT_TTL_SECONDS,
+                now=issued_at,
             )
-            status_response.raise_for_status()
-            states = status_response.json()
-            state = states.get(name) if isinstance(states, dict) else None
-            if isinstance(state, dict) and state.get("status") == "connected":
-                break
-            await asyncio.sleep(0.25)
-        else:
-            raise RuntimeError("OpenCode run-scoped MCP bridge did not connect")
-        self._mcp_by_run[request.run_id] = name
-        return name
+            name = name or f"aiat-{request.run_id.hex}"
+            client = await self._get_client()
+            response = await client.post(
+                self._endpoint("mcp_add"),
+                params=self._query(request),
+                json={
+                    "name": name,
+                    "config": {
+                        "type": "remote",
+                        "url": self._MCP_BRIDGE_URL,
+                        "headers": {"X-AIAT-OpenCode-Grant": grant},
+                        "oauth": False,
+                        "enabled": True,
+                        "timeout": 60_000,
+                    },
+                },
+            )
+            response.raise_for_status()
+            for _ in range(60):
+                status_response = await client.get(
+                    self._endpoint("mcp_status"),
+                    params=self._query(request),
+                )
+                status_response.raise_for_status()
+                states = status_response.json()
+                state = states.get(name) if isinstance(states, dict) else None
+                if isinstance(state, dict) and state.get("status") == "connected":
+                    break
+                await asyncio.sleep(0.25)
+            else:
+                raise RuntimeError("OpenCode run-scoped MCP bridge did not connect")
+            self._mcp_by_run[request.run_id] = name
+            self._mcp_grant_expires_at[request.run_id] = float(
+                issued_at + self._MCP_GRANT_TTL_SECONDS
+            )
+            return name
+
+    def _ensure_mcp_grant_refresher(self, request: WorkerRunRequest) -> None:
+        task = self._mcp_refresh_tasks.get(request.run_id)
+        if task is None or task.done():
+            self._mcp_refresh_tasks[request.run_id] = asyncio.create_task(
+                self._refresh_mcp_grant(request),
+                name=f"opencode-mcp-grant-{request.run_id}",
+            )
+
+    async def _refresh_mcp_grant(self, request: WorkerRunRequest) -> None:
+        """Replace the OpenCode MCP connection before its grant can expire."""
+        try:
+            while request.run_id in self._mcp_by_run:
+                expires_at = self._mcp_grant_expires_at.get(request.run_id)
+                if expires_at is None:
+                    return
+                delay = max(
+                    0.0,
+                    expires_at - time.time() - self._MCP_GRANT_REFRESH_LEEWAY_SECONDS,
+                )
+                await asyncio.sleep(delay)
+                await self._configure_tool_bridge(request, force_refresh=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Never log the token; retrying preserves a still-valid grant when
+            # a transient OpenCode connection refresh fails.
+            logger.warning(
+                "opencode_mcp_grant_refresh_failed",
+                extra={"run_id": str(request.run_id), "worker_id": self.worker_id},
+            )
+            await asyncio.sleep(self._MCP_GRANT_REFRESH_RETRY_SECONDS)
+            if request.run_id in self._mcp_by_run:
+                self._mcp_refresh_tasks[request.run_id] = asyncio.create_task(
+                    self._refresh_mcp_grant(request),
+                    name=f"opencode-mcp-grant-{request.run_id}",
+                )
+
+    async def _stop_mcp_grant_refresher(self, run_id: UUID) -> None:
+        task = self._mcp_refresh_tasks.pop(run_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self._mcp_by_run.pop(run_id, None)
+        self._mcp_grant_expires_at.pop(run_id, None)
+        self._mcp_locks.pop(run_id, None)
 
     async def start(self, request: WorkerRunRequest) -> Any:
         existing = self._accepted_by_key.get(request.idempotency_key)
@@ -950,11 +1027,19 @@ class OpenCodeAdapter(HTTPAdapter):
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
-        await self._create_session(request)
+        try:
+            await self._create_session(request)
+        except Exception:
+            await self._stop_mcp_grant_refresher(request.run_id)
+            raise
         # BaseWorkerAdapter.start creates the task after emitting ACCEPTED;
         # the session map above lets the base hook include the runtime ID in
         # that first authoritative acceptance event.
-        result = await BaseWorkerAdapter.start(self, request)
+        try:
+            result = await BaseWorkerAdapter.start(self, request)
+        except Exception:
+            await self._stop_mcp_grant_refresher(request.run_id)
+            raise
         self._accepted_by_key[request.idempotency_key] = result
         return result
 
@@ -1161,6 +1246,14 @@ class OpenCodeAdapter(HTTPAdapter):
 
     async def _execute(self, request: WorkerRunRequest) -> Any:
         session_id = self._session_by_run.get(request.run_id) or await self._create_session(request)
+        # A restart/retry may reuse a known session.  Ensure that path also
+        # recreates the refresher if the previous task was interrupted.
+        try:
+            await self._configure_tool_bridge(request)
+        except Exception:
+            await self._stop_mcp_grant_refresher(request.run_id)
+            raise
+        self._ensure_mcp_grant_refresher(request)
         self._idle[request.run_id] = False
         self._terminal_error[request.run_id] = False
         self._stop_events[request.run_id] = False
@@ -1209,6 +1302,7 @@ class OpenCodeAdapter(HTTPAdapter):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+            await self._stop_mcp_grant_refresher(request.run_id)
             await self._cleanup_session(request, session_id)
 
     async def cancel(self, request: WorkerCancellation) -> None:
@@ -1223,6 +1317,7 @@ class OpenCodeAdapter(HTTPAdapter):
                 if not request.force:
                     raise
             self._cancelled.add(request.run_id)
+            await self._stop_mcp_grant_refresher(request.run_id)
         await super().cancel(request)
 
     async def deliver_tool_response(self, response: Any) -> None:
@@ -1239,6 +1334,10 @@ class OpenCodeAdapter(HTTPAdapter):
 
     async def close(self) -> None:
         self._stop_events.update({run_id: True for run_id in self._event_tasks})
+        await asyncio.gather(
+            *(self._stop_mcp_grant_refresher(run_id) for run_id in list(self._mcp_refresh_tasks)),
+            return_exceptions=True,
+        )
         await super().close()
         if self._owned_client is not None:
             await self._owned_client.aclose()

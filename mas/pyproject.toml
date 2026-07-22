@@ -33,6 +33,7 @@ members = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "trio>=0.27",
     "pytest-cov>=5.0",
     "fastapi>=0.115",
     "pyyaml>=6.0",

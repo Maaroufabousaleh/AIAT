@@ -48,6 +48,20 @@ def test_egress_and_scoped_workspace_are_preserved() -> None:
     ]
 
 
+def test_opencode_workspace_is_initialized_for_the_runtime_user() -> None:
+    compose_path = Path(__file__).resolve().parents[3] / "infra" / "compose" / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+
+    initializer = compose["services"]["opencode-workspace-init"]
+    assert initializer["user"] == "0:0"
+    assert initializer["network_mode"] == "none"
+    assert initializer["volumes"] == ["opencode_workspace:/workspace"]
+    assert "chown -R 10001:10001 /workspace" in initializer["command"][-1]
+    for service_name in ("tool-service", "opencode-runtime"):
+        dependency = compose["services"][service_name]["depends_on"]["opencode-workspace-init"]
+        assert dependency == {"condition": "service_completed_successfully"}
+
+
 def test_prometheus_uses_orchestrator_api_secret() -> None:
     compose_dir = Path(__file__).resolve().parents[3] / "infra" / "compose"
     dev_compose = yaml.safe_load((compose_dir / "docker-compose.dev.yml").read_text(encoding="utf-8"))

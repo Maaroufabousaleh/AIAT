@@ -37,6 +37,42 @@ def test_sandbox_runner_never_falls_back_when_runsc_is_missing(tmp_path, monkeyp
     assert result["sandbox_profile"] == "gvisor"
 
 
+def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_path, monkeypatch):
+    captured = {}
+
+    class CompletedProcess:
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setenv("TOOL_SECRET", "must-not-reach-generated-tests")
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr("tool_service.sandbox_runner._runtime_available", lambda _docker: True)
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner.subprocess.Popen",
+        lambda command, **_kwargs: captured.setdefault("command", command) and CompletedProcess(),
+    )
+
+    result = execute_sandbox(
+        {
+            "argv": ["python", "-m", "pytest", "-q", "test_solution.py"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "workspace_read_only": True,
+            "profile": "gvisor",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    command = captured["command"]
+    assert result["available"] is True
+    assert "--network=none" in command
+    assert "--user=10001:10001" in command
+    assert "PYTHONNOUSERSITE=1" in command
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in command
+    assert "must-not-reach-generated-tests" not in command
+    assert any(value.endswith(",readonly") for value in command)
+
+
 def test_code_review_reports_structured_findings_without_secret_text(tmp_path):
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "audit@example.invalid"], cwd=tmp_path, check=True)

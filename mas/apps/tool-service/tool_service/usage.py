@@ -59,34 +59,49 @@ class ProjectUsageWriter:
         normalized_project_id = (
             project_id if isinstance(project_id, UUID) else UUID(str(project_id))
         )
-        await self._pool.execute(
-            """
-            INSERT INTO project_usage_events (
-                id, project_id, event_type, agent_id, team_id, model,
-                tool_name, status, prompt_tokens, completion_tokens,
-                cost_usd, duration_ms, trace_id, span_id, details, occurred_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15::jsonb, $16
+        try:
+            await self._pool.execute(
+                """
+                INSERT INTO project_usage_events (
+                    id, project_id, event_type, agent_id, team_id, model,
+                    tool_name, status, prompt_tokens, completion_tokens,
+                    cost_usd, duration_ms, trace_id, span_id, details, occurred_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15::jsonb, $16
+                )
+                """,
+                event_id,
+                normalized_project_id,
+                event_type,
+                agent_id,
+                team_id,
+                model,
+                tool_name,
+                status,
+                max(0, int(prompt_tokens or 0)),
+                max(0, int(completion_tokens or 0)),
+                max(0.0, float(cost_usd or 0.0)),
+                duration_ms,
+                trace_id,
+                span_id,
+                json.dumps(details) if details is not None else None,
+                timestamp,
             )
-            """,
-            event_id,
-            normalized_project_id,
-            event_type,
-            agent_id,
-            team_id,
-            model,
-            tool_name,
-            status,
-            max(0, int(prompt_tokens or 0)),
-            max(0, int(completion_tokens or 0)),
-            max(0.0, float(cost_usd or 0.0)),
-            duration_ms,
-            trace_id,
-            span_id,
-            json.dumps(details) if details is not None else None,
-            timestamp,
-        )
+        except asyncpg.ForeignKeyViolationError as exc:
+            # Usage is best-effort telemetry. A project may be deleted between
+            # the tool call and this asynchronous write; do not turn that
+            # expected lifecycle race into a service-level error. Other
+            # database failures still propagate to the registry's error path.
+            if "project_usage_events_project_id_fkey" not in str(exc):
+                raise
+            return {
+                "id": event_id,
+                "project_id": normalized_project_id,
+                "occurred_at": timestamp,
+                "persisted": False,
+                "drop_reason": "project_deleted_before_persistence",
+            }
         return {
             "id": event_id,
             "project_id": normalized_project_id,

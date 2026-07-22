@@ -80,6 +80,9 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         maximum=2_000_000,
         name="max_output_bytes",
     )
+    workspace_read_only = payload.get("workspace_read_only", False)
+    if not isinstance(workspace_read_only, bool):
+        raise ValueError("workspace_read_only must be a boolean")
     docker = shutil.which(os.getenv("AIAT_SANDBOX_DOCKER_BINARY", "docker"))
     if docker is None or not _runtime_available(docker):
         return {
@@ -91,6 +94,9 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
 
     image = os.getenv("AIAT_SANDBOX_IMAGE", "mas/tool-service:latest")
     container_name = f"aiat-sandbox-{uuid4().hex[:12]}"
+    mount = f"type=bind,src={root},dst=/workspace"
+    if workspace_read_only:
+        mount += ",readonly"
     command = [
         docker,
         "run",
@@ -105,15 +111,26 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         "--pids-limit=256",
         "--memory=512m",
         "--cpus=0.5",
+        "--user=10001:10001",
         "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=128m",
         "--env",
         "HOME=/tmp",
         "--env",
         "XDG_CONFIG_HOME=/tmp/.config",
         "--env",
+        "XDG_CACHE_HOME=/tmp/.cache",
+        "--env",
+        "PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
+        "--env",
+        "PYTHONNOUSERSITE=1",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "--env",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
+        "--env",
         "SEMGREP_SETTINGS_FILE=/tmp/.semgrep/settings.yml",
         "--mount",
-        f"type=bind,src={root},dst=/workspace",
+        mount,
         "--workdir",
         f"/workspace/{relative_cwd.as_posix()}",
         image,

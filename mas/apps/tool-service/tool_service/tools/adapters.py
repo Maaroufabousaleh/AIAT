@@ -186,8 +186,14 @@ async def _run_sandboxed_process(
     cwd: Path,
     timeout: float,
     max_output_bytes: int,
+    workspace_root: Path | None = None,
+    workspace_read_only: bool = False,
 ) -> dict[str, Any]:
-    """Delegate worker-controlled execution to the configured hardened sandbox adapter."""
+    """Delegate worker-controlled execution to the configured hardened sandbox adapter.
+
+    ``workspace_root`` lets a caller narrow the bind mount to a single
+    governed run rather than exposing the service-wide project workspace.
+    """
     timeout = _bounded_number(timeout, name="timeout_seconds", minimum=1, maximum=900)
     max_output_bytes = int(
         _bounded_number(
@@ -205,11 +211,17 @@ async def _run_sandboxed_process(
             "reason": "TOOL_SANDBOX_COMMAND_not_configured",
         }
 
-    root = _workspace_root()
+    root = (workspace_root or _workspace_root()).resolve()
+    resolved_cwd = cwd.resolve()
+    try:
+        relative_cwd = resolved_cwd.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("sandbox cwd must be inside workspace_root") from exc
     payload = {
         "argv": argv,
         "workspace_root": str(root),
-        "cwd": str(cwd.relative_to(root)),
+        "cwd": str(relative_cwd),
+        "workspace_read_only": bool(workspace_read_only),
         "profile": "gvisor",
         "network_mode": "egress-deny-all",
         "timeout_seconds": timeout,

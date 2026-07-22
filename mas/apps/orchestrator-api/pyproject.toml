@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 
 dependencies = [
     "mas-core",
+    "anyio>=4",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "asyncpg>=0.29",
