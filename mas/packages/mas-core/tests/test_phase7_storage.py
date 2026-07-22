@@ -113,7 +113,7 @@ def _mock_mappings(rows: list[dict]) -> MagicMock:
 
 
 class TestModelsMetadata:
-    """Verify that all canonical 20 tables are properly defined in metadata."""
+    """Verify that the current canonical table set is fully represented."""
 
     EXPECTED_TABLES = [
         "projects",
@@ -128,6 +128,10 @@ class TestModelsMetadata:
         "agent_profiles",
         "dead_letters",
         "system_config",
+        "project_context_items",
+        "project_context_chunks",
+        "project_context_tags",
+        "project_context_relations",
         "agent_checkpoints",
         "memory",
         "task_log",
@@ -135,18 +139,48 @@ class TestModelsMetadata:
         "infra_events",
         "capabilities",
         "worker_registry",
-        "role_capability_map",
         "evaluation_reports",
+        "project_usage_events",
+        "worker_shell_versions",
+        "runtime_adapters",
+        "external_runtime_provenance",
+        "steward_agents",
+        "steward_transitions",
+        "documentation_sources",
+        "documentation_snapshots",
+        "capability_snapshots",
+        "compatibility_matrices",
+        "certification_runs",
+        "skill_bundles",
+        "skill_bundle_candidates",
+        "model_profiles",
+        "model_profile_versions",
+        "model_resolution_snapshots",
+        "model_override_requests",
+        "rollout_records",
+        "rollout_transitions",
+        "rollback_records",
+        "worker_runs",
+        "worker_run_transitions",
+        "worker_events",
+        "worker_checkpoints",
+        "worker_artifacts",
+        "worker_usage_records",
+        "hiring_pipeline_stages",
+        "approval_records",
+        "update_monitoring_jobs",
+        "project_repository_records",
+        "evidence_policies",
+        "project_evidence_packages",
+        "role_capability_map",
         "flows",
         "flow_instances",
         "flow_node_executions",
     ]
 
-    def test_all_28_tables_present(self):
-        """metadata.tables should contain exactly 28 table names."""
-        assert len(metadata.tables) == 28
-        for name in self.EXPECTED_TABLES:
-            assert name in metadata.tables, f"Missing table: {name}"
+    def test_all_current_tables_present(self):
+        """Metadata should contain exactly the declared canonical table set."""
+        assert set(metadata.tables) == set(self.EXPECTED_TABLES)
 
     def test_capability_registry_tables_defined(self):
         assert capabilities.name == "capabilities"
