@@ -199,6 +199,19 @@
           "default": null,
           "description": "Resource caps for this task. Only valid on TASK and ADMIN_TASK messages."
         },
+        "contract_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nested universal worker contract version.",
+          "title": "Contract Version"
+        },
         "correlation_id": {
           "anyOf": [
             {
@@ -296,6 +309,19 @@
           "title": "Retry Count",
           "type": "integer"
         },
+        "schema_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nested worker payload schema version.",
+          "title": "Schema Version"
+        },
         "sender_id": {
           "description": "Agent ID of the sender (e.g. 'ceo_agent').",
           "title": "Sender Id",
@@ -356,6 +382,26 @@
           "title": "Agent Id",
           "type": "string"
         },
+        "audit_context": {
+          "additionalProperties": true,
+          "description": "Trace and provenance references for audit.",
+          "title": "Audit Context",
+          "type": "object"
+        },
+        "budget_snapshot": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Budget state at authorization time.",
+          "title": "Budget Snapshot"
+        },
         "idempotency_key": {
           "anyOf": [
             {
@@ -375,6 +421,14 @@
           "description": "Keyword arguments forwarded verbatim to the tool implementation.",
           "title": "Kwargs",
           "type": "object"
+        },
+        "permission_scope": {
+          "description": "AIAT-approved permission scopes.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Permission Scope",
+          "type": "array"
         },
         "project_id": {
           "anyOf": [
@@ -443,6 +497,20 @@
           "default": null,
           "description": "Distributed trace ID for log correlation.",
           "title": "Trace Id"
+        },
+        "worker_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Durable worker run that authorized this tool call.",
+          "title": "Worker Run Id"
         }
       },
       "required": [
@@ -614,6 +682,20 @@
           ],
           "default": null,
           "title": "Trace Id"
+        },
+        "worker_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Durable worker run associated with this response.",
+          "title": "Worker Run Id"
         }
       },
       "required": [
@@ -621,6 +703,1385 @@
         "success"
       ],
       "title": "ToolResponse",
+      "type": "object"
+    },
+    "UniversalWorkerManifest": {
+      "$defs": {
+        "CancellationMode": {
+          "enum": [
+            "immediate",
+            "cooperative",
+            "after_current_step"
+          ],
+          "title": "CancellationMode",
+          "type": "string"
+        },
+        "CapabilityRequirement": {
+          "additionalProperties": true,
+          "properties": {
+            "minimum_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Minimum Version"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "required": {
+              "default": true,
+              "title": "Required",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "CapabilityRequirement",
+          "type": "object"
+        },
+        "CheckpointMode": {
+          "enum": [
+            "native",
+            "wrapper",
+            "restart_only",
+            "unsupported"
+          ],
+          "title": "CheckpointMode",
+          "type": "string"
+        },
+        "MemoryMode": {
+          "enum": [
+            "aiat",
+            "runtime_native",
+            "hybrid"
+          ],
+          "title": "MemoryMode",
+          "type": "string"
+        },
+        "ModelMode": {
+          "enum": [
+            "none",
+            "aiat_gateway",
+            "certified_external_runtime",
+            "hybrid"
+          ],
+          "title": "ModelMode",
+          "type": "string"
+        },
+        "ModelProfileReference": {
+          "additionalProperties": true,
+          "properties": {
+            "exact_model_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Exact Model Id"
+            },
+            "profile_id": {
+              "title": "Profile Id",
+              "type": "string"
+            },
+            "resolution_snapshot_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resolution Snapshot Id"
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Version"
+            }
+          },
+          "required": [
+            "profile_id"
+          ],
+          "title": "ModelProfileReference",
+          "type": "object"
+        },
+        "ProtocolVersion": {
+          "additionalProperties": false,
+          "description": "Protocol metadata persisted on every request, event, and snapshot.",
+          "properties": {
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "schema_version": {
+              "default": "1.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "skill_bundle_format_version": {
+              "default": "aiat.skill-bundle.v1",
+              "title": "Skill Bundle Format Version",
+              "type": "string"
+            }
+          },
+          "title": "ProtocolVersion",
+          "type": "object"
+        },
+        "StreamingMode": {
+          "enum": [
+            "event_stream",
+            "polling",
+            "final_only"
+          ],
+          "title": "StreamingMode",
+          "type": "string"
+        },
+        "ToolMode": {
+          "enum": [
+            "aiat_mediated",
+            "certified_native_bridge"
+          ],
+          "title": "ToolMode",
+          "type": "string"
+        },
+        "WorkerCapabilities": {
+          "additionalProperties": true,
+          "properties": {
+            "cancellation_mode": {
+              "$ref": "#/$defs/CancellationMode",
+              "default": "cooperative"
+            },
+            "capability_names": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Capability Names",
+              "type": "array"
+            },
+            "checkpoint_mode": {
+              "$ref": "#/$defs/CheckpointMode",
+              "default": "unsupported"
+            },
+            "extensions": {
+              "additionalProperties": true,
+              "title": "Extensions",
+              "type": "object"
+            },
+            "memory_mode": {
+              "$ref": "#/$defs/MemoryMode",
+              "default": "aiat"
+            },
+            "model_mode": {
+              "$ref": "#/$defs/ModelMode",
+              "default": "none"
+            },
+            "required_model_capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Model Capabilities",
+              "type": "array",
+              "uniqueItems": true
+            },
+            "streaming_mode": {
+              "$ref": "#/$defs/StreamingMode",
+              "default": "final_only"
+            },
+            "supports_health": {
+              "default": true,
+              "title": "Supports Health",
+              "type": "boolean"
+            },
+            "supports_readiness": {
+              "default": true,
+              "title": "Supports Readiness",
+              "type": "boolean"
+            },
+            "supports_usage": {
+              "default": true,
+              "title": "Supports Usage",
+              "type": "boolean"
+            },
+            "tool_mode": {
+              "$ref": "#/$defs/ToolMode",
+              "default": "aiat_mediated"
+            },
+            "workspace_mode": {
+              "$ref": "#/$defs/WorkspaceMode",
+              "default": "isolated"
+            }
+          },
+          "title": "WorkerCapabilities",
+          "type": "object"
+        },
+        "WorkerIdentity": {
+          "additionalProperties": true,
+          "properties": {
+            "active_adapter_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Active Adapter Version"
+            },
+            "active_skill_bundle_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Active Skill Bundle Id"
+            },
+            "department": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Department"
+            },
+            "lifecycle_state": {
+              "default": "INACTIVE",
+              "title": "Lifecycle State",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "organizational_role": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Organizational Role"
+            },
+            "shell_version": {
+              "default": "1.0.0",
+              "title": "Shell Version",
+              "type": "string"
+            },
+            "steward_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Steward Id"
+            },
+            "worker_id": {
+              "title": "Worker Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "worker_id",
+            "name"
+          ],
+          "title": "WorkerIdentity",
+          "type": "object"
+        },
+        "WorkspaceMode": {
+          "enum": [
+            "isolated",
+            "shared_readonly",
+            "approved_write"
+          ],
+          "title": "WorkspaceMode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "description": "Specialist Shell declaration used by the universal adapter factory.",
+      "properties": {
+        "active_adapter_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Adapter Version"
+        },
+        "active_skill_bundle_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Skill Bundle Id"
+        },
+        "adapter_type": {
+          "default": "native",
+          "title": "Adapter Type",
+          "type": "string"
+        },
+        "budget_limits": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Budget Limits",
+          "type": "object"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/WorkerCapabilities"
+        },
+        "capability_requirements": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirement"
+          },
+          "title": "Capability Requirements",
+          "type": "array"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "title": "Extensions",
+          "type": "object"
+        },
+        "identity": {
+          "$ref": "#/$defs/WorkerIdentity"
+        },
+        "model_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Model Requirements",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "permissions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Permissions",
+          "type": "array"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "sandbox_profile": {
+          "default": "standard",
+          "title": "Sandbox Profile",
+          "type": "string"
+        },
+        "source_provenance": {
+          "additionalProperties": true,
+          "title": "Source Provenance",
+          "type": "object"
+        },
+        "tool_grants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Grants",
+          "type": "array"
+        },
+        "transport": {
+          "default": "native",
+          "title": "Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity"
+      ],
+      "title": "WorkerManifest",
+      "type": "object"
+    },
+    "WorkerArtifact": {
+      "$defs": {
+        "ArtifactKind": {
+          "enum": [
+            "file",
+            "document",
+            "report",
+            "log",
+            "checkpoint",
+            "other"
+          ],
+          "title": "ArtifactKind",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "artifact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind",
+          "default": "other"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mime Type"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "retention_class": {
+          "default": "project_default",
+          "title": "Retention Class",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "uri",
+        "sha256"
+      ],
+      "title": "WorkerArtifact",
+      "type": "object"
+    },
+    "WorkerEvent": {
+      "$defs": {
+        "ArtifactKind": {
+          "enum": [
+            "file",
+            "document",
+            "report",
+            "log",
+            "checkpoint",
+            "other"
+          ],
+          "title": "ArtifactKind",
+          "type": "string"
+        },
+        "EventType": {
+          "enum": [
+            "accepted",
+            "started",
+            "progress",
+            "tool_request",
+            "tool_response",
+            "checkpoint",
+            "paused",
+            "resumed",
+            "result",
+            "error",
+            "cancel_requested",
+            "cancelled",
+            "audit",
+            "heartbeat"
+          ],
+          "title": "EventType",
+          "type": "string"
+        },
+        "ProtocolVersion": {
+          "additionalProperties": false,
+          "description": "Protocol metadata persisted on every request, event, and snapshot.",
+          "properties": {
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "schema_version": {
+              "default": "1.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "skill_bundle_format_version": {
+              "default": "aiat.skill-bundle.v1",
+              "title": "Skill Bundle Format Version",
+              "type": "string"
+            }
+          },
+          "title": "ProtocolVersion",
+          "type": "object"
+        },
+        "WorkerArtifact": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Artifact Id"
+            },
+            "kind": {
+              "$ref": "#/$defs/ArtifactKind",
+              "default": "other"
+            },
+            "metadata": {
+              "additionalProperties": true,
+              "title": "Metadata",
+              "type": "object"
+            },
+            "mime_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mime Type"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "retention_class": {
+              "default": "project_default",
+              "title": "Retention Class",
+              "type": "string"
+            },
+            "sha256": {
+              "title": "Sha256",
+              "type": "string"
+            },
+            "size_bytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Bytes"
+            },
+            "uri": {
+              "title": "Uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "uri",
+            "sha256"
+          ],
+          "title": "WorkerArtifact",
+          "type": "object"
+        },
+        "WorkerAuditEvent": {
+          "additionalProperties": true,
+          "properties": {
+            "action": {
+              "title": "Action",
+              "type": "string"
+            },
+            "actor": {
+              "title": "Actor",
+              "type": "string"
+            },
+            "audit_id": {
+              "format": "uuid",
+              "title": "Audit Id",
+              "type": "string"
+            },
+            "details": {
+              "additionalProperties": true,
+              "title": "Details",
+              "type": "object"
+            },
+            "occurred_at": {
+              "format": "date-time",
+              "title": "Occurred At",
+              "type": "string"
+            },
+            "outcome": {
+              "default": "accepted",
+              "title": "Outcome",
+              "type": "string"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "worker_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Worker Id"
+            }
+          },
+          "required": [
+            "action",
+            "actor"
+          ],
+          "title": "WorkerAuditEvent",
+          "type": "object"
+        },
+        "WorkerCheckpoint": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WorkerArtifact"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "checkpoint_id": {
+              "format": "uuid",
+              "title": "Checkpoint Id",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "protocol": {
+              "$ref": "#/$defs/ProtocolVersion"
+            },
+            "resumable": {
+              "default": true,
+              "title": "Resumable",
+              "type": "boolean"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "sequence": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Sequence",
+              "type": "integer"
+            },
+            "state": {
+              "additionalProperties": true,
+              "title": "State",
+              "type": "object"
+            }
+          },
+          "required": [
+            "run_id"
+          ],
+          "title": "WorkerCheckpoint",
+          "type": "object"
+        },
+        "WorkerError": {
+          "additionalProperties": true,
+          "properties": {
+            "category": {
+              "default": "runtime",
+              "title": "Category",
+              "type": "string"
+            },
+            "cause_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cause Type"
+            },
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "additionalProperties": true,
+              "title": "Details",
+              "type": "object"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "retryable": {
+              "default": false,
+              "title": "Retryable",
+              "type": "boolean"
+            },
+            "terminal": {
+              "default": false,
+              "title": "Terminal",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "WorkerError",
+          "type": "object"
+        },
+        "WorkerProgress": {
+          "additionalProperties": true,
+          "properties": {
+            "current_step": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Current Step"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message"
+            },
+            "metadata": {
+              "additionalProperties": true,
+              "title": "Metadata",
+              "type": "object"
+            },
+            "percent": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Percent"
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Phase"
+            }
+          },
+          "title": "WorkerProgress",
+          "type": "object"
+        },
+        "WorkerResult": {
+          "additionalProperties": true,
+          "properties": {
+            "artifacts": {
+              "items": {
+                "$ref": "#/$defs/WorkerArtifact"
+              },
+              "title": "Artifacts",
+              "type": "array"
+            },
+            "completed_at": {
+              "format": "date-time",
+              "title": "Completed At",
+              "type": "string"
+            },
+            "completion_criteria": {
+              "additionalProperties": true,
+              "title": "Completion Criteria",
+              "type": "object"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WorkerError"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "output": {
+              "default": null,
+              "title": "Output"
+            },
+            "protocol": {
+              "$ref": "#/$defs/ProtocolVersion"
+            },
+            "replay_metadata": {
+              "additionalProperties": true,
+              "title": "Replay Metadata",
+              "type": "object"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "success": {
+              "title": "Success",
+              "type": "boolean"
+            },
+            "usage": {
+              "$ref": "#/$defs/WorkerUsage"
+            },
+            "worker_id": {
+              "title": "Worker Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "run_id",
+            "worker_id",
+            "success"
+          ],
+          "title": "WorkerResult",
+          "type": "object"
+        },
+        "WorkerToolRequest": {
+          "additionalProperties": true,
+          "properties": {
+            "approval_required": {
+              "default": false,
+              "title": "Approval Required",
+              "type": "boolean"
+            },
+            "arguments": {
+              "additionalProperties": true,
+              "title": "Arguments",
+              "type": "object"
+            },
+            "idempotency_key": {
+              "title": "Idempotency Key",
+              "type": "string"
+            },
+            "permission_scope": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Permission Scope",
+              "type": "array"
+            },
+            "request_id": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "run_id",
+            "tool_name",
+            "idempotency_key"
+          ],
+          "title": "WorkerToolRequest",
+          "type": "object"
+        },
+        "WorkerToolResponse": {
+          "additionalProperties": true,
+          "properties": {
+            "error": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WorkerError"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "request_id": {
+              "format": "uuid",
+              "title": "Request Id",
+              "type": "string"
+            },
+            "result": {
+              "default": null,
+              "title": "Result"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "success": {
+              "title": "Success",
+              "type": "boolean"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WorkerUsage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "request_id",
+            "run_id",
+            "tool_name",
+            "success"
+          ],
+          "title": "WorkerToolResponse",
+          "type": "object"
+        },
+        "WorkerUsage": {
+          "additionalProperties": true,
+          "properties": {
+            "completion_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Completion Tokens",
+              "type": "integer"
+            },
+            "cost_usd": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cost Usd",
+              "type": "number"
+            },
+            "cpu_seconds": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cpu Seconds"
+            },
+            "duration_ms": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Duration Ms",
+              "type": "number"
+            },
+            "exact_model_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Exact Model Id"
+            },
+            "memory_bytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Memory Bytes"
+            },
+            "prompt_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Prompt Tokens",
+              "type": "integer"
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Provider"
+            },
+            "total_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Total Tokens",
+              "type": "integer"
+            }
+          },
+          "title": "WorkerUsage",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "audit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerAuditEvent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerCheckpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "emitted_at": {
+          "format": "date-time",
+          "title": "Emitted At",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "title": "Extensions",
+          "type": "object"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sequence": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "tool_request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerToolRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tool_response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerToolResponse"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "worker_id",
+        "event_type"
+      ],
+      "title": "WorkerEvent",
       "type": "object"
     },
     "WorkerManifest": {
@@ -777,6 +2238,24 @@
         },
         "WorkerIntegration": {
           "properties": {
+            "active_skill_bundle_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Active Skill Bundle Id"
+            },
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
             "adapter_entrypoint": {
               "default": "WorkerAgent",
               "title": "Adapter Entrypoint",
@@ -794,12 +2273,41 @@
               "default": null,
               "title": "Adapter Module"
             },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "certified_adapter_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Certified Adapter Version"
+            },
             "compatibility_tests": {
               "items": {
                 "type": "string"
               },
               "title": "Compatibility Tests",
               "type": "array"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
             },
             "isolation_mode": {
               "default": "native",
@@ -814,6 +2322,31 @@
               ],
               "title": "Isolation Mode",
               "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "steward_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Steward Id"
             },
             "wrapper_config": {
               "additionalProperties": true,
@@ -888,6 +2421,17 @@
             },
             "id": {
               "title": "Id",
+              "type": "string"
+            },
+            "migration_status": {
+              "default": "native",
+              "enum": [
+                "native",
+                "compatibility",
+                "migrated",
+                "blocked"
+              ],
+              "title": "Migration Status",
               "type": "string"
             },
             "name": {
@@ -1067,6 +2611,31 @@
         }
       },
       "properties": {
+        "active_adapter_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Adapter Version"
+        },
+        "active_skill_bundle_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Skill Bundle Id"
+        },
         "allowed_inner_runtimes": {
           "items": {
             "enum": [
@@ -1089,6 +2658,18 @@
           "title": "Capabilities",
           "type": "array"
         },
+        "certification_status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "certified",
+            "approved",
+            "blocked",
+            "compatibility"
+          ],
+          "title": "Certification Status",
+          "type": "string"
+        },
         "checkpointing": {
           "$ref": "#/$defs/WorkerCheckpointing"
         },
@@ -1106,8 +2687,45 @@
         "metadata": {
           "$ref": "#/$defs/WorkerMetadata"
         },
+        "model_mode": {
+          "default": "aiat_gateway",
+          "enum": [
+            "none",
+            "aiat_gateway",
+            "certified_external_runtime",
+            "hybrid"
+          ],
+          "title": "Model Mode",
+          "type": "string"
+        },
+        "model_profile_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Profile Id"
+        },
+        "model_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Model Requirements",
+          "type": "array"
+        },
         "observability": {
           "$ref": "#/$defs/WorkerObservability"
+        },
+        "permission_grants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Permission Grants",
+          "type": "array"
         },
         "protocol_version": {
           "const": "aiat.v1",
@@ -1139,12 +2757,975 @@
         },
         "sandbox": {
           "$ref": "#/$defs/WorkerSandbox"
+        },
+        "shell_version": {
+          "default": "1.0.0",
+          "title": "Shell Version",
+          "type": "string"
+        },
+        "source_provenance": {
+          "additionalProperties": true,
+          "title": "Source Provenance",
+          "type": "object"
+        },
+        "steward_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Steward Id"
+        },
+        "tool_grants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Grants",
+          "type": "array"
         }
       },
       "required": [
         "metadata"
       ],
       "title": "WorkerManifest",
+      "type": "object"
+    },
+    "WorkerResult": {
+      "$defs": {
+        "ArtifactKind": {
+          "enum": [
+            "file",
+            "document",
+            "report",
+            "log",
+            "checkpoint",
+            "other"
+          ],
+          "title": "ArtifactKind",
+          "type": "string"
+        },
+        "ProtocolVersion": {
+          "additionalProperties": false,
+          "description": "Protocol metadata persisted on every request, event, and snapshot.",
+          "properties": {
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "schema_version": {
+              "default": "1.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "skill_bundle_format_version": {
+              "default": "aiat.skill-bundle.v1",
+              "title": "Skill Bundle Format Version",
+              "type": "string"
+            }
+          },
+          "title": "ProtocolVersion",
+          "type": "object"
+        },
+        "WorkerArtifact": {
+          "additionalProperties": true,
+          "properties": {
+            "artifact_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Artifact Id"
+            },
+            "kind": {
+              "$ref": "#/$defs/ArtifactKind",
+              "default": "other"
+            },
+            "metadata": {
+              "additionalProperties": true,
+              "title": "Metadata",
+              "type": "object"
+            },
+            "mime_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mime Type"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "retention_class": {
+              "default": "project_default",
+              "title": "Retention Class",
+              "type": "string"
+            },
+            "sha256": {
+              "title": "Sha256",
+              "type": "string"
+            },
+            "size_bytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Bytes"
+            },
+            "uri": {
+              "title": "Uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "uri",
+            "sha256"
+          ],
+          "title": "WorkerArtifact",
+          "type": "object"
+        },
+        "WorkerError": {
+          "additionalProperties": true,
+          "properties": {
+            "category": {
+              "default": "runtime",
+              "title": "Category",
+              "type": "string"
+            },
+            "cause_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cause Type"
+            },
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "details": {
+              "additionalProperties": true,
+              "title": "Details",
+              "type": "object"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "retryable": {
+              "default": false,
+              "title": "Retryable",
+              "type": "boolean"
+            },
+            "terminal": {
+              "default": false,
+              "title": "Terminal",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "WorkerError",
+          "type": "object"
+        },
+        "WorkerUsage": {
+          "additionalProperties": true,
+          "properties": {
+            "completion_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Completion Tokens",
+              "type": "integer"
+            },
+            "cost_usd": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cost Usd",
+              "type": "number"
+            },
+            "cpu_seconds": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cpu Seconds"
+            },
+            "duration_ms": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Duration Ms",
+              "type": "number"
+            },
+            "exact_model_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Exact Model Id"
+            },
+            "memory_bytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Memory Bytes"
+            },
+            "prompt_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Prompt Tokens",
+              "type": "integer"
+            },
+            "provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Provider"
+            },
+            "total_tokens": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Total Tokens",
+              "type": "integer"
+            }
+          },
+          "title": "WorkerUsage",
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/WorkerArtifact"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "completion_criteria": {
+          "additionalProperties": true,
+          "title": "Completion Criteria",
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "default": null,
+          "title": "Output"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "replay_metadata": {
+          "additionalProperties": true,
+          "title": "Replay Metadata",
+          "type": "object"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "success": {
+          "title": "Success",
+          "type": "boolean"
+        },
+        "usage": {
+          "$ref": "#/$defs/WorkerUsage"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "worker_id",
+        "success"
+      ],
+      "title": "WorkerResult",
+      "type": "object"
+    },
+    "WorkerRunAccepted": {
+      "$defs": {
+        "CancellationMode": {
+          "enum": [
+            "immediate",
+            "cooperative",
+            "after_current_step"
+          ],
+          "title": "CancellationMode",
+          "type": "string"
+        },
+        "CheckpointMode": {
+          "enum": [
+            "native",
+            "wrapper",
+            "restart_only",
+            "unsupported"
+          ],
+          "title": "CheckpointMode",
+          "type": "string"
+        },
+        "MemoryMode": {
+          "enum": [
+            "aiat",
+            "runtime_native",
+            "hybrid"
+          ],
+          "title": "MemoryMode",
+          "type": "string"
+        },
+        "ModelMode": {
+          "enum": [
+            "none",
+            "aiat_gateway",
+            "certified_external_runtime",
+            "hybrid"
+          ],
+          "title": "ModelMode",
+          "type": "string"
+        },
+        "ProtocolVersion": {
+          "additionalProperties": false,
+          "description": "Protocol metadata persisted on every request, event, and snapshot.",
+          "properties": {
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "schema_version": {
+              "default": "1.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "skill_bundle_format_version": {
+              "default": "aiat.skill-bundle.v1",
+              "title": "Skill Bundle Format Version",
+              "type": "string"
+            }
+          },
+          "title": "ProtocolVersion",
+          "type": "object"
+        },
+        "StreamingMode": {
+          "enum": [
+            "event_stream",
+            "polling",
+            "final_only"
+          ],
+          "title": "StreamingMode",
+          "type": "string"
+        },
+        "ToolMode": {
+          "enum": [
+            "aiat_mediated",
+            "certified_native_bridge"
+          ],
+          "title": "ToolMode",
+          "type": "string"
+        },
+        "WorkerCapabilities": {
+          "additionalProperties": true,
+          "properties": {
+            "cancellation_mode": {
+              "$ref": "#/$defs/CancellationMode",
+              "default": "cooperative"
+            },
+            "capability_names": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Capability Names",
+              "type": "array"
+            },
+            "checkpoint_mode": {
+              "$ref": "#/$defs/CheckpointMode",
+              "default": "unsupported"
+            },
+            "extensions": {
+              "additionalProperties": true,
+              "title": "Extensions",
+              "type": "object"
+            },
+            "memory_mode": {
+              "$ref": "#/$defs/MemoryMode",
+              "default": "aiat"
+            },
+            "model_mode": {
+              "$ref": "#/$defs/ModelMode",
+              "default": "none"
+            },
+            "required_model_capabilities": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Required Model Capabilities",
+              "type": "array",
+              "uniqueItems": true
+            },
+            "streaming_mode": {
+              "$ref": "#/$defs/StreamingMode",
+              "default": "final_only"
+            },
+            "supports_health": {
+              "default": true,
+              "title": "Supports Health",
+              "type": "boolean"
+            },
+            "supports_readiness": {
+              "default": true,
+              "title": "Supports Readiness",
+              "type": "boolean"
+            },
+            "supports_usage": {
+              "default": true,
+              "title": "Supports Usage",
+              "type": "boolean"
+            },
+            "tool_mode": {
+              "$ref": "#/$defs/ToolMode",
+              "default": "aiat_mediated"
+            },
+            "workspace_mode": {
+              "$ref": "#/$defs/WorkspaceMode",
+              "default": "isolated"
+            }
+          },
+          "title": "WorkerCapabilities",
+          "type": "object"
+        },
+        "WorkspaceMode": {
+          "enum": [
+            "isolated",
+            "shared_readonly",
+            "approved_write"
+          ],
+          "title": "WorkspaceMode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "accepted_at": {
+          "format": "date-time",
+          "title": "Accepted At",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "initial_state": {
+          "default": "READY",
+          "title": "Initial State",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "negotiated_capabilities": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "runtime_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Run Id"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "idempotency_key",
+        "worker_id"
+      ],
+      "title": "WorkerRunAccepted",
+      "type": "object"
+    },
+    "WorkerRunRequest": {
+      "$defs": {
+        "CapabilityRequirement": {
+          "additionalProperties": true,
+          "properties": {
+            "minimum_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Minimum Version"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "required": {
+              "default": true,
+              "title": "Required",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "CapabilityRequirement",
+          "type": "object"
+        },
+        "ModelProfileReference": {
+          "additionalProperties": true,
+          "properties": {
+            "exact_model_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Exact Model Id"
+            },
+            "profile_id": {
+              "title": "Profile Id",
+              "type": "string"
+            },
+            "resolution_snapshot_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resolution Snapshot Id"
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Version"
+            }
+          },
+          "required": [
+            "profile_id"
+          ],
+          "title": "ModelProfileReference",
+          "type": "object"
+        },
+        "ProtocolVersion": {
+          "additionalProperties": false,
+          "description": "Protocol metadata persisted on every request, event, and snapshot.",
+          "properties": {
+            "adapter_api_version": {
+              "default": "aiat.adapter.v1",
+              "title": "Adapter Api Version",
+              "type": "string"
+            },
+            "capability_snapshot_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Snapshot Version"
+            },
+            "contract_version": {
+              "default": "aiat.worker.v1",
+              "title": "Contract Version",
+              "type": "string"
+            },
+            "runtime_api_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Runtime Api Version"
+            },
+            "schema_version": {
+              "default": "1.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "skill_bundle_format_version": {
+              "default": "aiat.skill-bundle.v1",
+              "title": "Skill Bundle Format Version",
+              "type": "string"
+            }
+          },
+          "title": "ProtocolVersion",
+          "type": "object"
+        },
+        "WorkspaceMode": {
+          "enum": [
+            "isolated",
+            "shared_readonly",
+            "approved_write"
+          ],
+          "title": "WorkspaceMode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "properties": {
+        "budget": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Budget",
+          "type": "object"
+        },
+        "capability_requirements": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirement"
+          },
+          "title": "Capability Requirements",
+          "type": "array"
+        },
+        "checkpoint_policy": {
+          "additionalProperties": true,
+          "title": "Checkpoint Policy",
+          "type": "object"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "title": "Extensions",
+          "type": "object"
+        },
+        "flow_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Flow Id"
+        },
+        "flow_instance_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Flow Instance Id"
+        },
+        "flow_node_execution_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Flow Node Execution Id"
+        },
+        "idempotency_key": {
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "permission_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Permission Requirements",
+          "type": "array"
+        },
+        "project_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project Id"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "requested_model_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resolved_model_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retry_policy": {
+          "additionalProperties": true,
+          "title": "Retry Policy",
+          "type": "object"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "task_input": {
+          "additionalProperties": true,
+          "title": "Task Input",
+          "type": "object"
+        },
+        "task_type": {
+          "title": "Task Type",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        },
+        "tool_grants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Grants",
+          "type": "array"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "workspace_mode": {
+          "$ref": "#/$defs/WorkspaceMode",
+          "default": "isolated"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "worker_id",
+        "task_type"
+      ],
+      "title": "WorkerRunRequest",
       "type": "object"
     }
   }

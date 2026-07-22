@@ -1,0 +1,32 @@
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+
+ARG OPENCODE_VERSION=1.17.13
+ARG OPENCODE_TARBALL_SHA512=qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ==
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && cd /tmp \
+    && npm pack --silent "opencode-ai@${OPENCODE_VERSION}" \
+    && actual_sha512=$(openssl dgst -sha512 -binary "opencode-ai-${OPENCODE_VERSION}.tgz" | openssl base64 -A) \
+    && test "${actual_sha512}" = "${OPENCODE_TARBALL_SHA512}" \
+    && npm install --global --omit=dev "./opencode-ai-${OPENCODE_VERSION}.tgz" \
+    && test "$(opencode --version)" = "${OPENCODE_VERSION}" \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin opencode \
+    && mkdir -p /workspace /runtime \
+    && chown -R opencode:opencode /workspace /runtime
+
+COPY infra/docker/opencode-entrypoint.sh /usr/local/bin/opencode-entrypoint
+RUN chmod 0555 /usr/local/bin/opencode-entrypoint
+
+USER 10001:10001
+WORKDIR /workspace
+ENV OPENCODE_SERVER_HOSTNAME=0.0.0.0 \
+    OPENCODE_SERVER_PORT=4096 \
+    OPENCODE_CONFIG=/runtime/opencode.json \
+    HOME=/tmp/home \
+    XDG_CONFIG_HOME=/tmp/home/.config \
+    XDG_DATA_HOME=/tmp/home/.local/share
+
+EXPOSE 4096
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/opencode-entrypoint"]

@@ -138,6 +138,10 @@ class MessageEnvelope(BaseModel):
         default="aiat.v1",
         description="Non-breaking protocol version for cross-runtime contract validation.",
     )
+    # When this envelope carries a universal worker payload, these fields
+    # identify the payload schema. The envelope itself remains aiat.v1 routing.
+    contract_version: str | None = Field(default=None, description="Nested universal worker contract version.")
+    schema_version: str | None = Field(default=None, description="Nested worker payload schema version.")
 
     # --- Identity & correlation ---
     message_id: UUID = Field(
@@ -330,3 +334,9 @@ class MessageEnvelope(BaseModel):
             payload=payload or {},
             **kwargs,
         )
+
+    def worker_payload(self, model_type: Any):
+        """Validate the nested worker payload without replacing the envelope."""
+        if not self.contract_version:
+            raise ValueError("message does not carry a versioned worker payload")
+        return model_type.model_validate(self.payload)

@@ -74,6 +74,14 @@ from .tool import (
     ToolResponse,
 )
 from .worker_manifest import WORKER_SDK_VERSION, WorkerManifest
+from .worker_contract import (
+    WorkerArtifact,
+    WorkerCapabilities,
+    WorkerEvent,
+    WorkerResult,
+    WorkerRunAccepted,
+    WorkerRunRequest,
+)
 from .ws import (
     AgentFrame,
     RouterFrame,
@@ -122,6 +130,12 @@ __all__ = [
     "CapabilitySearchResponse",
     "WORKER_SDK_VERSION",
     "WorkerManifest",
+    "WorkerCapabilities",
+    "WorkerRunRequest",
+    "WorkerRunAccepted",
+    "WorkerEvent",
+    "WorkerResult",
+    "WorkerArtifact",
     # Domain
     "ProjectDocument",
     "ReviewComment",

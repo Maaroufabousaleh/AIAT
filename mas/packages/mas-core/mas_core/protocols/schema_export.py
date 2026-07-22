@@ -9,6 +9,14 @@ from typing import Any
 from .envelope import MessageEnvelope
 from .tool import ToolRequest, ToolResponse
 from .worker_manifest import WorkerManifest
+from mas_core.worker_contract import (
+    WorkerArtifact,
+    WorkerEvent,
+    WorkerResult,
+    WorkerRunAccepted,
+    WorkerRunRequest,
+    WorkerManifest as UniversalWorkerManifest,
+)
 
 PROTOCOL_SCHEMA_VERSION = "aiat.v1"
 
@@ -17,6 +25,12 @@ SCHEMA_MODELS = {
     "ToolRequest": ToolRequest,
     "ToolResponse": ToolResponse,
     "WorkerManifest": WorkerManifest,
+    "UniversalWorkerManifest": UniversalWorkerManifest,
+    "WorkerRunRequest": WorkerRunRequest,
+    "WorkerRunAccepted": WorkerRunAccepted,
+    "WorkerEvent": WorkerEvent,
+    "WorkerResult": WorkerResult,
+    "WorkerArtifact": WorkerArtifact,
 }
 
 

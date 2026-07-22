@@ -66,6 +66,10 @@ class ToolRequest(BaseModel):
         description="Caller's team for team-scoped permission checks.",
     )
     project_id: str | None = Field(default=None, description="Project context for audit logging.")
+    worker_run_id: UUID | None = Field(default=None, description="Durable worker run that authorized this tool call.")
+    permission_scope: list[str] = Field(default_factory=list, description="AIAT-approved permission scopes.")
+    budget_snapshot: dict[str, Any] | None = Field(default=None, description="Budget state at authorization time.")
+    audit_context: dict[str, Any] = Field(default_factory=dict, description="Trace and provenance references for audit.")
 
     # Tool to invoke
     tool_name: str = Field(
@@ -113,6 +117,7 @@ class ToolResponse(BaseModel):
     # Request echo — always set
     tool_name: str = Field(..., description="Tool that was (attempted to be) called.")
     idempotency_key: UUID | None = Field(default=None)
+    worker_run_id: UUID | None = Field(default=None, description="Durable worker run associated with this response.")
 
     # Outcome
     success: bool = Field(..., description="True if the tool executed successfully.")

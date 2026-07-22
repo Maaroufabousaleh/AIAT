@@ -44,6 +44,19 @@ from .dashboard import DASHBOARD_HTML
 from .metrics import MetricsCollector
 from .metrics import Window as MetricsWindow
 from .model_selector import ModelSelector
+from .model_profiles import (
+    ModelPolicyConstraints,
+    ModelPolicyLayer,
+    ModelProfile,
+    ModelProfileStatus,
+    ModelProfileVersion,
+    ModelResolutionError,
+    ModelResolutionRequest,
+    ModelResolutionSnapshot,
+    PrivacyClass,
+    RejectedModelCandidate,
+)
+from .model_resolver import ModelProfileResolver, ResolutionResult
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -107,6 +120,18 @@ __all__ = [
     "SmartRouter",
     "ModelScore",
     "ModelSelector",
+    "ModelProfile",
+    "ModelProfileVersion",
+    "ModelProfileStatus",
+    "ModelPolicyConstraints",
+    "ModelPolicyLayer",
+    "ModelResolutionRequest",
+    "ModelResolutionSnapshot",
+    "ModelResolutionError",
+    "ModelProfileResolver",
+    "ResolutionResult",
+    "RejectedModelCandidate",
+    "PrivacyClass",
     "ConversationContext",
     "create_observability_router",
     "DASHBOARD_HTML",

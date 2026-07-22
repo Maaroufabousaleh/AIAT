@@ -1,0 +1,53 @@
+{
+  "report_id": "opencode-phase0b-pending",
+  "report_version": "2",
+  "release": "1.17.13",
+  "commit_sha": "F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+  "approved": false,
+  "approval_status": "PENDING_LIVE_CERTIFICATION",
+  "approval_record_id": "phase0b-live-certification-required",
+  "auth_mode": "aiat_gateway",
+  "config_schema_sha256": "63d2788bb9968a9fab410d9a590e0adedc4b7f7ccbc09d4a52b91b9a0f46bc9e",
+  "openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+  "checkpoint_mode": "restart_only",
+  "cancellation_mode": "cooperative",
+  "streaming_mode": "event_stream",
+  "supported_model_pattern": "^[^/\\s]+/[^/\\s]+$",
+  "endpoints": {
+    "health": "/global/health",
+    "openapi": "/doc",
+    "project_current": "/project/current",
+    "session_list": "/session",
+    "session_create": "/session",
+    "session_get": "/session/{sessionID}",
+    "session_delete": "/session/{sessionID}",
+    "session_status": "/session/status",
+    "messages": "/session/{sessionID}/message",
+    "prompt": "/session/{sessionID}/message",
+    "prompt_async": "/session/{sessionID}/prompt_async",
+    "events": "/global/event",
+    "abort": "/session/{sessionID}/abort",
+    "diff": "/session/{sessionID}/diff",
+    "file_content": "/file/content",
+    "file_status": "/file/status",
+    "vcs_diff": "/vcs/diff",
+    "vcs_status": "/vcs/status",
+    "permission_reply": "/session/{sessionID}/permissions/{permissionID}"
+  },
+  "evidence": {
+    "discovery_route": "/doc",
+    "health_route": "/global/health",
+    "credentials_written": false,
+    "fixture_refs": [
+      "mas/docs/opencode/phase0b/1.17.13/openapi.sanitized.json",
+      "mas/docs/opencode/phase0b/1.17.13/endpoint-manifest.json",
+      "mas/docs/opencode/phase0b/1.17.13/capability-matrix.json",
+      "mas/docs/opencode/phase0b/1.17.13/binary-provenance.json",
+      "mas/docs/opencode/phase0b/1.17.13/live-certification-evidence.json"
+    ]
+  },
+  "fixture_refs": [
+    "mas/docs/opencode/phase0b/1.17.13/interface-verification-report.json",
+    "mas/docs/opencode/phase0b/1.17.13/checksums.sha256"
+  ]
+}

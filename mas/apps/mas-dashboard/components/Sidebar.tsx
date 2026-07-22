@@ -18,6 +18,7 @@ import {
   Lock,
   Users,
   Send,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -61,6 +62,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/system", label: "System", icon: Settings },
       { href: "/tools",  label: "Tools",  icon: Wrench },
+      { href: "/governance", label: "Governance", icon: ShieldCheck },
     ],
   },
 ];

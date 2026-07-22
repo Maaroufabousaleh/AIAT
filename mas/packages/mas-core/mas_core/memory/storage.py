@@ -2052,6 +2052,11 @@ class AgentStorage:
         adapter_module: str | None = None,
         wrapper_config: dict | None = None,
         isolation_mode: str = "native",
+        active_shell_version_id: UUID | None = None,
+        active_adapter_id: UUID | None = None,
+        active_skill_bundle_id: UUID | None = None,
+        model_profile_id: str | None = None,
+        model_mode: str | None = None,
     ) -> dict[str, Any]:
         """Register or re-register a worker (upsert on name)."""
         wid = worker_id or uuid4()
@@ -2075,38 +2080,60 @@ class AgentStorage:
             "adapter_module": adapter_module,
             "wrapper_config": wrapper_config or {},
             "isolation_mode": isolation_mode,
+            "active_shell_version_id": active_shell_version_id,
+            "active_adapter_id": active_adapter_id,
+            "active_skill_bundle_id": active_skill_bundle_id,
+            "model_profile_id": model_profile_id,
+            "model_mode": model_mode or "none",
             "created_at": now,
             "updated_at": now,
         }
+        updates = {
+            "adapter_type": adapter_type,
+            "adapter_config": adapter_config or {},
+            "sandbox_profile": sandbox_profile,
+            "capability_ids": capability_ids or [],
+            "team_id": team_id,
+            "status": status,
+            "version": version,
+            "source_repo": source_repo,
+            "source_revision": source_revision,
+            "version_pin": version_pin,
+            "update_policy": update_policy,
+            "evaluation_status": evaluation_status,
+            "adapter_entrypoint": adapter_entrypoint,
+            "adapter_module": adapter_module,
+            "wrapper_config": wrapper_config or {},
+            "isolation_mode": isolation_mode,
+            "updated_at": now,
+        }
+        # Re-registration must not silently unpin a governed worker.  The
+        # control plane changes these pointers explicitly during approval and
+        # rollout; startup registration only writes them when supplied.
+        for key, value in (
+            ("active_shell_version_id", active_shell_version_id),
+            ("active_adapter_id", active_adapter_id),
+            ("active_skill_bundle_id", active_skill_bundle_id),
+            ("model_profile_id", model_profile_id),
+            ("model_mode", model_mode),
+        ):
+            if value is not None:
+                updates[key] = value
         stmt = (
             pg_insert(t.worker_registry)
             .values(**values)
             .on_conflict_do_update(
                 constraint="uq_worker_registry_name",
-                set_={
-                    "adapter_type": adapter_type,
-                    "adapter_config": adapter_config or {},
-                    "sandbox_profile": sandbox_profile,
-                    "capability_ids": capability_ids or [],
-                    "team_id": team_id,
-                    "status": status,
-                    "version": version,
-                    "source_repo": source_repo,
-                    "source_revision": source_revision,
-                    "version_pin": version_pin,
-                    "update_policy": update_policy,
-                    "evaluation_status": evaluation_status,
-                    "adapter_entrypoint": adapter_entrypoint,
-                    "adapter_module": adapter_module,
-                    "wrapper_config": wrapper_config or {},
-                    "isolation_mode": isolation_mode,
-                    "updated_at": now,
-                },
+                set_=updates,
             )
         )
         async with self.engine.begin() as conn:
             await conn.execute(stmt)
-        return values
+        # The insert may have conflicted on the worker name. Return the
+        # canonical persisted row so callers cannot attach governance records
+        # to the throw-away UUID generated for a re-registration.
+        persisted = await self.get_worker_by_name(name)
+        return persisted or values
 
     async def get_worker(self, worker_id: UUID) -> dict[str, Any] | None:
         """Fetch a worker by ID."""
@@ -2307,6 +2334,11 @@ class AgentStorage:
         adapter_module: str | None = None,
         wrapper_config: dict | None = None,
         isolation_mode: str | None = None,
+        active_shell_version_id: UUID | None = None,
+        active_adapter_id: UUID | None = None,
+        active_skill_bundle_id: UUID | None = None,
+        model_profile_id: str | None = None,
+        model_mode: str | None = None,
     ) -> None:
         """Update a worker's configuration fields (partial update)."""
         values: dict[str, Any] = {"updated_at": datetime.now(tz=UTC)}
@@ -2336,6 +2368,16 @@ class AgentStorage:
             values["wrapper_config"] = wrapper_config
         if isolation_mode is not None:
             values["isolation_mode"] = isolation_mode
+        if active_shell_version_id is not None:
+            values["active_shell_version_id"] = active_shell_version_id
+        if active_adapter_id is not None:
+            values["active_adapter_id"] = active_adapter_id
+        if active_skill_bundle_id is not None:
+            values["active_skill_bundle_id"] = active_skill_bundle_id
+        if model_profile_id is not None:
+            values["model_profile_id"] = model_profile_id
+        if model_mode is not None:
+            values["model_mode"] = model_mode
         if len(values) == 1:
             return
         async with self.engine.begin() as conn:
@@ -2343,6 +2385,27 @@ class AgentStorage:
                 t.worker_registry.update()
                 .where(t.worker_registry.c.id == worker_id)
                 .values(**values)
+            )
+
+    async def set_worker_governed_versions(
+        self,
+        worker_id: UUID,
+        *,
+        active_shell_version_id: UUID | None,
+        active_adapter_id: UUID | None,
+        active_skill_bundle_id: UUID | None,
+    ) -> None:
+        """Atomically replace the mutable active-version pointers."""
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(
+                    active_shell_version_id=active_shell_version_id,
+                    active_adapter_id=active_adapter_id,
+                    active_skill_bundle_id=active_skill_bundle_id,
+                    updated_at=datetime.now(tz=UTC),
+                )
             )
 
     async def update_worker_health(
@@ -3041,3 +3104,929 @@ class AgentStorage:
             input_json=context_json,
         )
         return await self.get_flow_instance(instance_id)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Universal worker contract, steward, model, and durable run records
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def _get_table_row(self, table: sa.Table, key_column: sa.Column, key: Any) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(table.select().where(key_column == key))).mappings().first()
+        return dict(row) if row else None
+
+    async def create_worker_shell_version(self, *, worker_id: UUID, version: str, contract_version: str, schema_version: str, identity: dict[str, Any], capabilities: dict[str, Any], permissions: dict[str, Any] | None = None, model_mode: str = "none", provenance: dict[str, Any] | None = None, content_hash: str) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "worker_id": worker_id,
+            "version": version,
+            "contract_version": contract_version,
+            "schema_version": schema_version,
+            "identity_json": identity,
+            "capabilities_json": capabilities,
+            "permissions_json": permissions or {},
+            "model_mode": model_mode,
+            "provenance_json": provenance or {},
+            "content_hash": content_hash,
+            "status": "active",
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_shell_versions.insert().values(**values))
+        return values
+
+    async def create_runtime_adapter(self, *, worker_id: UUID, version: str, adapter_type: str, transport_type: str, content_hash: str, runtime_api_version: str | None = None, implementation_ref: str | None = None, capabilities: dict[str, Any] | None = None, conformance_status: str = "pending", conformance: dict[str, Any] | None = None, status: str = "candidate") -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "worker_id": worker_id,
+            "version": version,
+            "adapter_type": adapter_type,
+            "transport_type": transport_type,
+            "runtime_api_version": runtime_api_version,
+            "implementation_ref": implementation_ref,
+            "content_hash": content_hash,
+            "capabilities_json": capabilities or {},
+            "conformance_status": conformance_status,
+            "conformance_json": conformance,
+            "status": status,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.runtime_adapters.insert().values(**values))
+        return values
+
+    async def get_runtime_adapter(self, adapter_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.runtime_adapters, t.runtime_adapters.c.id, adapter_id)
+
+    async def list_runtime_adapters(self, worker_id: UUID, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = t.runtime_adapters.select().where(t.runtime_adapters.c.worker_id == worker_id)
+        if status is not None:
+            query = query.where(t.runtime_adapters.c.status == status)
+        query = query.order_by(t.runtime_adapters.c.created_at.desc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_active_runtime_adapter(self, worker_id: UUID) -> dict[str, Any] | None:
+        query = (
+            t.runtime_adapters.select()
+            .where(
+                sa.and_(
+                    t.runtime_adapters.c.worker_id == worker_id,
+                    t.runtime_adapters.c.status == "active",
+                    t.runtime_adapters.c.conformance_status == "passed",
+                )
+            )
+            .order_by(t.runtime_adapters.c.created_at.desc())
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def create_external_provenance(self, *, worker_id: UUID, provenance: dict[str, Any], provenance_hash: str) -> dict[str, Any]:
+        values = {"id": uuid4(), "worker_id": worker_id, **provenance, "provenance_hash": provenance_hash}
+        async with self.engine.begin() as conn:
+            stmt = (
+                pg_insert(t.external_runtime_provenance)
+                .values(**values)
+                .on_conflict_do_update(
+                    constraint="uq_external_provenance_worker",
+                    set_={key: value for key, value in values.items() if key not in {"id", "worker_id", "created_at"}},
+                )
+                .returning(t.external_runtime_provenance)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+        return dict(row) if row else values
+
+    async def get_external_provenance_by_worker(self, worker_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.external_runtime_provenance, t.external_runtime_provenance.c.worker_id, worker_id)
+
+    async def create_steward(self, *, worker_id: UUID, provenance_id: UUID | None = None, steward_id: UUID | None = None, status: str = "PROVISIONING", steward_version: str = "1.0.0", monitoring_cadence: str = "daily", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        values = {"id": steward_id or uuid4(), "worker_id": worker_id, "status": status, "steward_version": steward_version, "provenance_id": provenance_id, "monitoring_cadence": monitoring_cadence, "metadata": metadata or {}}
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                pg_insert(t.steward_agents)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_steward_worker")
+            )
+            row = (
+                await conn.execute(
+                    t.steward_agents.select().where(t.steward_agents.c.worker_id == worker_id)
+                )
+            ).mappings().first()
+        return dict(row) if row else values
+
+    async def get_steward(self, steward_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.steward_agents, t.steward_agents.c.id, steward_id)
+
+    async def get_steward_by_worker(self, worker_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.steward_agents, t.steward_agents.c.worker_id, worker_id)
+
+    async def list_stewards(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.steward_agents.select().order_by(t.steward_agents.c.updated_at.desc()).limit(limit)
+        if status is not None:
+            query = query.where(t.steward_agents.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def update_steward(self, steward_id: UUID, *, status: str | None = None, active_skill_bundle_id: UUID | None = None, active_adapter_id: UUID | None = None, last_monitor_at: datetime | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        values: dict[str, Any] = {"updated_at": datetime.now(tz=UTC)}
+        for name, value in (("status", status), ("active_skill_bundle_id", active_skill_bundle_id), ("active_adapter_id", active_adapter_id), ("last_monitor_at", last_monitor_at), ("metadata", metadata)):
+            if value is not None:
+                values[name] = value
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.steward_agents.update().where(t.steward_agents.c.id == steward_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self.get_steward(steward_id)
+
+    async def transition_steward(
+        self,
+        steward_id: UUID,
+        *,
+        to_status: str,
+        actor: str,
+        reason: str | None = None,
+        correlation_id: str | None = None,
+        evidence: dict[str, Any] | None = None,
+        expected_status: str | None = None,
+    ) -> dict[str, Any] | None:
+        async with self.engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    t.steward_agents.select()
+                    .where(t.steward_agents.c.id == steward_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if current is None or (expected_status is not None and current["status"] != expected_status):
+                return None
+            await conn.execute(
+                t.steward_agents.update()
+                .where(t.steward_agents.c.id == steward_id)
+                .values(status=to_status, updated_at=datetime.now(tz=UTC))
+            )
+            await conn.execute(
+                t.steward_transitions.insert().values(
+                    id=uuid4(),
+                    steward_id=steward_id,
+                    from_status=current["status"],
+                    to_status=to_status,
+                    actor=actor,
+                    reason=reason,
+                    correlation_id=correlation_id,
+                    evidence=evidence or {},
+                )
+            )
+        return await self.get_steward(steward_id)
+
+    async def set_steward_active_versions(self, steward_id: UUID, *, active_skill_bundle_id: UUID | None, active_adapter_id: UUID | None) -> dict[str, Any] | None:
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.steward_agents.update()
+                .where(t.steward_agents.c.id == steward_id)
+                .values(active_skill_bundle_id=active_skill_bundle_id, active_adapter_id=active_adapter_id, updated_at=datetime.now(tz=UTC))
+            )
+            if result.rowcount == 0:
+                return None
+        return await self.get_steward(steward_id)
+
+    async def create_documentation_source(self, *, steward_id: UUID, uri: str, source_type: str = "official", trusted_for_provenance: bool = False, allowed_domains: list[str] | None = None) -> dict[str, Any]:
+        values = {"id": uuid4(), "steward_id": steward_id, "uri": uri, "source_type": source_type, "trusted_for_provenance": trusted_for_provenance, "allowed_domains": allowed_domains or []}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.documentation_sources.insert().values(**values))
+        return values
+
+    async def get_documentation_source(self, *, steward_id: UUID, uri: str) -> dict[str, Any] | None:
+        query = t.documentation_sources.select().where(
+            sa.and_(t.documentation_sources.c.steward_id == steward_id, t.documentation_sources.c.uri == uri)
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def create_documentation_snapshot(self, *, source_id: UUID, version: str, content_sha256: str, content_ref: str | None = None, extracted_interfaces: dict[str, Any] | None = None, security_findings: list[str] | None = None, untrusted: bool = True) -> dict[str, Any]:
+        values = {"id": uuid4(), "source_id": source_id, "version": version, "content_sha256": content_sha256, "content_ref": content_ref, "extracted_interfaces": extracted_interfaces or {}, "security_findings": security_findings or [], "untrusted": untrusted}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.documentation_snapshots.insert().values(**values))
+        return values
+
+    async def create_capability_snapshot(self, *, worker_id: UUID, version: str, capabilities: dict[str, Any], steward_id: UUID | None = None, evidence_refs: list[str] | None = None) -> dict[str, Any]:
+        values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "version": version, "capabilities_json": capabilities, "evidence_refs": evidence_refs or []}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.capability_snapshots.insert().values(**values))
+        return values
+
+    async def list_capability_snapshots(self, worker_id: UUID, *, steward_id: UUID | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.capability_snapshots.select().where(t.capability_snapshots.c.worker_id == worker_id)
+        if steward_id is not None:
+            query = query.where(t.capability_snapshots.c.steward_id == steward_id)
+        query = query.order_by(t.capability_snapshots.c.created_at.asc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_skill_bundle(self, *, worker_id: UUID, steward_id: UUID, semantic_version: str, format_version: str, upstream_compatibility_range: str, provenance: dict[str, Any], bundle: dict[str, Any], content_hash: str, status: str = "DRAFT") -> dict[str, Any]:
+        values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "semantic_version": semantic_version, "format_version": format_version, "upstream_compatibility_range": upstream_compatibility_range, "provenance_json": provenance, "bundle_json": bundle, "content_hash": content_hash, "status": status}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.skill_bundles.insert().values(**values))
+        return values
+
+    async def get_skill_bundle(self, bundle_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.skill_bundles, t.skill_bundles.c.id, bundle_id)
+
+    async def get_active_skill_bundle(self, worker_id: UUID) -> dict[str, Any] | None:
+        query = (
+            t.skill_bundles.select()
+            .where(sa.and_(t.skill_bundles.c.worker_id == worker_id, t.skill_bundles.c.status == "APPROVED"))
+            .order_by(t.skill_bundles.c.created_at.desc())
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def create_skill_bundle_candidate(self, *, candidate_id: UUID, skill_bundle_id: UUID, worker_id: UUID, adapter_id: UUID | None, intake_status: str, diff: dict[str, Any], evidence: dict[str, Any], certification_run_id: UUID | None = None, approval_record_id: UUID | None = None, candidate_json: dict[str, Any] | None = None) -> dict[str, Any]:
+        evidence_json = dict(evidence)
+        if candidate_json is not None:
+            evidence_json["candidate_record"] = candidate_json
+        values = {"id": candidate_id, "skill_bundle_id": skill_bundle_id, "adapter_id": adapter_id, "worker_id": worker_id, "intake_status": intake_status, "diff_json": diff, "evidence_json": evidence_json, "certification_run_id": certification_run_id, "approval_record_id": approval_record_id}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.skill_bundle_candidates.insert().values(**values))
+        return values
+
+    async def get_skill_bundle_candidate(self, candidate_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.skill_bundle_candidates, t.skill_bundle_candidates.c.id, candidate_id)
+
+    async def list_skill_bundle_candidates(self, worker_id: UUID) -> list[dict[str, Any]]:
+        query = t.skill_bundle_candidates.select().where(t.skill_bundle_candidates.c.worker_id == worker_id).order_by(t.skill_bundle_candidates.c.created_at.asc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def update_skill_bundle_candidate(self, candidate_id: UUID, *, intake_status: str | None = None, evidence: dict[str, Any] | None = None, certification_run_id: UUID | None = None, approval_record_id: UUID | None = None) -> dict[str, Any] | None:
+        values: dict[str, Any] = {}
+        if intake_status is not None:
+            values["intake_status"] = intake_status
+        if evidence is not None:
+            values["evidence_json"] = evidence
+        if certification_run_id is not None:
+            values["certification_run_id"] = certification_run_id
+        if approval_record_id is not None:
+            values["approval_record_id"] = approval_record_id
+        if not values:
+            return await self.get_skill_bundle_candidate(candidate_id)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.skill_bundle_candidates.update().where(t.skill_bundle_candidates.c.id == candidate_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self.get_skill_bundle_candidate(candidate_id)
+
+    async def update_skill_bundle(self, bundle_id: UUID, *, status: str | None = None) -> dict[str, Any] | None:
+        if status is None:
+            return await self.get_skill_bundle(bundle_id)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.skill_bundles.update().where(t.skill_bundles.c.id == bundle_id).values(status=status)
+            )
+            if result.rowcount == 0:
+                return None
+        return await self.get_skill_bundle(bundle_id)
+
+    async def update_runtime_adapter(self, adapter_id: UUID, *, status: str | None = None, conformance_status: str | None = None, conformance: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        values = {key: value for key, value in (("status", status), ("conformance_status", conformance_status), ("conformance_json", conformance)) if value is not None}
+        if not values:
+            return await self.get_runtime_adapter(adapter_id)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.runtime_adapters.update().where(t.runtime_adapters.c.id == adapter_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self.get_runtime_adapter(adapter_id)
+
+    async def create_certification_run(self, *, certification_id: UUID, worker_id: UUID, candidate_id: UUID, steward_id: UUID | None, status: str, conformance: dict[str, Any], checks: dict[str, Any], evidence: dict[str, Any] | None = None, failure_reasons: list[str] | None = None, completed_at: datetime | None = None) -> dict[str, Any]:
+        values = {"id": certification_id, "worker_id": worker_id, "steward_id": steward_id, "candidate_id": candidate_id, "status": status, "conformance_json": conformance, "checks_json": checks, "evidence_json": evidence or {}, "failure_reasons": failure_reasons or [], "completed_at": completed_at}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.certification_runs.insert().values(**values))
+        return values
+
+    async def create_approval_record(
+        self,
+        *,
+        scope_type: str,
+        scope_id: UUID,
+        decision: str,
+        decided_by: str,
+        reason: str | None = None,
+        evidence: dict[str, Any] | None = None,
+        expires_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+            "decision": decision,
+            "decided_by": decided_by,
+            "reason": reason,
+            "evidence": evidence or {},
+            "expires_at": expires_at,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.approval_records.insert().values(**values))
+        return values
+
+    async def get_approval_record(self, approval_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.approval_records, t.approval_records.c.id, approval_id)
+
+    async def create_update_monitoring_job(
+        self,
+        *,
+        worker_id: UUID,
+        steward_id: UUID | None,
+        cadence: str = "daily",
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "worker_id": worker_id,
+            "steward_id": steward_id,
+            "cadence": cadence,
+            "status": "active",
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.update_monitoring_jobs.insert().values(**values))
+        return values
+
+    async def list_update_monitoring_jobs(self, *, worker_id: UUID | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.update_monitoring_jobs.select().order_by(t.update_monitoring_jobs.c.created_at.desc()).limit(limit)
+        if worker_id is not None:
+            query = query.where(t.update_monitoring_jobs.c.worker_id == worker_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def record_update_monitoring_result(
+        self,
+        job_id: UUID,
+        *,
+        last_candidate_id: UUID | None = None,
+        last_error: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any] | None:
+        values: dict[str, Any] = {"last_checked_at": datetime.now(tz=UTC)}
+        if last_candidate_id is not None:
+            values["last_candidate_id"] = last_candidate_id
+        if last_error is not None:
+            values["last_error"] = last_error
+        if status is not None:
+            values["status"] = status
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.update_monitoring_jobs.update()
+                .where(t.update_monitoring_jobs.c.id == job_id)
+                .values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        return await self._get_table_row(t.update_monitoring_jobs, t.update_monitoring_jobs.c.id, job_id)
+
+    async def update_certification_run(self, certification_id: UUID, *, status: str | None = None, evidence: dict[str, Any] | None = None, failure_reasons: list[str] | None = None, completed_at: datetime | None = None) -> dict[str, Any] | None:
+        values = {key: value for key, value in (("status", status), ("evidence_json", evidence), ("failure_reasons", failure_reasons), ("completed_at", completed_at)) if value is not None}
+        if not values:
+            return await self._get_table_row(t.certification_runs, t.certification_runs.c.id, certification_id)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.certification_runs.update().where(t.certification_runs.c.id == certification_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self._get_table_row(t.certification_runs, t.certification_runs.c.id, certification_id)
+
+    async def list_certification_runs(self, worker_id: UUID) -> list[dict[str, Any]]:
+        query = t.certification_runs.select().where(t.certification_runs.c.worker_id == worker_id).order_by(t.certification_runs.c.started_at.asc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_model_profile(self, logical_profile_id: str) -> dict[str, Any] | None:
+        return await self._get_table_row(t.model_profiles, t.model_profiles.c.logical_profile_id, logical_profile_id)
+
+    async def list_model_profiles(self) -> list[dict[str, Any]]:
+        async with self.engine.connect() as conn:
+            profile_rows = (await conn.execute(t.model_profiles.select().order_by(t.model_profiles.c.logical_profile_id.asc()))).mappings().all()
+            version_rows = (await conn.execute(t.model_profile_versions.select().order_by(t.model_profile_versions.c.version.desc()))).mappings().all()
+        versions_by_profile: dict[UUID, list[dict[str, Any]]] = {}
+        for row in version_rows:
+            versions_by_profile.setdefault(row["profile_id"], []).append(dict(row))
+        return [{**dict(row), "versions": versions_by_profile.get(row["id"], [])} for row in profile_rows]
+
+    async def create_model_profile(self, *, logical_profile_id: str, purpose: str, approved_provider_ids: list[str] | None = None, required_capabilities: list[str] | None = None, fallback_profile_ids: list[str] | None = None, status: str = "draft", owner: str = "aiat") -> dict[str, Any]:
+        values = {"id": uuid4(), "logical_profile_id": logical_profile_id, "purpose": purpose, "approved_provider_ids": approved_provider_ids or [], "required_capabilities": required_capabilities or [], "fallback_profile_ids": fallback_profile_ids or [], "status": status, "owner": owner}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.model_profiles.insert().values(**values))
+        return values
+
+    async def create_model_profile_version(self, *, profile_id: UUID, version: str, provider_id: str, exact_model_id: str, capabilities: list[str] | None = None, constraints: dict[str, Any] | None = None, provider_settings: dict[str, Any] | None = None, status: str = "draft", api_version: str | None = None, effective_from: datetime | None = None, effective_until: datetime | None = None, version_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        if exact_model_id.lower() in {"auto", "default", "latest"}:
+            raise ValueError("raw/unmanaged model IDs are not permitted")
+        values = {"id": uuid4(), "profile_id": profile_id, "version": version, "provider_id": provider_id, "exact_model_id": exact_model_id, "api_version": api_version, "capabilities": capabilities or [], "constraints_json": {**(constraints or {}), **(version_metadata or {})}, "provider_settings": provider_settings or {}, "status": status, "effective_from": effective_from, "effective_until": effective_until}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.model_profile_versions.insert().values(**values))
+        return values
+
+    async def create_model_override_request(
+        self,
+        *,
+        project_id: UUID,
+        requested_by: str,
+        requested_profile_id: str,
+        reason: str,
+        scope: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "requested_by": requested_by,
+            "requested_profile_id": requested_profile_id,
+            "reason": reason,
+            "scope": scope or {},
+            "status": "PENDING",
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.model_override_requests.insert().values(**values))
+        return values
+
+    async def get_model_override_request(self, request_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.model_override_requests, t.model_override_requests.c.id, request_id)
+
+    async def update_model_override_request(
+        self,
+        request_id: UUID,
+        *,
+        status: str,
+        decided_by: str,
+        decision: str,
+        expires_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        values = {
+            "status": status,
+            "decided_by": decided_by,
+            "decision": decision,
+            "expires_at": expires_at,
+            "decided_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.model_override_requests.update()
+                .where(t.model_override_requests.c.id == request_id)
+                .values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        return await self.get_model_override_request(request_id)
+
+    async def create_rollout_record(self, *, rollout_id: UUID, worker_id: UUID, steward_id: UUID, candidate_id: UUID, status: str, eligible_task_classes: list[str], sample_targets: dict[str, Any], comparison_metrics: dict[str, Any] | None = None, rollback_thresholds: dict[str, Any] | None = None, promotion_actor: str | None = None) -> dict[str, Any]:
+        values = {"id": rollout_id, "worker_id": worker_id, "steward_id": steward_id, "candidate_id": candidate_id, "status": status, "eligible_task_classes": eligible_task_classes, "sample_targets": sample_targets, "comparison_metrics": comparison_metrics or {}, "rollback_thresholds": rollback_thresholds or {}, "promotion_actor": promotion_actor}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.rollout_records.insert().values(**values))
+        return values
+
+    async def get_rollout_record(self, rollout_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.rollout_records, t.rollout_records.c.id, rollout_id)
+
+    async def list_rollout_records(self, worker_id: UUID) -> list[dict[str, Any]]:
+        query = t.rollout_records.select().where(t.rollout_records.c.worker_id == worker_id).order_by(t.rollout_records.c.started_at.asc())
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def update_rollout_record(self, rollout_id: UUID, *, status: str | None = None, sample_count: int | None = None, comparison_metrics: dict[str, Any] | None = None, rollback_reason: str | None = None, completed_at: datetime | None = None) -> dict[str, Any] | None:
+        values = {key: value for key, value in (("status", status), ("sample_count", sample_count), ("comparison_metrics", comparison_metrics), ("rollback_reason", rollback_reason), ("completed_at", completed_at)) if value is not None}
+        if not values:
+            return await self.get_rollout_record(rollout_id)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.rollout_records.update().where(t.rollout_records.c.id == rollout_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self.get_rollout_record(rollout_id)
+
+    async def transition_rollout(
+        self,
+        rollout_id: UUID,
+        *,
+        to_status: str,
+        actor: str,
+        reason: str | None = None,
+        sample_count: int | None = None,
+        comparison_metrics: dict[str, Any] | None = None,
+        completed_at: datetime | None = None,
+        expected_status: str | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        async with self.engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(t.rollout_records.c.id == rollout_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if current is None or (expected_status is not None and current["status"] != expected_status):
+                return None
+            values: dict[str, Any] = {"status": to_status}
+            if sample_count is not None:
+                values["sample_count"] = sample_count
+            if comparison_metrics is not None:
+                values["comparison_metrics"] = comparison_metrics
+            if completed_at is not None:
+                values["completed_at"] = completed_at
+            await conn.execute(
+                t.rollout_records.update()
+                .where(t.rollout_records.c.id == rollout_id)
+                .values(**values)
+            )
+            await conn.execute(
+                t.rollout_transitions.insert().values(
+                    id=uuid4(),
+                    rollout_id=rollout_id,
+                    from_status=current["status"],
+                    to_status=to_status,
+                    actor=actor,
+                    reason=reason,
+                    evidence=evidence or {},
+                )
+            )
+        return await self.get_rollout_record(rollout_id)
+
+    async def activate_rollout_atomically(
+        self,
+        *,
+        rollout_id: UUID,
+        worker_id: UUID,
+        steward_id: UUID,
+        candidate_id: UUID,
+        completed_at: datetime | None,
+    ) -> dict[str, Any] | None:
+        """Promote one candidate with a worker-row lock and compare-and-set.
+
+        The Worker Run keeps immutable version references, so this method only
+        moves pointers for *new* dispatches after the rollout state is still
+        PROMOTING and no other candidate owns an in-flight rollout.
+        """
+        active_states = {"PENDING", "SHADOW", "CANARY", "PROMOTING"}
+        async with self.engine.begin() as conn:
+            worker = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            rollout = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(t.rollout_records.c.id == rollout_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if worker is None or rollout is None:
+                return None
+            if (
+                rollout["worker_id"] != worker_id
+                or rollout["steward_id"] != steward_id
+                or rollout["candidate_id"] != candidate_id
+                or rollout["status"] != "PROMOTING"
+            ):
+                return None
+            competing = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(
+                        sa.and_(
+                            t.rollout_records.c.worker_id == worker_id,
+                            t.rollout_records.c.id != rollout_id,
+                            t.rollout_records.c.status.in_(active_states),
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if competing is not None:
+                return None
+            candidate = (
+                await conn.execute(
+                    t.skill_bundle_candidates.select()
+                    .where(t.skill_bundle_candidates.c.id == candidate_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if candidate is None or candidate["approval_record_id"] is None:
+                return None
+            steward = (
+                await conn.execute(
+                    t.steward_agents.select()
+                    .where(t.steward_agents.c.id == steward_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if steward is None:
+                return None
+            if candidate["adapter_id"] is not None:
+                await conn.execute(
+                    t.runtime_adapters.update()
+                    .where(t.runtime_adapters.c.id == candidate["adapter_id"])
+                    .values(status="active", conformance_status="passed")
+                )
+            await conn.execute(
+                t.skill_bundles.update()
+                .where(t.skill_bundles.c.id == candidate["skill_bundle_id"])
+                .values(status="APPROVED")
+            )
+            await conn.execute(
+                t.steward_agents.update()
+                .where(t.steward_agents.c.id == steward_id)
+                .values(
+                    status="READY",
+                    active_skill_bundle_id=candidate["skill_bundle_id"],
+                    active_adapter_id=candidate["adapter_id"],
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+            if steward["status"] != "READY":
+                await conn.execute(
+                    t.steward_transitions.insert().values(
+                        id=uuid4(),
+                        steward_id=steward_id,
+                        from_status=steward["status"],
+                        to_status="READY",
+                        actor="worker-rollout-approver",
+                        reason="candidate activated through atomic rollout promotion",
+                        evidence={"rollout_id": str(rollout_id), "candidate_id": str(candidate_id)},
+                    )
+                )
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(
+                    active_adapter_id=candidate["adapter_id"],
+                    active_skill_bundle_id=candidate["skill_bundle_id"],
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+            result = await conn.execute(
+                t.rollout_records.update()
+                .where(
+                    sa.and_(
+                        t.rollout_records.c.id == rollout_id,
+                        t.rollout_records.c.status == "PROMOTING",
+                    )
+                )
+                .values(status="ACTIVE", completed_at=completed_at)
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("rollout promotion compare-and-set failed")
+            await conn.execute(
+                t.rollout_transitions.insert().values(
+                    id=uuid4(),
+                    rollout_id=rollout_id,
+                    from_status="PROMOTING",
+                    to_status="ACTIVE",
+                    actor="worker-rollout-approver",
+                    reason="atomic controlled promotion",
+                    evidence={"candidate_id": str(candidate_id), "approval_record_id": str(candidate["approval_record_id"])},
+                )
+            )
+        return await self.get_rollout_record(rollout_id)
+
+    async def create_rollback_record(self, *, rollout_id: UUID, worker_id: UUID, reason: str, triggered_by: str, evidence: dict[str, Any] | None = None, from_candidate_id: UUID | None = None, target_candidate_id: UUID | None = None) -> dict[str, Any]:
+        values = {"id": uuid4(), "rollout_id": rollout_id, "worker_id": worker_id, "from_candidate_id": from_candidate_id, "target_candidate_id": target_candidate_id, "reason": reason, "triggered_by": triggered_by, "evidence": evidence or {}}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.rollback_records.insert().values(**values))
+        return values
+
+    async def create_model_resolution_snapshot(self, *, snapshot: dict[str, Any], project_id: UUID | None = None) -> dict[str, Any]:
+        values = {"id": snapshot.get("snapshot_id") or uuid4(), "project_id": project_id, "requested_profile_id": snapshot.get("requested_profile_id"), "resolved_profile_id": snapshot.get("resolved_profile_id"), "resolved_profile_version": snapshot.get("resolved_profile_version"), "provider_id": snapshot.get("provider_id"), "exact_model_id": snapshot.get("exact_model_id"), "effective_constraints": snapshot.get("effective_constraints") or {}, "effective_configuration": snapshot.get("effective_configuration") or {}, "capability_checks": snapshot.get("capability_checks") or {}, "rejected_candidates": snapshot.get("rejected_candidates") or [], "fallback_chain": snapshot.get("fallback_chain") or [], "cost_estimate_usd": snapshot.get("cost_estimate_usd") or 0, "override_approval_id": snapshot.get("override_approval_id"), "selection_reason": snapshot.get("selection_reason"), "policy_failure_code": snapshot.get("policy_failure_code")}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.model_resolution_snapshots.insert().values(**values))
+        return values
+
+    async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.model_resolution_snapshots, t.model_resolution_snapshots.c.id, snapshot_id)
+
+    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED") -> dict[str, Any]:
+        async with self.engine.begin() as conn:
+            existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
+            if existing:
+                return dict(existing)
+            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state}
+            await conn.execute(t.worker_runs.insert().values(**values))
+        return await self.get_worker_run(run_id)  # type: ignore[return-value]
+
+    async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.worker_runs, t.worker_runs.c.id, run_id)
+
+    async def list_worker_runs(self, *, project_id: UUID | None = None, worker_id: UUID | None = None, flow_instance_id: UUID | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        q = t.worker_runs.select().order_by(t.worker_runs.c.created_at.desc()).limit(limit).offset(offset)
+        clauses = []
+        if project_id is not None:
+            clauses.append(t.worker_runs.c.project_id == project_id)
+        if worker_id is not None:
+            clauses.append(t.worker_runs.c.worker_id == worker_id)
+        if flow_instance_id is not None:
+            clauses.append(t.worker_runs.c.flow_instance_id == flow_instance_id)
+        if state is not None:
+            clauses.append(t.worker_runs.c.state == state)
+        if clauses:
+            q = q.where(sa.and_(*clauses))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def transition_worker_run(
+        self,
+        run_id: UUID,
+        *,
+        new_state: str,
+        expected_state: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        negotiation: dict[str, Any] | None = None,
+        replay_metadata: dict[str, Any] | None = None,
+        actor: str = "worker-run-controller",
+        reason: str | None = None,
+        correlation_id: str | None = None,
+        transition_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        allowed = {"CREATED": {"VALIDATING", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSING": {"PAUSED", "FAILED", "CANCELLED"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == run_id).with_for_update())).mappings().first()
+            if not current:
+                return None
+            if expected_state is not None and current["state"] != expected_state:
+                return None
+            if new_state not in allowed.get(str(current["state"]), set()):
+                raise ValueError(f"invalid worker run transition {current['state']} -> {new_state}")
+            values: dict[str, Any] = {"state": new_state}
+            if new_state == "RUNNING" and current.get("started_at") is None:
+                values["started_at"] = now
+            if new_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
+                values["completed_at"] = now
+            if result is not None:
+                values["result_json"] = result
+            if error is not None:
+                values["error_json"] = error
+            if negotiation is not None:
+                values["negotiation_json"] = negotiation
+            if replay_metadata is not None:
+                values["replay_metadata"] = replay_metadata
+            await conn.execute(t.worker_runs.update().where(t.worker_runs.c.id == run_id).values(**values))
+            await conn.execute(
+                t.worker_run_transitions.insert().values(
+                    id=uuid4(),
+                    run_id=run_id,
+                    from_state=str(current["state"]),
+                    to_state=new_state,
+                    actor=actor,
+                    reason=reason,
+                    correlation_id=correlation_id,
+                    metadata=transition_metadata or {},
+                )
+            )
+        return await self.get_worker_run(run_id)
+
+    async def append_worker_event(self, *, run_id: UUID, sequence: int, event_type: str, event: dict[str, Any], event_sha256: str, max_event_count: int | None = None) -> dict[str, Any]:
+        values = {"id": uuid4(), "run_id": run_id, "sequence": sequence, "event_type": event_type, "event_json": event, "event_sha256": event_sha256}
+        async with self.engine.begin() as conn:
+            existing = (await conn.execute(t.worker_events.select().where(sa.and_(t.worker_events.c.run_id == run_id, t.worker_events.c.sequence == sequence)))).mappings().first()
+            if existing:
+                if existing["event_sha256"] != event_sha256:
+                    raise ValueError("duplicate worker event sequence has different content")
+                return dict(existing)
+            if max_event_count is not None:
+                current_count = int(
+                    (
+                        await conn.execute(
+                            sa.select(sa.func.count())
+                            .select_from(t.worker_events)
+                            .where(t.worker_events.c.run_id == run_id)
+                        )
+                    ).scalar_one()
+                )
+                if current_count >= max_event_count:
+                    raise ValueError("worker event limit exceeded")
+            await conn.execute(t.worker_events.insert().values(**values))
+        return values
+
+    async def list_worker_events(self, run_id: UUID, *, limit: int = 1000, offset: int = 0) -> list[dict[str, Any]]:
+        q = t.worker_events.select().where(t.worker_events.c.run_id == run_id).order_by(t.worker_events.c.sequence.asc()).limit(limit).offset(offset)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def count_worker_events(self, run_id: UUID) -> int:
+        query = sa.select(sa.func.count()).select_from(t.worker_events).where(t.worker_events.c.run_id == run_id)
+        async with self.engine.connect() as conn:
+            return int((await conn.execute(query)).scalar_one())
+
+    async def create_worker_checkpoint(self, *, run_id: UUID, sequence: int, state: dict[str, Any], artifact_id: int | None = None, resumable: bool = True) -> dict[str, Any]:
+        values = {"id": uuid4(), "run_id": run_id, "sequence": sequence, "state_json": state, "artifact_id": artifact_id, "resumable": resumable}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_checkpoints.insert().values(**values))
+        return values
+
+    async def list_worker_checkpoints(self, run_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
+        q = t.worker_checkpoints.select().where(t.worker_checkpoints.c.run_id == run_id).order_by(t.worker_checkpoints.c.sequence.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_worker_run_transitions(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
+        q = (
+            t.worker_run_transitions.select()
+            .where(t.worker_run_transitions.c.run_id == run_id)
+            .order_by(t.worker_run_transitions.c.created_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_worker_artifact(
+        self,
+        *,
+        run_id: UUID,
+        artifact_id: int,
+        kind: str,
+        uri: str,
+        sha256: str,
+        size_bytes: int | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "run_id": run_id,
+            "artifact_id": artifact_id,
+            "kind": kind,
+            "uri": uri,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+            "metadata": metadata or {},
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_artifacts.insert().values(**values))
+        return values
+
+    async def list_worker_artifacts(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
+        q = (
+            t.worker_artifacts.select()
+            .where(t.worker_artifacts.c.run_id == run_id)
+            .order_by(t.worker_artifacts.c.created_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_worker_usage(self, *, run_id: UUID, usage: dict[str, Any]) -> dict[str, Any]:
+        values = {"id": uuid4(), "run_id": run_id, "prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0), "cost_usd": usage.get("cost_usd", 0), "duration_ms": usage.get("duration_ms", 0), "resource_json": usage.get("resource_json") or {}, "provider_id": usage.get("provider_id"), "exact_model_id": usage.get("exact_model_id")}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_usage_records.insert().values(**values))
+        return values
+
+    async def list_worker_usage(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
+        q = (
+            t.worker_usage_records.select()
+            .where(t.worker_usage_records.c.run_id == run_id)
+            .order_by(t.worker_usage_records.c.created_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_project_repository_record(self, *, project_id: UUID, workspace_path: str, repository_mode: str, remote_url: str | None = None, branch: str | None = None, initialized: bool = False, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        values = {"id": uuid4(), "project_id": project_id, "workspace_path": workspace_path, "repository_mode": repository_mode, "remote_url": remote_url, "branch": branch, "initialized": initialized, "metadata": metadata or {}}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_repository_records.insert().values(**values))
+        return values
+
+    async def get_project_repository_record(self, project_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.project_repository_records, t.project_repository_records.c.project_id, project_id)
+
+    async def update_project_repository_record(self, project_id: UUID, **kwargs: Any) -> dict[str, Any] | None:
+        allowed = {"workspace_path", "repository_mode", "remote_url", "branch", "head_commit", "dirty", "last_sync_at", "adapter_health", "initialized", "metadata"}
+        values = {key: value for key, value in kwargs.items() if key in allowed}
+        values["updated_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(t.project_repository_records.update().where(t.project_repository_records.c.project_id == project_id).values(**values))
+            if result.rowcount == 0:
+                return None
+        return await self.get_project_repository_record(project_id)
+
+    async def create_project_evidence_package(self, *, project_id: UUID, policy_id: str, policy_version: str, status: str, checks: dict[str, Any], evidence_refs: dict[str, Any], completeness_score: float) -> dict[str, Any]:
+        values = {"id": uuid4(), "project_id": project_id, "policy_id": policy_id, "policy_version": policy_version, "status": status, "checks": checks, "evidence_refs": evidence_refs, "completeness_score": completeness_score}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.project_evidence_packages.insert().values(**values))
+        return values
+
+    async def get_project_evidence_package(self, project_id: UUID, *, policy_id: str | None = None) -> dict[str, Any] | None:
+        q = t.project_evidence_packages.select().where(t.project_evidence_packages.c.project_id == project_id).order_by(t.project_evidence_packages.c.generated_at.desc()).limit(1)
+        if policy_id:
+            q = q.where(t.project_evidence_packages.c.policy_id == policy_id)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(q)).mappings().first()
+        return dict(row) if row else None

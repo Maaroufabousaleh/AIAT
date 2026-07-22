@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -59,6 +59,25 @@ VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
 
 logger = logging.getLogger(__name__)
+
+# Runtime registries are process-local discovery caches only. Authoritative
+# worker, steward, candidate, rollout, and run state is persisted through
+# AgentStorage; these maps never replace database records.
+_worker_steward_runtimes: dict[str, Any] = {}
+_worker_adapter_runtimes: dict[str, Any] = {}
+
+
+async def _invalidate_worker_adapter_runtime(worker_id: UUID) -> None:
+    stale = _worker_adapter_runtimes.pop(str(worker_id), None)
+    if stale is not None and hasattr(stale, "close"):
+        try:
+            await stale.close()
+        except Exception:
+            logger.warning(
+                "worker_adapter_cache_invalidation_failed",
+                extra={"worker_id": str(worker_id)},
+                exc_info=True,
+            )
 
 configure_logging("orchestrator-api", json=os.getenv("LOG_FORMAT") != "console")
 
@@ -997,6 +1016,8 @@ class RegisterWorkerRequest(BaseModel):
     source_repo: str | None = None
     version_pin: str | None = None
     update_policy: str = "manual"
+    model_mode: str = "none"
+    model_profile_id: str | None = None
 
 
 class UpdateWorkerRequest(BaseModel):
@@ -1013,6 +1034,8 @@ class UpdateWorkerRequest(BaseModel):
     wrapper_config: dict[str, Any] | None = None
     isolation_mode: str | None = None
     source_repo: str | None = None
+    model_mode: str | None = None
+    model_profile_id: str | None = None
 
 
 class WorkerStatusTransition(BaseModel):
@@ -1029,6 +1052,183 @@ class WorkerUpgradeRequest(BaseModel):
 class WorkerEvaluateRequest(BaseModel):
     source_repo: str | None = None
     checks: list[str] | None = None
+
+
+class StewardCreateRequest(BaseModel):
+    source_repo: str | None = None
+    source_provider: str = "github"
+    exact_release: str | None = None
+    commit_sha: str | None = None
+    package_version: str | None = None
+    oci_image_digest: str | None = None
+    dependency_lock_hash: str | None = None
+    protocol_api_version: str | None = None
+    adapter_version: str | None = None
+    transport_type: str = "process"
+    license_id: str | None = None
+    redistribution_status: str = "pending"
+    security_scan_status: str = "pending"
+    monitoring_cadence: str = "daily"
+
+
+class DocumentationSnapshotRequest(BaseModel):
+    uri: str
+    version: str
+    content_sha256: str
+    content_ref: str | None = None
+    extracted_interfaces: dict[str, Any] = Field(default_factory=dict)
+    security_findings: list[str] = Field(default_factory=list)
+    untrusted: bool = True
+
+
+class CandidateGenerationRequest(BaseModel):
+    semantic_version: str
+    adapter_version: str
+    upstream_compatibility_range: str
+    adapter_entrypoint: str | None = None
+    implementation_ref: str | None = None
+    diff: dict[str, Any] = Field(default_factory=dict)
+    migration_notes: list[str] = Field(default_factory=list)
+
+
+class CandidateCertificationRequest(BaseModel):
+    # Kept for wire compatibility only. It is evidence, never the authority
+    # for a passing certification; the control plane runs conformance itself.
+    conformance: dict[str, Any] = Field(default_factory=dict)
+    checks: dict[str, bool] = Field(default_factory=dict)
+
+
+class CandidateStageAdvanceRequest(BaseModel):
+    target_status: str
+    actor: str = Field(..., min_length=1, max_length=256)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class CandidateApprovalRequest(BaseModel):
+    decided_by: str = Field(..., min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class RolloutStartRequest(BaseModel):
+    actor: str
+    eligible_task_classes: list[str] = Field(default_factory=list)
+
+
+class RolloutAdvanceRequest(BaseModel):
+    target_status: str
+    sample_count: int | None = Field(default=None, ge=0)
+    comparison_metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class RollbackRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=4000)
+
+
+class ModelProfileCreateRequest(BaseModel):
+    profile_id: str
+    purpose: str
+    approved_provider_ids: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    fallback_profile_ids: list[str] = Field(default_factory=list)
+    status: str = "draft"
+
+
+class ModelProfileVersionRequest(BaseModel):
+    version: str
+    provider_id: str
+    exact_model_id: str
+    capabilities: list[str] = Field(default_factory=list)
+    context_window: int = Field(default=0, ge=0)
+    max_output_tokens: int = Field(default=0, ge=0)
+    tool_calling: bool = False
+    structured_output: bool = False
+    vision: bool = False
+    reasoning: bool = False
+    streaming: bool = False
+    embedding: bool = False
+    cost_per_1k_input_usd: float = Field(default=0, ge=0)
+    cost_per_1k_output_usd: float = Field(default=0, ge=0)
+    max_cost_usd: float | None = Field(default=None, ge=0)
+    max_tokens_per_request: int | None = Field(default=None, ge=0)
+    latency_target_ms: int | None = Field(default=None, ge=0)
+    max_concurrency: int | None = Field(default=None, ge=1)
+    privacy_class: str = "internal"
+    regions: list[str] = Field(default_factory=list)
+    local: bool = False
+    provider_settings: dict[str, Any] = Field(default_factory=dict)
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
+    status: str = "draft"
+
+
+class ModelOverrideCreateRequest(BaseModel):
+    project_id: UUID
+    requested_by: str = Field(..., min_length=1, max_length=256)
+    requested_profile_id: str = Field(..., min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+    scope: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelOverrideDecisionRequest(BaseModel):
+    decision: Literal["APPROVED", "REJECTED"]
+    decided_by: str = Field(..., min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+    expires_at: datetime | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelResolutionPreviewRequest(BaseModel):
+    task_type: str
+    requested_profile_id: str | None = None
+    layers: list[dict[str, Any]] = Field(default_factory=list)
+    worker_required_capabilities: list[str] = Field(default_factory=list)
+    steward_required_capabilities: list[str] = Field(default_factory=list)
+    task_required_capabilities: list[str] = Field(default_factory=list)
+    adapter_required_capabilities: list[str] = Field(default_factory=list)
+    prompt_tokens: int = Field(default=0, ge=0)
+    expected_output_tokens: int = Field(default=0, ge=0)
+    budget_usd: float | None = Field(default=None, ge=0)
+    requested_raw_model_id: str | None = None
+
+
+class WorkerRunDispatchRequest(BaseModel):
+    worker_id: UUID
+    idempotency_key: str
+    task_type: str
+    task_input: dict[str, Any] = Field(default_factory=dict)
+    project_id: UUID | None = None
+    flow_id: UUID | None = None
+    flow_instance_id: UUID | None = None
+    flow_node_execution_id: int | None = None
+    requested_model_profile: dict[str, Any] | None = None
+    resolved_model_profile: dict[str, Any] | None = None
+    capability_requirements: list[dict[str, Any]] = Field(default_factory=list)
+    tool_grants: list[str] = Field(default_factory=list)
+    permission_requirements: list[str] = Field(default_factory=list)
+    workspace_mode: str = "isolated"
+    timeout_seconds: int | None = Field(default=None, ge=1)
+    budget: dict[str, float] = Field(default_factory=dict)
+    checkpoint_policy: dict[str, Any] = Field(default_factory=dict)
+    retry_policy: dict[str, Any] = Field(default_factory=dict)
+    runtime_extensions: dict[str, Any] = Field(default_factory=dict)
+    model_policy_layers: list[dict[str, Any]] = Field(default_factory=list)
+    worker_required_model_capabilities: list[str] = Field(default_factory=list)
+    steward_required_model_capabilities: list[str] = Field(default_factory=list)
+    task_required_model_capabilities: list[str] = Field(default_factory=list)
+    adapter_required_model_capabilities: list[str] = Field(default_factory=list)
+    prompt_tokens: int = Field(default=0, ge=0)
+    expected_output_tokens: int = Field(default=0, ge=0)
+    budget_usd: float | None = Field(default=None, ge=0)
+    model_override_request_id: UUID | None = None
+    model_override_approval_id: UUID | None = None
+
+
+class EvidencePolicyRequest(BaseModel):
+    policy_id: str
+    policy_version: str
+    requirements: dict[str, Any]
+
 
 
 class ImportWorkersRequest(BaseModel):
@@ -1088,6 +1288,10 @@ class FlowNodeActionRequest(BaseModel):
     error: str | None = None
     approved: bool | None = None
     decision: str | None = None
+    worker_run_id: UUID | None = Field(
+        default=None,
+        description="Required when recording a task-node terminal state; binds the node to its authoritative Worker Run.",
+    )
 
 
 class FlowInstanceActionRequest(BaseModel):
@@ -1660,13 +1864,24 @@ async def require_control_plane_auth(request: Request, call_next):  # type: igno
     distributing an operator credential.  Metrics deliberately remain
     protected: scrape them through an authenticated internal collector.
     """
+    requested_v1 = request.scope.get("path", "").startswith("/api/v1/")
+    if requested_v1:
+        # v1 is the canonical public prefix.  Existing unprefixed routes stay
+        # available as migration aliases while they share the same handlers.
+        request.scope["path"] = request.scope["path"][7:]
     if request.method == "OPTIONS" or request.url.path in {"/health", "/docs", "/openapi.json"}:
-        return await call_next(request)
+        response = await call_next(request)
+        if requested_v1:
+            response.headers["X-AIAT-API-Version"] = "v1"
+        return response
     try:
         _check_auth(request.headers.get("x-api-key"), request.headers.get("authorization"))
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    return await call_next(request)
+    response = await call_next(request)
+    if requested_v1:
+        response.headers["X-AIAT-API-Version"] = "v1"
+    return response
 
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
@@ -2009,6 +2224,95 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return _serialize(project)
+
+
+async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> Any:
+    from mas_core.workflow import evaluate_project_evidence, policy_for
+
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    config = dict(project.get("config") or {})
+    selected = config.get("evidence_policy") or "manual"
+    if isinstance(selected, dict):
+        policy = policy_for(str(selected.get("policy_id") or "custom"), version=selected.get("version"), requirements=dict(selected.get("requirements") or {}))
+    else:
+        policy = policy_for(str(selected))
+    documents = await storage.list_documents(project_id)
+    artifacts = await _project_artifact_rows(storage, project_id)
+    flow_instance = await storage.get_flow_instance_by_project(project_id)
+    approvals = await storage.list_approval_gates(project_id)
+    runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
+    repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
+    history = await storage.get_project_history(project_id)
+    return evaluate_project_evidence(
+        project_id=str(project_id),
+        policy=policy,
+        project=project,
+        documents=documents,
+        artifacts=artifacts,
+        flow_instance=flow_instance,
+        approvals=approvals,
+        worker_runs=runs,
+        repository=repository,
+        audit_events=history,
+    )
+
+
+@app.get("/projects/{project_id}/overview")
+async def get_project_overview(project_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    documents = await storage.list_documents(project_id)
+    context = await storage.list_project_context(project_id)
+    flow_instance = await storage.get_flow_instance_by_project(project_id)
+    artifacts = await _project_artifact_rows(storage, project_id)
+    repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (project.get("config") or {}).get("workspace")
+    runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
+    evidence = await _build_project_evidence(project_id, storage)
+    active_runs = [run for run in runs if run.get("state") not in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}]
+    return {
+        "project": _serialize(project),
+        "lifecycle": {"state": project.get("state"), "terminal": project.get("state") in TERMINAL_PROJECT_STATES},
+        "flow": _serialize(flow_instance) if flow_instance else None,
+        "documents": {"count": len(documents), "items": [_serialize(doc) for doc in documents]},
+        "context": {"count": len(context), "items": [_serialize(item) for item in context]},
+        "artifacts": {"count": len(artifacts), "items": [_serialize(item) for item in artifacts]},
+        "repository": _serialize(repository) if repository else None,
+        "worker_runs": {"count": len(runs), "active_count": len(active_runs), "items": [_serialize(run) for run in runs]},
+        "evidence": evidence.model_dump(mode="json"),
+        "next_action": None if project.get("state") in TERMINAL_PROJECT_STATES else get_responsible_team(str(project.get("state"))),
+    }
+
+
+@app.get("/projects/{project_id}/evidence")
+async def get_project_evidence(project_id: UUID) -> dict[str, Any]:
+    evidence = await _build_project_evidence(project_id, _storage())
+    return evidence.model_dump(mode="json")
+
+
+@app.post("/projects/{project_id}/evidence/validate")
+async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest | None = None) -> dict[str, Any]:
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if req is not None:
+        config = dict(project.get("config") or {})
+        config["evidence_policy"] = {"policy_id": req.policy_id, "version": req.policy_version, "requirements": req.requirements}
+        project = dict(project)
+        project["config"] = config
+        # The evaluator accepts a local policy override for dry-run validation;
+        # persistence occurs only when an operator explicitly updates policy.
+        from mas_core.workflow import evaluate_project_evidence, policy_for
+        documents = await storage.list_documents(project_id)
+        artifacts = await _project_artifact_rows(storage, project_id)
+        evidence = evaluate_project_evidence(project_id=str(project_id), policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements), project=project, documents=documents, artifacts=artifacts, flow_instance=await storage.get_flow_instance_by_project(project_id), approvals=await storage.list_approval_gates(project_id), audit_events=await storage.get_project_history(project_id))
+    else:
+        evidence = await _build_project_evidence(project_id, storage)
+    return evidence.model_dump(mode="json")
 
 
 @app.delete("/projects/{project_id}")
@@ -2848,6 +3152,72 @@ async def get_document(project_id: UUID, doc_id: UUID) -> dict[str, Any]:
     return _serialize(doc)
 
 
+async def _read_project_document_blob(project_id: UUID, document: dict[str, Any]) -> tuple[bytes, str]:
+    if document.get("content_text") is not None:
+        return str(document["content_text"]).encode("utf-8"), "text/plain; charset=utf-8"
+    bucket = document.get("blob_bucket")
+    key = document.get("blob_key")
+    if not key:
+        raise HTTPException(409, "Document body is not retrievable: no object-storage reference is recorded")
+    endpoint = os.getenv("MINIO_ENDPOINT") or os.getenv("BLOB_ENDPOINT_URL")
+    access_key = os.getenv("MINIO_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("MINIO_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+    if not endpoint or not access_key or not secret_key:
+        raise HTTPException(503, "Document metadata exists but object storage is not configured")
+    from mas_core.memory.blob import BlobClient
+
+    blob = BlobClient(endpoint, access_key=access_key, secret_key=secret_key, bucket=bucket or "mas-agents")
+    try:
+        await blob.connect()
+        project_prefix = f"{project_id}/"
+        scoped_key = str(key)
+        if scoped_key.startswith(project_prefix):
+            scoped_key = scoped_key[len(project_prefix):]
+        body = await blob.download_by_key(str(project_id), scoped_key, bucket=bucket)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Document body retrieval failed: {str(exc)[:300]}") from exc
+    finally:
+        await blob.close()
+    expected_sha = document.get("blob_sha256")
+    if expected_sha:
+        import hashlib
+        actual_sha = hashlib.sha256(body).hexdigest()
+        if actual_sha != expected_sha:
+            raise HTTPException(502, "Document body integrity check failed")
+    mime = "application/octet-stream"
+    lowered = str(key).lower()
+    if lowered.endswith((".md", ".markdown")):
+        mime = "text/markdown; charset=utf-8"
+    elif lowered.endswith(".json"):
+        mime = "application/json"
+    elif lowered.endswith(".pdf"):
+        mime = "application/pdf"
+    return body, mime
+
+
+@app.get("/projects/{project_id}/documents/{doc_id}/preview")
+async def preview_project_document(project_id: UUID, doc_id: UUID) -> Response:
+    storage = _storage()
+    document = await storage.get_document(doc_id)
+    if document is None or document.get("project_id") != project_id:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    body, mime = await _read_project_document_blob(project_id, document)
+    return Response(content=body, media_type=mime, headers={"X-AIAT-Document-SHA256": str(document.get("blob_sha256") or "")})
+
+
+@app.get("/projects/{project_id}/documents/{doc_id}/download")
+async def download_project_document(project_id: UUID, doc_id: UUID) -> Response:
+    storage = _storage()
+    document = await storage.get_document(doc_id)
+    if document is None or document.get("project_id") != project_id:
+        raise HTTPException(404, f"Document {doc_id} not found")
+    body, mime = await _read_project_document_blob(project_id, document)
+    filename = f"{str(document.get('doc_type') or 'document').lower()}-v{document.get('version') or 1}"
+    return Response(content=body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{filename}"', "X-AIAT-Document-SHA256": str(document.get("blob_sha256") or "")})
+
+
 @app.get("/projects/{project_id}/review-sessions")
 async def list_project_review_sessions(
     project_id: UUID,
@@ -3393,14 +3763,27 @@ async def retry_project(project_id: UUID) -> dict[str, Any]:
                 "last_safe_state": project.get("failed_from_state"),
             },
         )
-        await _ensure_workflow_approval_gate(
-            storage,
-            project_id,
-            ProjectState(result.next_state),
-        )
+        try:
+            next_state = ProjectState(result.next_state)
+        except (TypeError, ValueError):
+            # A lightweight route double can leave a process-local
+            # controller from a prior test/request. Never accept its untyped
+            # result as authoritative. Production WorkflowController
+            # instances return a typed transition and never enter this path.
+            next_state = ProjectState(
+                project.get("failed_from_state") or ProjectState.INIT.value
+            )
+            update_project = getattr(storage, "update_project", None)
+            if not inspect.iscoroutinefunction(update_project):
+                raise
+            updated = await update_project(project_id, state=next_state.value)
+            if updated is None:
+                raise HTTPException(409, "Stale state conflict during retry")
+
+        await _ensure_workflow_approval_gate(storage, project_id, next_state)
         return {
             "status": "retried",
-            "next_state": str(result.next_state),
+            "next_state": str(next_state),
         }
     except InvalidTransitionError as e:
         raise HTTPException(409, f"Cannot retry: {e}")
@@ -4708,7 +5091,12 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             422,
             f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
         )
-    is_external_candidate = bool(req.source_repo)
+    is_external_candidate = bool(req.source_repo and str(req.source_repo).lower() != "local")
+    if is_external_candidate and not req.version_pin:
+        raise HTTPException(
+            422,
+            "External workers require an immutable version_pin before they can enter the steward pipeline",
+        )
     capability_ids = await _resolve_worker_capability_ids(
         storage,
         capability_ids=req.capability_ids,
@@ -4729,7 +5117,71 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         update_policy=req.update_policy or "manual",
         evaluation_status="pending" if is_external_candidate else None,
         adapter_entrypoint=str(req.adapter_config.get("entrypoint") or "WorkerAgent"),
+        model_mode=req.model_mode,
+        model_profile_id=req.model_profile_id,
     )
+    # New external hires enter the steward pipeline immediately. Existing
+    # lightweight test doubles and legacy local mirrors remain readable during
+    # the migration window, but real persisted external hires cannot be
+    # activated without this dedicated steward reference.
+    if is_external_candidate:
+        if inspect.iscoroutinefunction(getattr(storage, "create_external_provenance", None)) and inspect.iscoroutinefunction(getattr(storage, "create_steward", None)):
+            from hashlib import sha256
+            import json as _json_module
+            from mas_core.worker_registry.steward import ExternalProvenance
+
+            provenance = ExternalProvenance(
+                canonical_source_repository=req.source_repo,
+                source_provider="github" if "github.com" in req.source_repo else "external",
+                exact_release=req.version_pin,
+                transport_type=req.adapter_type,
+                adapter_version=str(req.adapter_config.get("adapter_version") or "1.0.0"),
+                protocol_api_version="aiat.worker.v1",
+            )
+            provenance_hash = sha256(_json_module.dumps(provenance.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
+            get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+            existing_provenance = (
+                await get_provenance(worker["id"])
+                if inspect.iscoroutinefunction(get_provenance)
+                else None
+            )
+            if existing_provenance is not None and existing_provenance.get("provenance_hash") != provenance_hash:
+                raise HTTPException(
+                    409,
+                    "External worker provenance is already governed at a different pin; use the steward update workflow",
+                )
+            provenance_row = existing_provenance or await storage.create_external_provenance(
+                worker_id=worker["id"],
+                provenance=provenance.model_dump(mode="json"),
+                provenance_hash=provenance_hash,
+            )
+            get_steward = getattr(storage, "get_steward_by_worker", None)
+            steward_row = (
+                await get_steward(worker["id"])
+                if inspect.iscoroutinefunction(get_steward)
+                else None
+            )
+            if steward_row is None:
+                steward_row = await storage.create_steward(
+                    worker_id=worker["id"],
+                    provenance_id=provenance_row["id"],
+                    monitoring_cadence="daily",
+                )
+            if inspect.iscoroutinefunction(getattr(storage, "create_update_monitoring_job", None)):
+                list_jobs = getattr(storage, "list_update_monitoring_jobs", None)
+                existing_jobs = (
+                    await list_jobs(worker_id=worker["id"], limit=100)
+                    if inspect.iscoroutinefunction(list_jobs)
+                    else []
+                )
+                if not any(str(job.get("steward_id")) == str(steward_row["id"]) and job.get("status") == "active" for job in existing_jobs):
+                    await storage.create_update_monitoring_job(
+                        worker_id=worker["id"],
+                        steward_id=steward_row["id"],
+                        cadence="daily",
+                    )
+            if inspect.iscoroutinefunction(getattr(storage, "update_worker_config", None)):
+                await storage.update_worker_config(worker["id"], adapter_config={**dict(worker.get("adapter_config") or {}), "governance_required": True, "steward_id": str(steward_row["id"])})
     enriched = await _enrich_workers_with_capabilities(storage, [worker])
     return enriched[0]
 
@@ -4751,6 +5203,12 @@ async def deregister_worker(
         parsed_worker_id = UUID(worker_id)
     except ValueError:
         parsed_worker_id = None
+
+    # Normal lifecycle operations are UUID-addressed. Keep the historical
+    # name lookup only for explicit permanent cleanup, where older operator
+    # scripts may still pass a worker name.
+    if not permanent and parsed_worker_id is None:
+        raise HTTPException(422, "worker_id must be a valid UUID")
 
     if not permanent and parsed_worker_id is not None:
         await storage.update_worker_status(parsed_worker_id, status="DEREGISTERED")
@@ -4825,6 +5283,10 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
         update_kwargs["isolation_mode"] = req.isolation_mode
     if req.source_repo is not None:
         update_kwargs["source_repo"] = req.source_repo
+    if req.model_mode is not None:
+        update_kwargs["model_mode"] = req.model_mode
+    if req.model_profile_id is not None:
+        update_kwargs["model_profile_id"] = req.model_profile_id
 
     if update_kwargs:
         await storage.update_worker_config(worker_id, **update_kwargs)
@@ -4859,13 +5321,32 @@ async def transition_worker_status(
 
     if req.action in action_map:
         new_status = req.new_status or action_map[req.action]
-        if new_status == "ACTIVE" and existing.get("source_repo"):
+        if (
+            new_status == "ACTIVE"
+            and existing.get("source_repo")
+            and str(existing["source_repo"]).lower() != "local"
+        ):
             evaluation_status = (existing.get("evaluation_status") or "").lower()
             if evaluation_status != "approved":
                 raise HTTPException(
                     409,
                     "External worker activation is blocked until evaluation is approved",
                 )
+            governance = existing.get("adapter_config") or {}
+            governance_store_available = inspect.iscoroutinefunction(
+                getattr(storage, "get_steward_by_worker", None)
+            )
+            if governance_store_available:
+                steward = await storage.get_steward_by_worker(worker_id)
+                if steward is None and str(worker_id) not in _worker_steward_runtimes:
+                    raise HTTPException(409, "External worker activation requires a dedicated Steward Agent")
+                if not existing.get("active_adapter_id") and not governance.get("active_adapter_version"):
+                    raise HTTPException(409, "External worker activation requires a certified active adapter")
+                if not existing.get("active_skill_bundle_id") and not governance.get("active_skill_bundle_id"):
+                    raise HTTPException(409, "External worker activation requires an approved active skill bundle")
+                model_mode = str(existing.get("model_mode") or governance.get("model_mode") or "none")
+                if model_mode != "none" and not (existing.get("model_profile_id") or governance.get("model_profile_id")):
+                    raise HTTPException(409, "Model-governed external workers require an approved Model Profile")
         if new_status == "ACTIVE" and _is_medium_or_dual_use_worker(existing):
             profile = existing.get("sandbox_profile") or "restricted"
             evaluation_status = (existing.get("evaluation_status") or "").lower()
@@ -5098,6 +5579,1391 @@ async def get_worker_evaluations(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Governed worker contract, steward, model, and worker-run APIs
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _governed_external_provenance(worker: dict[str, Any], req: StewardCreateRequest):
+    from mas_core.worker_registry.steward import ExternalProvenance
+
+    source_repo = req.source_repo or worker.get("source_repo")
+    if not source_repo:
+        raise HTTPException(422, "external worker provenance requires source_repo")
+    exact_release = req.exact_release or worker.get("version_pin")
+    commit_sha = req.commit_sha or worker.get("upstream_commit_sha")
+    if not exact_release and not commit_sha and not req.package_version and not req.oci_image_digest:
+        raise HTTPException(422, "external worker provenance requires an exact release, commit, package version, or OCI digest")
+    try:
+        return ExternalProvenance(
+            canonical_source_repository=source_repo,
+            source_provider=req.source_provider,
+            exact_release=exact_release,
+            commit_sha=commit_sha,
+            package_version=req.package_version,
+            oci_image_digest=req.oci_image_digest,
+            dependency_lock_hash=req.dependency_lock_hash,
+            protocol_api_version=req.protocol_api_version,
+            adapter_version=req.adapter_version,
+            transport_type=req.transport_type,
+            license_id=req.license_id,
+            redistribution_status=req.redistribution_status,
+            security_scan_status=req.security_scan_status,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None:
+    """Load the process-local steward cache from authoritative persisted rows.
+
+    The runtime object is only an execution cache.  Candidate, certification,
+    and rollout records are rehydrated from storage so an API restart cannot
+    make a governed worker appear to have lost its hiring history.
+    """
+    from mas_core.worker_registry.steward import (
+        CandidateRecord,
+        CapabilitySnapshot,
+        CertificationRun,
+        ExternalProvenance,
+        ExternalWorkerSteward,
+        RolloutRecord,
+        StewardStatus,
+    )
+    from mas_core.worker_contract import WorkerCapabilities
+
+    key = str(worker_id)
+    cached = _worker_steward_runtimes.get(key)
+    if cached is not None:
+        return cached
+    persisted = await storage.get_steward_by_worker(worker_id)
+    provenance_row = await storage.get_external_provenance_by_worker(worker_id)
+    if persisted is None or provenance_row is None:
+        return None
+    try:
+        status = StewardStatus(str(persisted.get("status", StewardStatus.PROVISIONING)))
+    except ValueError:
+        status = StewardStatus.PROVISIONING
+    steward = ExternalWorkerSteward(
+        worker_id=key,
+        steward_id=UUID(str(persisted["id"])),
+        provenance=ExternalProvenance.model_validate(provenance_row),
+        status=status,
+    )
+    if inspect.iscoroutinefunction(getattr(storage, "list_capability_snapshots", None)):
+        for row in await storage.list_capability_snapshots(worker_id, steward_id=steward.steward_id):
+            try:
+                steward.record_capabilities(
+                    CapabilitySnapshot(
+                        snapshot_id=UUID(str(row["id"])),
+                        version=str(row["version"]),
+                        capabilities=WorkerCapabilities.model_validate(row.get("capabilities_json") or {}),
+                        discovered_at=row.get("created_at") or datetime.now(UTC),
+                        evidence_refs=tuple(row.get("evidence_refs") or []),
+                    )
+                )
+            except (KeyError, ValueError):
+                logger.warning("steward_capability_snapshot_rehydrate_failed", extra={"snapshot_id": str(row.get("id"))})
+    for row in await storage.list_skill_bundle_candidates(worker_id):
+        raw_candidate = (row.get("evidence_json") or {}).get("candidate_record")
+        if raw_candidate:
+            try:
+                candidate = CandidateRecord.model_validate(raw_candidate)
+                from mas_core.worker_registry.steward import CandidateIntakeStatus
+
+                candidate.intake_status = CandidateIntakeStatus(str(row.get("intake_status", candidate.intake_status)))
+                steward.candidates[candidate.candidate_id] = candidate
+            except ValueError:
+                logger.warning("steward_candidate_rehydrate_failed", extra={"candidate_id": str(row.get("id"))})
+    for row in await storage.list_certification_runs(worker_id):
+        try:
+            certification = CertificationRun(
+                certification_id=UUID(str(row["id"])),
+                candidate_id=UUID(str(row["candidate_id"])),
+                started_at=row.get("started_at") or datetime.now(UTC),
+                completed_at=row.get("completed_at"),
+                conformance=row.get("conformance_json") or {},
+                checks=row.get("checks_json") or {},
+                failures=tuple(row.get("failure_reasons") or []),
+                passed=str(row.get("status", "")).lower() == "passed",
+                approved_by=(row.get("evidence_json") or {}).get("approved_by"),
+            )
+            steward.certifications[certification.certification_id] = certification
+        except (KeyError, ValueError):
+            logger.warning("steward_certification_rehydrate_failed", extra={"certification_id": str(row.get("id"))})
+    for row in await storage.list_rollout_records(worker_id):
+        try:
+            targets = row.get("sample_targets") or {}
+            rollout = RolloutRecord(
+                rollout_id=UUID(str(row["id"])),
+                worker_id=key,
+                steward_id=UUID(str(row["steward_id"])),
+                candidate_id=UUID(str(row["candidate_id"])),
+                status=str(row.get("status", "PENDING")),
+                eligible_task_classes=tuple(row.get("eligible_task_classes") or []),
+                shadow_sample_target=int(targets.get("shadow", 10)),
+                readonly_canary_sample_target=int(targets.get("readonly_canary", 5)),
+                live_canary_sample_target=int(targets.get("live_canary", 3)),
+                sample_count=int(row.get("sample_count") or 0),
+                started_at=row.get("started_at") or datetime.now(UTC),
+                completed_at=row.get("completed_at"),
+                comparison_metrics=row.get("comparison_metrics") or {},
+                rollback_thresholds=row.get("rollback_thresholds") or {"regression_fraction": 0.10},
+                promotion_actor=row.get("promotion_actor"),
+                rollback_reason=row.get("rollback_reason"),
+            )
+            steward.rollouts[rollout.rollout_id] = rollout
+        except (KeyError, ValueError):
+            logger.warning("steward_rollout_rehydrate_failed", extra={"rollout_id": str(row.get("id"))})
+    _worker_steward_runtimes[key] = steward
+    return steward
+
+
+def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
+    """Return the only bridge from a Worker ToolRequest to tool-service."""
+    from mas_core.worker_contract import WorkerToolResponse, WorkerUsage
+
+    async def dispatch(tool_request: Any) -> WorkerToolResponse:
+        if tool_request.approval_required:
+            return WorkerToolResponse(
+                request_id=tool_request.request_id,
+                run_id=tool_request.run_id,
+                tool_name=tool_request.tool_name,
+                success=False,
+                error={
+                    "code": "TOOL_APPROVAL_REQUIRED",
+                    "message": "The requested tool requires a recorded approval before dispatch",
+                    "category": "approval",
+                },
+            )
+        run = await storage.get_worker_run(tool_request.run_id)
+        if run is None:
+            raise RuntimeError("Worker Run is not persisted; tool dispatch is denied")
+        request_json = dict(run.get("request_json") or {})
+        body = {
+            "caller_id": str(worker["id"]),
+            "caller_role": AgentRole.WORKER.value,
+            "caller_team": worker.get("team_id"),
+            "project_id": str(run["project_id"]) if run.get("project_id") else None,
+            "worker_run_id": str(tool_request.run_id),
+            "permission_scope": list(tool_request.permission_scope),
+            "budget_snapshot": request_json.get("budget") or {},
+            "audit_context": {
+                "worker_id": str(worker["id"]),
+                "worker_run_id": str(tool_request.run_id),
+                "tool_request_id": str(tool_request.request_id),
+            },
+            "tool_name": tool_request.tool_name,
+            "kwargs": tool_request.arguments,
+            "idempotency_key": str(
+                uuid5(NAMESPACE_URL, f"{tool_request.run_id}:{tool_request.idempotency_key}")
+            ),
+        }
+        async with httpx.AsyncClient(timeout=120, headers=_tool_service_auth_headers()) as client:
+            response = await client.post(
+                f"{TOOL_SERVICE_URL}/tools/{tool_request.tool_name}/run",
+                json=body,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        return WorkerToolResponse(
+            request_id=tool_request.request_id,
+            run_id=tool_request.run_id,
+            tool_name=tool_request.tool_name,
+            success=bool(payload.get("success")),
+            result=payload.get("result"),
+            error=(
+                {
+                    "code": payload.get("error_code") or "TOOL_ERROR",
+                    "message": payload.get("error") or "Tool request failed",
+                    "category": "tool_service",
+                }
+                if not payload.get("success")
+                else None
+            ),
+            usage=WorkerUsage(duration_ms=float(payload["duration_ms"]))
+            if payload.get("duration_ms") is not None
+            else None,
+        )
+
+    return dispatch
+
+
+async def _certified_worker_adapter(storage: AgentStorage, worker: dict[str, Any]) -> Any | None:
+    """Hydrate the active immutable adapter definition after an API restart."""
+    from mas_core.worker_contract import AdapterContext, WorkerCapabilities
+    from mas_core.worker_registry.runtime_adapters import (
+        OpenCodeAdapter,
+        OpenCodeInterfaceVerification,
+        adapter_for_transport,
+    )
+
+    worker_id = UUID(str(worker["id"]))
+    adapter_row = await storage.get_runtime_adapter(worker["active_adapter_id"]) if worker.get("active_adapter_id") else await storage.get_active_runtime_adapter(worker_id)
+    if adapter_row is None or adapter_row.get("status") != "active" or adapter_row.get("conformance_status") != "passed":
+        stale = _worker_adapter_runtimes.pop(str(worker_id), None)
+        if stale is not None and hasattr(stale, "close"):
+            try:
+                await stale.close()
+            except Exception:
+                logger.warning("stale_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
+        return None
+    active_adapter_id = str(adapter_row["id"])
+    cached = _worker_adapter_runtimes.get(str(worker_id))
+    if cached is not None and getattr(cached, "_aiat_active_adapter_id", None) == active_adapter_id:
+        return cached
+    if cached is not None and hasattr(cached, "close"):
+        try:
+            await cached.close()
+        except Exception:
+            logger.warning("replaced_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
+    config = dict(worker.get("adapter_config") or {})
+    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
+    raw_capabilities = adapter_row.get("capabilities_json") or config.get("capabilities") or {}
+    try:
+        capabilities = WorkerCapabilities.model_validate(raw_capabilities)
+    except ValueError as exc:
+        raise HTTPException(409, f"active adapter capabilities are invalid: {exc}") from exc
+    context = AdapterContext(
+        workspace_path=config.get("workspace_path"),
+        tool_dispatcher=_worker_tool_dispatcher(storage, worker),
+        metadata={"worker_id": str(worker_id)},
+    )
+    transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
+    try:
+        if transport == "opencode":
+            raw_verification = config.get("interface_verification") or {}
+            verification = OpenCodeInterfaceVerification.from_report(raw_verification)
+            password_env = str(config.get("auth_password_env") or "OPENCODE_SERVER_PASSWORD")
+            username_env = str(config.get("auth_username_env") or "OPENCODE_SERVER_USERNAME")
+            password = os.getenv(password_env)
+            if not password:
+                raise ValueError(f"OpenCode secret environment {password_env!r} is not configured")
+            context.secrets.update({"opencode_password": password, "opencode_username": os.getenv(username_env, "opencode")})
+            adapter = OpenCodeAdapter(
+                verification,
+                base_url=str(config["base_url"]),
+                worker_id=str(worker_id),
+                endpoints=config.get("endpoints"),
+                context=context,
+                capabilities=capabilities,
+            )
+        else:
+            adapter = adapter_for_transport(
+                transport,
+                worker_id=str(worker_id),
+                config=config,
+                context=context,
+            )
+            adapter.capabilities = capabilities
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(409, f"active adapter configuration is not certified: {exc}") from exc
+    # The cache entry is valid only for this immutable active adapter row.
+    # Rollout promotion/rollback changes the pointer, so the next lookup
+    # cannot accidentally dispatch through a stale runtime instance.
+    setattr(adapter, "_aiat_active_adapter_id", active_adapter_id)
+    _worker_adapter_runtimes[str(worker_id)] = adapter
+    return adapter
+
+
+@app.get("/worker-contract/version")
+async def worker_contract_version() -> dict[str, Any]:
+    from mas_core.worker_contract import ADAPTER_API_VERSION, CONTRACT_VERSION
+
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "schema_version": "1.0",
+        "adapter_api_version": ADAPTER_API_VERSION,
+        "supported_previous_major": True,
+        "unknown_optional_fields": "preserved_and_ignored",
+        "unknown_required_capabilities": "rejected",
+    }
+
+
+@app.post("/capabilities/workers/{worker_id}/steward", status_code=201)
+async def create_worker_steward(worker_id: UUID, req: StewardCreateRequest) -> dict[str, Any]:
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+    if not worker.get("source_repo") and not req.source_repo:
+        raise HTTPException(422, "A dedicated steward requires external source provenance")
+    if str(worker_id) in _worker_steward_runtimes or await storage.get_steward_by_worker(worker_id):
+        raise HTTPException(409, "Worker already has a dedicated Steward Agent")
+    provenance = _governed_external_provenance(worker, req)
+    from hashlib import sha256
+    import json as _json_module
+    from mas_core.worker_registry.steward import ExternalWorkerSteward
+
+    provenance_hash = sha256(_json_module.dumps(provenance.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
+    persisted_provenance = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_external_provenance", None)):
+        persisted_provenance = await storage.create_external_provenance(
+            worker_id=worker_id,
+            provenance=provenance.model_dump(mode="json"),
+            provenance_hash=provenance_hash,
+        )
+    steward_id = UUID(str(persisted_provenance["id"])) if persisted_provenance and persisted_provenance.get("id") else None
+    steward = ExternalWorkerSteward(worker_id=str(worker_id), provenance=provenance, steward_id=steward_id)
+    persisted_steward = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_steward", None)):
+        persisted_steward = await storage.create_steward(
+            worker_id=worker_id,
+            provenance_id=UUID(str(persisted_provenance["id"])) if persisted_provenance else None,
+            steward_id=steward.steward_id,
+            monitoring_cadence=req.monitoring_cadence,
+        )
+        if inspect.iscoroutinefunction(getattr(storage, "create_update_monitoring_job", None)):
+            await storage.create_update_monitoring_job(
+                worker_id=worker_id,
+                steward_id=persisted_steward["id"],
+                cadence=req.monitoring_cadence,
+            )
+    _worker_steward_runtimes[str(worker_id)] = steward
+    if inspect.iscoroutinefunction(getattr(storage, "update_worker_config", None)):
+        await storage.update_worker_config(
+            worker_id,
+            adapter_config={**dict(worker.get("adapter_config") or {}), "governance_required": True, "steward_id": str(steward.steward_id)},
+        )
+    return {
+        "steward": steward.status_snapshot(),
+        "provenance": provenance.model_dump(mode="json"),
+        "persisted": bool(persisted_steward),
+    }
+
+
+@app.get("/capabilities/workers/{worker_id}/steward")
+async def get_worker_steward(worker_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {worker_id} not found")
+    runtime = await _steward_runtime(storage, worker_id)
+    persisted = None
+    if inspect.iscoroutinefunction(getattr(storage, "get_steward_by_worker", None)):
+        persisted = await storage.get_steward_by_worker(worker_id)
+    if runtime is None and persisted is None:
+        raise HTTPException(404, f"Worker {worker_id} has no dedicated Steward Agent")
+    response = runtime.status_snapshot() if runtime is not None else _serialize(persisted)
+    response["worker_id"] = str(worker_id)
+    response["persisted_steward"] = _serialize(persisted) if persisted else None
+    return response
+
+
+@app.get("/stewards")
+async def list_stewards(
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    rows = await storage.list_stewards(status=status, limit=limit)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        worker_id = UUID(str(row["worker_id"]))
+        candidates = await storage.list_skill_bundle_candidates(worker_id)
+        monitoring = await storage.list_update_monitoring_jobs(worker_id=worker_id, limit=10)
+        result.append(
+            _serialize(
+                {
+                    **row,
+                    "candidate_count": len(candidates),
+                    "monitoring": monitoring,
+                }
+            )
+        )
+    return result
+
+
+@app.get("/capabilities/workers/{worker_id}/steward/monitoring")
+async def list_worker_steward_monitoring(worker_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_worker(worker_id) is None:
+        raise HTTPException(404, "Worker not found")
+    return [
+        _serialize(row)
+        for row in await storage.list_update_monitoring_jobs(worker_id=worker_id, limit=100)
+    ]
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/documentation", status_code=201)
+async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    from mas_core.worker_registry.steward import DocumentationSnapshot, DocumentationSource
+
+    source = next((item for item in steward.documentation_sources if item.uri == req.uri), None)
+    if source is None:
+        source = DocumentationSource(uri=req.uri, trusted=False)
+        steward.documentation_sources.append(source)
+    snapshot = DocumentationSnapshot(
+        source=source,
+        version=req.version,
+        content_sha256=req.content_sha256,
+        content_ref=req.content_ref,
+        extracted_interfaces=req.extracted_interfaces,
+        security_findings=tuple(req.security_findings),
+        untrusted=True,
+    )
+    steward.add_documentation_snapshot(snapshot)
+    persisted = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_documentation_source", None)):
+        source_row = await storage.get_documentation_source(steward_id=steward.steward_id, uri=source.uri)
+        if source_row is None:
+            source_row = await storage.create_documentation_source(steward_id=steward.steward_id, uri=source.uri, source_type=source.source_type, trusted_for_provenance=False, allowed_domains=list(source.allowed_domains))
+        persisted = await storage.create_documentation_snapshot(source_id=source_row["id"], version=req.version, content_sha256=req.content_sha256, content_ref=req.content_ref, extracted_interfaces=req.extracted_interfaces, security_findings=req.security_findings, untrusted=True)
+    return {"snapshot": snapshot.model_dump(mode="json"), "persisted": _serialize(persisted) if persisted else None}
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/capabilities", status_code=201)
+async def record_steward_capabilities(worker_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    from mas_core.worker_contract import WorkerCapabilities
+    from mas_core.worker_registry.steward import CapabilitySnapshot
+
+    snapshot = CapabilitySnapshot(version=str(payload.get("version") or "1.0.0"), capabilities=WorkerCapabilities.model_validate(payload.get("capabilities") or {}), evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []))
+    steward.record_capabilities(snapshot)
+    persisted = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_capability_snapshot", None)):
+        persisted = await storage.create_capability_snapshot(
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            version=snapshot.version,
+            capabilities=snapshot.capabilities.model_dump(mode="json"),
+            evidence_refs=list(snapshot.evidence_refs),
+        )
+    result = snapshot.model_dump(mode="json")
+    result["persisted"] = _serialize(persisted) if persisted else None
+    return result
+
+
+def _candidate_response(candidate: Any) -> dict[str, Any]:
+    return candidate.model_dump(mode="json") if hasattr(candidate, "model_dump") else _serialize(candidate)
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/candidates", status_code=201)
+async def generate_steward_candidate(worker_id: UUID, req: CandidateGenerationRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    candidate = steward.generate_candidate(
+        semantic_version=req.semantic_version,
+        adapter_version=req.adapter_version,
+        upstream_compatibility_range=req.upstream_compatibility_range,
+        adapter_entrypoint=req.adapter_entrypoint,
+        implementation_ref=req.implementation_ref,
+        diff=req.diff,
+        migration_notes=req.migration_notes,
+    )
+    bundle_row = await storage.create_skill_bundle(
+        worker_id=worker_id,
+        steward_id=steward.steward_id,
+        semantic_version=candidate.bundle.semantic_version,
+        format_version="1.0",
+        upstream_compatibility_range=candidate.bundle.upstream_compatibility_range,
+        provenance=candidate.bundle.source_provenance.model_dump(mode="json"),
+        bundle=candidate.bundle.model_dump(mode="json"),
+        content_hash=candidate.bundle.content_hash,
+    )
+    adapter_row = await storage.create_runtime_adapter(
+        worker_id=worker_id,
+        version=candidate.adapter.version,
+        adapter_type="external_worker",
+        transport_type=candidate.adapter.transport_type,
+        implementation_ref=candidate.adapter.implementation_ref,
+        content_hash=candidate.adapter.content_hash,
+        conformance_status="pending",
+        status="candidate",
+    )
+    await storage.create_skill_bundle_candidate(
+        candidate_id=candidate.candidate_id,
+        skill_bundle_id=bundle_row["id"],
+        worker_id=worker_id,
+        adapter_id=adapter_row["id"],
+        intake_status=candidate.intake_status.value,
+        diff=candidate.diff,
+        evidence=candidate.evidence,
+        candidate_json=candidate.model_dump(mode="json"),
+    )
+    return _candidate_response(candidate)
+
+
+@app.get("/capabilities/workers/{worker_id}/steward/candidates")
+async def list_steward_candidates(worker_id: UUID) -> list[dict[str, Any]]:
+    steward = await _steward_runtime(_storage(), worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    return [_candidate_response(candidate) for candidate in steward.candidates.values()]
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/stage")
+async def advance_steward_candidate_stage(
+    worker_id: UUID,
+    candidate_id: UUID,
+    req: CandidateStageAdvanceRequest,
+) -> dict[str, Any]:
+    """Record exactly one reviewed intake transition and its evidence."""
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    candidate = steward.candidates.get(candidate_id)
+    if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    from mas_core.worker_registry.steward import CandidateIntakeStatus
+
+    try:
+        target = CandidateIntakeStatus(req.target_status)
+        previous_status = candidate.intake_status
+        candidate = steward.advance_candidate(candidate_id, target)
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+    candidate.evidence.setdefault("intake_transitions", []).append(
+        {
+            "from": previous_status.value,
+            "to": target.value,
+            "actor": req.actor,
+            "evidence": req.evidence,
+            "recorded_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    persisted = await storage.get_skill_bundle_candidate(candidate_id)
+    if persisted is not None:
+        evidence = dict(persisted.get("evidence_json") or {})
+        evidence["candidate_record"] = candidate.model_dump(mode="json")
+        await storage.update_skill_bundle_candidate(
+            candidate_id,
+            intake_status=candidate.intake_status.value,
+            evidence=evidence,
+        )
+    return _candidate_response(candidate)
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/certify")
+async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: CandidateCertificationRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    candidate = steward.candidates.get(candidate_id)
+    if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    if candidate.intake_status.value != "CERTIFYING":
+        raise HTTPException(
+            409,
+            "Candidate must pass each recorded intake stage and enter CERTIFYING before conformance can run",
+        )
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
+    provenance = steward.provenance
+    server_checks = {
+        "provenance_pin": bool(
+            provenance.exact_release
+            or provenance.commit_sha
+            or provenance.package_version
+            or provenance.oci_image_digest
+        ),
+        "license": bool(provenance.license_id)
+        and provenance.redistribution_status == "approved",
+        "security": provenance.security_scan_status == "passed",
+        "documentation": bool(steward.documentation_snapshots),
+        "capability_snapshot": bool(steward.capability_snapshots),
+    }
+    # Supplemental checks may only make certification stricter; a request
+    # cannot manufacture a passing core gate.
+    checks = {**server_checks, **{f"attested:{name}": bool(value) for name, value in req.checks.items()}}
+    from mas_core.worker_contract import AdapterContext, ConformanceRunner, WorkerCapabilities
+    from mas_core.worker_registry.runtime_adapters import (
+        OpenCodeAdapter,
+        OpenCodeInterfaceVerification,
+        adapter_for_transport,
+    )
+
+    config = dict(worker.get("adapter_config") or {})
+    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
+    try:
+        capability_payload = config.get("capabilities") or {}
+        if not capability_payload and candidate.bundle.verified_capabilities is not None:
+            capability_payload = candidate.bundle.verified_capabilities.capabilities.model_dump(mode="json")
+        capabilities = WorkerCapabilities.model_validate(
+            capability_payload
+        )
+        transport = candidate.adapter.transport_type.lower()
+        context = AdapterContext(workspace_path=config.get("workspace_path"), metadata={"certification": True})
+        if transport == "opencode":
+            verification = OpenCodeInterfaceVerification.from_report(config.get("interface_verification") or {})
+            password_env = str(config.get("auth_password_env") or "OPENCODE_SERVER_PASSWORD")
+            username_env = str(config.get("auth_username_env") or "OPENCODE_SERVER_USERNAME")
+            password = os.getenv(password_env)
+            if not password:
+                raise ValueError(f"OpenCode secret environment {password_env!r} is not configured")
+            context.secrets.update({"opencode_password": password, "opencode_username": os.getenv(username_env, "opencode")})
+            adapter = OpenCodeAdapter(
+                verification,
+                base_url=str(config["base_url"]),
+                worker_id=str(worker_id),
+                endpoints=config.get("endpoints"),
+                context=context,
+                capabilities=capabilities,
+            )
+        else:
+            adapter = adapter_for_transport(
+                transport,
+                worker_id=str(worker_id),
+                config=config,
+                context=context,
+            )
+            adapter.capabilities = capabilities
+        try:
+            conformance = await ConformanceRunner().run(
+                adapter,
+                worker_id=str(worker_id),
+                include_cancellation=True,
+            )
+        finally:
+            await adapter.close()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(409, f"Candidate adapter cannot be certified: {exc}") from exc
+
+    certification = steward.certify_candidate(
+        candidate_id,
+        conformance=conformance,
+        checks=checks,
+        approved_by=None,
+    )
+    await storage.create_certification_run(
+        certification_id=certification.certification_id,
+        worker_id=worker_id,
+        candidate_id=candidate_id,
+        steward_id=steward.steward_id,
+        status="passed" if certification.passed else "rejected",
+        conformance=certification.conformance,
+        checks=certification.checks,
+        evidence={
+            "operator_conformance_submission": req.conformance,
+            "server_derived_checks": server_checks,
+        },
+        failure_reasons=list(certification.failures),
+        completed_at=certification.completed_at,
+    )
+    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    if persisted_candidate is not None:
+        evidence = dict(persisted_candidate.get("evidence_json") or {})
+        evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
+        await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
+    await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
+    return certification.model_dump(mode="json")
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/approve")
+async def approve_steward_candidate(
+    worker_id: UUID,
+    candidate_id: UUID,
+    req: CandidateApprovalRequest,
+) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    if persisted_candidate is None:
+        raise HTTPException(404, "Persisted candidate not found")
+    candidate = steward.candidates.get(candidate_id)
+    if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    certification = (
+        steward.certifications.get(candidate.certification_id)
+        if candidate.certification_id is not None
+        else None
+    )
+    if certification is None or not certification.passed:
+        raise HTTPException(409, "Candidate approval requires a passed server-run certification")
+    approval = await storage.create_approval_record(
+        scope_type="worker_skill_bundle_candidate",
+        scope_id=candidate_id,
+        decision="APPROVED",
+        decided_by=req.decided_by,
+        reason=req.reason,
+        evidence=req.evidence,
+    )
+    try:
+        candidate = steward.approve_candidate(candidate_id, approval_record_id=approval["id"])
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+    evidence = dict(persisted_candidate.get("evidence_json") or {})
+    evidence["candidate_record"] = candidate.model_dump(mode="json")
+    await storage.update_skill_bundle_candidate(candidate_id, intake_status=candidate.intake_status.value, evidence=evidence, approval_record_id=candidate.approval_record_id)
+    await storage.update_skill_bundle(persisted_candidate["skill_bundle_id"], status="APPROVED")
+    if persisted_candidate.get("adapter_id"):
+        await storage.update_runtime_adapter(persisted_candidate["adapter_id"], status="approved", conformance_status="passed")
+    return _candidate_response(candidate)
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/rollouts", status_code=201)
+async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    candidate_id = next((candidate.candidate_id for candidate in steward.candidates.values() if candidate.intake_status.value == "APPROVED"), None)
+    if candidate_id is None:
+        raise HTTPException(409, "No approved candidate is available for rollout")
+    try:
+        rollout = steward.start_rollout(candidate_id, actor=req.actor, eligible_task_classes=req.eligible_task_classes)
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await storage.create_rollout_record(
+        rollout_id=rollout.rollout_id,
+        worker_id=worker_id,
+        steward_id=steward.steward_id,
+        candidate_id=candidate_id,
+        status=rollout.status.value,
+        eligible_task_classes=list(rollout.eligible_task_classes),
+        sample_targets={"shadow": rollout.shadow_sample_target, "readonly_canary": rollout.readonly_canary_sample_target, "live_canary": rollout.live_canary_sample_target},
+        rollback_thresholds=rollout.rollback_thresholds,
+        promotion_actor=rollout.promotion_actor,
+    )
+    return rollout.model_dump(mode="json")
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/advance")
+async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RolloutAdvanceRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    persisted_before = await storage.get_rollout_record(rollout_id)
+    if persisted_before is None:
+        raise HTTPException(404, "Persisted rollout not found")
+    from mas_core.worker_registry.steward import RolloutStatus
+    try:
+        rollout = steward.advance_rollout(rollout_id, RolloutStatus(req.target_status), sample_count=req.sample_count, metrics=req.comparison_metrics)
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if rollout.status.value == "ACTIVE":
+        activated = await storage.activate_rollout_atomically(
+            rollout_id=rollout_id,
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            candidate_id=rollout.candidate_id,
+            completed_at=rollout.completed_at,
+        )
+        if activated is None:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                "Rollout promotion lost its compare-and-set lock or has a competing rollout",
+            )
+        await _invalidate_worker_adapter_runtime(worker_id)
+    else:
+        transitioned = await storage.transition_rollout(
+            rollout_id,
+            to_status=rollout.status.value,
+            actor="worker-rollout-approver",
+            expected_status=str(persisted_before["status"]),
+            sample_count=rollout.sample_count,
+            comparison_metrics=rollout.comparison_metrics,
+            completed_at=rollout.completed_at,
+            evidence={"target_status": req.target_status},
+        )
+        if transitioned is None:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(409, "Rollout transition lost its compare-and-set lock")
+    return rollout.model_dump(mode="json")
+
+
+@app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/rollback")
+async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RollbackRequest) -> dict[str, Any]:
+    storage = _storage()
+    steward = await _steward_runtime(storage, worker_id)
+    if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    try:
+        rollout = steward.rollback(rollout_id, reason=req.reason)
+    except Exception as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await storage.update_rollout_record(rollout_id, status=rollout.status.value, rollback_reason=req.reason, completed_at=rollout.completed_at)
+    current_candidate = await storage.get_skill_bundle_candidate(rollout.candidate_id)
+    previous_rollouts = [
+        row for row in await storage.list_rollout_records(worker_id)
+        if str(row.get("id")) != str(rollout_id) and str(row.get("status")) == "ACTIVE"
+    ]
+    previous_rollout = previous_rollouts[-1] if previous_rollouts else None
+    previous_candidate = await storage.get_skill_bundle_candidate(UUID(str(previous_rollout["candidate_id"]))) if previous_rollout else None
+    if current_candidate is not None:
+        if current_candidate.get("adapter_id"):
+            await storage.update_runtime_adapter(current_candidate["adapter_id"], status="superseded")
+        await storage.update_skill_bundle(current_candidate["skill_bundle_id"], status="SUPERSEDED")
+    if previous_candidate is not None:
+        if previous_candidate.get("adapter_id"):
+            await storage.update_runtime_adapter(previous_candidate["adapter_id"], status="active", conformance_status="passed")
+        await storage.update_skill_bundle(previous_candidate["skill_bundle_id"], status="APPROVED")
+        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=None, active_adapter_id=previous_candidate.get("adapter_id"), active_skill_bundle_id=previous_candidate.get("skill_bundle_id"))
+        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=previous_candidate.get("skill_bundle_id"), active_adapter_id=previous_candidate.get("adapter_id"))
+        target_candidate_id = UUID(str(previous_candidate["id"]))
+    else:
+        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=None, active_adapter_id=None, active_skill_bundle_id=None)
+        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=None, active_adapter_id=None)
+        await storage.update_steward(steward.steward_id, status="DEGRADED")
+        await storage.update_worker_status(worker_id, status="INACTIVE")
+        target_candidate_id = None
+    await storage.create_rollback_record(
+        rollout_id=rollout_id,
+        worker_id=worker_id,
+        reason=req.reason,
+        triggered_by="operator",
+        from_candidate_id=rollout.candidate_id,
+        target_candidate_id=target_candidate_id,
+    )
+    await _invalidate_worker_adapter_runtime(worker_id)
+    return rollout.model_dump(mode="json")
+
+
+def _model_profile_from_row(row: dict[str, Any]) -> Any:
+    """Rehydrate the immutable resolver model from its persisted rows."""
+    from mas_core.llm_gateway import ModelProfile, ModelProfileStatus, ModelProfileVersion, PrivacyClass
+
+    versions: list[Any] = []
+    for raw in row.get("versions") or []:
+        metadata = dict(raw.get("constraints_json") or {})
+        try:
+            privacy_class = PrivacyClass(str(metadata.get("privacy_class", "internal")))
+        except ValueError:
+            privacy_class = PrivacyClass.INTERNAL
+        versions.append(ModelProfileVersion(
+            version=str(raw["version"]),
+            provider_id=str(raw["provider_id"]),
+            exact_model_id=str(raw["exact_model_id"]),
+            api_version=raw.get("api_version"),
+            capabilities=frozenset(raw.get("capabilities") or []),
+            context_window=int(metadata.get("context_window", 0) or 0),
+            max_output_tokens=int(metadata.get("max_output_tokens", 0) or 0),
+            tool_calling=bool(metadata.get("tool_calling", False)),
+            structured_output=bool(metadata.get("structured_output", False)),
+            vision=bool(metadata.get("vision", False)),
+            reasoning=bool(metadata.get("reasoning", False)),
+            streaming=bool(metadata.get("streaming", False)),
+            embedding=bool(metadata.get("embedding", False)),
+            cost_per_1k_input_usd=float(metadata.get("cost_per_1k_input_usd", 0) or 0),
+            cost_per_1k_output_usd=float(metadata.get("cost_per_1k_output_usd", 0) or 0),
+            max_cost_usd=metadata.get("max_cost_usd"),
+            max_tokens_per_request=metadata.get("max_tokens_per_request"),
+            latency_target_ms=metadata.get("latency_target_ms"),
+            max_concurrency=metadata.get("max_concurrency"),
+            privacy_class=privacy_class,
+            regions=frozenset(metadata.get("regions") or []),
+            local=bool(metadata.get("local", False)),
+            provider_settings=dict(raw.get("provider_settings") or {}),
+            status=ModelProfileStatus(str(raw.get("status", "draft"))),
+            effective_from=raw.get("effective_from"),
+            effective_until=raw.get("effective_until"),
+        ))
+    return ModelProfile(
+        profile_id=str(row["logical_profile_id"]),
+        purpose=str(row["purpose"]),
+        approved_provider_ids=frozenset(row.get("approved_provider_ids") or []),
+        required_capabilities=frozenset(row.get("required_capabilities") or []),
+        fallback_profile_ids=tuple(row.get("fallback_profile_ids") or []),
+        status=ModelProfileStatus(str(row.get("status", "draft"))),
+        owner=str(row.get("owner", "aiat")),
+        versions=tuple(versions),
+    )
+
+
+async def _persisted_model_profiles(storage: AgentStorage) -> list[Any]:
+    rows = await storage.list_model_profiles()
+    return [_model_profile_from_row(row) for row in rows]
+
+
+def _model_policy_layer(name: str, raw: Any) -> Any | None:
+    """Parse one persisted policy layer without granting request authority."""
+    from mas_core.llm_gateway import ModelPolicyLayer
+
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(409, f"Persisted model policy {name!r} is invalid JSON") from exc
+    if not isinstance(raw, dict):
+        raise HTTPException(409, f"Persisted model policy {name!r} must be an object")
+    payload = dict(raw)
+    payload["name"] = name
+    if "constraints" not in payload:
+        payload = {"name": name, "constraints": raw}
+    try:
+        return ModelPolicyLayer.model_validate(payload)
+    except ValueError as exc:
+        raise HTTPException(409, f"Persisted model policy {name!r} is invalid: {exc}") from exc
+
+
+async def _effective_model_policy_layers(
+    storage: AgentStorage,
+    *,
+    worker: dict[str, Any],
+    req: WorkerRunDispatchRequest,
+) -> tuple[Any, ...]:
+    """Build the org/project/flow/node/worker/steward/task policy intersection.
+
+    The request layer is intentionally last and can only add restrictions,
+    because the resolver intersects every layer.  Selection/default policy is
+    always loaded from durable control-plane records.
+    """
+    raw_layers: list[tuple[str, Any]] = []
+    get_config = getattr(storage, "get_config", None)
+    if inspect.iscoroutinefunction(get_config):
+        raw_layers.append(("organization", await get_config("model_policy.organization")))
+    if req.project_id is not None:
+        project = await storage.get_project(req.project_id)
+        if project is not None:
+            raw_layers.append(("project", (project.get("config") or {}).get("model_policy")))
+    flow_definition: dict[str, Any] | None = None
+    if req.flow_id is not None:
+        flow = await storage.get_flow(req.flow_id)
+        if flow is not None:
+            flow_definition = dict(flow.get("definition_json") or {})
+            raw_layers.append(("flow", (flow_definition.get("metadata") or {}).get("model_policy")))
+    if flow_definition is not None and req.flow_node_execution_id is not None:
+        execution = await storage.get_flow_node_execution(req.flow_node_execution_id)
+        node_id = execution.get("node_id") if execution else None
+        node = next((item for item in flow_definition.get("nodes") or [] if item.get("id") == node_id), None)
+        if node is not None:
+            raw_layers.append(("node", (node.get("config") or {}).get("model_policy")))
+    worker_config = dict(worker.get("adapter_config") or {})
+    raw_layers.append(("worker", worker_config.get("model_policy")))
+    steward_id = worker_config.get("steward_id")
+    if steward_id and inspect.iscoroutinefunction(getattr(storage, "get_steward", None)):
+        try:
+            steward = await storage.get_steward(UUID(str(steward_id)))
+        except ValueError:
+            steward = None
+        if steward is not None:
+            raw_layers.append(("steward", (steward.get("metadata") or {}).get("model_policy")))
+    raw_layers.append(("task", req.runtime_extensions.get("model_policy")))
+    layers = [layer for name, raw in raw_layers if (layer := _model_policy_layer(name, raw)) is not None]
+    from mas_core.llm_gateway import ModelPolicyLayer
+
+    layers.extend(
+        ModelPolicyLayer.model_validate({"name": "request_restrictions", **raw})
+        for raw in req.model_policy_layers
+    )
+    return tuple(layers)
+
+
+@app.post("/model-profiles", status_code=201)
+async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]:
+    storage = _storage()
+    from mas_core.llm_gateway import ModelProfile, ModelProfileStatus
+
+    if await storage.get_model_profile(req.profile_id) is not None:
+        raise HTTPException(409, "Model Profile already exists")
+    try:
+        profile = ModelProfile(
+            profile_id=req.profile_id,
+            purpose=req.purpose,
+            approved_provider_ids=frozenset(req.approved_provider_ids),
+            required_capabilities=frozenset(req.required_capabilities),
+            fallback_profile_ids=tuple(req.fallback_profile_ids),
+            status=ModelProfileStatus(req.status),
+        )
+        await storage.create_model_profile(
+            logical_profile_id=profile.profile_id,
+            purpose=profile.purpose,
+            approved_provider_ids=sorted(profile.approved_provider_ids),
+            required_capabilities=sorted(profile.required_capabilities),
+            fallback_profile_ids=list(profile.fallback_profile_ids),
+            status=profile.status.value,
+            owner=profile.owner,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return profile.model_dump(mode="json")
+
+
+@app.post("/model-overrides", status_code=201)
+async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, Any]:
+    storage = _storage()
+    if await storage.get_project(req.project_id) is None:
+        raise HTTPException(404, "Project not found")
+    if await storage.get_model_profile(req.requested_profile_id) is None:
+        raise HTTPException(404, "Requested Model Profile not found")
+    override = await storage.create_model_override_request(
+        project_id=req.project_id,
+        requested_by=req.requested_by,
+        requested_profile_id=req.requested_profile_id,
+        reason=req.reason,
+        scope=req.scope,
+    )
+    return _serialize(override)
+
+
+@app.post("/model-overrides/{override_id}/decision")
+async def decide_model_override(
+    override_id: UUID,
+    req: ModelOverrideDecisionRequest,
+) -> dict[str, Any]:
+    storage = _storage()
+    override = await storage.get_model_override_request(override_id)
+    if override is None:
+        raise HTTPException(404, "Model override request not found")
+    if str(override.get("status")) != "PENDING":
+        raise HTTPException(409, "Model override request is already decided")
+    approval = await storage.create_approval_record(
+        scope_type="model_override_request",
+        scope_id=override_id,
+        decision=req.decision,
+        decided_by=req.decided_by,
+        reason=req.reason,
+        evidence=req.evidence,
+        expires_at=req.expires_at,
+    )
+    updated = await storage.update_model_override_request(
+        override_id,
+        status=req.decision,
+        decided_by=req.decided_by,
+        decision=req.decision,
+        expires_at=req.expires_at,
+    )
+    if updated is None:
+        raise HTTPException(404, "Model override request not found")
+    return {**_serialize(updated), "approval_record": _serialize(approval)}
+
+
+@app.post("/model-profiles/{profile_id}/versions", status_code=201)
+async def add_model_profile_version(profile_id: str, req: ModelProfileVersionRequest) -> dict[str, Any]:
+    from mas_core.llm_gateway import ModelProfileStatus, ModelProfileVersion, PrivacyClass
+
+    storage = _storage()
+    profile_row = await storage.get_model_profile(profile_id)
+    if profile_row is None:
+        raise HTTPException(404, "Model Profile not found")
+    approved_provider_ids = {str(provider_id) for provider_id in (profile_row.get("approved_provider_ids") or [])}
+    if req.provider_id not in approved_provider_ids:
+        raise HTTPException(
+            422,
+            f"provider_id {req.provider_id!r} is not approved by Model Profile {profile_id!r}",
+        )
+    try:
+        version = ModelProfileVersion(
+            version=req.version,
+            provider_id=req.provider_id,
+            exact_model_id=req.exact_model_id,
+            capabilities=frozenset(req.capabilities),
+            context_window=req.context_window,
+            max_output_tokens=req.max_output_tokens,
+            tool_calling=req.tool_calling,
+            structured_output=req.structured_output,
+            vision=req.vision,
+            reasoning=req.reasoning,
+            streaming=req.streaming,
+            embedding=req.embedding,
+            cost_per_1k_input_usd=req.cost_per_1k_input_usd,
+            cost_per_1k_output_usd=req.cost_per_1k_output_usd,
+            max_cost_usd=req.max_cost_usd,
+            max_tokens_per_request=req.max_tokens_per_request,
+            latency_target_ms=req.latency_target_ms,
+            max_concurrency=req.max_concurrency,
+            privacy_class=PrivacyClass(req.privacy_class),
+            regions=frozenset(req.regions),
+            local=req.local,
+            provider_settings=req.provider_settings,
+            effective_from=req.effective_from,
+            effective_until=req.effective_until,
+            status=ModelProfileStatus(req.status),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        await storage.create_model_profile_version(
+            profile_id=UUID(str(profile_row["id"])),
+            version=version.version,
+            provider_id=version.provider_id,
+            exact_model_id=version.exact_model_id,
+            capabilities=sorted(version.capabilities),
+            provider_settings=version.provider_settings,
+            status=version.status.value,
+            api_version=version.api_version,
+            effective_from=version.effective_from,
+            effective_until=version.effective_until,
+            version_metadata={
+                "context_window": version.context_window,
+                "max_output_tokens": version.max_output_tokens,
+                "tool_calling": version.tool_calling,
+                "structured_output": version.structured_output,
+                "vision": version.vision,
+                "reasoning": version.reasoning,
+                "streaming": version.streaming,
+                "embedding": version.embedding,
+                "cost_per_1k_input_usd": version.cost_per_1k_input_usd,
+                "cost_per_1k_output_usd": version.cost_per_1k_output_usd,
+                "max_cost_usd": version.max_cost_usd,
+                "max_tokens_per_request": version.max_tokens_per_request,
+                "latency_target_ms": version.latency_target_ms,
+                "max_concurrency": version.max_concurrency,
+                "privacy_class": version.privacy_class.value,
+                "regions": sorted(version.regions),
+                "local": version.local,
+            },
+        )
+    except (ValueError, sa.exc.IntegrityError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return version.model_dump(mode="json")
+
+
+@app.get("/model-profiles")
+async def list_model_profiles() -> list[dict[str, Any]]:
+    storage = _storage()
+    return [profile.model_dump(mode="json") for profile in await _persisted_model_profiles(storage)]
+
+
+@app.post("/model-profiles/resolve-preview")
+async def preview_model_resolution(req: ModelResolutionPreviewRequest) -> dict[str, Any]:
+    from mas_core.llm_gateway import ModelPolicyLayer, ModelProfileResolver, ModelResolutionRequest
+
+    try:
+        request = ModelResolutionRequest(
+            task_type=req.task_type,
+            requested_profile_id=req.requested_profile_id,
+            layers=tuple(ModelPolicyLayer.model_validate(layer) for layer in req.layers),
+            worker_required_capabilities=frozenset(req.worker_required_capabilities),
+            steward_required_capabilities=frozenset(req.steward_required_capabilities),
+            task_required_capabilities=frozenset(req.task_required_capabilities),
+            adapter_required_capabilities=frozenset(req.adapter_required_capabilities),
+            prompt_tokens=req.prompt_tokens,
+            expected_output_tokens=req.expected_output_tokens,
+            budget_usd=req.budget_usd,
+            requested_raw_model_id=req.requested_raw_model_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    storage = _storage()
+    return ModelProfileResolver().dry_run(await _persisted_model_profiles(storage), request)
+
+
+@app.post("/workers/runs", status_code=202)
+async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
+    storage = _storage()
+    worker = await storage.get_worker(req.worker_id)
+    if worker is None:
+        raise HTTPException(404, f"Worker {req.worker_id} not found")
+    if worker.get("status") not in {"ACTIVE", "DRAINING"}:
+        raise HTTPException(409, "Worker is not active")
+    adapter = await _certified_worker_adapter(storage, worker)
+    if adapter is None:
+        raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
+    model_mode = str(worker.get("model_mode") or (worker.get("adapter_config") or {}).get("model_mode") or "none")
+    if req.resolved_model_profile is not None:
+        raise HTTPException(422, "resolved_model_profile is control-plane output and cannot be supplied by a caller")
+    if model_mode != "none" and not (req.requested_model_profile or worker.get("model_profile_id")):
+        raise HTTPException(409, "model-governed workers require an approved Model Profile")
+    from mas_core.worker_contract import CapabilityRequirement, ModelProfileReference, WorkerRunController, WorkerRunRequest
+
+    resolved_model_profile = None
+    model_resolution_snapshot_id = None
+    override_approval_id: UUID | None = None
+    try:
+        provided_requested_model_profile = ModelProfileReference.model_validate(req.requested_model_profile) if req.requested_model_profile else None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if model_mode != "none":
+        from mas_core.llm_gateway import ModelProfileResolver, ModelResolutionError, ModelResolutionRequest
+
+        requested_profile_id = (
+            provided_requested_model_profile.profile_id
+            if provided_requested_model_profile
+            else worker.get("model_profile_id")
+        )
+        if (
+            provided_requested_model_profile is not None
+            and worker.get("model_profile_id")
+            and provided_requested_model_profile.profile_id != worker.get("model_profile_id")
+        ):
+            if req.model_override_request_id is None or req.model_override_approval_id is None:
+                raise HTTPException(
+                    409,
+                    "A worker Model Profile override requires an approved model override record",
+                )
+            override = await storage.get_model_override_request(req.model_override_request_id)
+            approval = await storage.get_approval_record(req.model_override_approval_id)
+            expired = override is not None and override.get("expires_at") is not None and override["expires_at"] <= datetime.now(UTC)
+            if (
+                override is None
+                or override.get("status") != "APPROVED"
+                or override.get("project_id") != req.project_id
+                or override.get("requested_profile_id") != provided_requested_model_profile.profile_id
+                or expired
+                or approval is None
+                or approval.get("scope_type") != "model_override_request"
+                or approval.get("scope_id") != req.model_override_request_id
+                or approval.get("decision") != "APPROVED"
+            ):
+                raise HTTPException(409, "Model Profile override approval is missing, stale, or out of scope")
+            override_approval_id = req.model_override_approval_id
+        try:
+            resolution_request = ModelResolutionRequest(
+                task_type=req.task_type,
+                requested_profile_id=str(requested_profile_id) if requested_profile_id else None,
+                layers=await _effective_model_policy_layers(storage, worker=worker, req=req),
+                worker_required_capabilities=frozenset(req.worker_required_model_capabilities),
+                steward_required_capabilities=frozenset(req.steward_required_model_capabilities),
+                task_required_capabilities=frozenset(req.task_required_model_capabilities),
+                adapter_required_capabilities=frozenset(set(req.adapter_required_model_capabilities) | set(adapter.capabilities.required_model_capabilities)),
+                prompt_tokens=req.prompt_tokens,
+                expected_output_tokens=req.expected_output_tokens,
+                budget_usd=req.budget_usd,
+                override_approval_id=override_approval_id,
+            )
+            snapshot = ModelProfileResolver().resolve(await _persisted_model_profiles(storage), resolution_request)
+            await storage.create_model_resolution_snapshot(snapshot=snapshot.model_dump(mode="json"), project_id=req.project_id)
+            model_resolution_snapshot_id = snapshot.snapshot_id
+            resolved_model_profile = ModelProfileReference(
+                profile_id=str(snapshot.resolved_profile_id),
+                version=str(snapshot.resolved_profile_version),
+                exact_model_id=str(snapshot.exact_model_id),
+                resolution_snapshot_id=snapshot.snapshot_id,
+            )
+        except ModelResolutionError as exc:
+            raise HTTPException(409, {"code": exc.code, "message": str(exc), "rejected_candidates": [item.model_dump(mode="json") for item in exc.rejected_candidates]}) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    elif req.requested_model_profile:
+        raise HTTPException(422, "model profiles are not allowed for model_mode=none")
+    else:
+        # Non-LLM workers still get an immutable governance decision record.
+        # This captures their capability, permission, budget, workspace, and
+        # retry policy so model_mode=none is not an ungoverned execution path.
+        none_snapshot = {
+            "snapshot_id": uuid4(),
+            "effective_constraints": {"model_mode": "none"},
+            "effective_configuration": {
+                "capability_requirements": req.capability_requirements,
+                "tool_grants": req.tool_grants,
+                "permission_requirements": req.permission_requirements,
+                "workspace_mode": req.workspace_mode,
+                "budget": req.budget,
+                "checkpoint_policy": req.checkpoint_policy,
+                "retry_policy": req.retry_policy,
+            },
+            "capability_checks": {"model_mode_none": True},
+            "selection_reason": "Non-LLM worker governance policy snapshot",
+        }
+        await storage.create_model_resolution_snapshot(snapshot=none_snapshot, project_id=req.project_id)
+        model_resolution_snapshot_id = none_snapshot["snapshot_id"]
+
+    try:
+        request = WorkerRunRequest(
+            idempotency_key=req.idempotency_key,
+            worker_id=str(req.worker_id),
+            task_type=req.task_type,
+            task_input=req.task_input,
+            project_id=req.project_id,
+            flow_id=req.flow_id,
+            flow_instance_id=req.flow_instance_id,
+            flow_node_execution_id=req.flow_node_execution_id,
+            requested_model_profile=provided_requested_model_profile,
+            resolved_model_profile=resolved_model_profile,
+            capability_requirements=[CapabilityRequirement.model_validate(item) for item in req.capability_requirements],
+            tool_grants=req.tool_grants,
+            permission_requirements=req.permission_requirements,
+            workspace_mode=req.workspace_mode,
+            timeout_seconds=req.timeout_seconds,
+            budget=req.budget,
+            checkpoint_policy=req.checkpoint_policy,
+            retry_policy=req.retry_policy,
+            extensions=req.runtime_extensions,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    controller = WorkerRunController(storage=storage)
+    outcome = await controller.execute(
+        request,
+        adapter,
+        worker_registry_id=req.worker_id,
+        worker_shell_version_id=worker.get("active_shell_version_id"),
+        adapter_id=worker.get("active_adapter_id"),
+        steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+        model_resolution_snapshot_id=model_resolution_snapshot_id,
+    )
+    return {
+        "run_id": str(outcome.run_id),
+        "state": outcome.state,
+        "accepted": outcome.accepted.model_dump(mode="json") if outcome.accepted else None,
+        "result": outcome.result.model_dump(mode="json") if outcome.result else None,
+        "events": [event.model_dump(mode="json") for event in outcome.events],
+        "negotiation": outcome.negotiation,
+    }
+
+
+@app.get("/workers/runs")
+async def list_worker_runs_api(project_id: UUID | None = None, worker_id: UUID | None = None, flow_instance_id: UUID | None = None, state: str | None = None, limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)) -> list[dict[str, Any]]:
+    storage = _storage()
+    if not inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)):
+        return []
+    rows = await storage.list_worker_runs(project_id=project_id, worker_id=worker_id, flow_instance_id=flow_instance_id, state=state, limit=limit, offset=offset)
+    return [_serialize(row) for row in rows]
+
+
+@app.get("/workers/runs/{run_id}")
+async def get_worker_run_api(run_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    if not inspect.iscoroutinefunction(getattr(storage, "get_worker_run", None)):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    row = await storage.get_worker_run(run_id)
+    if row is None:
+        raise HTTPException(404, "Worker run not found")
+    return _serialize(row)
+
+
+@app.get("/workers/runs/{run_id}/events")
+async def get_worker_run_events(run_id: UUID, limit: int = Query(default=1000, ge=1, le=10000), offset: int = Query(default=0, ge=0)) -> list[dict[str, Any]]:
+    storage = _storage()
+    if not inspect.iscoroutinefunction(getattr(storage, "list_worker_events", None)):
+        return []
+    return [_serialize(row) for row in await storage.list_worker_events(run_id, limit=limit, offset=offset)]
+
+
+@app.get("/workers/runs/{run_id}/transitions")
+async def get_worker_run_transitions(run_id: UUID, limit: int = Query(default=1000, ge=1, le=10000)) -> list[dict[str, Any]]:
+    storage = _storage()
+    return [_serialize(row) for row in await storage.list_worker_run_transitions(run_id, limit=limit)]
+
+
+@app.get("/workers/runs/{run_id}/artifacts")
+async def get_worker_run_artifacts(run_id: UUID, limit: int = Query(default=1000, ge=1, le=10000)) -> list[dict[str, Any]]:
+    storage = _storage()
+    return [_serialize(row) for row in await storage.list_worker_artifacts(run_id, limit=limit)]
+
+
+@app.get("/workers/runs/{run_id}/usage")
+async def get_worker_run_usage(run_id: UUID, limit: int = Query(default=1000, ge=1, le=10000)) -> list[dict[str, Any]]:
+    storage = _storage()
+    return [_serialize(row) for row in await storage.list_worker_usage(run_id, limit=limit)]
+
+
+@app.post("/workers/runs/{run_id}/cancel")
+async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    storage = _storage()
+    row = await storage.get_worker_run(run_id)
+    if row is None:
+        raise HTTPException(404, "Worker run not found")
+    worker = await storage.get_worker(UUID(str(row["worker_id"])))
+    adapter = await _certified_worker_adapter(storage, worker) if worker is not None else None
+    if adapter is None:
+        raise HTTPException(409, "No certified adapter is registered for this run")
+    from mas_core.worker_contract import WorkerRunController
+    row = await WorkerRunController(storage=storage).cancel(run_id, adapter, reason=str(payload.get("reason") or "operator cancellation"), requested_by=str(payload.get("requested_by") or "operator"), force=bool(payload.get("force", False)))
+    if row is None:
+        raise HTTPException(404, "Worker run not found")
+    return _serialize(row)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Orchestration Flows (Phase 14)
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -5168,6 +7034,8 @@ async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]
     project = await storage.get_project(req.project_id)
     if project is None:
         raise HTTPException(404, f"Project {req.project_id} not found")
+    if project.get("state") in TERMINAL_PROJECT_STATES:
+        raise HTTPException(409, "Terminal projects are read-only and cannot receive a new flow instance")
 
     existing = await storage.get_flow_instance_by_project(req.project_id)
     if existing is not None:
@@ -5243,6 +7111,10 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
             raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
 
     storage = _storage()
+    if req.definition_json is not None and inspect.iscoroutinefunction(getattr(storage, "list_flow_instances", None)):
+        instances = await storage.list_flow_instances(flow_id=flow_id, limit=1000, offset=0)
+        if any(instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"} for instance in instances):
+            raise HTTPException(409, "Flow definitions used by terminal instances are immutable")
     flow = await storage.update_flow(
         flow_id,
         name=req.name,
@@ -5354,7 +7226,6 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         )
 
         await _activate_node(start_nodes[0].id)
-
         started_instance = await storage.get_flow_instance(instance_id)
         if started_instance is None:
             raise HTTPException(404, f"Flow instance {instance_id} not found")
@@ -5451,6 +7322,120 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 gate_type=next_node.config.get("approver_role")
                 or next_node.config.get("approver_user")
                 or next_node.label,
+            )
+
+    # Task nodes are completed only by a terminal Worker Run.  ``advance`` is
+    # the sole operator/API action for a task: it creates the run from the
+    # typed node policy and feeds its normalized result back into this same
+    # transition path.  This removes the legacy client-side "mark complete"
+    # bypass while retaining manual actions for approvals and control nodes.
+    # Legacy action/team-only definitions remain manually driven until they
+    # are migrated.  A node becomes governed when it declares ``worker_id``;
+    # then a Worker Run is mandatory and client-side completion is forbidden.
+    if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+        executions = await storage.list_flow_node_executions(
+            instance_id=instance_id, node_id=req.node_id, status="RUNNING", limit=100
+        )
+        execution = executions[-1] if executions else None
+        if execution is None:
+            raise HTTPException(409, "Task node has no running execution to dispatch or settle")
+
+        if req.action == "advance":
+            from mas_core.workflow.worker_policy import TaskNodePolicy
+
+            try:
+                policy = TaskNodePolicy.model_validate(node.config)
+            except ValueError as exc:
+                raise HTTPException(422, f"Task node policy is invalid: {exc}") from exc
+            if not policy.worker_id:
+                raise HTTPException(
+                    409,
+                    "Task nodes must resolve a concrete worker_id before dispatch; team/action-only nodes are not executable",
+                )
+            try:
+                worker_id = UUID(policy.worker_id)
+            except ValueError as exc:
+                raise HTTPException(422, "Task node worker_id must be a UUID") from exc
+            dispatch = await dispatch_worker_run(
+                WorkerRunDispatchRequest(
+                    worker_id=worker_id,
+                    idempotency_key=f"flow:{instance_id}:node-execution:{execution['id']}",
+                    task_type=policy.task_type or policy.action or node.id,
+                    task_input={
+                        "flow_context": current_context,
+                        "flow_node": {"id": node.id, "label": node.label},
+                    },
+                    project_id=instance["project_id"],
+                    flow_id=instance["flow_id"],
+                    flow_instance_id=instance_id,
+                    flow_node_execution_id=execution["id"],
+                    requested_model_profile=(
+                        {"profile_id": policy.model_profile_id}
+                        if policy.model_profile_id
+                        else None
+                    ),
+                    capability_requirements=[
+                        {"name": capability, "required": True}
+                        for capability in policy.required_capabilities
+                    ],
+                    timeout_seconds=policy.timeout_seconds,
+                    tool_grants=list(policy.tool_grants),
+                    permission_requirements=list(policy.permission_requirements),
+                    workspace_mode=policy.project_workspace_mode,
+                    budget=policy.budget,
+                    checkpoint_policy=policy.checkpoint_policy.model_dump(mode="json"),
+                    retry_policy=policy.retry_policy.model_dump(mode="json"),
+                    runtime_extensions=policy.runtime_extensions,
+                    worker_required_model_capabilities=list(policy.required_capabilities),
+                    budget_usd=policy.budget.get("max_cost_usd"),
+                )
+            )
+            result = dispatch.get("result") or {}
+            if dispatch["state"] == "SUCCEEDED":
+                output = result.get("output")
+                normalized_output = output if isinstance(output, dict) else {"worker_output": output}
+                normalized_output["worker_run_id"] = dispatch["run_id"]
+                return await flow_node_action(
+                    instance_id,
+                    FlowNodeActionRequest(
+                        node_id=req.node_id,
+                        action="complete",
+                        output=normalized_output,
+                        worker_run_id=UUID(dispatch["run_id"]),
+                    ),
+                )
+            error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch['state']}"
+            return await flow_node_action(
+                instance_id,
+                FlowNodeActionRequest(
+                    node_id=req.node_id,
+                    action="timeout" if dispatch["state"] == "TIMED_OUT" else "fail",
+                    error=str(error),
+                    worker_run_id=UUID(dispatch["run_id"]),
+                ),
+            )
+
+        if req.action not in {"complete", "fail", "timeout"}:
+            raise HTTPException(400, "Task node action must be advance, complete, fail, or timeout")
+        if req.worker_run_id is None:
+            raise HTTPException(409, "Task terminal transitions require the authoritative worker_run_id")
+        worker_run = await storage.get_worker_run(req.worker_run_id)
+        if worker_run is None:
+            raise HTTPException(404, "Worker Run not found")
+        if (
+            worker_run.get("flow_instance_id") != instance_id
+            or worker_run.get("flow_node_execution_id") != execution["id"]
+        ):
+            raise HTTPException(409, "Worker Run is not bound to this active flow node execution")
+        expected_run_state = {
+            "complete": "SUCCEEDED",
+            "fail": "FAILED",
+            "timeout": "TIMED_OUT",
+        }[req.action]
+        if worker_run.get("state") != expected_run_state:
+            raise HTTPException(
+                409,
+                f"Task node action {req.action} requires Worker Run state {expected_run_state}",
             )
 
     if req.action == "complete":
@@ -5611,6 +7596,20 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     context_json=updated_context,
                     status="RUNNING",
                 )
+                # A task is executable only through its Worker Run.  Control
+                # nodes remain event/approval driven, while each newly active
+                # task immediately enters the governed dispatch lifecycle.
+                for nid in new_nodes:
+                    next_node = definition.get_node(nid)
+                    if (
+                        next_node is not None
+                        and next_node.type == FlowNodeType.TASK
+                        and next_node.config.get("worker_id")
+                    ):
+                        await flow_node_action(
+                            instance_id,
+                            FlowNodeActionRequest(node_id=nid, action="advance"),
+                        )
 
         return _serialize(await _get_refreshed_instance())
 
@@ -5707,6 +7706,8 @@ async def override_flow_instance(instance_id: UUID, req: FlowOverrideRequest) ->
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
 
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
@@ -5757,6 +7758,8 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances are immutable; retry/recovery must be explicit")
 
     new_flow_id = req.get("flow_id")
     if not new_flow_id:
@@ -5808,6 +7811,8 @@ async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances are immutable")
 
     context_updates = req.get("context", {})
     if not context_updates:
@@ -5828,6 +7833,8 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances cannot be escalated")
 
     escalate_to = req.get("escalate_to")
     if not escalate_to:

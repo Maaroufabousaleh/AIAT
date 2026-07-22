@@ -63,6 +63,16 @@ def _patch_state(storage):
     app.state.storage = storage
 
 
+@pytest.mark.anyio
+async def test_v1_contract_route_is_a_versioned_alias(client):
+    """The canonical v1 route must reach the governed handler, not a copy."""
+    response = await client.get("/api/v1/worker-contract/version")
+
+    assert response.status_code == 200
+    assert response.headers["x-aiat-api-version"] == "v1"
+    assert response.json()["contract_version"] == "aiat.worker.v1"
+
+
 # ── GET /capabilities ─────────────────────────────────────────────────────────
 
 

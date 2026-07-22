@@ -282,7 +282,14 @@ def _validate_node_config(node: FlowNode) -> list[str]:
 
     if node.type == FlowNodeType.TASK:
         if not config.get("action") and not config.get("team_id"):
-            errors.append(f"Node '{node.id}' (task): requires 'action' or 'team_id'")
+            if not config.get("worker_id"):
+                errors.append(f"Node '{node.id}' (task): requires 'action', 'team_id', or 'worker_id'")
+        # Modern typed worker policy validation is additive to the legacy graph
+        # rules. It rejects raw model IDs and invalid retry/cancellation policy
+        # while keeping old action/team flows readable during migration.
+        from .worker_policy import validate_task_policy
+
+        errors.extend(f"Node '{node.id}' (task): {error}" for error in validate_task_policy(config))
 
     elif node.type == FlowNodeType.APPROVAL:
         if not config.get("approver_role") and not config.get("approver_user"):

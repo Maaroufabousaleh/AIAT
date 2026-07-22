@@ -2011,6 +2011,9 @@ export default function ProjectDetailPage() {
                         const nodeExec = nodeExecutions.find(
                           (e) => e.node_id === nodeId && e.status === "RUNNING",
                         );
+                        const governedTask =
+                          activeNode?.type === "task" &&
+                          typeof activeNode.config?.worker_id === "string";
                         return (
                           <div
                             key={nodeId}
@@ -2070,6 +2073,22 @@ export default function ProjectDetailPage() {
                                   >
                                     Reject
                                   </button>
+                                </>
+                              ) : governedTask ? (
+                                <>
+                                  <button
+                                    onClick={() =>
+                                      handleNodeAction(nodeId, "advance")
+                                    }
+                                    disabled={!!actionLoading}
+                                    data-testid="dispatch-worker-run-button"
+                                    className="px-2 py-1 text-xs bg-blue-600/20 text-blue-300 border border-blue-800 rounded hover:bg-blue-600/40"
+                                  >
+                                    Dispatch Worker Run
+                                  </button>
+                                  <span className="self-center text-xxs text-slate-500">
+                                    Result evidence advances this node
+                                  </span>
                                 </>
                               ) : (
                                 <>
