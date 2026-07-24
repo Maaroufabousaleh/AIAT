@@ -6,12 +6,14 @@ import asyncio
 import base64
 import ipaddress
 import logging
+import os
 import socket
 import uuid
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route, async_playwright
 
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
@@ -19,28 +21,41 @@ from mas_tools_sdk.groups import ToolGroup
 
 logger = logging.getLogger(__name__)
 
-_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"}
+_BLOCKED_HOSTS = {"localhost"}
 _BLOCKED_SUFFIXES = (".local", ".internal", ".corp", ".lan", ".home", ".intranet")
-_PRIVATE_PREFIXES = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fe80::/10"),
-]
+
+
+def _chromium_args() -> list[str]:
+    """Keep Chromium's sandbox enabled except for explicit local development."""
+    args = ["--disable-dev-shm-usage"]
+    disable_sandbox = os.getenv(
+        "AIAT_BROWSER_DISABLE_CHROMIUM_SANDBOX", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    production = os.getenv("MAS_ENVIRONMENT", "development").strip().lower() in {
+        "production", "prod", "staging",
+    }
+    if disable_sandbox and production:
+        raise PermissionError("Chromium sandbox cannot be disabled in production")
+    if disable_sandbox:
+        args.append("--no-sandbox")
+    return args
 
 
 def _validate_url(url: str) -> None:
-    """Reject URLs pointing to internal/private addresses."""
+    """Reject non-web URLs and every non-public literal/resolved address."""
     if not url:
         raise ValueError("url is required")
 
     parsed = urlparse(url)
-    hostname = parsed.hostname or ""
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("URL blocked: only HTTP and HTTPS are allowed")
+    if not hostname:
+        raise ValueError("URL blocked: hostname is required")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL blocked: embedded credentials are not allowed")
 
-    if hostname.lower() in _BLOCKED_HOSTS:
+    if hostname in _BLOCKED_HOSTS:
         raise ValueError(f"URL blocked: {hostname} is not allowed")
 
     if any(hostname.endswith(suffix) for suffix in _BLOCKED_SUFFIXES):
@@ -48,23 +63,25 @@ def _validate_url(url: str) -> None:
 
     try:
         ip = ipaddress.ip_address(hostname)
-        for prefix in _PRIVATE_PREFIXES:
-            if ip in prefix:
-                raise ValueError(f"URL blocked: {hostname} is a private/internal address")
     except ValueError:
-        pass
+        ip = None
+    if ip is not None and not ip.is_global:
+        raise ValueError(f"URL blocked: {hostname} is not a public address")
 
     try:
-        resolved_ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        resolved_ips = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
         for info in resolved_ips:
-            ip = ipaddress.ip_address(info[4][0])
-            for prefix in _PRIVATE_PREFIXES:
-                if ip in prefix:
-                    raise ValueError(
-                        f"URL blocked: {hostname} resolves to a private address ({info[4][0]})"
-                    )
+            resolved = ipaddress.ip_address(info[4][0])
+            if not resolved.is_global:
+                raise ValueError(
+                    f"URL blocked: {hostname} resolves to a non-public address"
+                )
     except socket.gaierror:
-        pass
+        # The browser cannot navigate a name that does not resolve now. Treat
+        # resolution failure as denial rather than allowing a later rebinding.
+        raise ValueError(f"URL blocked: {hostname} could not be resolved") from None
     except ValueError:
         raise
 
@@ -80,8 +97,9 @@ class BrowserPage:
 class BrowserSession:
     """Manages browser contexts and pages."""
 
-    def __init__(self, playwright: Playwright) -> None:
+    def __init__(self, playwright: Playwright, profile_dir: Path | None = None) -> None:
         self._playwright = playwright
+        self._profile_dir = profile_dir
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._pages: dict[str, BrowserPage] = {}
@@ -89,13 +107,36 @@ class BrowserSession:
 
     async def start(self) -> None:
         """Start the browser (launch if not already running)."""
-        if self._browser is None:
-            self._browser = await self._playwright.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            self._context = await self._browser.new_context()
+        if self._context is None:
+            args = _chromium_args()
+            if self._profile_dir is not None:
+                self._profile_dir.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                self._profile_dir.mkdir(mode=0o700, exist_ok=True)
+                self._profile_dir.parent.chmod(0o700)
+                self._profile_dir.chmod(0o700)
+                downloads = self._profile_dir / "downloads"
+                downloads.mkdir(mode=0o700, parents=True, exist_ok=True)
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    str(self._profile_dir), headless=True, args=args,
+                    accept_downloads=True, downloads_path=str(downloads),
+                )
+            else:
+                self._browser = await self._playwright.chromium.launch(headless=True, args=args)
+                self._context = await self._browser.new_context()
+            # Validate every subresource and redirect at dispatch time, not
+            # merely the initial worker-supplied URL. This closes the common
+            # public-host-to-private-address DNS rebinding/redirect path.
+            await self._context.route("**/*", self._guard_request)
             logger.info("Browser launched")
+
+    @staticmethod
+    async def _guard_request(route: Route) -> None:
+        try:
+            _validate_url(route.request.url)
+        except ValueError:
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
 
     async def get_context(self) -> BrowserContext | None:
         """Get the session's browser context."""
@@ -165,6 +206,9 @@ class BrowserPool:
         self._max_sessions = max_sessions
         self._playwright: Playwright | None = None
         self._sessions: dict[str, BrowserSession] = {}
+        self._session_owner: dict[str, tuple[str, str]] = {}
+        self._identity_sessions: dict[str, str | None] = {}
+        self._owner_session: dict[tuple[str, str, bool], str] = {}
         self._in_use: set[str] = set()
         self._lock = asyncio.Lock()
 
@@ -174,28 +218,57 @@ class BrowserPool:
             self._playwright = await async_playwright().start()
             logger.info("Playwright started")
 
-    async def acquire(self, session_id: str | None = None) -> tuple[str, BrowserSession]:
+    def _profile_dir(self, owner: tuple[str, str]) -> Path:
+        root = Path(os.getenv("AIAT_BROWSER_PROFILE_ROOT", "/tmp/aiat-browser-profiles")).resolve()
+        worker_namespace = "worker-" + uuid.uuid5(
+            uuid.NAMESPACE_URL, owner[0]
+        ).hex
+        service_profile = "service-" + uuid.uuid5(
+            uuid.NAMESPACE_URL, owner[1]
+        ).hex
+        profile = (root / worker_namespace / service_profile).resolve()
+        if root not in profile.parents:
+            raise ValueError("browser profile escaped configured root")
+        return profile
+
+    async def acquire(self, owner: tuple[str, str], session_id: str | None = None, *, persistent: bool = False, identity_session_id: str | None = None) -> tuple[str, BrowserSession]:
         """Acquire a browser session. Returns (session_id, session).
 
         If session_id is provided and exists, returns that session.
         Otherwise returns the least-recently-used free session, or creates a new one.
         """
         async with self._lock:
+            if not owner[0] or not owner[1]:
+                raise ValueError("a worker and external service are required for a new browser context")
+            if persistent and not identity_session_id:
+                raise PermissionError("persistent browser context requires a governed identity session")
             if session_id is not None and session_id in self._sessions:
+                if self._session_owner.get(session_id) != owner:
+                    raise PermissionError("browser session belongs to another worker or service")
+                if self._identity_sessions.get(session_id) != identity_session_id:
+                    raise PermissionError("browser identity session binding does not match")
                 self._in_use.add(session_id)
                 return session_id, self._sessions[session_id]
 
-            free_sessions = [sid for sid in self._sessions if sid not in self._in_use]
-            if free_sessions:
-                chosen = free_sessions[0]
-                self._in_use.add(chosen)
-                return chosen, self._sessions[chosen]
+            owner_key = (*owner, persistent)
+            existing = self._owner_session.get(owner_key)
+            if existing and existing in self._sessions:
+                if self._identity_sessions.get(existing) != identity_session_id:
+                    raise PermissionError("browser identity session binding does not match")
+                self._in_use.add(existing)
+                return existing, self._sessions[existing]
 
             if len(self._sessions) < self._max_sessions:
-                session = BrowserSession(self._playwright)
+                # Generic research sessions are memory-only. A disk profile is
+                # permitted only after identity-service validates an opaque,
+                # worker-owned external-account session.
+                session = BrowserSession(self._playwright, self._profile_dir(owner) if persistent else None)
                 await session.start()
                 new_id = str(uuid.uuid4())
                 self._sessions[new_id] = session
+                self._session_owner[new_id] = owner
+                self._identity_sessions[new_id] = identity_session_id
+                self._owner_session[owner_key] = new_id
                 self._in_use.add(new_id)
                 return new_id, session
 
@@ -206,18 +279,46 @@ class BrowserPool:
         async with self._lock:
             self._in_use.discard(session_id)
 
-    async def get_session(self, session_id: str) -> BrowserSession | None:
+    async def get_session(self, session_id: str, owner: tuple[str, str] | None = None) -> BrowserSession | None:
         """Get a session by ID without marking it as in-use."""
         async with self._lock:
+            actual_owner = self._session_owner.get(session_id)
+            if owner is not None and (
+                actual_owner is None
+                or actual_owner[0] != owner[0]
+                or (owner[1] and actual_owner[1] != owner[1])
+            ):
+                raise PermissionError("browser session belongs to another worker or service")
             return self._sessions.get(session_id)
+
+    async def get_identity_session_id(self, session_id: str) -> str | None:
+        async with self._lock:
+            return self._identity_sessions.get(session_id)
 
     async def remove_session(self, session_id: str) -> None:
         """Remove and close a session from the pool."""
         async with self._lock:
             session = self._sessions.pop(session_id, None)
+            owner = self._session_owner.pop(session_id, None)
+            self._identity_sessions.pop(session_id, None)
+            if owner:
+                for owner_key, mapped_session in list(self._owner_session.items()):
+                    if mapped_session == session_id:
+                        self._owner_session.pop(owner_key, None)
             self._in_use.discard(session_id)
         if session:
             await session.close()
+
+    async def remove_worker(self, worker_id: str) -> int:
+        """Close every live local context for a suspended/retired worker."""
+        async with self._lock:
+            session_ids = [
+                session_id for session_id, owner in self._session_owner.items()
+                if owner[0] == worker_id
+            ]
+        for session_id in session_ids:
+            await self.remove_session(session_id)
+        return len(session_ids)
 
     async def close_all(self) -> None:
         """Close all sessions."""
@@ -225,6 +326,9 @@ class BrowserPool:
             for session in self._sessions.values():
                 await session.close()
             self._sessions.clear()
+            self._session_owner.clear()
+            self._identity_sessions.clear()
+            self._owner_session.clear()
             self._in_use.clear()
 
             if self._playwright:
@@ -238,6 +342,8 @@ _browser_pool: BrowserPool | None = None
 async def get_browser_pool() -> BrowserPool:
     """Get or create the global browser pool."""
     global _browser_pool
+    if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} and os.getenv("AIAT_BROWSER_RUNTIME_LOCATION", "") != "operator_laptop":
+        raise PermissionError("persistent browser automation is restricted to the operator laptop")
     if _browser_pool is None:
         _browser_pool = BrowserPool(max_sessions=3)
         await _browser_pool.start()
@@ -250,6 +356,106 @@ async def close_browser_pool() -> None:
     if _browser_pool:
         await _browser_pool.close_all()
         _browser_pool = None
+
+
+async def revoke_worker_browser_sessions(worker_id: str) -> int:
+    """Close live contexts without starting Playwright solely for revocation."""
+    if _browser_pool is None:
+        return 0
+    return await _browser_pool.remove_worker(worker_id)
+
+
+def _browser_owner(kwargs: dict[str, Any], *, url: str | None = None) -> tuple[str, str]:
+    """Derive an isolated worker/service ownership key from trusted context."""
+    context = kwargs.get("_aiat_context")
+    if not isinstance(context, dict):
+        if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"}:
+            raise PermissionError("trusted browser caller context is required")
+        return ("development-anonymous", str(kwargs.get("external_service") or "generic"))
+    caller = str(context.get("caller_id") or "")
+    role = str(context.get("caller_role") or "").lower()
+    worker_id = str(kwargs.get("worker_id") or caller)
+    if not caller:
+        raise PermissionError("browser caller identity is required")
+    if role in {"worker", "sub_agent"} and worker_id != caller:
+        raise PermissionError("cross-worker browser access is denied")
+    service = str(kwargs.get("external_service") or "").strip().lower()
+    if not service and url:
+        service = (urlparse(url).hostname or "").lower()
+    if any(char.isspace() for char in service):
+        raise ValueError("external_service must not contain whitespace")
+    # Follow-up calls bind only the worker id and let the opaque session id
+    # select its already-established service context. New sessions require a
+    # service/hostname and are checked in BrowserPool.acquire.
+    return worker_id, service
+
+
+async def _authorize_identity_session(
+    kwargs: dict[str, Any], owner: tuple[str, str], identity_session_id: str
+) -> None:
+    """Validate an opaque identity-session handle before using a disk profile."""
+    context = kwargs.get("_aiat_context")
+    if not isinstance(context, dict) or not context.get("caller_id"):
+        raise PermissionError("trusted browser caller context is required for a persistent profile")
+    from ..identity_client import IdentityGatewayClient
+
+    actor = {
+        "actor_id": context["caller_id"],
+        "project_id": context.get("project_id"),
+        "worker_run_id": context.get("worker_run_id"),
+        "purpose": "governed external-account browser session",
+    }
+    await IdentityGatewayClient().use_browser_session(
+        worker_id=owner[0], actor=actor, session_id=str(identity_session_id)
+    )
+
+
+async def _persistent_profile_authorized(
+    kwargs: dict[str, Any], owner: tuple[str, str]
+) -> str | None:
+    """Return the validated identity-session binding for a new context."""
+    identity_session_id = kwargs.get("identity_session_id")
+    if not identity_session_id:
+        return None
+    value = str(identity_session_id)
+    await _authorize_identity_session(kwargs, owner, value)
+    return value
+
+
+async def _get_authorized_session(
+    pool: BrowserPool,
+    session_id: str,
+    owner: tuple[str, str],
+    kwargs: dict[str, Any],
+) -> BrowserSession | None:
+    """Revalidate persistent authorization on every browser operation."""
+    session = await pool.get_session(session_id, owner)
+    if session is None:
+        return None
+    identity_session_id = await pool.get_identity_session_id(session_id)
+    if identity_session_id:
+        try:
+            await _authorize_identity_session(kwargs, owner, identity_session_id)
+        except Exception:
+            # Revocation closes the live context immediately; cached cookies
+            # cannot remain usable through a previously returned local handle.
+            await pool.remove_session(session_id)
+            raise
+    return session
+
+
+async def _require_governed_browser_write(
+    pool: BrowserPool, session_id: str
+) -> None:
+    """Block production form/click automation outside an identity session."""
+    if os.getenv("MAS_ENVIRONMENT", "development").lower() not in {
+        "production", "prod", "staging",
+    }:
+        return
+    if not await pool.get_identity_session_id(session_id):
+        raise PermissionError(
+            "production browser writes require a governed external-account session"
+        )
 
 
 class BrowserNavigateTool(BaseTool):
@@ -275,13 +481,18 @@ class BrowserNavigateTool(BaseTool):
         _validate_url(url)
 
         pool = await get_browser_pool()
+        owner = _browser_owner(kwargs, url=url)
 
         if session_id:
-            session = await pool.get_session(session_id)
+            session = await _get_authorized_session(pool, session_id, owner, kwargs)
             if session is None:
                 raise ValueError(f"Invalid session_id: {session_id}")
         else:
-            session_id, session = await pool.acquire()
+            identity_session_id = await _persistent_profile_authorized(kwargs, owner)
+            session_id, session = await pool.acquire(
+                owner, persistent=identity_session_id is not None,
+                identity_session_id=identity_session_id,
+            )
 
         if page_id:
             page = session.get_page(page_id)
@@ -339,9 +550,11 @@ class BrowserClickTool(BaseTool):
             raise ValueError("selector is required")
 
         pool = await get_browser_pool()
-        session = await pool.get_session(session_id)
+        owner = _browser_owner(kwargs)
+        session = await _get_authorized_session(pool, session_id, owner, kwargs)
         if session is None:
             raise ValueError(f"Invalid session_id: {session_id}")
+        await _require_governed_browser_write(pool, session_id)
 
         page = session.get_page(page_id)
         if not page:
@@ -380,9 +593,11 @@ class BrowserTypeTool(BaseTool):
             raise ValueError("selector is required")
 
         pool = await get_browser_pool()
-        session = await pool.get_session(session_id)
+        owner = _browser_owner(kwargs)
+        session = await _get_authorized_session(pool, session_id, owner, kwargs)
         if session is None:
             raise ValueError(f"Invalid session_id: {session_id}")
+        await _require_governed_browser_write(pool, session_id)
 
         page = session.get_page(page_id)
         if not page:
@@ -418,7 +633,8 @@ class BrowserScreenshotTool(BaseTool):
             raise ValueError("page_id is required (call browser_navigate first)")
 
         pool = await get_browser_pool()
-        session = await pool.get_session(session_id)
+        owner = _browser_owner(kwargs)
+        session = await _get_authorized_session(pool, session_id, owner, kwargs)
         if session is None:
             raise ValueError(f"Invalid session_id: {session_id}")
 
@@ -481,7 +697,8 @@ class BrowserEvaluateTool(BaseTool):
         self._validate_script(script)
 
         pool = await get_browser_pool()
-        session = await pool.get_session(session_id)
+        owner = _browser_owner(kwargs)
+        session = await _get_authorized_session(pool, session_id, owner, kwargs)
         if session is None:
             raise ValueError(f"Invalid session_id: {session_id}")
 
@@ -525,7 +742,8 @@ class BrowserCloseTool(BaseTool):
             raise ValueError("session_id is required")
 
         pool = await get_browser_pool()
-        session = await pool.get_session(session_id)
+        owner = _browser_owner(kwargs)
+        session = await _get_authorized_session(pool, session_id, owner, kwargs)
         if session is None:
             raise ValueError(f"Invalid session_id: {session_id}")
 

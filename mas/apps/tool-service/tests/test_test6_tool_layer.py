@@ -768,7 +768,7 @@ class TestCircuitBreakerLifecycle:
         registry = make_registry_with_browser()
         # Override breaker to have very short cooldown
         registry._breakers[BROWSER_TOOL] = CircuitBreaker(
-            BROWSER_TOOL, failure_threshold=3, failure_window=60.0, open_duration=0.05
+            BROWSER_TOOL, failure_threshold=3, failure_window=60.0, open_duration=1.0
         )
 
         fail_mode = {"active": True}
@@ -797,7 +797,7 @@ class TestCircuitBreakerLifecycle:
             assert any(r["status"] == "circuit_open" for r in logs)
 
             # 3. Wait for cooldown → HALF_OPEN
-            await anyio.sleep(0.06)
+            await anyio.sleep(1.01)
             assert registry._breakers[BROWSER_TOOL].state == CircuitState.HALF_OPEN
 
             # 4. Fix tool and send probe call

@@ -45,6 +45,7 @@ def test_egress_and_scoped_workspace_are_preserved() -> None:
     assert tool["volumes"] == [
         "${AIAT_WORKSPACE_ROOT:-../../..}:/workspace",
         "opencode_workspace:/opencode-workspace",
+        "browser_profiles:/var/lib/aiat/browser-profiles",
     ]
 
 
@@ -55,8 +56,14 @@ def test_opencode_workspace_is_initialized_for_the_runtime_user() -> None:
     initializer = compose["services"]["opencode-workspace-init"]
     assert initializer["user"] == "0:0"
     assert initializer["network_mode"] == "none"
-    assert initializer["volumes"] == ["opencode_workspace:/workspace"]
-    assert "chown -R 10001:10001 /workspace" in initializer["command"][-1]
+    assert initializer["volumes"] == [
+        "opencode_workspace:/workspace",
+        "browser_profiles:/browser-profiles",
+    ]
+    assert (
+        "chown -R 10001:10001 /workspace /browser-profiles"
+        in initializer["command"][-1]
+    )
     for service_name in ("tool-service", "opencode-runtime"):
         dependency = compose["services"][service_name]["depends_on"]["opencode-workspace-init"]
         assert dependency == {"condition": "service_completed_successfully"}

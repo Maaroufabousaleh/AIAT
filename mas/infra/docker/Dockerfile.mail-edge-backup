@@ -1,0 +1,6 @@
+FROM postgres:16.6-alpine@sha256:589f3b24f30e60a2b33f79543ed51c8f897589bcde5c59f4dc0e814551eeeb0f
+
+# `age` provides authenticated encryption; curl/jq are used only by the
+# profile-gated private Stalwart relay configurator. Pin the base image; update
+# these packages through the normal reviewed image rebuild cadence.
+RUN apk add --no-cache age curl jq

@@ -41,6 +41,7 @@ from .config import Settings, get_settings
 from .opencode_mcp import create_opencode_mcp_app
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
+from .tool_grants import ToolGrantStore
 from .routes import router
 from .tools.all_tools import get_all_tools
 
@@ -145,6 +146,7 @@ async def lifespan(app: FastAPI):
     redis_client: aioredis.Redis | None = None
     cache: ToolCache | None = None
     usage_storage = None
+    tool_grant_store: ToolGrantStore | None = None
 
     try:
         redis_client, cache = await _connect_cache(settings)
@@ -181,6 +183,15 @@ async def lifespan(app: FastAPI):
         usage_storage=usage_storage,
     )
     registry.register_all(get_all_tools())
+    if settings.pgbouncer_dsn:
+        try:
+            tool_grant_store = await ToolGrantStore.connect(settings.pgbouncer_dsn)
+            registry.load_worker_grants(await tool_grant_store.load_all())
+            logger.info("Loaded durable worker tool grants")
+        except Exception:
+            logger.warning("Worker tool-grant storage unavailable", exc_info=True)
+            if settings.environment_is_production:
+                raise
     TOOL_INVOCATIONS_TOTAL.labels(tool_name="_startup", status="success").inc(0)
     TOOL_ERRORS_TOTAL.labels(tool_name="_startup", error_code="none").inc(0)
     logger.info("Registered %d tools", len(registry.tool_names))
@@ -190,6 +201,7 @@ async def lifespan(app: FastAPI):
     app.state.cache = cache
     app.state.redis = redis_client
     app.state.usage_storage = usage_storage
+    app.state.tool_grant_store = tool_grant_store
 
     cache_recovery_task = asyncio.create_task(
         _recover_cache(app, registry, settings),
@@ -224,6 +236,10 @@ async def lifespan(app: FastAPI):
     active_usage_storage = getattr(app.state, "usage_storage", None)
     if active_usage_storage is not None:
         await active_usage_storage.close()
+
+    active_tool_grant_store = getattr(app.state, "tool_grant_store", None)
+    if active_tool_grant_store is not None:
+        await active_tool_grant_store.close()
 
     active_redis = getattr(app.state, "redis", None)
     if active_redis:

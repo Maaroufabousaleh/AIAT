@@ -29,7 +29,7 @@ class SecretPolicy(BaseModel):
     # Contexts in which the secret may be used (e.g. "llm-gateway", "tool-service")
     allowed_contexts: list[str] = Field(default_factory=list)
     # Maximum resolves per minute (0 = unlimited)
-    rate_limit_per_minute: int = 0
+    rate_limit_per_minute: int = Field(default=0, ge=0, le=10_000)
     # Require step-up approval from human operator for each resolution
     require_approval: bool = False
     # Set to False to effectively disable the secret

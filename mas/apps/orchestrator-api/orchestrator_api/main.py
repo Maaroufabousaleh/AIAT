@@ -35,7 +35,7 @@ import anyio
 import httpx
 import prometheus_client
 import sqlalchemy as sa
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -165,7 +165,6 @@ PGBOUNCER_DSN = os.getenv(
     "postgresql+asyncpg://mas_user:mas_pass@localhost:6432/mas",
 )
 ROUTER_URL = os.getenv("ROUTER_URL", "http://message-router:8001")
-TOOL_SERVICE_URL = os.getenv("TOOL_SERVICE_URL", "http://tool-service:8002")
 WATCHDOG_INTERVAL_S = int(os.getenv("WATCHDOG_INTERVAL_S", "60"))
 WATCHDOG_GRACE_S = int(os.getenv("WATCHDOG_GRACE_S", "300"))
 # This controls scheduler wakeups, not the external check cadence.  Individual
@@ -173,6 +172,166 @@ WATCHDOG_GRACE_S = int(os.getenv("WATCHDOG_GRACE_S", "300"))
 # checked when due.
 UPDATE_MONITOR_INTERVAL_S = max(15, int(os.getenv("UPDATE_MONITOR_INTERVAL_S", "300")))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8000")
+
+
+def _identity_required() -> bool:
+    """Return whether this deployment enforces mail identity before activation.
+
+    Development fixtures stay opt-in so the existing local control-plane test
+    suite never impersonates a mail edge. Production and staging are fail
+    closed by default and must provision/verify an identity before activation.
+    """
+    environment = os.getenv("MAS_ENVIRONMENT", "development").strip().lower()
+    if environment in {"production", "prod", "staging"}:
+        # A deployment flag must never bypass the mandatory production hiring
+        # gate.  The override exists only to keep local development fixtures
+        # independent from a live mail edge.
+        return True
+    configured = os.getenv("AIAT_IDENTITY_REQUIRED")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _identity_company_id() -> UUID:
+    raw = os.getenv("AIAT_COMPANY_ID", "")
+    if raw:
+        try:
+            return UUID(raw)
+        except ValueError as exc:
+            raise RuntimeError("AIAT_COMPANY_ID must be a UUID") from exc
+    if _identity_required():
+        raise RuntimeError("AIAT_COMPANY_ID must be configured when identity provisioning is required")
+    return uuid5(NAMESPACE_URL, "aiat.local-development-company")
+
+
+def _identity_client() -> Any:
+    from .identity_client import IdentityClientConfig, SignedIdentityClient
+
+    return SignedIdentityClient(IdentityClientConfig.from_environment())
+
+
+def _tool_service_client() -> Any:
+    from .tool_service_client import SignedToolServiceClient, ToolServiceClientConfig
+
+    return SignedToolServiceClient(ToolServiceClientConfig.from_environment())
+
+
+_IDENTITY_TOOL_GRANTS = (
+    "identity.email.get_address", "mail.list", "mail.search", "mail.read",
+    "mail.wait_for_verification", "mail.extract_code", "mail.extract_link",
+    "mail.mark_processed", "mail.delete", "mail.send_request", "mail.send_approved",
+    "mail.get_delivery_status", "mail.cancel_queued",
+    "identity.external.signup_request", "identity.external.login",
+    "identity.external.get_status", "identity.external.rotate_credentials",
+    "identity.external.suspend", "identity.external.close",
+    "identity.session.create", "identity.session.use", "identity.session.revoke",
+)
+
+
+async def _provision_identity_tool_grants(worker_id: UUID) -> None:
+    """Persist the governed identity tool set before worker activation."""
+    client = _tool_service_client()
+    for tool_name in _IDENTITY_TOOL_GRANTS:
+        await client.request(
+            "POST", f"/tools/workers/{worker_id}/grants", {"tool_name": tool_name},
+        )
+    await client.request(
+        "POST", f"/tools/workers/{worker_id}/browser-identity", {}
+    )
+
+
+async def _revoke_local_identity_access(worker_id: UUID, *, retired: bool) -> None:
+    """Revoke tool grants and close live laptop browser contexts first."""
+    await _tool_service_client().request(
+        "POST", f"/tools/workers/{worker_id}/identity-access/revoke",
+        {"retired": retired},
+    )
+
+
+async def _identity_activation_blocker(storage: AgentStorage, worker: dict[str, Any]) -> str | None:
+    """Provision or reconcile a required mailbox without activating early."""
+    if not _identity_required():
+        return None
+    required_methods = ("get_worker_identity_lifecycle", "upsert_worker_identity_lifecycle")
+    if not all(inspect.iscoroutinefunction(getattr(storage, name, None)) for name in required_methods):
+        # Test-only/incomplete storage implementations cannot be treated as
+        # evidence of verified production identity state.
+        return "identity lifecycle persistence is unavailable"
+    worker_id = worker["id"]
+    try:
+        client = _identity_client()
+        await client.reconcile_worker_lifecycle(storage)
+        lifecycle = await storage.get_worker_identity_lifecycle(worker_id)
+        if lifecycle and str(lifecycle.get("state")) == "IDENTITY_ACTIVE":
+            await _provision_identity_tool_grants(worker_id)
+            return None
+        company_id = _identity_company_id()
+        provisioning_key = f"mailbox:{company_id}:{worker_id}"
+        if lifecycle is None:
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="HIRED_PENDING_IDENTITY", provisioning_key=provisioning_key, evidence={"activation_requested": True})
+        mailbox_class = str((worker.get("adapter_config") or {}).get("identity_mailbox_class", "permanent")).strip().lower()
+        if mailbox_class not in {"permanent", "temporary"}:
+            return "worker identity mailbox class is invalid"
+        identity = await client.provision_worker(company_id=company_id, worker_id=worker_id, actor_id="orchestrator-api", purpose="approved worker activation", mailbox_class=mailbox_class)
+        await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state=str(identity.get("state") or "IDENTITY_PROVISIONING"), provisioning_key=provisioning_key, identity_address=identity.get("address"), identity_service_id=UUID(str(identity["id"])) if identity.get("id") else None, evidence={"provisioning_response": "received"})
+        if str(identity.get("state")) != "IDENTITY_ACTIVE":
+            return "mailbox provisioning is awaiting real inbound delivery verification"
+        await _provision_identity_tool_grants(worker_id)
+        return None
+    except Exception as exc:
+        error_code = type(exc).__name__
+        try:
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="IDENTITY_PROVISIONING_FAILED", failure_code=error_code, evidence={"failure_code": error_code})
+        except Exception:
+            logger.exception("identity_lifecycle_failure_persistence_failed", extra={"worker_id": str(worker_id)})
+        return f"IDENTITY_PROVISIONING_FAILED ({error_code})"
+
+
+async def _suspend_worker_identity(storage: AgentStorage, worker_id: UUID) -> str | None:
+    """Revoke remote mailbox/browser access after stopping the local worker."""
+    if not _identity_required():
+        return None
+    errors: list[str] = []
+    try:
+        await _revoke_local_identity_access(worker_id, retired=False)
+    except Exception as exc:
+        errors.append(f"local:{type(exc).__name__}")
+    try:
+        client = _identity_client()
+        await client.suspend_worker(worker_id=worker_id, actor_id="orchestrator-api", purpose="worker deactivated")
+        if inspect.iscoroutinefunction(getattr(storage, "upsert_worker_identity_lifecycle", None)):
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="SUSPENDED", evidence={"deactivation": True})
+        return ",".join(errors) or None
+    except Exception as exc:
+        error_code = type(exc).__name__
+        if inspect.iscoroutinefunction(getattr(storage, "upsert_worker_identity_lifecycle", None)):
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="IDENTITY_SUSPENSION_PENDING", failure_code=error_code, evidence={"failure_code": error_code})
+        errors.append(f"remote:{error_code}")
+        return ",".join(errors)
+
+
+async def _archive_worker_identity(storage: AgentStorage, worker_id: UUID) -> str | None:
+    """Archive remote mail/browser state during governed worker retirement."""
+    if not _identity_required():
+        return None
+    errors: list[str] = []
+    try:
+        await _revoke_local_identity_access(worker_id, retired=True)
+    except Exception as exc:
+        errors.append(f"local:{type(exc).__name__}")
+    try:
+        client = _identity_client()
+        await client.archive_worker(worker_id=worker_id, actor_id="orchestrator-api", purpose="worker retired")
+        if inspect.iscoroutinefunction(getattr(storage, "upsert_worker_identity_lifecycle", None)):
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="ARCHIVED", evidence={"retirement": True})
+        return ",".join(errors) or None
+    except Exception as exc:
+        error_code = type(exc).__name__
+        if inspect.iscoroutinefunction(getattr(storage, "upsert_worker_identity_lifecycle", None)):
+            await storage.upsert_worker_identity_lifecycle(worker_id=worker_id, state="IDENTITY_ARCHIVAL_PENDING", failure_code=error_code, evidence={"failure_code": error_code})
+        errors.append(f"remote:{error_code}")
+        return ",".join(errors)
 
 LEGACY_TIMEZONE_ALIASES = {
     "US/Eastern": "America/New_York",
@@ -937,6 +1096,19 @@ class ResolveCredentialRequest(BaseModel):
     context: str = "default"
 
 
+class CredentialApprovalRequest(BaseModel):
+    requester: str = Field(min_length=1, max_length=200)
+    context: str = Field(min_length=1, max_length=300)
+    requested_by: str = Field(default="human_operator", min_length=1, max_length=200)
+    ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+
+class CredentialApprovalDecisionRequest(BaseModel):
+    approved: bool
+    decided_by: str = Field(default="human_operator", min_length=1, max_length=200)
+    reason: str = Field(default="", max_length=2000)
+
+
 class TransitionRequest(BaseModel):
     event: str
     actor_id: str
@@ -1042,6 +1214,7 @@ class RegisterWorkerRequest(BaseModel):
     update_policy: str = "manual"
     model_mode: str = "none"
     model_profile_id: str | None = None
+    identity_mailbox_class: str = "permanent"
 
 
 class UpdateWorkerRequest(BaseModel):
@@ -1281,6 +1454,7 @@ class DoclingCertificationRequest(BaseModel):
 class GitHubMetadataRequest(BaseModel):
     repo_url: str
     credential_name: str | None = None
+    credential_approval_id: UUID | None = None
     requester: str = "human_operator"
     dry_run: bool = False
 
@@ -2080,13 +2254,6 @@ async def health() -> dict[str, str]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-def _tool_service_auth_headers() -> dict[str, str]:
-    secret = os.getenv("TOOL_SECRET")
-    if not secret:
-        raise RuntimeError("TOOL_SECRET must be configured for project workspace management")
-    return {"Authorization": f"Bearer {secret}"}
-
-
 async def _invoke_project_repository_tool(
     *,
     project_id: UUID,
@@ -2116,16 +2283,9 @@ async def _invoke_project_repository_tool(
         "tool_name": "project.repository",
         "kwargs": kwargs,
     }
-    async with httpx.AsyncClient(
-        timeout=900,
-        headers=_tool_service_auth_headers(),
-    ) as client:
-        response = await client.post(
-            f"{TOOL_SERVICE_URL}/tools/project.repository/run",
-            json=body,
-        )
-        response.raise_for_status()
-        payload = response.json()
+    payload = await _tool_service_client().request(
+        "POST", "/tools/project.repository/run", body, timeout=900,
+    )
 
     if not payload.get("success"):
         raise RuntimeError(payload.get("error") or "project.repository failed")
@@ -4537,6 +4697,7 @@ async def github_repository_metadata(req: GitHubMetadataRequest) -> dict[str, An
             req.credential_name,
             requester=req.requester,
             context="github.metadata.read",
+            approval_id=req.credential_approval_id,
         )
         if token is None:
             raise HTTPException(403, "Named GitHub credential was denied or not found")
@@ -5251,6 +5412,8 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
             422,
             f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
         )
+    if req.identity_mailbox_class.strip().lower() not in {"permanent", "temporary"}:
+        raise HTTPException(422, "identity_mailbox_class must be permanent or temporary")
     is_external_candidate = bool(req.source_repo and str(req.source_repo).lower() != "local")
     if is_external_candidate and not req.version_pin:
         raise HTTPException(
@@ -5278,7 +5441,7 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
-        adapter_config=req.adapter_config,
+        adapter_config={**req.adapter_config, "identity_mailbox_class": req.identity_mailbox_class.strip().lower()},
         sandbox_profile=req.sandbox_profile,
         capability_ids=capability_ids,
         team_id=req.team_id,
@@ -5602,6 +5765,7 @@ async def transition_worker_status(
         "ACTIVATE": "ACTIVE",
         "DEACTIVATE": "INACTIVE",
         "DRAIN": "DRAINING",
+        "RETIRE": "RETIRED",
     }
 
     if req.action in action_map:
@@ -5615,6 +5779,16 @@ async def transition_worker_status(
                         "code": "WORKER_ACTIVATION_GOVERNANCE_BLOCKED",
                         "message": "Worker activation requires current governed records",
                         "blockers": blockers,
+                    },
+                )
+            identity_blocker = await _identity_activation_blocker(storage, existing)
+            if identity_blocker:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "IDENTITY_PROVISIONING_BLOCKED",
+                        "message": "Worker activation requires a verified active identity mailbox",
+                        "blockers": [identity_blocker],
                     },
                 )
         if (
@@ -5657,6 +5831,12 @@ async def transition_worker_status(
                     "Medium/dual-use worker activation requires human approval",
                 )
         await storage.update_worker_status(worker_id, status=new_status)
+        identity_suspend_error = None
+        identity_archive_error = None
+        if new_status == "INACTIVE":
+            identity_suspend_error = await _suspend_worker_identity(storage, worker_id)
+        elif new_status == "RETIRED":
+            identity_archive_error = await _archive_worker_identity(storage, worker_id)
     elif req.action == "RECLASSIFY":
         updates: dict[str, Any] = {}
         if req.new_status:
@@ -5669,7 +5849,14 @@ async def transition_worker_status(
         raise HTTPException(400, f"Unknown action: {req.action}")
 
     updated = await storage.get_worker(worker_id)
-    return _serialize(updated)  # type: ignore[arg-type]
+    response = _serialize(updated)  # type: ignore[arg-type]
+    if req.action == "DEACTIVATE" and identity_suspend_error:
+        response["identity_suspension"] = "PENDING_RETRY"
+        response["identity_suspension_error_code"] = identity_suspend_error
+    if req.action == "RETIRE" and identity_archive_error:
+        response["identity_archival"] = "PENDING_RETRY"
+        response["identity_archival_error_code"] = identity_archive_error
+    return response
 
 
 @app.post("/capabilities/workers/{worker_id}/upgrade")
@@ -6083,13 +6270,9 @@ def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
                 uuid5(NAMESPACE_URL, f"{tool_request.run_id}:{tool_request.idempotency_key}")
             ),
         }
-        async with httpx.AsyncClient(timeout=120, headers=_tool_service_auth_headers()) as client:
-            response = await client.post(
-                f"{TOOL_SERVICE_URL}/tools/{tool_request.tool_name}/run",
-                json=body,
-            )
-            response.raise_for_status()
-            payload = response.json()
+        payload = await _tool_service_client().request(
+            "POST", f"/tools/{tool_request.tool_name}/run", body, timeout=120,
+        )
         return WorkerToolResponse(
             request_id=tool_request.request_id,
             run_id=tool_request.run_id,
@@ -8922,19 +9105,57 @@ async def delete_credential(name: str) -> None:
 
 @app.post("/credentials/{name}/resolve")
 async def resolve_credential(name: str, req: ResolveCredentialRequest) -> dict[str, Any]:
-    """Resolve a credential to its real value (policy-gated + audited).
+    """Reject raw secret export from the HTTP control-plane surface.
 
-    Only used by internal system components.  Agents should send a
-    ResolveCredentialRequest with their own identity as the requester.
+    Server-side adapters resolve credential references immediately before an
+    approved call.  A network route that returns the material value makes an
+    otherwise scoped credential exportable by any dashboard/API client.
     """
+    _ = (name, req)
+    raise HTTPException(
+        410,
+        "Raw credential export is prohibited; use an approved server-side adapter",
+    )
+
+
+@app.post("/credentials/{name}/approval-requests", status_code=201)
+async def request_credential_approval(
+    name: str, req: CredentialApprovalRequest
+) -> dict[str, Any]:
+    """Request one short-lived server-side credential use; no value is returned."""
     mgr = _credentials_manager()
     await mgr.ensure_tables()
-    value = await mgr.resolve(name, requester=req.requester, context=req.context)
-    if value is None:
-        raise HTTPException(
-            403, f"Credential '{name}' could not be resolved (policy denied or not found)"
+    try:
+        approval = await mgr.request_approval(
+            name,
+            requester=req.requester,
+            context=req.context,
+            requested_by=req.requested_by,
+            ttl_seconds=req.ttl_seconds,
         )
-    return {"name": name, "value": value}
+    except LookupError as exc:
+        raise HTTPException(404, "Credential not found") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(approval)
+
+
+@app.post("/credentials/approval-requests/{approval_id}/decision")
+async def decide_credential_approval(
+    approval_id: UUID, req: CredentialApprovalDecisionRequest
+) -> dict[str, Any]:
+    """Approve or reject one exact requester/context credential use."""
+    mgr = _credentials_manager()
+    await mgr.ensure_tables()
+    approval = await mgr.decide_approval(
+        approval_id,
+        approved=req.approved,
+        decided_by=req.decided_by,
+        reason=req.reason,
+    )
+    if approval is None:
+        raise HTTPException(404, "Pending credential approval not found or expired")
+    return _serialize(approval)
 
 
 @app.get("/credentials/{name}/audit")
@@ -8951,6 +9172,69 @@ async def full_audit_log(limit: int = 100) -> list[dict[str, Any]]:
     mgr = _credentials_manager()
     await mgr.ensure_tables()
     return await mgr.audit_log(limit=limit)
+
+
+@app.get("/identity/dashboard/{resource}")
+async def identity_dashboard_resource(resource: str, _auth: None = Depends(_check_auth)) -> dict[str, Any]:
+    """Signed control-plane proxy for secret-free identity dashboard data."""
+    allowed = {
+        "identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay",
+        "external-accounts", "auth-sessions", "identity-approvals", "identity-audit",
+    }
+    if resource not in allowed:
+        raise HTTPException(404, "identity dashboard resource not found")
+    try:
+        return await _identity_client().request("POST", f"/v1/dashboard/{resource}", {})
+    except Exception as exc:
+        raise HTTPException(503, "identity service is unavailable") from exc
+
+
+class IdentityDashboardActionRequest(BaseModel):
+    action: Literal[
+        "approval.approve", "approval.reject", "identity.suspend", "identity.archive",
+        "external.rotate_credentials", "external.suspend", "external.close", "session.revoke",
+    ]
+    id: UUID | None = None
+    worker_id: UUID | None = None
+    service: str | None = Field(default=None, max_length=120)
+    service_category: str = Field(default="development_test", max_length=80)
+    reason: str = Field(default="dashboard operator decision", max_length=500)
+
+
+@app.post("/identity/dashboard/action")
+async def identity_dashboard_action(req: IdentityDashboardActionRequest, _auth: None = Depends(_check_auth)) -> dict[str, Any]:
+    """Execute only the explicitly supported identity dashboard mutations."""
+    actor = {"actor_id": "dashboard-operator", "purpose": req.reason}
+    if req.action.startswith("approval."):
+        if req.id is None:
+            raise HTTPException(422, "approval id is required")
+        path = f"/v1/approvals/{req.id}/decision"
+        body = {"actor": actor, "approved": req.action == "approval.approve", "reason": req.reason}
+    elif req.action.startswith("identity."):
+        if req.worker_id is None:
+            raise HTTPException(422, "worker id is required")
+        operation = req.action.rsplit(".", 1)[1]
+        path = f"/v1/worker-identities/{req.worker_id}/{operation}"
+        body = {"actor": actor}
+    elif req.action.startswith("external."):
+        if req.id is None or req.worker_id is None or not req.service:
+            raise HTTPException(422, "external account id, worker id, and service are required")
+        operation = req.action.rsplit(".", 1)[1].replace("_", "-")
+        path = f"/v1/external-accounts/{req.id}/{operation}"
+        body = {
+            "worker_id": str(req.worker_id), "actor": actor, "service": req.service,
+            "service_category": req.service_category,
+            "idempotency_key": f"dashboard:{req.action}:{req.id}",
+        }
+    else:
+        if req.worker_id is None:
+            raise HTTPException(422, "worker id is required")
+        path = "/v1/sessions/revoke"
+        body = {"worker_id": str(req.worker_id), "actor": actor, "session_id": req.id}
+    try:
+        return await _identity_client().request("POST", path, body)
+    except Exception as exc:
+        raise HTTPException(503, "identity action could not be completed") from exc
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -22,6 +22,7 @@ Usage
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -2386,6 +2387,92 @@ class AgentStorage:
                 .where(t.worker_registry.c.id == worker_id)
                 .values(**values)
             )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Identity-service laptop reconciliation and lifecycle mirror
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def get_identity_reconciliation_cursor(self, client_id: str) -> int:
+        """Return the durable event cursor for the signed laptop client."""
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    sa.text("SELECT last_sequence FROM identity_reconciliation_cursors WHERE client_id = :client_id"),
+                    {"client_id": client_id},
+                )
+            ).mappings().first()
+        return int(row["last_sequence"]) if row else 0
+
+    async def set_identity_reconciliation_cursor(self, client_id: str, cursor: int) -> None:
+        """Advance the local cursor only after complete event processing."""
+        if cursor < 0:
+            raise ValueError("identity reconciliation cursor must be non-negative")
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    """INSERT INTO identity_reconciliation_cursors (client_id, last_sequence, updated_at)
+                       VALUES (:client_id, :cursor, now())
+                       ON CONFLICT (client_id) DO UPDATE
+                       SET last_sequence = GREATEST(identity_reconciliation_cursors.last_sequence, EXCLUDED.last_sequence),
+                           updated_at = now()"""
+                ),
+                {"client_id": client_id, "cursor": cursor},
+            )
+
+    async def get_worker_identity_lifecycle(self, worker_id: UUID) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    sa.text("SELECT * FROM worker_identity_lifecycle WHERE worker_id = :worker_id"),
+                    {"worker_id": worker_id},
+                )
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def upsert_worker_identity_lifecycle(
+        self,
+        *,
+        worker_id: UUID,
+        state: str,
+        provisioning_key: str | None = None,
+        identity_address: str | None = None,
+        identity_service_id: UUID | None = None,
+        last_event_sequence: int | None = None,
+        failure_code: str | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Mirror safe identity state without copying secrets from the VPS."""
+        values = {
+            "worker_id": worker_id,
+            "state": state,
+            "provisioning_key": provisioning_key,
+            "identity_address": identity_address,
+            "identity_service_id": identity_service_id,
+            "last_event_sequence": last_event_sequence or 0,
+            "failure_code": failure_code,
+            "evidence": evidence or {},
+        }
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                sa.text(
+                    """INSERT INTO worker_identity_lifecycle
+                         (worker_id, state, provisioning_key, identity_address, identity_service_id, last_event_sequence, failure_code, evidence_json)
+                       VALUES (:worker_id, :state, :provisioning_key, :identity_address, :identity_service_id, :last_event_sequence, :failure_code, CAST(:evidence AS jsonb))
+                       ON CONFLICT (worker_id) DO UPDATE SET
+                         state = EXCLUDED.state,
+                         provisioning_key = COALESCE(EXCLUDED.provisioning_key, worker_identity_lifecycle.provisioning_key),
+                         identity_address = COALESCE(EXCLUDED.identity_address, worker_identity_lifecycle.identity_address),
+                         identity_service_id = COALESCE(EXCLUDED.identity_service_id, worker_identity_lifecycle.identity_service_id),
+                         last_event_sequence = GREATEST(worker_identity_lifecycle.last_event_sequence, EXCLUDED.last_event_sequence),
+                         failure_code = EXCLUDED.failure_code,
+                         evidence_json = EXCLUDED.evidence_json,
+                         updated_at = now()
+                       RETURNING *"""
+                ),
+                {**values, "evidence": json.dumps(evidence or {}, default=str)},
+            )
+            row = result.mappings().first()
+        return dict(row)  # type: ignore[arg-type]
 
     async def set_worker_governed_versions(
         self,

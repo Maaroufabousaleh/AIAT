@@ -60,6 +60,7 @@ from .infra import (
     SecretsManageTool,
 )
 from .memory import SharedMemoryReadTool, SharedMemoryWriteTool
+from .identity import get_identity_tools
 from .opencode_workspace import OpenCodeWorkspacePytestTool, OpenCodeWorkspaceReadTool, OpenCodeWorkspaceWriteTool
 from .project import (
     ApprovalOverrideCSOTool,
@@ -204,4 +205,6 @@ def get_all_tools() -> list[BaseTool]:
         BlobDownloadTool(),
         BlobListTool(),
         BlobDeleteTool(),
+        # Governed mail, external-account and opaque browser-session boundary.
+        *get_identity_tools(),
     ]

@@ -26,6 +26,7 @@ members = [
     "apps/team-runner",
     "apps/message-router",
     "apps/tool-service",
+    "apps/identity-service",
 ]
 
 # ── shared dev dependencies ────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ mas-core = { workspace = true }
 mas-tools-sdk = { workspace = true }
 message-router = { workspace = true }
 tool-service = { workspace = true }
+identity-service = { workspace = true }
 team-runner = { workspace = true }
 orchestrator-api = { workspace = true }
 

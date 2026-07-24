@@ -14,6 +14,7 @@ dependencies = [
     "httpx[http2]>=0.27",
     "pydantic-settings>=2.3",
     "structlog>=24.2",
+    "cryptography>=42",
     "apscheduler>=3.10",  # scheduled auto-shutdown / auto-resume cron
 ]
 

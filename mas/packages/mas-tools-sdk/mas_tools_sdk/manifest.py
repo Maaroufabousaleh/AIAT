@@ -174,6 +174,35 @@ _register(
     ),
 )
 
+# --- Governed identity, mail, external-account and browser-session tools ---
+# These remain in the existing low-rate utility group so the control plane does
+# not create an ungoverned parallel tool-class. Every implementation delegates
+# to the signed identity-service and performs a second ownership check there.
+_register(
+    _entry(name="identity.email.get_address", group=ToolGroup.KPI_UTILITY, description="Get the caller-owned governed mailbox address.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.list", group=ToolGroup.KPI_UTILITY, description="List only caller-owned mailbox messages.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.search", group=ToolGroup.KPI_UTILITY, description="Search only caller-owned mailbox messages.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.read", group=ToolGroup.KPI_UTILITY, description="Read only a caller-owned mailbox message.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.wait_for_verification", group=ToolGroup.KPI_UTILITY, description="Wait for a caller-owned verification message.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.extract_code", group=ToolGroup.KPI_UTILITY, description="Extract a code from a caller-owned verification message.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.extract_link", group=ToolGroup.KPI_UTILITY, description="Extract a link from a caller-owned verification message.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.mark_processed", group=ToolGroup.KPI_UTILITY, description="Mark a caller-owned mailbox message processed.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.delete", group=ToolGroup.KPI_UTILITY, description="Delete a caller-owned mailbox message.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.send_request", group=ToolGroup.KPI_UTILITY, description="Request human-approved outbound mail through Stalwart.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.send_approved", group=ToolGroup.KPI_UTILITY, description="Submit an approved mail request through Stalwart's queue.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.get_delivery_status", group=ToolGroup.KPI_UTILITY, description="Read caller-owned outbound delivery status.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="mail.cancel_queued", group=ToolGroup.KPI_UTILITY, description="Cancel caller-owned queued outbound mail.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.signup_request", group=ToolGroup.KPI_UTILITY, description="Request a governed external account.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.login", group=ToolGroup.KPI_UTILITY, description="Begin external account login in an isolated local profile.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.get_status", group=ToolGroup.KPI_UTILITY, description="Get caller-owned external account state.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.rotate_credentials", group=ToolGroup.KPI_UTILITY, description="Request governed credential rotation without export.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.suspend", group=ToolGroup.KPI_UTILITY, description="Suspend caller-owned external account.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.external.close", group=ToolGroup.KPI_UTILITY, description="Close caller-owned external account.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.session.create", group=ToolGroup.KPI_UTILITY, description="Create opaque local browser session metadata.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.session.use", group=ToolGroup.KPI_UTILITY, description="Use a caller-owned opaque browser session.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+    _entry(name="identity.session.revoke", group=ToolGroup.KPI_UTILITY, description="Revoke caller-owned browser sessions.", allowed_roles=_WORKER, cache_ttl=0, idempotent=False),
+)
+
 # --- Document ---
 _register(
     _entry(

@@ -5,6 +5,8 @@ ARG OPENTOFU_VERSION=1.11.7
 ARG OPENTOFU_SHA256=2ae4434e08da9a17372c11509d11b07f1cb3730dea0bf7ff658bdb4b83b1cbab
 ARG MERMAID_CLI_VERSION=11.12.0
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git nodejs npm ripgrep unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -45,9 +47,10 @@ RUN pip install --no-cache-dir "asyncpg==0.31.0"
 
 RUN python -m playwright install --with-deps chromium
 
-RUN chromium_path="$(find /root/.cache/ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \
+RUN chromium_path="$(find /ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \
     && test -n "$chromium_path" \
-    && ln -s "$chromium_path" /usr/local/bin/chromium
+    && ln -s "$chromium_path" /usr/local/bin/chromium \
+    && chmod -R a+rX /ms-playwright
 
 # Keep application source after the heavyweight, pinned dependency layers so
 # a bridge or route fix does not re-download Docling and Playwright.
@@ -60,7 +63,13 @@ RUN pip install /tmp/mas-core /tmp/mas-tools-sdk /tmp/tool-service
 COPY apps/tool-service/tool_service/ /app/tool_service/
 COPY infra/docker/puppeteer-config.json /app/puppeteer-config.json
 
+RUN groupadd --gid 10001 aiat \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin aiat \
+    && chown -R 10001:10001 /app
+
+ENV HOME=/home/aiat
 WORKDIR /app
+USER 10001:10001
 
 EXPOSE 8002
 

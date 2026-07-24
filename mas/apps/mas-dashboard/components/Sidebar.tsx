@@ -58,6 +58,20 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Identity",
+    items: [
+      { href: "/identities",         label: "Identities", icon: Users },
+      { href: "/mail-domains",       label: "Mail Domains", icon: Network },
+      { href: "/mailboxes",          label: "Mailboxes", icon: Inbox },
+      { href: "/outbound-mail",      label: "Outbound Mail", icon: Send },
+      { href: "/mail-relay",         label: "Mail Relay", icon: Radio },
+      { href: "/external-accounts",  label: "External Accounts", icon: Lock },
+      { href: "/auth-sessions",      label: "Auth Sessions", icon: ShieldCheck },
+      { href: "/identity-approvals", label: "Identity Approvals", icon: ShieldCheck },
+      { href: "/identity-audit",     label: "Identity Audit", icon: ScrollText },
+    ],
+  },
+  {
     title: "Admin",
     items: [
       { href: "/system", label: "System", icon: Settings },

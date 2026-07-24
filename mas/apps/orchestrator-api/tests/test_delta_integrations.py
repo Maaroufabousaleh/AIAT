@@ -109,6 +109,7 @@ async def test_github_metadata_dry_run_resolves_named_credential_without_leaking
         "GITHUB_TOKEN",
         requester="operator",
         context="github.metadata.read",
+        approval_id=None,
     )
 
 

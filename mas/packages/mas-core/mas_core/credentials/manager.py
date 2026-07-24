@@ -25,12 +25,11 @@ import hashlib
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .models import SecretMetadata, SecretPolicy, SecretType
 
@@ -53,6 +52,12 @@ def _get_fernet():
 
     raw = os.getenv("CREDENTIALS_ENCRYPTION_KEY", "")
     if not raw:
+        environment = os.getenv("MAS_ENVIRONMENT", "development").strip().lower()
+        if environment in {"production", "prod", "staging"}:
+            raise RuntimeError(
+                "CREDENTIALS_ENCRYPTION_KEY is required when MAS_ENVIRONMENT is "
+                f"{environment!r}; refusing to derive a production key"
+            )
         # Derive a deterministic dev key from a fixed seed — NOT for production.
         seed = b"aiat-dev-credentials-key-do-not-use-in-prod"
         raw = base64.urlsafe_b64encode(hashlib.sha256(seed).digest()).decode()
@@ -105,6 +110,36 @@ CREATE TABLE IF NOT EXISTS credentials_audit (
 )
 """)
 
+_CREATE_APPROVAL_TABLE = sa.text("""
+CREATE TABLE IF NOT EXISTS credential_resolve_approvals (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    secret_name     TEXT NOT NULL REFERENCES credentials(name) ON DELETE CASCADE,
+    requester       TEXT NOT NULL,
+    context         TEXT NOT NULL,
+    state           TEXT NOT NULL DEFAULT 'PENDING',
+    requested_by    TEXT NOT NULL,
+    decided_by      TEXT,
+    decision_reason TEXT NOT NULL DEFAULT '',
+    expires_at      TIMESTAMPTZ NOT NULL,
+    decided_at      TIMESTAMPTZ,
+    consumed_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_credential_resolve_approval_state
+        CHECK (state IN ('PENDING', 'APPROVED', 'REJECTED', 'CONSUMED', 'EXPIRED'))
+)
+""")
+
+_CREATE_RATE_TABLE = sa.text("""
+CREATE TABLE IF NOT EXISTS credential_resolve_rates (
+    secret_name       TEXT NOT NULL REFERENCES credentials(name) ON DELETE CASCADE,
+    requester         TEXT NOT NULL,
+    window_started_at TIMESTAMPTZ NOT NULL,
+    resolve_count     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (secret_name, requester, window_started_at),
+    CONSTRAINT ck_credential_resolve_rate_count CHECK (resolve_count >= 0)
+)
+""")
+
 
 # ---------------------------------------------------------------------------
 # CredentialsManager
@@ -129,6 +164,8 @@ class CredentialsManager:
         async with self._conn_factory() as conn:
             await conn.execute(_CREATE_TABLE)
             await conn.execute(_CREATE_AUDIT_TABLE)
+            await conn.execute(_CREATE_APPROVAL_TABLE)
+            await conn.execute(_CREATE_RATE_TABLE)
             await conn.commit()
 
     # ------------------------------------------------------------------
@@ -260,6 +297,7 @@ class CredentialsManager:
         *,
         requester: str = "anonymous",
         context: str = "default",
+        approval_id: UUID | str | None = None,
     ) -> str | None:
         """Resolve a secret reference to its real value.
 
@@ -286,9 +324,8 @@ class CredentialsManager:
         policy = SecretPolicy.model_validate(policy_raw)
         allowed, reason = policy.allows(requester, context)
 
-        await self._audit(name, requester, context, allowed, reason)
-
         if not allowed:
+            await self._audit(name, requester, context, False, reason)
             logger.warning(
                 "credentials.resolve_denied name=%s requester=%s reason=%s",
                 name,
@@ -296,6 +333,46 @@ class CredentialsManager:
                 reason,
             )
             return None
+
+        if policy.rate_limit_per_minute:
+            rate_allowed = await self._consume_rate_limit(
+                name=name,
+                requester=requester,
+                limit=policy.rate_limit_per_minute,
+            )
+            if not rate_allowed:
+                await self._audit(
+                    name, requester, context, False, "rate_limit_exceeded"
+                )
+                logger.warning(
+                    "credentials.resolve_denied name=%s requester=%s reason=rate_limit_exceeded",
+                    name,
+                    requester,
+                )
+                return None
+
+        if policy.require_approval:
+            approved = await self._consume_approval(
+                approval_id=approval_id,
+                name=name,
+                requester=requester,
+                context=context,
+            )
+            if not approved:
+                await self._audit(
+                    name, requester, context, False, "valid_approval_required"
+                )
+                logger.warning(
+                    "credentials.resolve_denied name=%s requester=%s reason=valid_approval_required",
+                    name,
+                    requester,
+                )
+                return None
+
+        # An allowed resolve must never return a secret unless its durable
+        # audit record was committed successfully.  This is intentionally
+        # fail-closed; the caller can retry after the database recovers.
+        await self._audit(name, requester, context, True, "ok", strict=True)
 
         # Increment usage counter
         async with self._conn_factory() as conn:
@@ -310,6 +387,85 @@ class CredentialsManager:
             await conn.commit()
 
         return _decrypt(r["encrypted_value"])
+
+    async def request_approval(
+        self,
+        name: str,
+        *,
+        requester: str,
+        context: str,
+        requested_by: str,
+        ttl_seconds: int = 900,
+    ) -> dict[str, Any]:
+        """Create a one-use, short-lived approval request for a secret resolve."""
+        if ttl_seconds < 60 or ttl_seconds > 3600:
+            raise ValueError("credential approval TTL must be between 60 and 3600 seconds")
+        metadata = await self.get(name)
+        if metadata is None:
+            raise LookupError("credential not found")
+        if not metadata.policy.require_approval:
+            raise ValueError("credential policy does not require per-use approval")
+        approval_id = uuid4()
+        now = datetime.now(UTC)
+        async with self._conn_factory() as conn:
+            result = await conn.execute(
+                sa.text("""
+                    INSERT INTO credential_resolve_approvals
+                        (id, secret_name, requester, context, state, requested_by,
+                         expires_at, created_at)
+                    VALUES
+                        (:id, :name, :requester, :context, 'PENDING', :requested_by,
+                         :expires_at, :created_at)
+                    RETURNING id, secret_name, requester, context, state,
+                              requested_by, expires_at, created_at
+                """),
+                {
+                    "id": approval_id,
+                    "name": name,
+                    "requester": requester,
+                    "context": context,
+                    "requested_by": requested_by,
+                    "expires_at": now + timedelta(seconds=ttl_seconds),
+                    "created_at": now,
+                },
+            )
+            row = result.mappings().first()
+            await conn.commit()
+        if row is None:
+            raise RuntimeError("credential approval request was not persisted")
+        return dict(row)
+
+    async def decide_approval(
+        self,
+        approval_id: UUID,
+        *,
+        approved: bool,
+        decided_by: str,
+        reason: str = "",
+    ) -> dict[str, Any] | None:
+        """Record a human decision without exposing the underlying secret."""
+        state = "APPROVED" if approved else "REJECTED"
+        async with self._conn_factory() as conn:
+            result = await conn.execute(
+                sa.text("""
+                    UPDATE credential_resolve_approvals
+                    SET state = :state, decided_by = :decided_by,
+                        decision_reason = :reason, decided_at = now()
+                    WHERE id = :id AND state = 'PENDING' AND expires_at > now()
+                    RETURNING id, secret_name, requester, context, state,
+                              requested_by, decided_by, decision_reason,
+                              expires_at, decided_at, consumed_at, created_at
+                """),
+                {
+                    "id": approval_id,
+                    "state": state,
+                    "decided_by": decided_by,
+                    "reason": reason[:2000],
+                },
+            )
+            row = result.mappings().first()
+            await conn.commit()
+        return dict(row) if row else None
 
     async def audit_log(
         self, limit: int = 100, secret_name: str | None = None
@@ -370,6 +526,8 @@ class CredentialsManager:
         context: str,
         allowed: bool,
         reason: str,
+        *,
+        strict: bool = False,
     ) -> None:
         try:
             async with self._conn_factory() as conn:
@@ -392,3 +550,72 @@ class CredentialsManager:
                 await conn.commit()
         except Exception:
             logger.exception("credentials.audit_write_failed name=%s", name)
+            if strict:
+                raise RuntimeError("credential audit persistence is unavailable")
+
+    async def _consume_rate_limit(
+        self,
+        *,
+        name: str,
+        requester: str,
+        limit: int,
+    ) -> bool:
+        """Atomically consume one durable per-secret/requester minute slot."""
+        window = datetime.now(UTC).replace(second=0, microsecond=0)
+        async with self._conn_factory() as conn:
+            result = await conn.execute(
+                sa.text("""
+                    INSERT INTO credential_resolve_rates
+                        (secret_name, requester, window_started_at, resolve_count)
+                    VALUES (:name, :requester, :window, 1)
+                    ON CONFLICT (secret_name, requester, window_started_at)
+                    DO UPDATE SET resolve_count = credential_resolve_rates.resolve_count + 1
+                    WHERE credential_resolve_rates.resolve_count < :limit
+                    RETURNING resolve_count
+                """),
+                {
+                    "name": name,
+                    "requester": requester,
+                    "window": window,
+                    "limit": limit,
+                },
+            )
+            row = result.mappings().first()
+            await conn.commit()
+        return row is not None
+
+    async def _consume_approval(
+        self,
+        *,
+        approval_id: UUID | str | None,
+        name: str,
+        requester: str,
+        context: str,
+    ) -> bool:
+        """Consume exactly one matching approval; replays fail closed."""
+        if approval_id is None:
+            return False
+        try:
+            parsed_id = approval_id if isinstance(approval_id, UUID) else UUID(str(approval_id))
+        except (TypeError, ValueError):
+            return False
+        async with self._conn_factory() as conn:
+            result = await conn.execute(
+                sa.text("""
+                    UPDATE credential_resolve_approvals
+                    SET state = 'CONSUMED', consumed_at = now()
+                    WHERE id = :id AND secret_name = :name
+                      AND requester = :requester AND context = :context
+                      AND state = 'APPROVED' AND expires_at > now()
+                    RETURNING id
+                """),
+                {
+                    "id": parsed_id,
+                    "name": name,
+                    "requester": requester,
+                    "context": context,
+                },
+            )
+            row = result.mappings().first()
+            await conn.commit()
+        return row is not None

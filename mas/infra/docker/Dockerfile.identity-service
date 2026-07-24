@@ -1,0 +1,17 @@
+FROM python:3.11.11-slim@sha256:a8e0a3090316aed0b11037aac613aef32fb1747dcc1dcb5c0f6c727a0113a07f
+
+RUN useradd --system --create-home --uid 10001 aiat
+WORKDIR /app
+
+COPY pyproject.toml /tmp/identity-service/pyproject.toml
+COPY constraints.txt /tmp/identity-service/constraints.txt
+COPY identity_service /tmp/identity-service/identity_service
+RUN pip install --no-cache-dir --constraint /tmp/identity-service/constraints.txt /tmp/identity-service \
+    && rm -rf /tmp/identity-service
+
+COPY alembic.ini /app/alembic.ini
+COPY migrations /app/migrations
+
+USER 10001:10001
+EXPOSE 8010
+CMD ["uvicorn", "identity_service.main:app", "--host", "0.0.0.0", "--port", "8010"]

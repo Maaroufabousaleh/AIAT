@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "purpose": "AIAT outbound mail must use Resend relay and must never select a direct-MX route.",
+  "mta_route": {
+    "@type": "Relay",
+    "address": "smtp.resend.com",
+    "port": 465,
+    "protocol": "smtp",
+    "implicitTls": true,
+    "allowInvalidCerts": false,
+    "authUsername": "resend",
+    "authSecret": {
+      "@type": "EnvironmentVariable",
+      "variableName": "RESEND_API_KEY"
+    }
+  },
+  "mta_outbound_strategy_patch": {
+    "route": {
+      "match": [
+        {
+          "if": "is_local_domain(rcpt_domain)",
+          "then": "'local'"
+        }
+      ],
+      "else": "'resend-relay'"
+    }
+  }
+}

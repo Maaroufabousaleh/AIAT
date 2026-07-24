@@ -1,0 +1,17 @@
+{
+  email {$ACME_EMAIL}
+}
+
+http://{$MAIL_HOSTNAME}, http://{$IDENTITY_HOSTNAME} {
+  redir https://{host}{uri} permanent
+}
+
+{$MAIL_HOSTNAME} {
+  @admin path /admin* /api/* /api
+  respond @admin 404
+  reverse_proxy stalwart:8080
+}
+
+{$IDENTITY_HOSTNAME} {
+  reverse_proxy identity-service:8010
+}

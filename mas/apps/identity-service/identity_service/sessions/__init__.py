@@ -1,0 +1,1 @@
+"""Opaque browser-session metadata."""

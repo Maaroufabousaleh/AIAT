@@ -100,6 +100,10 @@ class ToolRegistry:
         """Replace the durable usage writer after Postgres recovery."""
         self._usage_storage = usage_storage
 
+    def load_worker_grants(self, grants: dict[str, set[str]]) -> None:
+        """Replace the hot-path grant cache from durable startup state."""
+        self._worker_grants = {worker_id: set(names) for worker_id, names in grants.items()}
+
     # ------------------------------------------------------------------
     # Per-worker tool grants
     # ------------------------------------------------------------------
@@ -123,6 +127,18 @@ class ToolRegistry:
         grants.discard(tool_name)
         return True
 
+    def revoke_identity_tools(self, worker_id: str) -> int:
+        """Remove all identity/mail grants from the live authorization cache."""
+        grants = self._worker_grants.get(worker_id)
+        if grants is None:
+            return 0
+        removed = {
+            name for name in grants
+            if name.startswith("identity.") or name.startswith("mail.")
+        }
+        grants.difference_update(removed)
+        return len(removed)
+
     def get_worker_grants(self, worker_id: str) -> list[str]:
         """Return the explicit grant list for *worker_id* (empty = role-only)."""
         return sorted(self._worker_grants.get(worker_id, set()))
@@ -134,6 +150,8 @@ class ToolRegistry:
         If the worker has explicit grants, the tool must be in the set.
         """
         grants = self._worker_grants.get(worker_id)
+        if tool_name.startswith("identity.") or tool_name.startswith("mail."):
+            return grants is not None and tool_name in grants
         if grants is None:
             return True
         return tool_name in grants
@@ -417,6 +435,17 @@ class ToolRegistry:
         # storage (for example ``blob.download``) without changing the caller
         # contract.  An explicit tool argument remains authoritative.
         kwargs = dict(request.tool_kwargs)
+        # Caller identity comes from the protocol request after gateway auth;
+        # overwrite any user-supplied reserved context so a worker cannot forge
+        # another worker's identity inside governed identity tools.
+        kwargs.pop("_aiat_context", None)
+        kwargs["_aiat_context"] = {
+            "caller_id": request.caller_id,
+            "caller_role": request.caller_role.value if request.caller_role else None,
+            "caller_team": request.caller_team,
+            "project_id": request.project_id,
+            "worker_run_id": str(request.worker_run_id) if request.worker_run_id else None,
+        }
         if request.project_id and "project_id" not in kwargs:
             kwargs["project_id"] = request.project_id
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:

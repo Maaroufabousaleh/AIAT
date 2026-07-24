@@ -14,15 +14,30 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 
-from .config import Settings, get_settings
+from .caller_auth import verify_signed_caller
+from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+class SignedBodyRoute(APIRoute):
+    """Cache one authoritative body for signature and model validation."""
+
+    def get_route_handler(self):
+        route_handler = super().get_route_handler()
+
+        async def signed_body_route_handler(request: Request):
+            request.scope["aiat.tool.raw_body"] = await request.body()
+            return await route_handler(request)
+
+        return signed_body_route_handler
+
+
+router = APIRouter(route_class=SignedBodyRoute)
 
 
 class ToolRunRequest(BaseModel):
@@ -53,15 +68,16 @@ class ToolRunRequest(BaseModel):
     span_id: str | None = None
 
 
-def _verify_secret(
+async def _verify_secret(
+    request: Request,
     authorization: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
 ) -> None:
     """Verify the Bearer token matches a configured TOOL_SECRET.
 
     Missing deployment credentials must fail closed; an unauthenticated tool
     runner is never a safe fallback.
     """
+    settings: Settings = request.app.state.settings
     if not settings.tool_secret:
         raise HTTPException(status_code=503, detail="Tool authentication is not configured.")
     if not authorization:
@@ -69,6 +85,18 @@ def _verify_secret(
     parts = authorization.split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != "bearer" or parts[1] != settings.tool_secret:
         raise HTTPException(status_code=403, detail="Invalid tool secret.")
+    if settings.environment_is_production:
+        request.state.signed_caller_id = await verify_signed_caller(
+            request, settings.tool_caller_public_keys,
+            getattr(request.app.state, "tool_grant_store", None),
+        )
+
+
+def _assert_signed_body_caller(request: Request, caller_id: str, settings: Settings) -> None:
+    """A production signature must bind to the request's asserted caller."""
+    signed_caller = getattr(request.state, "signed_caller_id", None)
+    if signed_caller is not None and signed_caller != caller_id and signed_caller not in settings.tool_delegate_client_ids:
+        raise HTTPException(403, "Signed caller does not match tool request caller")
 
 
 async def _execute_via_registry(request: Request, body: ToolRequest) -> ToolResponse | JSONResponse:
@@ -100,6 +128,7 @@ async def execute_tool(
 
     Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
     """
+    _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
     return await _execute_via_registry(request, body)
 
 
@@ -120,6 +149,8 @@ async def run_tool(
             status_code=400,
             detail=f"Body tool_name {body.tool_name!r} does not match path {tool_name!r}.",
         )
+
+    _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
 
     effective_body = ToolRequest.model_validate(
         body.model_dump(mode="json", by_alias=True) | {"tool_name": tool_name}
@@ -167,6 +198,26 @@ class WorkerGrantBody(BaseModel):
     tool_name: str = Field(..., description="Tool name to grant to the worker.")
 
 
+class WorkerIdentityRevokeBody(BaseModel):
+    retired: bool = False
+
+
+def _grant_store_or_raise(request: Request):  # noqa: ANN202
+    """Require durable storage outside a local development environment."""
+    store = getattr(request.app.state, "tool_grant_store", None)
+    settings: Settings = request.app.state.settings
+    if store is None and settings.environment_is_production:
+        raise HTTPException(503, "Durable tool-grant storage is unavailable")
+    return store
+
+
+def _assert_grant_admin(request: Request) -> None:
+    settings: Settings = request.app.state.settings
+    signed_caller = getattr(request.state, "signed_caller_id", None)
+    if settings.environment_is_production and signed_caller not in settings.tool_delegate_client_ids:
+        raise HTTPException(403, "signed tool-grant administrator is required")
+
+
 @router.post("/tools/workers/{worker_id}/grants", status_code=201)
 async def grant_worker_tool(
     worker_id: str,
@@ -181,7 +232,11 @@ async def grant_worker_tool(
     """
     from .registry import ToolRegistry
 
+    _assert_grant_admin(request)
     registry: ToolRegistry = request.app.state.registry
+    store = _grant_store_or_raise(request)
+    if store is not None:
+        await store.grant(worker_id, body.tool_name)
     registry.grant_tool(worker_id, body.tool_name)
     return {
         "worker_id": worker_id,
@@ -199,7 +254,15 @@ async def revoke_worker_tool(
     """Revoke a specific tool grant from *worker_id*."""
     from .registry import ToolRegistry
 
+    _assert_grant_admin(request)
     registry: ToolRegistry = request.app.state.registry
+    store = _grant_store_or_raise(request)
+    # Persist first; a failed storage operation must not make an in-memory
+    # revocation look successful only to be undone by a service restart.
+    if store is not None and not await store.revoke(worker_id, tool_name):
+        raise HTTPException(
+            status_code=404, detail=f"No grant for tool '{tool_name}' on worker '{worker_id}'."
+        )
     removed = registry.revoke_tool(worker_id, tool_name)
     if not removed:
         raise HTTPException(
@@ -209,6 +272,54 @@ async def revoke_worker_tool(
         "worker_id": worker_id,
         "revoked_tool": tool_name,
         "grants": registry.get_worker_grants(worker_id),
+    }
+
+
+@router.post("/tools/workers/{worker_id}/browser-identity", status_code=201)
+async def provision_worker_browser_identity(
+    worker_id: str,
+    request: Request,
+    _auth: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """Persist the local browser namespace before worker activation."""
+    _assert_grant_admin(request)
+    store = _grant_store_or_raise(request)
+    if store is None:
+        return {"worker_id": worker_id, "state": "DEVELOPMENT_ONLY"}
+    return await store.ensure_browser_identity(worker_id)
+
+
+@router.post("/tools/workers/{worker_id}/identity-access/revoke")
+async def revoke_worker_identity_access(
+    worker_id: str,
+    body: WorkerIdentityRevokeBody,
+    request: Request,
+    _auth: None = Depends(_verify_secret),
+) -> dict[str, Any]:
+    """Revoke local grants and live contexts during suspension/retirement."""
+    from .registry import ToolRegistry
+    from .tools.browser import revoke_worker_browser_sessions
+
+    _assert_grant_admin(request)
+    registry: ToolRegistry = request.app.state.registry
+    store = _grant_store_or_raise(request)
+    durable_removed = 0
+    browser_identity = None
+    if store is not None:
+        durable_removed = await store.revoke_identity_grants(worker_id)
+        browser_identity = await store.revoke_browser_identity(
+            worker_id, retired=body.retired
+        )
+    live_removed = registry.revoke_identity_tools(worker_id)
+    closed_sessions = await revoke_worker_browser_sessions(worker_id)
+    return {
+        "worker_id": worker_id,
+        "durable_grants_revoked": durable_removed,
+        "live_grants_revoked": live_removed,
+        "browser_sessions_closed": closed_sessions,
+        "browser_identity_state": (
+            browser_identity.get("state") if browser_identity else "ABSENT"
+        ),
     }
 
 

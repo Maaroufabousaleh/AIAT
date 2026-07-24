@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 class PrivilegeLevel(StrEnum):
     EXECUTIVE = "executive"  # Layer 1 — normal CEO permissions
     PRIVILEGED = "privileged"  # Layer 2 — gated operations
+    DENIED = "denied"  # Action is not in the allow-listed policy vocabulary
 
 
 # Privileged operations that require Layer 2 approval/audit
@@ -193,8 +194,10 @@ class PrivilegedOpsGate:
             return PrivilegeLevel.EXECUTIVE
         if action in PRIVILEGED_ACTIONS:
             return PrivilegeLevel.PRIVILEGED
-        # Unknown actions default to executive (fail-open with audit)
-        return PrivilegeLevel.EXECUTIVE
+        # New action types must be intentionally added to the policy vocabulary.
+        # Treating them as executive would allow a typo or a novel privileged
+        # operation to bypass review.
+        return PrivilegeLevel.DENIED
 
     async def check(
         self,
@@ -217,6 +220,34 @@ class PrivilegedOpsGate:
         meta = PRIVILEGED_ACTIONS.get(action, {})
         risk = meta.get("risk", "unknown")
         requires_approval = meta.get("require_approval", False) or self._require_all_approval
+
+        if level == PrivilegeLevel.DENIED:
+            record_id = str(uuid4())
+            await self._audit(
+                record_id=record_id,
+                action=action,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                payload=payload or {},
+                level=level,
+                risk=risk,
+                requires_approval=True,
+                decision="denied",
+            )
+            logger.warning(
+                "privileged_ops.denied_unknown_action action=%s actor=%s record=%s",
+                action,
+                actor_id,
+                record_id,
+            )
+            return {
+                "allowed": False,
+                "level": level,
+                "decision": "denied",
+                "record_id": record_id,
+                "risk": risk,
+                "reason": "unknown_action_requires_policy_registration",
+            }
 
         if level == PrivilegeLevel.EXECUTIVE:
             # Layer 1 — always allowed, no audit needed

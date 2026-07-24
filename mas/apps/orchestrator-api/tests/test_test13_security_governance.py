@@ -15,10 +15,11 @@ Tests the AIAT MAS security and governance boundaries:
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
+import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -587,13 +588,12 @@ def test_privileged_ops_classify_privileged():
     assert gate.classify("credentials.export") == PrivilegeLevel.PRIVILEGED
 
 
-def test_privileged_ops_unknown_action_defaults_to_executive():
-    """Unknown actions default to EXECUTIVE (fail-open with audit)."""
+def test_privileged_ops_unknown_action_is_denied():
+    """Unknown actions must be explicitly registered before they can run."""
     from mas_core.policy.privileged_ops import PrivilegedOpsGate, PrivilegeLevel
 
     gate = PrivilegedOpsGate(conn_factory=MagicMock())
-    # Unknown action → EXECUTIVE (fail-open)
-    assert gate.classify("some.unknown.action") == PrivilegeLevel.EXECUTIVE
+    assert gate.classify("some.unknown.action") == PrivilegeLevel.DENIED
 
 
 def test_privileged_actions_requiring_approval():
@@ -722,8 +722,9 @@ async def test_retry_project_not_found(client):
 async def test_retry_project_from_failed_state(client):
     """POST /projects/{id}/retry on FAILED project → transitions to retry state."""
     from orchestrator_api.main import app
-    from mas_core.workflow.controller import WorkflowTransitionResult
+
     from mas_core.protocols.enums import ProjectState
+    from mas_core.workflow.controller import WorkflowTransitionResult
     from mas_core.workflow.events import WorkflowEvent
 
     storage = MagicMock()
@@ -828,52 +829,36 @@ async def test_decision_invalid_project_uuid(client):
 
 
 @pytest.mark.anyio
-async def test_credential_resolve_denied_returns_403(client):
-    """Credential resolve when policy denies → 403."""
+async def test_credential_resolve_is_not_an_http_export_surface(client):
+    """Raw credentials never cross the orchestrator HTTP boundary."""
     storage = MagicMock()
     engine = _mock_engine()
     storage.engine = engine
     _patch(storage)
 
-    with patch("mas_core.credentials.CredentialsManager") as MockMgr:
-        instance = AsyncMock()
-        instance.ensure_tables = AsyncMock()
-        instance.resolve = AsyncMock(return_value=None)  # None → denied
-        MockMgr.return_value = instance
-
-        r = await client.post(
-            "/credentials/SECRET_API_KEY/resolve",
-            json={"requester": "rogue_agent"},
-        )
-    assert r.status_code == 403
-    assert (
-        "policy denied" in r.json()["detail"].lower()
-        or "could not be resolved" in r.json()["detail"].lower()
+    r = await client.post(
+        "/credentials/SECRET_API_KEY/resolve",
+        json={"requester": "rogue_agent"},
     )
+    assert r.status_code == 410
+    assert "prohibited" in r.json()["detail"].lower()
 
 
 @pytest.mark.anyio
-async def test_credential_resolve_success(client):
-    """Credential resolve when policy allows → 200 with value."""
+async def test_credential_resolve_never_returns_a_value(client):
+    """Even an approved caller cannot export a credential value over HTTP."""
     storage = MagicMock()
     engine = _mock_engine()
     storage.engine = engine
     _patch(storage)
 
-    with patch("mas_core.credentials.CredentialsManager") as MockMgr:
-        instance = AsyncMock()
-        instance.ensure_tables = AsyncMock()
-        instance.resolve = AsyncMock(return_value="secret-value-123")
-        MockMgr.return_value = instance
-
-        r = await client.post(
-            "/credentials/MY_API_KEY/resolve",
-            json={"requester": "orchestrator"},
-        )
-    assert r.status_code == 200
+    r = await client.post(
+        "/credentials/MY_API_KEY/resolve",
+        json={"requester": "orchestrator"},
+    )
+    assert r.status_code == 410
     data = r.json()
-    assert data["name"] == "MY_API_KEY"
-    assert data["value"] == "secret-value-123"
+    assert "value" not in data
 
 
 @pytest.mark.anyio

@@ -80,15 +80,15 @@ volumes:
   worker_mirrors:
   omniroute_data:
   opencode_workspace:
+  browser_profiles:
 
 # ── Services ─────────────────────────────────────────────────────────────────
 
 services:
 
-  # ── OpenCode workspace ownership ──────────────────────────────────────────
-  # Docker creates named volumes as root. The OpenCode runtime deliberately
-  # runs as UID 10001, so prepare the shared volume before either service can
-  # create a run workspace.
+  # ── OpenCode workspace and browser-profile ownership ──────────────────────
+  # Docker creates named volumes as root. The tool/OpenCode runtimes
+  # deliberately run as UID 10001, so prepare both persistent volumes first.
   opencode-workspace-init:
     image: alpine:3.21.3
     restart: "no"
@@ -96,12 +96,13 @@ services:
     network_mode: "none"
     volumes:
       - opencode_workspace:/workspace
+      - browser_profiles:/browser-profiles
     command:
       - /bin/sh
       - -ec
       - |
-        mkdir -p /workspace
-        chown -R 10001:10001 /workspace
+        mkdir -p /workspace /browser-profiles
+        chown -R 10001:10001 /workspace /browser-profiles
 
   # ── 0. Redis ACL Init (one-time setup) ──────────────────────────────────────
   # Runs once to configure ACL users. Can be removed after first run.
@@ -290,6 +291,7 @@ services:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.tool-service
     restart: unless-stopped
+    user: "10001:10001"
     env_file:
       - path: ../../../.env
         format: raw
@@ -331,10 +333,17 @@ services:
       AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
       PYTHONPATH: "/app"
       OPENCODE_WORKSPACE_ROOT: "/opencode-workspace"
+      AIAT_BROWSER_RUNTIME_LOCATION: "operator_laptop"
+      AIAT_BROWSER_PROFILE_ROOT: "/var/lib/aiat/browser-profiles"
       LOG_LEVEL: "INFO"
     volumes:
       - ${AIAT_WORKSPACE_ROOT:-../../..}:/workspace
       - opencode_workspace:/opencode-workspace
+      - browser_profiles:/var/lib/aiat/browser-profiles
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:

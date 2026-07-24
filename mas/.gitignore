@@ -33,6 +33,8 @@ infra/compose/.env
 .env
 *.env
 !.env.example
+.env.*
+!.env.*.example
 
 # IDE / editor
 .vscode/settings.json
