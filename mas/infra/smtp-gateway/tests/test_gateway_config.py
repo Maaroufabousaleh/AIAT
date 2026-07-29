@@ -172,7 +172,18 @@ def _host_gate_harness(tmp_path: Path, *, public_smtp25: str = "false",
         evidence_paths[key].write_bytes(
             {
                 "GATE_INTERNAL_RELAY_EVIDENCE": "GATEWAY_INTERNAL_RELAY_CERTIFIED=PASS\n",
-                "GATE_EXTERNAL_INBOUND_EVIDENCE": "EXTERNAL_INBOUND_SMTP_CERTIFIED=PASS\n",
+                "GATE_EXTERNAL_INBOUND_EVIDENCE": (
+                    "EXTERNAL_INBOUND_SMTP_CERTIFIED=PASS\n"
+                    "EXTERNAL_SOURCE_IP=52.103.2.17\n"
+                    "EXTERNAL_PROBE_ORIGIN=Outlook SMTP server\n"
+                    "DESTINATION_HOSTNAME=mail.aiat.ca\n"
+                    "DESTINATION_TCP_PORT=25\n"
+                    "SMTP_ACCEPTANCE=250 2.0.0 Message queued\n"
+                    "PRODUCTION_RECIPIENT=gateway-test@agents.aiat.ca\n"
+                    "POSTFIX_QUEUE_ID=4A1B2C3D4E\n"
+                    "DOWNSTREAM_RELAY_TARGET=10.77.0.2:2525\n"
+                    "FINAL_STATUS=sent\n"
+                ),
                 "GATE_DNS_MX_EVIDENCE": "DNS_MX_CERTIFIED=PASS\n",
                 "GATE_IDENTITY_HTTPS_EVIDENCE": "HTTPS_IDENTITY_INGRESS_CERTIFIED=PASS\n",
                 "GATE_RESEND_EVIDENCE": "RESEND_OUTBOUND_RELAY_CERTIFIED=PASS\n",
@@ -208,7 +219,12 @@ exit 0
     _write_stub(stubs, "ss", "printf '%s\\n' 'LISTEN 0 100 0.0.0.0:25 0.0.0.0:*'")
     public_firewall_rule = " 'tcp dport 25 accept'" if public_smtp25 == "true" else ""
     _write_stub(stubs, "nft", f"printf '%s\\n' 'udp dport 51820 accept'{public_firewall_rule}")
-    _write_stub(stubs, "nc", "exit 0")
+    _write_stub(stubs, "nc", """
+case " $* " in
+  *'192.0.2.10 25'*) exit 1 ;;
+  *) exit 0 ;;
+esac
+""")
     _write_stub(stubs, "systemctl", "exit 0")
     _write_stub(stubs, "dig", """
 case " $* " in
@@ -258,6 +274,33 @@ def test_external_inbound_accepts_public_smtp25_true_with_evidence(tmp_path: Pat
     profile, _, stubs = _host_gate_harness(tmp_path, public_smtp25="true")
     result = _run_host_gate(profile, "external-inbound", stubs)
     assert result.returncode == 0, result.stderr
+    assert "self-probe failed" in result.stdout
+
+
+def test_external_inbound_missing_evidence_fails(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path, public_smtp25="true")
+    (tmp_path / "evidence" / "external.txt").unlink()
+    result = _run_host_gate(profile, "external-inbound", stubs)
+    assert result.returncode != 0
+    assert "missing evidence file" in result.stderr
+
+
+def test_external_inbound_malformed_evidence_fails(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path, public_smtp25="true")
+    (tmp_path / "evidence" / "external.txt").write_bytes(
+        b"EXTERNAL_INBOUND_SMTP_CERTIFIED=PASS\n"
+        b"EXTERNAL_SOURCE_IP=not-an-ip\n"
+        b"DESTINATION_HOSTNAME=mail.aiat.ca\n"
+        b"DESTINATION_TCP_PORT=25\n"
+        b"SMTP_ACCEPTANCE=250 5.1.1 rejected\n"
+        b"PRODUCTION_RECIPIENT=test@example.net\n"
+        b"POSTFIX_QUEUE_ID=bad\n"
+        b"DOWNSTREAM_RELAY_TARGET=10.77.0.2:2525\n"
+        b"FINAL_STATUS=failed\n"
+    )
+    result = _run_host_gate(profile, "external-inbound", stubs)
+    assert result.returncode != 0
+    assert "malformed EXTERNAL_SOURCE_IP" in result.stderr
 
 
 def test_pre_activation_is_the_explicit_public_smtp25_false_gate(tmp_path: Path) -> None:

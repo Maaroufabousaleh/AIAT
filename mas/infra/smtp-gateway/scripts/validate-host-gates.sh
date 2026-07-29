@@ -11,6 +11,26 @@ marker() {
   test -f "$file" || { echo "gate refused: missing evidence file $file" >&2; exit 1; }
   grep -Eq "^${key}=PASS$" "$file" || { echo "gate refused: ${key}=PASS is missing from $file" >&2; exit 1; }
 }
+evidence_value() {
+  file="$1"; key="$2"
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$file"
+}
+require_evidence_value() {
+  file="$1"; key="$2"; expected="$3"
+  actual="$(evidence_value "$file" "$key")"
+  test "$actual" = "$expected" || {
+    echo "external-inbound gate refused: $key must be $expected in $file" >&2
+    exit 1
+  }
+}
+require_evidence_pattern() {
+  file="$1"; key="$2"; pattern="$3"
+  actual="$(evidence_value "$file" "$key")"
+  printf '%s\n' "$actual" | grep -Eq "$pattern" || {
+    echo "external-inbound gate refused: malformed or missing $key in $file" >&2
+    exit 1
+  }
+}
 require_command() { command -v "$1" >/dev/null 2>&1 || { echo "$1 is required for gate $gate" >&2; exit 1; }; }
 require_value() {
   test "$(env_value "$1")" = "$2" || { echo "gate refused: $1 must be $2" >&2; exit 1; }
@@ -49,12 +69,58 @@ check_internal() {
   esac
   marker "$(env_value GATE_INTERNAL_RELAY_EVIDENCE)" GATEWAY_INTERNAL_RELAY_CERTIFIED
 }
-check_external() {
-  require_command nc
-  require_value PUBLIC_SMTP25_ACTIVATED true
+validate_external_evidence() {
+  evidence_file="$(env_value GATE_EXTERNAL_INBOUND_EVIDENCE)"
+  marker "$evidence_file" EXTERNAL_INBOUND_SMTP_CERTIFIED
+
+  source_ip="$(evidence_value "$evidence_file" EXTERNAL_SOURCE_IP)"
+  probe_origin="$(evidence_value "$evidence_file" EXTERNAL_PROBE_ORIGIN)"
+  if [ -z "$source_ip" ] && [ -z "$probe_origin" ]; then
+    echo "external-inbound gate refused: external source IP or probe origin is required in $evidence_file" >&2
+    exit 1
+  fi
+  if [ -n "$source_ip" ]; then
+    printf '%s\n' "$source_ip" | grep -Eq '^(([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9A-Fa-f:]+)$' || {
+      echo "external-inbound gate refused: malformed EXTERNAL_SOURCE_IP in $evidence_file" >&2
+      exit 1
+    }
+  fi
+  if [ -n "$probe_origin" ]; then
+    printf '%s\n' "$probe_origin" | grep -Eq '^[[:print:]]+$' || {
+      echo "external-inbound gate refused: malformed EXTERNAL_PROBE_ORIGIN in $evidence_file" >&2
+      exit 1
+    }
+  fi
+  require_evidence_value "$evidence_file" DESTINATION_HOSTNAME "$(env_value MAIL_HOSTNAME)"
+  require_evidence_value "$evidence_file" DESTINATION_TCP_PORT 25
+  require_evidence_pattern "$evidence_file" SMTP_ACCEPTANCE '^250[[:space:]]+2\.0\.0([[:space:]].*)?$'
+  require_evidence_pattern "$evidence_file" PRODUCTION_RECIPIENT '^[^[:space:]@]+@agents\.aiat\.ca$'
+  require_evidence_pattern "$evidence_file" POSTFIX_QUEUE_ID '^[[:alnum:]]{5,}$'
+  require_evidence_value "$evidence_file" DOWNSTREAM_RELAY_TARGET 10.77.0.2:2525
+  require_evidence_value "$evidence_file" FINAL_STATUS sent
+}
+informational_self_probe() {
   target="$(env_value SMTP_GATEWAY_PUBLIC_IP)"
-  nc -z -w 15 "$target" 25 || { echo "external-inbound gate refused: public TCP/25 is not reachable" >&2; exit 1; }
-  marker "$(env_value GATE_EXTERNAL_INBOUND_EVIDENCE)" EXTERNAL_INBOUND_SMTP_CERTIFIED
+  case "$target" in
+    ''|'<public IPv4 of the gateway VPS>')
+      echo "external-inbound informational: local self-probe skipped; public IPv4 is not configured" ;;
+    *)
+      if command -v nc >/dev/null 2>&1; then
+        if nc -z -w 5 "$target" 25 >/dev/null 2>&1; then
+          echo "external-inbound informational: gateway self-probe succeeded; external evidence remains authoritative" ;
+        else
+          echo "external-inbound informational: gateway self-probe failed; this may reflect unavailable public-IP hairpin/NAT reflection; external evidence remains authoritative" ;
+        fi
+      else
+        echo "external-inbound informational: local self-probe skipped; nc is unavailable" ;
+      fi
+      ;;
+  esac
+}
+check_external() {
+  require_value PUBLIC_SMTP25_ACTIVATED true
+  validate_external_evidence
+  informational_self_probe
 }
 check_dns() {
   require_command dig

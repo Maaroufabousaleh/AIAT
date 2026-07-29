@@ -225,13 +225,38 @@ The `pre-activation` command is the only gate that requires
 `internal-relay` command validates the immutable host path and remains valid
 whether public SMTP activation is false or true. Each certification command
 fails closed unless its own evidence file contains the matching gate marker.
-The external-inbound command never opens TCP/25; the operator must separately
-authorize the network/firewall change and then provide external SMTP evidence.
+The external-inbound command does not use a gateway-to-its-own-public-IP
+connection as a reachability decision. Its optional local self-probe is
+informational only because public-IP hairpin/NAT reflection may be unavailable.
+The operator must provide external SMTP evidence collected off-host.
 The DNS/MX command does not create records. The
 identity command refuses while `IDENTITY_DNS_MODE=blocked`, so
 `identity.aiat.ca` remains absent until an HTTPS reverse proxy is configured
 and certified. The Resend command verifies TCP/465 and requires live relay
 evidence; it does not set `OUTBOUND_RELAY_CERTIFIED`.
+
+The external evidence file must be mode `0600` and contain the marker plus all
+of the following fields. The source IP or probe origin identifies the off-host
+test; the remaining fields bind the test to production delivery:
+
+```text
+EXTERNAL_INBOUND_SMTP_CERTIFIED=PASS
+EXTERNAL_SOURCE_IP=52.103.2.17
+EXTERNAL_PROBE_ORIGIN=Outlook SMTP server
+DESTINATION_HOSTNAME=mail.aiat.ca
+DESTINATION_TCP_PORT=25
+SMTP_ACCEPTANCE=250 2.0.0 Message queued
+PRODUCTION_RECIPIENT=gateway-test@agents.aiat.ca
+POSTFIX_QUEUE_ID=<postfix queue id>
+DOWNSTREAM_RELAY_TARGET=10.77.0.2:2525
+FINAL_STATUS=sent
+```
+
+`EXTERNAL_SOURCE_IP` may be omitted when `EXTERNAL_PROBE_ORIGIN` is a
+non-empty external origin, but at least one must be present. The validator
+requires the production hostname, TCP/25, a `250 2.0.0` acceptance, an
+`@agents.aiat.ca` recipient, a queue ID, the WireGuard relay target, and
+`FINAL_STATUS=sent`.
 
 Only after all five gates pass may an operator update the controlled
 environment state and perform the separately authorized activation change.
