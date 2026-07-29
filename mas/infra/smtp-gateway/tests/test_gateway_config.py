@@ -111,6 +111,17 @@ def test_host_adoption_has_separate_gate_and_evidence_commands() -> None:
     assert "IDENTITY_DNS_MODE gateway_reverse_proxy" in gates
 
 
+def test_resend_certification_script_is_one_message_and_secret_safe() -> None:
+    script = (GATEWAY / "scripts" / "certify-resend.sh").read_text(encoding="utf-8")
+    assert "--approve-one-message" in script
+    assert "EmailSubmission/set" in script
+    assert "verify-stalwart-relay.sh" in script
+    assert "openssl s_client -connect smtp.resend.com:465" in script
+    assert "RESEND_API_KEY" in script
+    assert 'echo "$resend_api_key"' not in script
+    assert "RESEND_API_KEY=NOT_RECORDED" not in script
+
+
 def test_no_private_keys_are_in_templates() -> None:
     for path in (GATEWAY / "wireguard").glob("*conf.example"):
         text = path.read_text(encoding="utf-8")
@@ -186,7 +197,23 @@ def _host_gate_harness(tmp_path: Path, *, public_smtp25: str = "false",
                 ),
                 "GATE_DNS_MX_EVIDENCE": "DNS_MX_CERTIFIED=PASS\n",
                 "GATE_IDENTITY_HTTPS_EVIDENCE": "HTTPS_IDENTITY_INGRESS_CERTIFIED=PASS\n",
-                "GATE_RESEND_EVIDENCE": "RESEND_OUTBOUND_RELAY_CERTIFIED=PASS\n",
+                "GATE_RESEND_EVIDENCE": (
+                    "RESEND_OUTBOUND_RELAY_CERTIFIED=PASS\n"
+                    "RELAY_HOST=smtp.resend.com\n"
+                    "RELAY_PORT=465\n"
+                    "TLS_MODE=implicit\n"
+                    "TLS_VERIFICATION=PASS\n"
+                    "SMTP_AUTHENTICATION=PASS\n"
+                    "AUTH_USERNAME=resend\n"
+                    "PRODUCTION_SENDER=gateway-test@agents.aiat.ca\n"
+                    "EXTERNAL_RECIPIENT=operator@example.net\n"
+                    "STALWART_ROUTE=resend-relay\n"
+                    "DIRECT_MX_OUTBOUND_ENABLED=false\n"
+                    "PROVIDER_MESSAGE_ID=re_123456789\n"
+                    "DELIVERY_STATUS=delivered\n"
+                    "REPLY_RECEIVED=PASS\n"
+                    "CERTIFIED_AT=2026-07-29T20:00:00Z\n"
+                ),
             }[key].encode("utf-8")
         )
     profile = tmp_path / "profile.env"
@@ -225,6 +252,8 @@ case " $* " in
   *) exit 0 ;;
 esac
 """)
+    _write_stub(stubs, "timeout", 'seconds=$1; shift; exec "$@"')
+    _write_stub(stubs, "openssl", "printf '%s\\n' 'Verification: OK'")
     _write_stub(stubs, "systemctl", "exit 0")
     _write_stub(stubs, "dig", """
 case " $* " in
@@ -301,6 +330,54 @@ def test_external_inbound_malformed_evidence_fails(tmp_path: Path) -> None:
     result = _run_host_gate(profile, "external-inbound", stubs)
     assert result.returncode != 0
     assert "malformed EXTERNAL_SOURCE_IP" in result.stderr
+
+
+def test_resend_complete_evidence_passes_after_tls_preliminary_check(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path, public_smtp25="true")
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode == 0, result.stderr
+
+
+def test_resend_missing_evidence_fails(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    (tmp_path / "evidence" / "resend.txt").unlink()
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "missing evidence file" in result.stderr
+
+
+def test_resend_forged_marker_only_evidence_fails(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    (tmp_path / "evidence" / "resend.txt").write_bytes(
+        b"RESEND_OUTBOUND_RELAY_CERTIFIED=PASS\n"
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "RELAY_HOST must be smtp.resend.com" in result.stderr
+
+
+def test_resend_malformed_evidence_fails(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    (tmp_path / "evidence" / "resend.txt").write_bytes(
+        b"RESEND_OUTBOUND_RELAY_CERTIFIED=PASS\n"
+        b"RELAY_HOST=mx.example.net\n"
+        b"RELAY_PORT=587\n"
+        b"TLS_MODE=starttls\n"
+        b"TLS_VERIFICATION=PASS\n"
+        b"SMTP_AUTHENTICATION=PASS\n"
+        b"AUTH_USERNAME=resend\n"
+        b"PRODUCTION_SENDER=gateway-test@agents.aiat.ca\n"
+        b"EXTERNAL_RECIPIENT=operator@example.net\n"
+        b"STALWART_ROUTE=mx\n"
+        b"DIRECT_MX_OUTBOUND_ENABLED=true\n"
+        b"PROVIDER_MESSAGE_ID=forged-provider-id\n"
+        b"DELIVERY_STATUS=delivered\n"
+        b"REPLY_RECEIVED=PASS\n"
+        b"CERTIFIED_AT=not-a-timestamp\n"
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "RELAY_HOST must be smtp.resend.com" in result.stderr
 
 
 def test_pre_activation_is_the_explicit_public_smtp25_false_gate(tmp_path: Path) -> None:

@@ -143,8 +143,44 @@ check_identity() {
 }
 check_resend() {
   require_command nc
-  nc -z -w 15 smtp.resend.com 465 || { echo "resend gate refused: smtp.resend.com:465 is unreachable" >&2; exit 1; }
-  marker "$(env_value GATE_RESEND_EVIDENCE)" RESEND_OUTBOUND_RELAY_CERTIFIED
+  require_command openssl
+  require_command timeout
+  require_value DEFAULT_OUTBOUND_ENABLED false
+  require_value DIRECT_MX_OUTBOUND_ENABLED false
+  require_value OUTBOUND_RELAY_CERTIFIED false
+  nc -z -w 15 smtp.resend.com 465 || { echo "resend gate refused: smtp.resend.com:465 TCP reachability failed" >&2; exit 1; }
+  tls_output="$(timeout 20 openssl s_client -connect smtp.resend.com:465 -servername smtp.resend.com -verify_return_error -brief </dev/null 2>&1 || true)"
+  printf '%s\n' "$tls_output" | grep -Eq 'Verification:[[:space:]]+OK|Verify return code:[[:space:]]+0[[:space:]]+\(ok\)' || {
+    echo "resend gate refused: smtp.resend.com:465 TLS certificate verification failed" >&2
+    exit 1
+  }
+  evidence_file="$(env_value GATE_RESEND_EVIDENCE)"
+  marker "$evidence_file" RESEND_OUTBOUND_RELAY_CERTIFIED
+  if grep -Eq '^RESEND_API_KEY=' "$evidence_file"; then
+    echo "resend gate refused: RESEND_API_KEY must never be stored in evidence" >&2
+    exit 1
+  fi
+  require_evidence_value "$evidence_file" RELAY_HOST smtp.resend.com
+  require_evidence_value "$evidence_file" RELAY_PORT 465
+  require_evidence_value "$evidence_file" TLS_MODE implicit
+  require_evidence_value "$evidence_file" TLS_VERIFICATION PASS
+  require_evidence_value "$evidence_file" SMTP_AUTHENTICATION PASS
+  require_evidence_value "$evidence_file" AUTH_USERNAME resend
+  require_evidence_pattern "$evidence_file" PRODUCTION_SENDER '^[^[:space:]@]+@agents\.aiat\.ca$'
+  external_recipient="$(evidence_value "$evidence_file" EXTERNAL_RECIPIENT)"
+  printf '%s\n' "$external_recipient" | grep -Eq '^[^[:space:]@]+@[^[:space:]@]+$' || {
+    echo "resend gate refused: malformed or missing EXTERNAL_RECIPIENT in $evidence_file" >&2
+    exit 1
+  }
+  case "$external_recipient" in
+    *@agents.aiat.ca) echo "resend gate refused: EXTERNAL_RECIPIENT must be external to agents.aiat.ca" >&2; exit 1 ;;
+  esac
+  require_evidence_value "$evidence_file" STALWART_ROUTE resend-relay
+  require_evidence_value "$evidence_file" DIRECT_MX_OUTBOUND_ENABLED false
+  require_evidence_pattern "$evidence_file" PROVIDER_MESSAGE_ID '^[[:print:]]{5,}$'
+  require_evidence_value "$evidence_file" DELIVERY_STATUS delivered
+  require_evidence_value "$evidence_file" REPLY_RECEIVED PASS
+  require_evidence_pattern "$evidence_file" CERTIFIED_AT '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
 }
 
 case "$gate" in

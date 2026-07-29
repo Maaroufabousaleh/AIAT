@@ -41,7 +41,7 @@ disabled for this profile.
 Constrained host-level minimum:
 
 - Ubuntu/Linux x86_64, WireGuard, `nftables`, Postfix, `socat`, `ss`, `nc`,
-  `dig`, `curl`, and `systemd`.
+  `dig`, `curl`, `jq`, `openssl`, `timeout`, and `systemd`.
 - One public IPv4, inbound TCP 25 only after the external gate passes, and UDP
   51820 for WireGuard. SSH remains operator-CIDR-only.
 - Outbound DNS and authenticated `smtp.resend.com:465`. Direct outbound TCP/25
@@ -257,6 +257,90 @@ non-empty external origin, but at least one must be present. The validator
 requires the production hostname, TCP/25, a `250 2.0.0` acceptance, an
 `@agents.aiat.ca` recipient, a queue ID, the WireGuard relay target, and
 `FINAL_STATUS=sent`.
+
+## Safe one-message Resend certification
+
+The repository includes `scripts/certify-resend.sh`. It is an
+operator-approved, one-message helper; it does not enable outbound mail,
+change `DEFAULT_OUTBOUND_ENABLED`, modify Stalwart configuration, or call the
+Resend API. It first verifies the exact Stalwart `resend-relay` route, rejects
+Mx/direct routes, verifies the `smtp.resend.com:465` certificate, and then
+submits exactly one message through Stalwart JMAP. The route's
+environment-backed Resend credential is exercised by the real Stalwart SMTP
+submission.
+
+Create this root-owned, mode-0600 secret file outside Git on the host that has
+the certified Stalwart JMAP path:
+
+```dotenv
+RESEND_API_KEY=<Resend SMTP/API secret; never copy into evidence>
+STALWART_API_KEY=<Stalwart management JMAP key>
+STALWART_JMAP_SERVICE_TOKEN=<Stalwart mail JMAP bearer token>
+```
+
+The script reads `RESEND_API_KEY` only to require a protected operator secret;
+it never puts that value in process arguments, output, or evidence. Stalwart
+uses its own configured environment-backed secret. The API key may instead be
+provided as one line on stdin with `--resend-key-stdin`; the protected file
+must still contain the two Stalwart credentials.
+
+Run only after an operator has approved the exact sender and external mailbox:
+
+```sh
+sudo sh scripts/certify-resend.sh \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --jmap-url http://10.77.0.2:8080 \
+  --admin-url http://10.77.0.2:8080/api \
+  --account-id <existing-production-stalwart-account-id> \
+  --sender gateway-test@agents.aiat.ca \
+  --external-recipient <operator-external-mailbox> \
+  --approve-one-message \
+  --output /secure/evidence/aiat-smtp-gateway/resend-submission.txt
+```
+
+The JMAP URL must be the home Stalwart service reachable only through the
+certified WireGuard path; do not use a public administration URL. The output
+is sanitized submission evidence and remains pending until the external
+mailbox receives the message and replies. Do not retry after an ambiguous
+submission; preserve the returned submission/provider correlation.
+
+The final `GATE_RESEND_EVIDENCE` file is a separate mode-0600 operator record
+and must contain every field below. It must never contain `RESEND_API_KEY`:
+
+```text
+RESEND_OUTBOUND_RELAY_CERTIFIED=PASS
+RELAY_HOST=smtp.resend.com
+RELAY_PORT=465
+TLS_MODE=implicit
+TLS_VERIFICATION=PASS
+SMTP_AUTHENTICATION=PASS
+AUTH_USERNAME=resend
+PRODUCTION_SENDER=gateway-test@agents.aiat.ca
+EXTERNAL_RECIPIENT=operator@example.net
+STALWART_ROUTE=resend-relay
+DIRECT_MX_OUTBOUND_ENABLED=false
+PROVIDER_MESSAGE_ID=<correlated-Stalwart-or-provider-message-id>
+DELIVERY_STATUS=delivered
+REPLY_RECEIVED=PASS
+CERTIFIED_AT=2026-07-29T20:00:00Z
+```
+
+The validator requires an external recipient, a production sender, exact
+Resend route/TLS settings, a correlated provider ID, delivered status, a
+received reply, and an RFC3339 certification time. It does not accept the
+sanitized pending output as final certification.
+
+Cleanup is limited to the sanitized pending artifact; it does not recall a
+delivered message or alter mail state:
+
+```sh
+sudo rm -f -- /secure/evidence/aiat-smtp-gateway/resend-submission.txt
+```
+
+Leave `OUTBOUND_RELAY_CERTIFIED=false` and `DEFAULT_OUTBOUND_ENABLED=false`
+until the complete evidence record is reviewed and the separately governed
+activation gate passes.
 
 Only after all five gates pass may an operator update the controlled
 environment state and perform the separately authorized activation change.
