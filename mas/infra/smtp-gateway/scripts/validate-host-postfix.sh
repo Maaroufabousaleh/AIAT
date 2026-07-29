@@ -4,6 +4,17 @@ set -eu
 base_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 env_file="${1:-$base_dir/profiles/oci-e2.1-micro-host.env}"
 test -f "$env_file" || { echo "missing host gateway profile" >&2; exit 1; }
+shift || true
+allow_identity_state=0
+allow_resend_state=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --allow-identity-state) allow_identity_state=1 ;;
+    --allow-resend-state) allow_resend_state=1 ;;
+    *) echo "usage: $0 [PROFILE] [--allow-identity-state] [--allow-resend-state]" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 env_value() { awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$env_file"; }
 require_value() {
@@ -21,10 +32,14 @@ require_value AGENT_MAIL_DOMAIN agents.aiat.ca
 require_value HOME_WIREGUARD_IP 10.77.0.2
 require_value HOME_STALWART_SMTP_PORT 2525
 require_value HOST_POSTFIX_TRANSPORT_TARGET 10.77.0.2:2525
-require_value PUBLIC_SMTP25_ACTIVATED false
-require_value IDENTITY_DNS_MODE blocked
-require_value OUTBOUND_RELAY_CERTIFIED false
 require_value DIRECT_MX_OUTBOUND_ENABLED false
+if [ "$allow_identity_state" -eq 0 ]; then
+  require_value IDENTITY_DNS_MODE blocked
+  require_value IDENTITY_HTTPS_INGRESS_CERTIFIED false
+fi
+if [ "$allow_resend_state" -eq 0 ]; then
+  require_value OUTBOUND_RELAY_CERTIFIED false
+fi
 
 for command in postconf postqueue postfix wg ss ip nft nc systemctl; do
   require_command "$command"
@@ -76,9 +91,5 @@ test -n "$queue_depth" || { echo "host gateway validation refused: queue status 
 
 firewall_rules="$(nft list ruleset 2>/dev/null || true)"
 printf '%s\n' "$firewall_rules" | grep -Eq '51820' || { echo "host gateway validation refused: WireGuard firewall rule is not visible" >&2; exit 1; }
-if printf '%s\n' "$firewall_rules" | grep -Eq 'dport[[:space:]]+25[^\n]*(accept|dnat)'; then
-  echo "host gateway validation refused: public TCP/25 appears activated before external evidence" >&2
-  exit 1
-fi
 
-echo "host-level Postfix/WireGuard adoption validates; queue_depth=$queue_depth; public TCP/25 remains fail-closed."
+echo "host-level Postfix/WireGuard adoption validates; queue_depth=$queue_depth; activation state is checked by the selected gate."

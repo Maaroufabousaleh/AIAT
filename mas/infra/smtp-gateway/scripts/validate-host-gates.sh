@@ -20,19 +20,40 @@ require_value DEPLOYMENT_TOPOLOGY smtp_gateway_vps_home_stalwart_resend
 require_value GATEWAY_RUNTIME host_postfix_wireguard
 require_value GATEWAY_RUNTIME_PROFILE oci_e2_1_micro_host
 case "$gate" in
-  internal-relay|external-inbound|dns-mx|identity-https|resend|all) ;;
-  *) echo "usage: $0 PROFILE [internal-relay|external-inbound|dns-mx|identity-https|resend|all]" >&2; exit 2 ;;
+  pre-activation|internal-relay|external-inbound|dns-mx|identity-https|resend|all) ;;
+  *) echo "usage: $0 PROFILE [pre-activation|internal-relay|external-inbound|dns-mx|identity-https|resend|all]" >&2; exit 2 ;;
 esac
 
-check_internal() {
+check_pre_activation() {
+  require_value PUBLIC_SMTP25_ACTIVATED false
+  require_value IDENTITY_DNS_MODE blocked
+  require_value IDENTITY_HTTPS_INGRESS_CERTIFIED false
+  require_value OUTBOUND_RELAY_CERTIFIED false
   "$base_dir/scripts/validate-host-postfix.sh" "$env_file"
+  require_command nft
+  firewall_rules="$(nft list ruleset 2>/dev/null || true)"
+  if printf '%s\n' "$firewall_rules" | grep -Eq 'dport[[:space:]]+25[^\n]*(accept|dnat)'; then
+    echo "pre-activation gate refused: public TCP/25 appears activated before external evidence" >&2
+    exit 1
+  fi
+}
+check_internal() {
+  case "${1:-strict}" in
+    allow-certified-state)
+      "$base_dir/scripts/validate-host-postfix.sh" "$env_file" --allow-identity-state --allow-resend-state
+      ;;
+    strict)
+      "$base_dir/scripts/validate-host-postfix.sh" "$env_file"
+      ;;
+    *) echo "internal-relay gate refused: invalid host validation mode" >&2; exit 2 ;;
+  esac
   marker "$(env_value GATE_INTERNAL_RELAY_EVIDENCE)" GATEWAY_INTERNAL_RELAY_CERTIFIED
 }
 check_external() {
   require_command nc
+  require_value PUBLIC_SMTP25_ACTIVATED true
   target="$(env_value SMTP_GATEWAY_PUBLIC_IP)"
   nc -z -w 15 "$target" 25 || { echo "external-inbound gate refused: public TCP/25 is not reachable" >&2; exit 1; }
-  require_value PUBLIC_SMTP25_ACTIVATED true
   marker "$(env_value GATE_EXTERNAL_INBOUND_EVIDENCE)" EXTERNAL_INBOUND_SMTP_CERTIFIED
 }
 check_dns() {
@@ -61,13 +82,14 @@ check_resend() {
 }
 
 case "$gate" in
+  pre-activation) check_pre_activation ;;
   internal-relay) check_internal ;;
   external-inbound) check_external ;;
   dns-mx) check_dns ;;
   identity-https) check_identity ;;
   resend) check_resend ;;
   all)
-    check_internal
+    check_internal allow-certified-state
     check_external
     check_dns
     check_identity

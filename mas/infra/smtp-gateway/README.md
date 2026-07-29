@@ -203,6 +203,9 @@ not start the Compose profile, and do not replace the existing WireGuard keys.
 Use the adoption audit, then run the individual certification gates:
 
 ```sh
+# Before public SMTP activation, validate the staging state and fail-closed firewall.
+sh scripts/validate-host-gates.sh \
+  /secure/aiat/oci-e2.1-micro-host.env.active pre-activation
 sh scripts/validate-host-gates.sh \
   /secure/aiat/oci-e2.1-micro-host.env.active internal-relay
 sh scripts/validate-host-gates.sh \
@@ -217,10 +220,14 @@ sh scripts/validate-host-gates.sh \
   /secure/aiat/oci-e2.1-micro-host.env.active all
 ```
 
-Each command fails closed unless its own evidence file contains the matching
-gate marker. The external-inbound command never opens TCP/25; the operator
-must separately authorize the OCI/network/firewall change and then provide
-external SMTP evidence. The DNS/MX command does not create records. The
+The `pre-activation` command is the only gate that requires
+`PUBLIC_SMTP25_ACTIVATED=false` and rejects a public TCP/25 firewall rule. The
+`internal-relay` command validates the immutable host path and remains valid
+whether public SMTP activation is false or true. Each certification command
+fails closed unless its own evidence file contains the matching gate marker.
+The external-inbound command never opens TCP/25; the operator must separately
+authorize the network/firewall change and then provide external SMTP evidence.
+The DNS/MX command does not create records. The
 identity command refuses while `IDENTITY_DNS_MODE=blocked`, so
 `identity.aiat.ca` remains absent until an HTTPS reverse proxy is configured
 and certified. The Resend command verifies TCP/465 and requires live relay
