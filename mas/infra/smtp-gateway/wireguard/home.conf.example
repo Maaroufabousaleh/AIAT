@@ -1,0 +1,11 @@
+# Install as /etc/wireguard/aiat-gateway.conf on the home AIAT host.
+# Generate the private key outside the repository; never commit it.
+[Interface]
+Address = 10.77.0.2/30
+PrivateKey = <HOME_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <GATEWAY_PUBLIC_KEY>
+Endpoint = <SMTP_GATEWAY_PUBLIC_IP>:51820
+AllowedIPs = 10.77.0.1/32
+PersistentKeepalive = 25

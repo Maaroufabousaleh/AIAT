@@ -1,0 +1,31 @@
+# Review and load with nft -f after replacing placeholders. This is a
+# restrictive baseline; retain only operator-approved SSH source CIDRs.
+define public_if = "<GATEWAY_PUBLIC_INTERFACE>"
+define wg_if = "aiat-gateway"
+define home_wg_ip = 10.77.0.2
+define home_peer_ip = <HOME_PUBLIC_IP>
+
+table inet aiat_gateway_filter {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif "lo" accept
+    ct state established,related accept
+    ip protocol icmp accept
+    iifname $public_if tcp dport { 25, 80, 443 } accept
+    iifname $public_if udp dport 51820 ip saddr $home_peer_ip accept
+    iifname $wg_if accept
+    iifname $public_if tcp dport 22 ip saddr <OPERATOR_ADMIN_CIDR> accept
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    ct state established,related accept
+    iifname $wg_if ip daddr $home_wg_ip tcp dport { 25, 8080, 8010 } accept
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+    ip daddr $home_wg_ip tcp dport { 25, 8080, 8010 } accept
+    ip daddr 0.0.0.0/0 tcp dport 25 reject with icmpx type admin-prohibited
+  }
+}

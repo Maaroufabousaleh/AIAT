@@ -1,0 +1,11 @@
+# Install as /etc/wireguard/aiat-gateway.conf on the public gateway VPS.
+# Generate the private key outside the repository; never commit it.
+[Interface]
+Address = 10.77.0.1/30
+ListenPort = 51820
+PrivateKey = <GATEWAY_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <HOME_WIREGUARD_PUBLIC_KEY>
+AllowedIPs = 10.77.0.2/32
+PersistentKeepalive = 25

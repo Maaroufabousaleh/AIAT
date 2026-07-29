@@ -1,0 +1,18 @@
+# Optional constrained Docker profile for a 1 OCPU / 1 GiB gateway.
+# The supplied live deployment is host-level Postfix and must not run this
+# profile concurrently with the existing host Postfix listener on TCP/25.
+services:
+  postfix-gateway:
+    profiles: [oci-e2-1-micro]
+    mem_limit: 384m
+    cpus: "0.50"
+    pids_limit: 128
+
+  # Caddy is disabled until identity HTTPS ingress is separately certified.
+  ingress:
+    profiles: [oci-e2-1-micro-disabled]
+
+  # Log sanitization is nonessential for the host-level adoption path; host
+  # evidence collection uses a filter without starting another container.
+  log-sanitizer:
+    profiles: [oci-e2-1-micro-disabled]

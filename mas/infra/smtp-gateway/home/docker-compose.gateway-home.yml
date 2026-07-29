@@ -1,0 +1,16 @@
+services:
+  # Compose !override removes the direct-self-hosting public/loopback port
+  # list and binds only to the home host's WireGuard address.
+  stalwart:
+    ports: !override
+      - "${HOME_WIREGUARD_IP:?HOME_WIREGUARD_IP is required}:25:25"
+      - "${HOME_WIREGUARD_IP:?HOME_WIREGUARD_IP is required}:8080:8080"
+
+  identity-service:
+    ports: !override
+      - "${HOME_WIREGUARD_IP:?HOME_WIREGUARD_IP is required}:8010:8010"
+
+  # Public TLS terminates on the gateway. The home Caddy service is not
+  # started in gateway mode and therefore has no home-router listener.
+  ingress:
+    profiles: [gateway-home-disabled]
