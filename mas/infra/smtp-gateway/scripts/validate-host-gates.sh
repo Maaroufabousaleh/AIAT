@@ -19,7 +19,7 @@ require_evidence_value() {
   file="$1"; key="$2"; expected="$3"
   actual="$(evidence_value "$file" "$key")"
   test "$actual" = "$expected" || {
-    echo "external-inbound gate refused: $key must be $expected in $file" >&2
+    echo "$gate gate refused: $key must be $expected in $file" >&2
     exit 1
   }
 }
@@ -27,7 +27,7 @@ require_evidence_pattern() {
   file="$1"; key="$2"; pattern="$3"
   actual="$(evidence_value "$file" "$key")"
   printf '%s\n' "$actual" | grep -Eq "$pattern" || {
-    echo "external-inbound gate refused: malformed or missing $key in $file" >&2
+    echo "$gate gate refused: malformed or missing $key in $file" >&2
     exit 1
   }
 }
@@ -177,9 +177,24 @@ check_resend() {
   esac
   require_evidence_value "$evidence_file" STALWART_ROUTE resend-relay
   require_evidence_value "$evidence_file" DIRECT_MX_OUTBOUND_ENABLED false
-  require_evidence_pattern "$evidence_file" PROVIDER_MESSAGE_ID '^[[:print:]]{5,}$'
+  require_evidence_pattern "$evidence_file" STALWART_SUBMISSION_ID '^[[:print:]]{5,}$'
+  resend_provider_message_id="$(evidence_value "$evidence_file" RESEND_PROVIDER_MESSAGE_ID)"
+  printf '%s\n' "$resend_provider_message_id" | grep -Eq '^[[:print:]]{5,}$' || {
+    echo "resend gate refused: missing actual RESEND_PROVIDER_MESSAGE_ID in $evidence_file" >&2
+    exit 1
+  }
+  stalwart_submission_id="$(evidence_value "$evidence_file" STALWART_SUBMISSION_ID)"
+  test "$resend_provider_message_id" != "$stalwart_submission_id" || {
+    echo "resend gate refused: RESEND_PROVIDER_MESSAGE_ID must not be the local STALWART_SUBMISSION_ID" >&2
+    exit 1
+  }
+  require_evidence_pattern "$evidence_file" ORIGINAL_MESSAGE_ID '^<[^[:space:]<>]+>$'
+  require_evidence_pattern "$evidence_file" EXTERNAL_RECEIPT_ID '^[[:print:]]{5,}$'
   require_evidence_value "$evidence_file" DELIVERY_STATUS delivered
   require_evidence_value "$evidence_file" REPLY_RECEIVED PASS
+  require_evidence_pattern "$evidence_file" REPLY_MESSAGE_ID '^<[^[:space:]<>]+>$'
+  require_evidence_value "$evidence_file" REPLY_IN_REPLY_TO "$(evidence_value "$evidence_file" ORIGINAL_MESSAGE_ID)"
+  require_evidence_value "$evidence_file" REPLY_TOKEN_VERIFIED PASS
   require_evidence_pattern "$evidence_file" CERTIFIED_AT '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
 }
 

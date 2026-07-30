@@ -113,13 +113,94 @@ def test_host_adoption_has_separate_gate_and_evidence_commands() -> None:
 
 def test_resend_certification_script_is_one_message_and_secret_safe() -> None:
     script = (GATEWAY / "scripts" / "certify-resend.sh").read_text(encoding="utf-8")
+    preflight = (GATEWAY / "scripts" / "preflight-resend-certification.sh").read_text(encoding="utf-8")
+    completion = (GATEWAY / "scripts" / "complete-resend-certification.sh").read_text(encoding="utf-8")
     assert "--approve-one-message" in script
     assert "EmailSubmission/set" in script
-    assert "verify-stalwart-relay.sh" in script
-    assert "openssl s_client -connect smtp.resend.com:465" in script
-    assert "RESEND_API_KEY" in script
-    assert 'echo "$resend_api_key"' not in script
+    assert "verify-stalwart-relay.sh" in preflight
+    assert "openssl s_client -connect smtp.resend.com:465" in preflight
+    assert "test \"$container_fingerprint\" = \"$local_fingerprint\"" in preflight
+    assert "RESEND_PROVIDER_MESSAGE_ID=PENDING_EXTERNAL_PROVIDER_CORRELATION" in script
+    assert "RESEND_PROVIDER_MESSAGE_ID=$stalwart_submission_id" not in script
+    assert "--reply-token-stdin" in completion
+    assert "RESEND_API_KEY" in preflight
+    assert 'echo "$resend_api_key"' not in preflight
     assert "RESEND_API_KEY=NOT_RECORDED" not in script
+
+
+def test_resend_certification_is_local_loopback_only_and_never_uses_wireguard_http() -> None:
+    scripts = "\n".join(
+        (GATEWAY / "scripts" / name).read_text(encoding="utf-8")
+        for name in (
+            "preflight-resend-certification.sh",
+            "configure-stalwart-resend-route.sh",
+            "certify-resend.sh",
+        )
+    )
+    assert "http://127.0.0.1:18080" in scripts
+    assert "10.77.0.2:8080" not in scripts
+    assert "10.77.0.1:8080" not in scripts
+    assert 'test "$jmap_url" = http://127.0.0.1:18080' in scripts
+
+
+def _write_resend_secret_file(path: Path) -> Path:
+    path.write_text(
+        "RESEND_API_KEY=re_test_key_long_enough_to_be_rejected\n"
+        "STALWART_API_KEY=admin-test-token\n"
+        "STALWART_JMAP_SERVICE_TOKEN=jmap-test-token\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return path
+
+
+def _run_resend_preflight(profile: Path, secret: Path, stubs: Path, *options: str) -> subprocess.CompletedProcess[str]:
+    script = shlex.quote(_wsl_path(GATEWAY / "scripts" / "preflight-resend-certification.sh"))
+    profile_path = shlex.quote(_wsl_path(profile))
+    secret_path = shlex.quote(_wsl_path(secret))
+    stub_path = shlex.quote(_wsl_path(stubs))
+    quoted_options = " ".join(shlex.quote(option) for option in options)
+    command = (
+        f"PATH={stub_path}:/usr/bin:/bin; export PATH; exec {script} {profile_path} "
+        f"--secret-file {secret_path} --stalwart-container stalwart-test "
+        f"--account-id account-test --sender gateway-test@agents.aiat.ca {quoted_options}"
+    )
+    return subprocess.run(
+        ["bash", "-c", command],
+        cwd=GATEWAY,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_resend_preflight_refuses_wireguard_http_url(tmp_path: Path) -> None:
+    secret = _write_resend_secret_file(tmp_path / "resend.env")
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    result = _run_resend_preflight(
+        GATEWAY / ".env.smtp-gateway.example", secret, stubs,
+        "--jmap-url", "http://10.77.0.2:8080",
+    )
+    assert result.returncode != 0
+    assert "JMAP must remain local" in result.stderr
+
+
+def test_resend_preflight_rejects_a_sufficient_length_key_when_container_source_differs(tmp_path: Path) -> None:
+    secret = _write_resend_secret_file(tmp_path / "resend.env")
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    _write_stub(stubs, "docker", """
+case "${1:-}" in
+  inspect) printf '%s\\n' true ;;
+  exec) printf '%s\\n' '0000000000000000000000000000000000000000000000000000000000000000' ;;
+  *) exit 1 ;;
+esac
+""")
+    _write_stub(stubs, "ss", "printf '%s\\n' 'LISTEN 0 100 127.0.0.1:18080 0.0.0.0:*'")
+    result = _run_resend_preflight(GATEWAY / ".env.smtp-gateway.example", secret, stubs)
+    assert result.returncode != 0
+    assert "does not match the running Stalwart secret source" in result.stderr
 
 
 def test_no_private_keys_are_in_templates() -> None:
@@ -138,6 +219,8 @@ def _write_stub(directory: Path, name: str, body: str) -> None:
 
 def _wsl_path(path: Path) -> str:
     windows_path = path.resolve().as_posix()
+    if ":" not in windows_path:
+        return windows_path
     drive, remainder = windows_path.split(":", 1)
     return f"/mnt/{drive.lower()}{remainder}"
 
@@ -209,9 +292,15 @@ def _host_gate_harness(tmp_path: Path, *, public_smtp25: str = "false",
                     "EXTERNAL_RECIPIENT=operator@example.net\n"
                     "STALWART_ROUTE=resend-relay\n"
                     "DIRECT_MX_OUTBOUND_ENABLED=false\n"
-                    "PROVIDER_MESSAGE_ID=re_123456789\n"
+                    "STALWART_SUBMISSION_ID=submission_123456789\n"
+                    "RESEND_PROVIDER_MESSAGE_ID=re_123456789\n"
+                    "ORIGINAL_MESSAGE_ID=<aiat-cert-123@example.aiat.ca>\n"
+                    "EXTERNAL_RECEIPT_ID=mailbox-receipt-123456\n"
                     "DELIVERY_STATUS=delivered\n"
                     "REPLY_RECEIVED=PASS\n"
+                    "REPLY_MESSAGE_ID=<reply-123@example.net>\n"
+                    "REPLY_IN_REPLY_TO=<aiat-cert-123@example.aiat.ca>\n"
+                    "REPLY_TOKEN_VERIFIED=PASS\n"
                     "CERTIFIED_AT=2026-07-29T20:00:00Z\n"
                 ),
             }[key].encode("utf-8")
@@ -338,6 +427,80 @@ def test_resend_complete_evidence_passes_after_tls_preliminary_check(tmp_path: P
     assert result.returncode == 0, result.stderr
 
 
+def test_resend_pending_submission_record_is_not_final_evidence(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    (tmp_path / "evidence" / "resend.txt").write_text(
+        "\n".join((
+            "RESEND_CERTIFICATION_SUBMISSION=PASS",
+            "CERTIFICATION_STATE=PENDING_EXTERNAL_CONFIRMATION",
+            "RESEND_PROVIDER_MESSAGE_ID=PENDING_EXTERNAL_PROVIDER_CORRELATION",
+            "DELIVERY_STATUS=PENDING_EXTERNAL_RECEIPT",
+            "REPLY_RECEIVED=PENDING_EXTERNAL_REPLY",
+        )) + "\n",
+        encoding="utf-8",
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "RESEND_OUTBOUND_RELAY_CERTIFIED=PASS is missing" in result.stderr
+
+
+def test_resend_rejects_local_jmap_submission_id_as_provider_id(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    evidence = tmp_path / "evidence" / "resend.txt"
+    evidence.write_text(
+        evidence.read_text(encoding="utf-8").replace(
+            "RESEND_PROVIDER_MESSAGE_ID=re_123456789",
+            "RESEND_PROVIDER_MESSAGE_ID=submission_123456789",
+        ),
+        encoding="utf-8",
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "must not be the local STALWART_SUBMISSION_ID" in result.stderr
+
+
+def test_resend_rejects_missing_actual_provider_correlation(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    evidence = tmp_path / "evidence" / "resend.txt"
+    evidence.write_text(
+        evidence.read_text(encoding="utf-8").replace(
+            "RESEND_PROVIDER_MESSAGE_ID=re_123456789\n", "",
+        ),
+        encoding="utf-8",
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "missing actual RESEND_PROVIDER_MESSAGE_ID" in result.stderr
+
+
+def test_resend_rejects_missing_external_delivery(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    evidence = tmp_path / "evidence" / "resend.txt"
+    evidence.write_text(
+        evidence.read_text(encoding="utf-8").replace(
+            "DELIVERY_STATUS=delivered", "DELIVERY_STATUS=PENDING_EXTERNAL_RECEIPT",
+        ),
+        encoding="utf-8",
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "DELIVERY_STATUS must be delivered" in result.stderr
+
+
+def test_resend_rejects_missing_correlated_reply(tmp_path: Path) -> None:
+    profile, _, stubs = _host_gate_harness(tmp_path)
+    evidence = tmp_path / "evidence" / "resend.txt"
+    evidence.write_text(
+        evidence.read_text(encoding="utf-8").replace(
+            "REPLY_RECEIVED=PASS", "REPLY_RECEIVED=PENDING_EXTERNAL_REPLY",
+        ),
+        encoding="utf-8",
+    )
+    result = _run_host_gate(profile, "resend", stubs)
+    assert result.returncode != 0
+    assert "REPLY_RECEIVED must be PASS" in result.stderr
+
+
 def test_resend_missing_evidence_fails(tmp_path: Path) -> None:
     profile, _, stubs = _host_gate_harness(tmp_path)
     (tmp_path / "evidence" / "resend.txt").unlink()
@@ -370,9 +533,15 @@ def test_resend_malformed_evidence_fails(tmp_path: Path) -> None:
         b"EXTERNAL_RECIPIENT=operator@example.net\n"
         b"STALWART_ROUTE=mx\n"
         b"DIRECT_MX_OUTBOUND_ENABLED=true\n"
-        b"PROVIDER_MESSAGE_ID=forged-provider-id\n"
+        b"STALWART_SUBMISSION_ID=forged-submission-id\n"
+        b"RESEND_PROVIDER_MESSAGE_ID=forged-provider-id\n"
+        b"ORIGINAL_MESSAGE_ID=<forged@example.aiat.ca>\n"
+        b"EXTERNAL_RECEIPT_ID=forged-receipt-id\n"
         b"DELIVERY_STATUS=delivered\n"
         b"REPLY_RECEIVED=PASS\n"
+        b"REPLY_MESSAGE_ID=<reply@example.net>\n"
+        b"REPLY_IN_REPLY_TO=<forged@example.aiat.ca>\n"
+        b"REPLY_TOKEN_VERIFIED=PASS\n"
         b"CERTIFIED_AT=not-a-timestamp\n"
     )
     result = _run_host_gate(profile, "resend", stubs)

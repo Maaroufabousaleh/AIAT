@@ -260,17 +260,21 @@ requires the production hostname, TCP/25, a `250 2.0.0` acceptance, an
 
 ## Safe one-message Resend certification
 
-The repository includes `scripts/certify-resend.sh`. It is an
-operator-approved, one-message helper; it does not enable outbound mail,
-change `DEFAULT_OUTBOUND_ENABLED`, modify Stalwart configuration, or call the
-Resend API. It first verifies the exact Stalwart `resend-relay` route, rejects
-Mx/direct routes, verifies the `smtp.resend.com:465` certificate, and then
-submits exactly one message through Stalwart JMAP. The route's
-environment-backed Resend credential is exercised by the real Stalwart SMTP
-submission.
+Certification runs locally in the home WSL instance only. The only supported
+URLs are `http://127.0.0.1:18080` for JMAP and
+`http://127.0.0.1:18080/api` for management. It never exposes JMAP or Stalwart
+administration over WireGuard, the VPS, or the public Internet.
 
-Create this root-owned, mode-0600 secret file outside Git on the host that has
-the certified Stalwart JMAP path:
+Provision the credentials first, using Stalwart's local bootstrap/admin path:
+
+- Create a restricted management API key for route read/write only.
+- Create a separate mail/JMAP service credential that can use the approved
+  production sender account.
+- Add the exact protected Resend secret to Stalwart's existing environment and
+  restart/reload only under a separately authorized Stalwart maintenance
+  procedure. Do not put the value in route JSON.
+
+Store the credentials in this root-owned, mode-0600 file outside Git:
 
 ```dotenv
 RESEND_API_KEY=<Resend SMTP/API secret; never copy into evidence>
@@ -278,11 +282,56 @@ STALWART_API_KEY=<Stalwart management JMAP key>
 STALWART_JMAP_SERVICE_TOKEN=<Stalwart mail JMAP bearer token>
 ```
 
-The script reads `RESEND_API_KEY` only to require a protected operator secret;
-it never puts that value in process arguments, output, or evidence. Stalwart
-uses its own configured environment-backed secret. The API key may instead be
-provided as one line on stdin with `--resend-key-stdin`; the protected file
-must still contain the two Stalwart credentials.
+The local preflight compares non-reversible SHA-256 fingerprints in memory:
+the protected `RESEND_API_KEY` versus the `RESEND_API_KEY` in the exact running
+Stalwart container. It records only `RELAY_SECRET_SOURCE_MATCH=PASS`, never a
+key or fingerprint. It also checks the local listener, both credentials, the
+production sender, exactly one environment-backed `resend-relay`, no Mx/direct
+route, and implicit TLS on `smtp.resend.com:465`.
+
+```sh
+sudo sh scripts/preflight-resend-certification.sh \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --stalwart-container <running-stalwart-container> \
+  --account-id <existing-production-stalwart-account-id> \
+  --sender gateway-test@agents.aiat.ca
+```
+
+If the route is not yet configured, make a configuration backup before the
+explicit apply operation. These commands alter only Stalwart remote route and
+outbound-strategy objects; they do not recreate containers, volumes, accounts,
+mailboxes, or messages.
+
+```sh
+sudo sh scripts/configure-stalwart-resend-route.sh backup \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --stalwart-container <running-stalwart-container> \
+  --backup /secure/rollback/stalwart-remote-route.json
+
+sudo sh scripts/configure-stalwart-resend-route.sh apply \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --stalwart-container <running-stalwart-container> \
+  --backup /secure/rollback/stalwart-remote-route.json
+
+sudo sh scripts/configure-stalwart-resend-route.sh verify \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --stalwart-container <running-stalwart-container> \
+  --backup /secure/rollback/stalwart-remote-route.json
+```
+
+Rollback restores only the backed-up remote route/strategy objects:
+
+```sh
+sudo sh scripts/configure-stalwart-resend-route.sh rollback \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --stalwart-container <running-stalwart-container> \
+  --backup /secure/rollback/stalwart-remote-route.json
+```
 
 Run only after an operator has approved the exact sender and external mailbox:
 
@@ -290,8 +339,7 @@ Run only after an operator has approved the exact sender and external mailbox:
 sudo sh scripts/certify-resend.sh \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --jmap-url http://10.77.0.2:8080 \
-  --admin-url http://10.77.0.2:8080/api \
+  --stalwart-container <running-stalwart-container> \
   --account-id <existing-production-stalwart-account-id> \
   --sender gateway-test@agents.aiat.ca \
   --external-recipient <operator-external-mailbox> \
@@ -299,11 +347,27 @@ sudo sh scripts/certify-resend.sh \
   --output /secure/evidence/aiat-smtp-gateway/resend-submission.txt
 ```
 
-The JMAP URL must be the home Stalwart service reachable only through the
-certified WireGuard path; do not use a public administration URL. The output
-is sanitized submission evidence and remains pending until the external
-mailbox receives the message and replies. Do not retry after an ambiguous
-submission; preserve the returned submission/provider correlation.
+This sends exactly one message and writes a pending record. Its
+`STALWART_SUBMISSION_ID` is only a local JMAP submission identifier;
+`RESEND_PROVIDER_MESSAGE_ID` remains pending until actual Resend/provider
+correlation is available. Do not retry after an ambiguous submission.
+
+After the external mailbox has received the original message, a real provider
+correlation has been obtained, and a reply containing the one-time token has
+been received, create the final evidence. Supply the reply token through stdin
+so it is not placed in process arguments:
+
+```sh
+sudo sh scripts/complete-resend-certification.sh \
+  /secure/evidence/aiat-smtp-gateway/resend-submission.txt \
+  --output /secure/evidence/aiat-smtp-gateway/resend.txt \
+  --resend-provider-message-id <actual-resend-provider-id> \
+  --external-receipt-id <external-mailbox-receipt-correlation> \
+  --reply-message-id '<reply-rfc5322-message-id>' \
+  --reply-in-reply-to '<original-rfc5322-message-id>' \
+  --reply-token-stdin \
+  --approve-completion < /secure/evidence/aiat-smtp-gateway/reply-token.txt
+```
 
 The final `GATE_RESEND_EVIDENCE` file is a separate mode-0600 operator record
 and must contain every field below. It must never contain `RESEND_API_KEY`:
@@ -320,16 +384,23 @@ PRODUCTION_SENDER=gateway-test@agents.aiat.ca
 EXTERNAL_RECIPIENT=operator@example.net
 STALWART_ROUTE=resend-relay
 DIRECT_MX_OUTBOUND_ENABLED=false
-PROVIDER_MESSAGE_ID=<correlated-Stalwart-or-provider-message-id>
+STALWART_SUBMISSION_ID=<local-jmap-submission-id>
+RESEND_PROVIDER_MESSAGE_ID=<actual-resend-provider-id>
+ORIGINAL_MESSAGE_ID=<original-rfc5322-message-id>
+EXTERNAL_RECEIPT_ID=<external-mailbox-receipt-correlation>
 DELIVERY_STATUS=delivered
 REPLY_RECEIVED=PASS
+REPLY_MESSAGE_ID=<reply-rfc5322-message-id>
+REPLY_IN_REPLY_TO=<original-rfc5322-message-id>
+REPLY_TOKEN_VERIFIED=PASS
 CERTIFIED_AT=2026-07-29T20:00:00Z
 ```
 
 The validator requires an external recipient, a production sender, exact
-Resend route/TLS settings, a correlated provider ID, delivered status, a
-received reply, and an RFC3339 certification time. It does not accept the
-sanitized pending output as final certification.
+Resend route/TLS settings, separate local/provider IDs, external receipt,
+delivered status, a correlated reply, the verified reply token, and an RFC3339
+certification time. It rejects pending records, a local JMAP ID reused as a
+provider ID, or any incomplete completion evidence.
 
 Cleanup is limited to the sanitized pending artifact; it does not recall a
 delivered message or alter mail state:

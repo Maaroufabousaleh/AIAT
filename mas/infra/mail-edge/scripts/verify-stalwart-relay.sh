@@ -19,7 +19,7 @@ strategy_payload='{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"me
 routes="$(jmap "$routes_payload")"
 strategy="$(jmap "$strategy_payload")"
 printf '%s' "$routes" | jq -e '[.methodResponses[0][1].list[]? | select(."@type" == "Mx" or (."@type" == "Relay" and .name != "resend-relay"))] | length == 0' >/dev/null || { echo "an unapproved remote-delivery route remains configured" >&2; exit 1; }
-printf '%s' "$routes" | jq -e '[.methodResponses[0][1].list[]? | select(.name == "resend-relay" and ."@type" == "Relay" and .address == "smtp.resend.com" and .port == 465 and .implicitTls == true and .allowInvalidCerts == false)] | length == 1' >/dev/null || { echo "exactly one safe Resend relay route is required" >&2; exit 1; }
+printf '%s' "$routes" | jq -e '[.methodResponses[0][1].list[]? | select(.name == "resend-relay" and ."@type" == "Relay" and .address == "smtp.resend.com" and .port == 465 and .implicitTls == true and .allowInvalidCerts == false and .authUsername == "resend" and .authSecret == {"@type":"EnvironmentVariable","variableName":"RESEND_API_KEY"})] | length == 1' >/dev/null || { echo "exactly one safe environment-backed Resend relay route is required" >&2; exit 1; }
 expected_route="'resend-relay'"
 printf '%s' "$strategy" | jq -e --arg expected "$expected_route" '.methodResponses[0][1].list[0].route.else == $expected' >/dev/null || { echo "remote strategy does not select resend-relay" >&2; exit 1; }
 echo "Stalwart remote delivery is relay-only and direct MX is disabled."

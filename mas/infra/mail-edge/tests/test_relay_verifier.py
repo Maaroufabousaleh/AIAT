@@ -25,6 +25,11 @@ def _route(name: str, kind: str = "Relay") -> dict[str, Any]:
         "port": 465,
         "implicitTls": True,
         "allowInvalidCerts": False,
+        "authUsername": "resend",
+        "authSecret": {
+            "@type": "EnvironmentVariable",
+            "variableName": "RESEND_API_KEY",
+        },
     }
 
 
@@ -96,3 +101,11 @@ def test_relay_verifier_rejects_every_other_remote_route(
     result = _run_verifier([_route("resend-relay"), extra_route])
     assert result.returncode != 0
     assert "unapproved remote-delivery route" in result.stderr
+
+
+def test_relay_verifier_rejects_non_environment_backed_secret() -> None:
+    route = _route("resend-relay")
+    route["authSecret"] = {"@type": "String", "value": "not-a-secret"}
+    result = _run_verifier([route])
+    assert result.returncode != 0
+    assert "environment-backed Resend relay" in result.stderr
