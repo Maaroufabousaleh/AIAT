@@ -189,6 +189,114 @@ def test_successful_recreation_preserves_definition_and_adds_only_secret() -> No
     assert before["container_id"] != after["container_id"]
 
 
+def test_legacy_hashed_labels_compare_with_raw_label_values() -> None:
+    before = snapshot()
+    after = snapshot(secret="re_test_secret_value_long_enough")
+    after["definition"]["labels"] = {
+        "com.docker.compose.project": "mas",
+        "com.docker.compose.service": "stalwart",
+        "aiat.role": "mail-authority",
+    }
+    migration.compare_preserved(before, after, expect_secret=True)
+
+
+def test_expected_compose_metadata_label_changes_are_ignored() -> None:
+    before_raw = inspect_fixture()
+    before_raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = "base.yml"
+    after_raw = inspect_fixture(secret="re_test_secret_value_long_enough")
+    after_raw["Config"]["Labels"].update(
+        {
+            "com.docker.compose.config-hash": "d" * 64,
+            "com.docker.compose.project.config_files": "base.yml,secret.yml",
+            "com.docker.compose.replace": "old-container",
+        }
+    )
+    migration.compare_preserved(
+        migration.snapshot_from_inspect(before_raw),
+        migration.snapshot_from_inspect(after_raw),
+        expect_secret=True,
+    )
+
+
+def test_unexpected_configured_label_change_is_rejected() -> None:
+    before = snapshot()
+    after_raw = inspect_fixture(secret="re_test_secret_value_long_enough")
+    after_raw["Config"]["Labels"]["aiat.role"] = "changed"
+    after = migration.snapshot_from_inspect(after_raw)
+    with pytest.raises(migration.Refused, match="configured labels changed"):
+        migration.compare_preserved(before, after, expect_secret=True)
+
+
+def test_already_recreated_healthy_state_is_recoverable() -> None:
+    before = snapshot()
+    after_raw = inspect_fixture(secret="re_test_secret_value_long_enough")
+    after_raw["Id"] = "d" * 64
+    after = migration.snapshot_from_inspect(after_raw)
+    migration.validate_recovery_state(before, after)
+
+
+@pytest.mark.parametrize(
+    ("field", "mutation", "message"),
+    [
+        ("image_ref", lambda value: value.update(image_ref="bad"), "image digest changed"),
+        (
+            "mounts",
+            lambda value: value["mounts"][1].update(source="/changed"),
+            "volume or mount source changed",
+        ),
+        (
+            "ports",
+            lambda value: value["ports"]["25/tcp"][0].update(host_port="9999"),
+            "published ports changed",
+        ),
+        (
+            "networks",
+            lambda value: value["networks"].append("wrong"),
+            "container networks changed",
+        ),
+    ],
+)
+def test_resume_refuses_changed_preserved_state(field, mutation, message) -> None:
+    before = snapshot()
+    after_raw = inspect_fixture(secret="re_test_secret_value_long_enough")
+    after_raw["Id"] = "d" * 64
+    after = migration.snapshot_from_inspect(after_raw)
+    mutation(after["definition"])
+    with pytest.raises(migration.Refused, match=message):
+        migration.validate_recovery_state(before, after)
+
+
+def test_resume_refuses_missing_secret() -> None:
+    before = snapshot()
+    after_raw = inspect_fixture()
+    after_raw["Id"] = "d" * 64
+    after = migration.snapshot_from_inspect(after_raw)
+    with pytest.raises(migration.Refused, match="presence"):
+        migration.validate_recovery_state(before, after)
+
+
+def test_resume_refuses_secret_source_mismatch() -> None:
+    class SecretRunner:
+        def run(self, _args):
+            return migration.sha256_text("different-protected-secret")
+
+    with pytest.raises(migration.Refused, match="does not match the protected source"):
+        migration.secret_matches_container(
+            SecretRunner(),
+            "mas-stalwart-1",
+            "operator-approved-protected-secret",
+        )
+
+
+def test_second_apply_refuses_to_recreate_again() -> None:
+    before = snapshot()
+    after_raw = inspect_fixture(secret="re_test_secret_value_long_enough")
+    after_raw["Id"] = "d" * 64
+    after = migration.snapshot_from_inspect(after_raw)
+    with pytest.raises(migration.Refused, match="already recreated"):
+        migration.validate_apply_start(before, after)
+
+
 def test_rollback_preserves_definition_and_removes_secret() -> None:
     original = snapshot()
     restored_raw = inspect_fixture()

@@ -371,9 +371,22 @@ metadata. All configured labels must remain unchanged:
 stalwart_migrate apply --approve-recreate-stalwart
 ```
 
+If the approved recreation completed but the command stopped during
+post-recreation checks, do not run `apply` again. Resume with the
+verification-only recovery action. It requires the existing manifest and
+dry-run artifact, a different healthy container ID, the approved Compose
+config hash, and the injected secret; it never invokes Compose `up`:
+
+```sh
+stalwart_migrate recover \
+  --verification-secret-file /etc/aiat/resend-certification.env \
+  --account-id <existing-gateway-test-stalwart-account-id>
+```
+
 Verify the preserved image, mounts, ports, networks, labels, restart policy,
 health, key-source fingerprint, production domain/account, local SMTP/JMAP,
-and WireGuard-only SMTP forward:
+and WireGuard-only SMTP forward. `recover` and `verify` share the same strict
+checks and write `post-migration-success.json` only after every check passes:
 
 ```sh
 stalwart_migrate verify \
@@ -381,9 +394,10 @@ stalwart_migrate verify \
   --account-id <existing-gateway-test-stalwart-account-id>
 ```
 
-If verification fails before route application, restore the original Compose
-definition without the secret. If the route has already been applied, roll it
-back first with the route rollback command below:
+Until verification succeeds, restore the original Compose definition without
+the secret with the following command. Successful verification closes this
+rollback window. If the route has already been applied, roll it back first
+with the route rollback command below:
 
 ```sh
 stalwart_migrate rollback --approve-rollback

@@ -30,6 +30,8 @@ INTERNAL_COMPOSE_LABELS = {
     "com.docker.compose.project.config_files",
     "com.docker.compose.replace",
 }
+HASH_VALUE = re.compile(r"^[0-9a-f]{64}$")
+SUCCESS_ARTIFACT = "post-migration-success.json"
 
 
 class Refused(RuntimeError):
@@ -107,6 +109,23 @@ def label_hashes(labels: dict[str, str]) -> dict[str, str]:
         for key, value in sorted(labels.items())
         if key not in INTERNAL_COMPOSE_LABELS
     }
+
+
+def normalized_label_hashes(labels: dict[str, Any]) -> dict[str, str]:
+    """Normalize both legacy raw-label maps and sanitized hash maps."""
+    values: dict[str, str] = {}
+    for key, raw_value in sorted(labels.items()):
+        if key in INTERNAL_COMPOSE_LABELS:
+            continue
+        value = str(raw_value)
+        values[key] = value.lower() if HASH_VALUE.fullmatch(value.lower()) else sha256_text(value)
+    return values
+
+
+def normalized_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    value = dict(definition)
+    value["labels"] = normalized_label_hashes(value.get("labels") or {})
+    return value
 
 
 def normalized_mounts(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -251,6 +270,8 @@ def compare_preserved(
 ) -> None:
     if after["resend_secret_present"] != expect_secret:
         raise Refused("RESEND_API_KEY presence does not match the requested migration state")
+    before_definition = normalized_definition(before["definition"])
+    after_definition = normalized_definition(after["definition"])
     for field, message in (
         ("image_ref", "image digest changed"),
         ("image_id", "image identity changed"),
@@ -262,9 +283,9 @@ def compare_preserved(
         ("labels", "configured labels changed"),
         ("healthcheck", "container healthcheck changed"),
     ):
-        if before["definition"][field] != after["definition"][field]:
+        if before_definition[field] != after_definition[field]:
             raise Refused(message)
-    if before["definition_fingerprint"] != after["definition_fingerprint"]:
+    if canonical_hash(before_definition) != canonical_hash(after_definition):
         raise Refused("container definition changed outside the approved secret injection")
     if require_health and (after["health"] != before["health"] or after["health"] != "healthy"):
         raise Refused("container health was not preserved")
@@ -462,6 +483,10 @@ def dry_run_path(args: argparse.Namespace) -> Path:
     return args.backup_dir / "dry-run.json"
 
 
+def success_path(args: argparse.Namespace) -> Path:
+    return args.backup_dir / SUCCESS_ARTIFACT
+
+
 def read_backup(args: argparse.Namespace) -> dict[str, Any]:
     value = load_json(backup_path(args))
     if value.get("schema") != 1 or value.get("container") != args.container:
@@ -568,15 +593,35 @@ def require_dry_run(args: argparse.Namespace, backup: dict[str, Any]) -> dict[st
     return dry_run
 
 
+def validate_apply_start(before: dict[str, Any], current: dict[str, Any]) -> None:
+    if current["container_id"] != before["container_id"] or current["resend_secret_present"]:
+        try:
+            compare_preserved(before, current, expect_secret=True)
+        except Refused as exc:
+            raise Refused("live Stalwart state changed after backup; apply will not recreate it") from exc
+        raise Refused(
+            "Stalwart was already recreated with RESEND_API_KEY; use recover or verify"
+        )
+    compare_preserved(before, current, expect_secret=False)
+
+
+def validate_recovery_state(before: dict[str, Any], current: dict[str, Any]) -> None:
+    if current["container_id"] == before["container_id"]:
+        raise Refused("Stalwart has not been recreated; recovery is not applicable")
+    compare_preserved(before, current, expect_secret=True)
+
+
 def apply_action(runner: Runner, args: argparse.Namespace) -> None:
     if not args.approve_recreate_stalwart:
         raise Refused("--approve-recreate-stalwart is required")
     backup = read_backup(args)
     dry_run = require_dry_run(args, backup)
+    if success_path(args).exists():
+        raise Refused("migration is already verified; apply will not recreate Stalwart")
     require_file_hashes(args, backup)
     current = inspect_container(runner, args.container)
     prepare_compose_environment(runner, args)
-    compare_preserved(backup["before"], current, expect_secret=False)
+    validate_apply_start(backup["before"], current)
     require_compose_identity(runner, args, current, include_override=False)
     secret = protected_secret(args.secret_file)
     expected_hash = compose_service_hash(runner, args, include_override=True)
@@ -686,14 +731,22 @@ def smtp_reachable(host: str, port: int) -> None:
         raise Refused(f"required SMTP listener {host}:{port} is unreachable") from exc
 
 
-def verify_action(runner: Runner, args: argparse.Namespace) -> None:
+def verify_completed_recreation(
+    runner: Runner,
+    args: argparse.Namespace,
+    *,
+    recovery: bool,
+) -> None:
     backup = read_backup(args)
+    dry_run = require_dry_run(args, backup)
     require_file_hashes(args, backup)
     after = wait_for_healthy(runner, args.container)
     prepare_compose_environment(runner, args)
-    compare_preserved(backup["before"], after, expect_secret=True)
+    validate_recovery_state(backup["before"], after)
     validate_mount_tracking(runner, after, project=args.project_name)
-    require_compose_identity(runner, args, after, include_override=True)
+    config_hash = require_compose_identity(runner, args, after, include_override=True)
+    if config_hash != dry_run["proposed_compose_hash"]:
+        raise Refused("running Stalwart does not match the approved dry-run definition")
     secret = protected_secret(args.secret_file)
     credentials = certification_secrets(args.verification_secret_file)
     secret_matches_container(runner, args.container, secret)
@@ -702,6 +755,39 @@ def verify_action(runner: Runner, args: argparse.Namespace) -> None:
     smtp_reachable(*EXPECTED_WIREGUARD_SMTP)
     secret = ""
     credentials.clear()
+    artifact = {
+        "schema": 1,
+        "status": "PASS",
+        "container": args.container,
+        "original_container_id": backup["before"]["container_id"],
+        "verified_container_id": after["container_id"],
+        "verified_definition_fingerprint": canonical_hash(
+            normalized_definition(after["definition"])
+        ),
+        "compose_config_hash": config_hash,
+        "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "secret_value_or_fingerprint_stored": False,
+    }
+    completed = success_path(args)
+    if completed.exists():
+        existing = load_json(completed)
+        if existing != artifact and any(
+            existing.get(key) != artifact.get(key)
+            for key in (
+                "schema",
+                "status",
+                "container",
+                "original_container_id",
+                "verified_container_id",
+                "verified_definition_fingerprint",
+                "compose_config_hash",
+            )
+        ):
+            raise Refused("post-migration success artifact does not match the running container")
+    else:
+        atomic_json(completed, artifact)
+    if recovery:
+        print("POST_RECREATION_RECOVERY=PASS")
     print("POST_MIGRATION_VERIFICATION=PASS")
     print("IMAGE_DIGEST_PRESERVED=PASS")
     print("PERSISTENT_MOUNT_SOURCE_PRESERVED=PASS")
@@ -714,11 +800,22 @@ def verify_action(runner: Runner, args: argparse.Namespace) -> None:
     print("LOCAL_SMTP_127_0_0_1_2525=PASS")
     print("LOCAL_JMAP_127_0_0_1_18080=PASS")
     print("WIREGUARD_SMTP_10_77_0_2_2525=PASS")
+    print(f"SUCCESS_ARTIFACT={completed}")
+
+
+def verify_action(runner: Runner, args: argparse.Namespace) -> None:
+    verify_completed_recreation(runner, args, recovery=False)
+
+
+def recover_action(runner: Runner, args: argparse.Namespace) -> None:
+    verify_completed_recreation(runner, args, recovery=True)
 
 
 def rollback_action(runner: Runner, args: argparse.Namespace) -> None:
     if not args.approve_rollback:
         raise Refused("--approve-rollback is required")
+    if success_path(args).exists():
+        raise Refused("rollback window closed after successful post-migration verification")
     backup = read_backup(args)
     require_file_hashes(args, backup)
     current = inspect_container(runner, args.container)
@@ -790,7 +887,10 @@ def diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("action", choices=("diagnose", "inspect", "dry-run", "apply", "verify", "rollback"))
+    value.add_argument(
+        "action",
+        choices=("diagnose", "inspect", "dry-run", "apply", "recover", "verify", "rollback"),
+    )
     value.add_argument("--container", default="mas-stalwart-1")
     value.add_argument("--service", default="stalwart")
     value.add_argument("--project-name", default="mas")
@@ -826,14 +926,17 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args.backup_dir = args.backup_dir.resolve()
     if args.verification_secret_file:
         args.verification_secret_file = args.verification_secret_file.resolve()
-    if args.action == "verify" and (not args.verification_secret_file or not args.account_id):
-        raise Refused("verify requires --verification-secret-file and --account-id")
+    if args.action in {"recover", "verify"} and (
+        not args.verification_secret_file or not args.account_id
+    ):
+        raise Refused(f"{args.action} requires --verification-secret-file and --account-id")
     active_runner = runner or Runner()
     actions = {
         "diagnose": diagnose_action,
         "inspect": inspect_action,
         "dry-run": dry_run_action,
         "apply": apply_action,
+        "recover": recover_action,
         "verify": verify_action,
         "rollback": rollback_action,
     }
