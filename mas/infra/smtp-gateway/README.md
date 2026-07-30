@@ -387,6 +387,42 @@ sudo python3 scripts/provision-stalwart-certification-api-key.py \
 sudo awk -F= '{print $1"=<redacted>"}' /etc/aiat/resend-certification.env
 ```
 
+If provisioning fails, rerun it normally from the terminal with bounded
+diagnostics. Do not redirect stdin/stdout through `sudo sh -c`; both passwords
+must continue to use the controlling terminal's no-echo prompts. The
+administrator address is non-secret and may be supplied as an argument:
+
+```sh
+sudo python3 scripts/provision-stalwart-certification-api-key.py \
+  --administrator-address admin@agents.aiat.local \
+  --output /etc/aiat/resend-certification.env \
+  --expires-in-hours 24 \
+  --diagnose
+```
+
+On failure, diagnostic output is limited to endpoint path, HTTP status, JMAP
+method, bounded sanitized error type and description, and the three
+preflight states. For example:
+
+```text
+ENDPOINT_PATH=/api
+HTTP_STATUS=200
+JMAP_METHOD=x:ApiKey/set
+JMAP_ERROR_TYPE=server-side-validation-error/invalidProperties
+DESCRIPTION=Property permissions failed server-side validation
+SYS_API_KEY_CREATE_PREFLIGHT=PASS
+ADMINISTRATOR_AUTHENTICATION=PASS
+MAILBOX_APPLICATION_PASSWORD_VALIDATION=PASS
+```
+
+The diagnostic mode never prints the administrator password, application
+password, Authorization value, bearer token, generated `API_` secret, raw
+request body, or raw response body. It distinguishes authentication failure,
+missing `sysApiKeyCreate`, unsupported method, invalid `x:ApiKey/set`
+payload, forbidden permission assignment, and other server-side validation
+errors. Any reserved but incomplete output file is removed before failure is
+returned.
+
 At the prompts, provide:
 
 1. The existing regular Stalwart administrator address.
