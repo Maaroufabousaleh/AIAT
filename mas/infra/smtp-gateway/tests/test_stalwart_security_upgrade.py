@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -153,6 +154,139 @@ def manifest_for(snapshot: dict) -> dict:
     }
 
 
+def matching_compose() -> dict:
+    return {
+        "name": "mas",
+        "services": {
+            "stalwart": {
+                "image": upgrade.SOURCE_IMAGE,
+                "command": None,
+                "entrypoint": None,
+                "environment": {
+                    "STALWART_PUBLIC_URL": "http://localhost:18080",
+                    "STALWART_RECOVERY_ADMIN": "",
+                },
+                "healthcheck": {
+                    "test": [
+                        "CMD",
+                        "curl",
+                        "-f",
+                        "http://127.0.0.1:8080/healthz/ready",
+                    ],
+                    "interval": "0s",
+                    "timeout": "0s",
+                    "start_period": "0s",
+                    "retries": 0,
+                },
+                "mem_limit": "805306368",
+                "cpus": 0.75,
+                "networks": {"internal": None, "public": None},
+                "ports": [
+                    {
+                        "host_ip": "127.0.0.1",
+                        "target": 25,
+                        "published": "2525",
+                        "protocol": "tcp",
+                    },
+                    {
+                        "host_ip": "127.0.0.1",
+                        "target": 8080,
+                        "published": "18080",
+                        "protocol": "tcp",
+                    },
+                ],
+                "restart": "unless-stopped",
+                "security_opt": ["no-new-privileges:true"],
+                "volumes": [
+                    {
+                        "type": "volume",
+                        "source": "stalwart_local_config",
+                        "target": "/etc/stalwart",
+                        "volume": {},
+                    },
+                    {
+                        "type": "volume",
+                        "source": "stalwart_local_data",
+                        "target": "/var/lib/stalwart",
+                        "volume": {},
+                    },
+                ],
+            }
+        },
+        "networks": {
+            "internal": {"name": "mas_internal"},
+            "public": {"name": "mas_public"},
+        },
+        "volumes": {
+            "stalwart_local_config": {"name": "mas_stalwart_local_config"},
+            "stalwart_local_data": {"name": "mas_stalwart_local_data"},
+        },
+    }
+
+
+class SemanticRunner:
+    def __init__(
+        self,
+        raw: dict,
+        compose: dict,
+        *,
+        rendered_hash: str = "f" * 64,
+        repository_changed: bool = False,
+    ):
+        self.raw = raw
+        self.compose = compose
+        self.rendered_hash = rendered_hash
+        self.repository_changed = repository_changed
+        self.commands: list[list[str]] = []
+
+    def run(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[:2] == ["docker", "compose"] and "--format" in command:
+            return json.dumps(self.compose)
+        if command[:2] == ["docker", "compose"] and "--hash" in command:
+            return self.rendered_hash
+        if command[:2] == ["git", "-C"] and "rev-parse" in command:
+            return str(ROOT)
+        if command[:2] == ["git", "-C"] and "status" in command:
+            return " M canonical.yml" if self.repository_changed else ""
+        if command[:2] == ["git", "-C"] and "log" in command:
+            return "2020-01-01T00:00:00+00:00"
+        raise AssertionError(f"unexpected command: {command}")
+
+    def json(self, command):
+        self.commands.append(command)
+        if command[:3] == ["docker", "image", "inspect"]:
+            config = copy.deepcopy(self.raw["Config"])
+            config.pop("Labels", None)
+            config.pop("Env", None)
+            config["Env"] = ["PATH=/usr/local/bin"]
+            return [{"Config": config}]
+        raise AssertionError(f"unexpected JSON command: {command}")
+
+
+def semantic_case(
+    tmp_path: Path,
+    *,
+    live_hash: str = "3" * 64,
+) -> tuple[SimpleNamespace, dict, dict]:
+    args = action_args(tmp_path)
+    raw = inspect_fixture()
+    raw["Created"] = "2026-07-30T00:00:00Z"
+    raw["Config"]["Labels"].pop("aiat.role")
+    raw["Config"]["Labels"]["com.docker.compose.config-hash"] = live_hash
+    raw["Config"]["Env"] = [
+        "PATH=/usr/local/bin",
+        "STALWART_PUBLIC_URL=http://localhost:18080",
+        "STALWART_RECOVERY_ADMIN=",
+        "RESEND_API_KEY=re_protected_test_secret",
+    ]
+    compose = matching_compose()
+    compose["services"]["stalwart"]["env_file"] = [
+        {"path": str(args.secret_file), "format": "raw"}
+    ]
+    return args, raw, compose
+
+
 def test_existing_secret_migration_inspect_still_refuses_present_secret() -> None:
     with pytest.raises(migration.Refused, match="RESEND_API_KEY must be absent"):
         migration.validate_snapshot(
@@ -176,19 +310,32 @@ def test_secret_source_fingerprint_mismatch_fails_closed(
     tmp_path: Path,
 ) -> None:
     args = action_args(tmp_path)
-    value = source_snapshot()
-    monkeypatch.setattr(migration, "inspect_container", lambda *_: value)
     monkeypatch.setattr(migration, "validate_mount_tracking", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(migration, "prepare_compose_environment", lambda *_: None)
-    monkeypatch.setattr(migration, "require_compose_identity", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        upgrade,
+        "compare_source_semantics",
+        lambda *_: {
+            "source_semantic_match": True,
+            "config_hash_match": False,
+            "config_hash_drift_class": "COMPOSE_METADATA",
+            "differing_fields": [],
+        },
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "require_compose_container_identity",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(migration, "protected_secret", lambda *_: "different-secret")
 
     def mismatch(*_args):
         raise migration.Refused("fingerprint mismatch")
 
     monkeypatch.setattr(migration, "secret_matches_container", mismatch)
+    runner = SimpleNamespace(json=lambda _command: [inspect_fixture()])
     with pytest.raises(migration.Refused, match="fingerprint mismatch"):
-        upgrade.prepare_runtime(SimpleNamespace(), args)
+        upgrade.prepare_runtime(runner, args)
 
 
 @pytest.mark.parametrize(
@@ -253,6 +400,196 @@ def test_wrong_target_digest_is_rejected() -> None:
         )
 
 
+def test_same_semantics_with_different_compose_hash_is_allowed(
+    tmp_path: Path,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    snapshot = migration.snapshot_from_inspect(raw)
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose, rendered_hash="f" * 64),
+        args,
+        raw,
+        snapshot,
+    )
+    assert report["source_semantic_match"] is True
+    assert report["config_hash_match"] is False
+    assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
+    assert report["differing_fields"] == []
+
+
+def test_compose_hash_algorithm_drift_is_not_material_drift(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path, live_hash="1" * 64)
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose, rendered_hash="2" * 64),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
+    assert report["source_semantic_match"] is True
+
+
+def test_lifecycle_label_drift_is_ignored(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"].update(
+        {
+            "com.docker.compose.replace": "old-container",
+            "com.docker.compose.project.config_files": "different-path-list",
+            "com.docker.compose.version": "different-version",
+        }
+    )
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["source_semantic_match"] is True
+
+
+def test_repository_change_is_recorded_when_semantics_still_match(
+    tmp_path: Path,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose, repository_changed=True),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["config_hash_drift_class"] == "REPOSITORY_CHANGE"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "field"),
+    [
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(
+                command=["--different", "/etc/stalwart/config.toml"]
+            ),
+            "command",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(
+                entrypoint=["/different-entrypoint"]
+            ),
+            "entrypoint",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"][
+                "environment"
+            ].update(EXTRA_SECRET_SOURCE="configured"),
+            "environment_names",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"]["env_file"][0].update(
+                path="/different/protected.env"
+            ),
+            "secret_override",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"]["volumes"][0].update(
+                target="/wrong"
+            ),
+            "mounts",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"]["ports"][0].update(
+                published="2526"
+            ),
+            "ports",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(
+                networks={"public": None}
+            ),
+            "networks",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(
+                security_opt=[]
+            ),
+            "security_opt",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"]["healthcheck"].update(
+                retries=9
+            ),
+            "healthcheck",
+        ),
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(user="1000"),
+            "user",
+        ),
+    ],
+)
+def test_material_source_definition_changes_are_rejected(
+    tmp_path: Path,
+    mutation,
+    field: str,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    mutation(raw, compose)
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["source_semantic_match"] is False
+    assert report["config_hash_drift_class"] == "MATERIAL_DRIFT"
+    assert field in report["differing_fields"]
+
+
+def test_user_configured_label_drift_is_material(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"]["aiat.security-policy"] = "strict"
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert "labels" in report["differing_fields"]
+
+
+def test_target_override_never_participates_in_source_comparison(
+    tmp_path: Path,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    runner = SemanticRunner(raw, compose)
+    report = upgrade.compare_source_semantics(
+        runner,
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    target_path = str(args.override_file)
+    source_commands = [
+        command for command in runner.commands if command[:2] == ["docker", "compose"]
+    ]
+    assert report["target_override_in_source_comparison"] is False
+    assert all(target_path not in command for command in source_commands)
+
+
+def test_diagnostic_output_is_bounded_and_never_contains_secret_or_fingerprint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "re_secret_that_must_not_be_printed"
+    report = {
+        "source_semantic_match": False,
+        "config_hash_match": False,
+        "config_hash_drift_class": "MATERIAL_DRIFT",
+        "differing_fields": ["command", "environment_names"],
+    }
+    upgrade.print_source_report(report)
+    output = capsys.readouterr().out
+    assert secret not in output
+    assert hashlib.sha256(secret.encode()).hexdigest() not in output
+    assert "DIFFERING_FIELD=command" in output
+    assert len(output) < 2048
+
+
 def test_inspection_is_live_read_only_resume_safe_and_secret_free(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -263,7 +600,16 @@ def test_inspection_is_live_read_only_resume_safe_and_secret_free(
     value = source_snapshot()
     manifest = manifest_for(value)
     monkeypatch.setattr(upgrade, "require_root", lambda: None)
-    monkeypatch.setattr(upgrade, "prepare_runtime", lambda *_: copy.deepcopy(value))
+    runtime = {
+        "snapshot": copy.deepcopy(value),
+        "source_comparison": {
+            "source_semantic_match": True,
+            "config_hash_match": False,
+            "config_hash_drift_class": "COMPOSE_METADATA",
+            "differing_fields": [],
+        },
+    }
+    monkeypatch.setattr(upgrade, "prepare_runtime", lambda *_: copy.deepcopy(runtime))
     monkeypatch.setattr(upgrade, "build_manifest", lambda *_: copy.deepcopy(manifest))
     monkeypatch.setattr(upgrade, "load_protected_artifact", migration.load_json)
 
@@ -298,7 +644,14 @@ def test_backup_copy_failure_restarts_original_and_records_failure(
     manifest = manifest_for(value)
     monkeypatch.setattr(upgrade, "require_root", lambda: None)
     monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
-    monkeypatch.setattr(upgrade, "prepare_runtime", lambda *_: copy.deepcopy(value))
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: {
+            "snapshot": copy.deepcopy(value),
+            "source_comparison": {},
+        },
+    )
     monkeypatch.setattr(
         upgrade,
         "wait_for_source_healthy",

@@ -461,12 +461,31 @@ sudo install -d -o root -g root -m 0700 "$AIAT_STALWART_SECURITY_BACKUP"
 sudo docker pull \
   "ghcr.io/stalwartlabs/stalwart:v0.16.15@sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
 
+sudo sh scripts/stalwart-security-upgrade.sh diagnose \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
 sudo sh scripts/stalwart-security-upgrade.sh inspect \
   --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
 ```
 
-`inspect` verifies the exact live `mas-stalwart-1` source definition, protected
-secret source, canonical Compose resolution, and locally cached target digest.
+`diagnose` is read-only and reports the source semantic result, independent
+config-hash result, bounded safe field names for every material mismatch, and
+one drift classification. `COMPOSE_METADATA` means the runtime-significant
+definition is identical and only the Compose provenance hash differs, such as
+after a Compose hash-algorithm/version change. `REPOSITORY_CHANGE` means the
+semantics still match but Git records a working-tree or committed source change
+after container creation. `MATERIAL_DRIFT` blocks inspection and identifies
+each differing field. Secret values and secret fingerprints are never printed.
+
+`inspect` verifies the exact live `mas-stalwart-1` source semantics, protected
+secret source, canonical source-only Compose resolution, and separately cached
+target digest. The v0.16.15 override does not participate in source comparison.
+An otherwise identical source is permitted to have a different
+`com.docker.compose.config-hash`; both live and rendered hashes, the drift
+classification, Git provenance result, and semantic result are recorded in
+the sanitized manifest. Any image, command, entrypoint, environment-name,
+mount, port, network, restart, healthcheck, security, DNS, user, or meaningful
+label difference remains fail-closed.
 It writes only a root-owned mode-`0600` sanitized
 `pre-upgrade-manifest.json`; it does not stop, restart, recreate, or write into
 the live volumes. Rerunning it is read-only with respect to Stalwart and only

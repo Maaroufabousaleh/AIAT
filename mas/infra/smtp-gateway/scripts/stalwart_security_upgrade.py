@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +55,11 @@ CUTOVER_SUCCESS_NAME = "cutover-success.json"
 BACKUP_FAILURE_NAME = "backup-failed.json"
 CONFIG_COPY = "etc-stalwart"
 DATA_COPY = "var-lib-stalwart"
+MAX_DIFFERING_FIELDS = 64
+SOURCE_CONFIG_FILES = (
+    "docker-compose.stalwart-canonical.yml",
+    "docker-compose.stalwart-resend-secret.yml",
+)
 
 Refused = migration.Refused
 Runner = migration.Runner
@@ -99,6 +106,452 @@ def require_exact_container_argument(args: argparse.Namespace) -> None:
         raise Refused(f"security upgrade is restricted to {CONTAINER}")
     if args.project_name != PROJECT or args.service != SERVICE:
         raise Refused("security upgrade project/service identity is fixed to mas/stalwart")
+
+
+def env_names(values: list[str]) -> list[str]:
+    return sorted({item.split("=", 1)[0] for item in values if "=" in item})
+
+
+def env_map(values: list[str]) -> dict[str, str]:
+    return {
+        key: value
+        for item in values
+        if "=" in item
+        for key, value in [item.split("=", 1)]
+    }
+
+
+def normalized_extra_hosts(values: Any) -> list[str]:
+    if isinstance(values, dict):
+        return sorted(f"{key}:{value}" for key, value in values.items())
+    return sorted(str(value) for value in (values or []))
+
+
+def normalized_labels(values: dict[str, Any]) -> dict[str, str]:
+    configured = {
+        key: value
+        for key, value in values.items()
+        if not key.startswith("com.docker.compose.")
+    }
+    return migration.normalized_label_hashes(configured)
+
+
+def normalized_healthcheck(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "test": values.get("Test") or values.get("test") or [],
+        "interval": values.get("Interval") or values.get("interval") or 0,
+        "timeout": values.get("Timeout") or values.get("timeout") or 0,
+        "start_period": values.get("StartPeriod") or values.get("start_period") or 0,
+        "start_interval": (
+            values.get("StartInterval") or values.get("start_interval") or 0
+        ),
+        "retries": values.get("Retries") or values.get("retries") or 0,
+    }
+
+
+def duration_nanoseconds(value: Any) -> int:
+    if value in (None, "", 0):
+        return 0
+    if isinstance(value, int):
+        return value
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(ns|us|ms|s|m|h)", str(value))
+    if not match:
+        raise Refused("rendered Compose healthcheck contains an unsupported duration")
+    multipliers = {
+        "ns": 1,
+        "us": 1_000,
+        "ms": 1_000_000,
+        "s": 1_000_000_000,
+        "m": 60_000_000_000,
+        "h": 3_600_000_000_000,
+    }
+    return int(float(match.group(1)) * multipliers[match.group(2)])
+
+
+def compose_healthcheck(
+    service: dict[str, Any],
+    image_config: dict[str, Any],
+) -> dict[str, Any]:
+    selected = service.get("healthcheck")
+    if selected is None:
+        return normalized_healthcheck(image_config.get("Healthcheck") or {})
+    if selected.get("disable"):
+        return normalized_healthcheck({"Test": ["NONE"]})
+    return normalized_healthcheck(
+        {
+            "Test": selected.get("test") or [],
+            "Interval": duration_nanoseconds(selected.get("interval")),
+            "Timeout": duration_nanoseconds(selected.get("timeout")),
+            "StartPeriod": duration_nanoseconds(selected.get("start_period")),
+            "StartInterval": duration_nanoseconds(selected.get("start_interval")),
+            "Retries": selected.get("retries") or 0,
+        }
+    )
+
+
+def network_aliases(raw: dict[str, Any], *, container_id: str) -> dict[str, list[str]]:
+    values: dict[str, list[str]] = {}
+    generated = {CONTAINER, SERVICE, container_id, container_id[:12]}
+    for name, network in sorted(
+        ((raw.get("NetworkSettings") or {}).get("Networks") or {}).items()
+    ):
+        aliases = {
+            str(alias)
+            for alias in (network.get("Aliases") or [])
+            if alias and str(alias) not in generated
+        }
+        values[name] = sorted(aliases)
+    return values
+
+
+def live_semantics(raw: dict[str, Any]) -> dict[str, Any]:
+    config = raw.get("Config") or {}
+    host = raw.get("HostConfig") or {}
+    labels = config.get("Labels") or {}
+    container_id = str(raw.get("Id") or "")
+    return {
+        "image": config.get("Image") or "",
+        "container_name": str(raw.get("Name") or "").lstrip("/"),
+        "compose_project": labels.get("com.docker.compose.project") or "",
+        "compose_service": labels.get("com.docker.compose.service") or "",
+        "running": bool((raw.get("State") or {}).get("Running")),
+        "health": ((raw.get("State") or {}).get("Health") or {}).get("Status")
+        or "none",
+        "command": config.get("Cmd"),
+        "entrypoint": config.get("Entrypoint"),
+        "working_directory": config.get("WorkingDir") or "",
+        "user": config.get("User") or "",
+        "environment_names": env_names(config.get("Env") or []),
+        "resend_secret_present": migration.SECRET_NAME
+        in env_names(config.get("Env") or []),
+        "mounts": [
+            {
+                "type": item["type"],
+                "name": item["name"],
+                "destination": item["destination"],
+                "rw": item["rw"],
+            }
+            for item in migration.normalized_mounts(raw)
+        ],
+        "ports": migration.normalized_ports(raw),
+        "networks": network_aliases(raw, container_id=container_id),
+        "restart_policy": host.get("RestartPolicy") or {},
+        "healthcheck": normalized_healthcheck(config.get("Healthcheck") or {}),
+        "labels": normalized_labels(labels),
+        "security_opt": sorted(host.get("SecurityOpt") or []),
+        "cap_add": sorted(host.get("CapAdd") or []),
+        "cap_drop": sorted(host.get("CapDrop") or []),
+        "privileged": bool(host.get("Privileged")),
+        "read_only_rootfs": bool(host.get("ReadonlyRootfs")),
+        "dns": sorted(host.get("Dns") or []),
+        "dns_options": sorted(host.get("DnsOptions") or []),
+        "dns_search": sorted(host.get("DnsSearch") or []),
+        "extra_hosts": normalized_extra_hosts(host.get("ExtraHosts")),
+        "memory": host.get("Memory") or 0,
+        "nano_cpus": host.get("NanoCpus") or 0,
+    }
+
+
+def parse_compose_json(runner: Runner, args: argparse.Namespace) -> dict[str, Any]:
+    raw = runner.run(
+        migration.compose_command(args, False)
+        + ["config", "--format", "json", "--no-env-resolution"],
+        env=migration.compose_environment(args),
+    )
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise Refused("Compose source render did not return valid JSON") from exc
+    if not isinstance(value, dict):
+        raise Refused("Compose source render did not return an object")
+    return value
+
+
+def image_config(runner: Runner, image: str) -> dict[str, Any]:
+    values = runner.json(["docker", "image", "inspect", image])
+    if not isinstance(values, list) or len(values) != 1:
+        raise Refused("approved source image configuration is unavailable")
+    return values[0].get("Config") or {}
+
+
+def compose_volume_name(
+    compose: dict[str, Any],
+    source: str,
+    *,
+    project: str,
+) -> str:
+    definition = (compose.get("volumes") or {}).get(source) or {}
+    return definition.get("name") or f"{project}_{source}"
+
+
+def compose_network_name(
+    compose: dict[str, Any],
+    source: str,
+    *,
+    project: str,
+) -> str:
+    definition = (compose.get("networks") or {}).get(source) or {}
+    return definition.get("name") or f"{project}_{source}"
+
+
+def rendered_semantics(
+    runner: Runner,
+    args: argparse.Namespace,
+    compose: dict[str, Any],
+) -> dict[str, Any]:
+    service = (compose.get("services") or {}).get(args.service)
+    if not isinstance(service, dict):
+        raise Refused("canonical Compose source does not define stalwart")
+    image = str(service.get("image") or "")
+    if image != SOURCE_IMAGE:
+        raise Refused("canonical Compose source image is not approved v0.16.7")
+    image_values = image_config(runner, image)
+    environment_names = set(env_names(image_values.get("Env") or []))
+    environment_names.update((service.get("environment") or {}).keys())
+    environment_names.add(migration.SECRET_NAME)
+    mounts = []
+    for item in service.get("volumes") or []:
+        mount_type = item.get("type") or "volume"
+        source = str(item.get("source") or "")
+        mounts.append(
+            {
+                "type": mount_type,
+                "name": (
+                    compose_volume_name(compose, source, project=args.project_name)
+                    if mount_type == "volume"
+                    else ""
+                ),
+                "destination": item.get("target") or "",
+                "rw": not bool(item.get("read_only")),
+            }
+        )
+    ports: dict[str, list[dict[str, str]]] = {}
+    for item in service.get("ports") or []:
+        key = f"{item.get('target')}/{item.get('protocol') or 'tcp'}"
+        ports.setdefault(key, []).append(
+            {
+                "host_ip": item.get("host_ip") or "",
+                "host_port": str(item.get("published") or ""),
+            }
+        )
+    networks: dict[str, list[str]] = {}
+    for source, settings in (service.get("networks") or {}).items():
+        name = compose_network_name(compose, source, project=args.project_name)
+        networks[name] = sorted((settings or {}).get("aliases") or [])
+    restart = service.get("restart") or "no"
+    restart_policy = {
+        "Name": restart,
+        "MaximumRetryCount": 0,
+    }
+    if restart.startswith("on-failure:"):
+        restart_policy = {
+            "Name": "on-failure",
+            "MaximumRetryCount": int(restart.split(":", 1)[1]),
+        }
+    command = service.get("command")
+    if command is None:
+        command = image_values.get("Cmd")
+    entrypoint = service.get("entrypoint")
+    if entrypoint is None:
+        entrypoint = image_values.get("Entrypoint")
+    labels = dict(service.get("labels") or {})
+    return {
+        "image": image,
+        "container_name": CONTAINER,
+        "compose_project": args.project_name,
+        "compose_service": args.service,
+        "running": True,
+        "health": "healthy",
+        "command": command,
+        "entrypoint": entrypoint,
+        "working_directory": (
+            service.get("working_dir") or image_values.get("WorkingDir") or ""
+        ),
+        "user": service.get("user") or image_values.get("User") or "",
+        "environment_names": sorted(environment_names),
+        "resend_secret_present": True,
+        "mounts": sorted(mounts, key=lambda item: item["destination"]),
+        "ports": {
+            key: sorted(value, key=lambda item: (item["host_ip"], item["host_port"]))
+            for key, value in sorted(ports.items())
+        },
+        "networks": dict(sorted(networks.items())),
+        "restart_policy": restart_policy,
+        "healthcheck": compose_healthcheck(service, image_values),
+        "labels": normalized_labels(labels),
+        "security_opt": sorted(service.get("security_opt") or []),
+        "cap_add": sorted(service.get("cap_add") or []),
+        "cap_drop": sorted(service.get("cap_drop") or []),
+        "privileged": bool(service.get("privileged")),
+        "read_only_rootfs": bool(service.get("read_only")),
+        "dns": sorted(service.get("dns") or []),
+        "dns_options": sorted(service.get("dns_opt") or []),
+        "dns_search": sorted(service.get("dns_search") or []),
+        "extra_hosts": normalized_extra_hosts(service.get("extra_hosts")),
+        "memory": int(service.get("mem_limit") or 0),
+        "nano_cpus": int(float(service.get("cpus") or 0) * 1_000_000_000),
+    }
+
+
+def secret_override_matches(service: dict[str, Any], args: argparse.Namespace) -> bool:
+    env_files = service.get("env_file") or []
+    if len(env_files) != 1 or not isinstance(env_files[0], dict):
+        return False
+    configured = env_files[0]
+    try:
+        path_matches = Path(str(configured.get("path") or "")).resolve() == (
+            args.secret_file.resolve()
+        )
+    except OSError:
+        return False
+    return path_matches and configured.get("format") == "raw"
+
+
+def environment_values_match(
+    raw: dict[str, Any],
+    service: dict[str, Any],
+    image_values: dict[str, Any],
+) -> bool:
+    live = env_map((raw.get("Config") or {}).get("Env") or [])
+    live.pop(migration.SECRET_NAME, None)
+    expected = env_map(image_values.get("Env") or [])
+    expected.update(
+        {
+            str(key): "" if value is None else str(value)
+            for key, value in (service.get("environment") or {}).items()
+        }
+    )
+    expected.pop(migration.SECRET_NAME, None)
+    return live == expected
+
+
+def require_compose_container_identity(
+    runner: Runner,
+    args: argparse.Namespace,
+    snapshot: dict[str, Any],
+) -> None:
+    if snapshot["compose"]["project"] != args.project_name:
+        raise Refused("container Compose project does not match")
+    if snapshot["compose"]["service"] != args.service:
+        raise Refused("container Compose service does not match")
+    current_id = runner.run(
+        migration.compose_command(args, False) + ["ps", "-q", args.service],
+        env=migration.compose_environment(args),
+    )
+    if current_id != snapshot["container_id"]:
+        raise Refused("Compose does not resolve to the inspected Stalwart container")
+
+
+def repository_drift(
+    runner: Runner,
+    args: argparse.Namespace,
+    *,
+    created_at: str,
+) -> dict[str, Any]:
+    files = [str(path) for path in args.compose_file]
+    result = {
+        "working_tree_changed": False,
+        "committed_after_container_creation": False,
+        "history_checked": False,
+    }
+    try:
+        root = runner.run(
+            ["git", "-C", str(args.project_directory), "rev-parse", "--show-toplevel"]
+        )
+        status = runner.run(["git", "-C", root, "status", "--porcelain", "--", *files])
+        result["working_tree_changed"] = bool(status)
+        history = runner.run(
+            [
+                "git",
+                "-C",
+                root,
+                "log",
+                "-1",
+                "--format=%cI",
+                "--",
+                *files,
+            ]
+        )
+        if history and created_at:
+            committed = datetime.fromisoformat(history.replace("Z", "+00:00"))
+            created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            result["committed_after_container_creation"] = committed > created
+        result["history_checked"] = True
+    except (Refused, ValueError):
+        pass
+    return result
+
+
+def compare_source_semantics(
+    runner: Runner,
+    args: argparse.Namespace,
+    raw: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    compose = parse_compose_json(runner, args)
+    live = live_semantics(raw)
+    rendered = rendered_semantics(runner, args, compose)
+    differing = sorted(
+        field for field in rendered if live.get(field) != rendered.get(field)
+    )
+    service = (compose.get("services") or {}).get(args.service) or {}
+    source_image_config = image_config(runner, SOURCE_IMAGE)
+    if not environment_values_match(raw, service, source_image_config):
+        differing.append("environment_values")
+    if not secret_override_matches(service, args):
+        differing.append("secret_override")
+    differing = sorted(set(differing))
+    if len(differing) > MAX_DIFFERING_FIELDS:
+        differing = differing[:MAX_DIFFERING_FIELDS]
+    rendered_hash = migration.compose_service_hash(
+        runner,
+        args,
+        include_override=False,
+    )
+    live_hash = snapshot["compose"]["config_hash"]
+    hash_match = live_hash == rendered_hash
+    provenance = repository_drift(
+        runner,
+        args,
+        created_at=str(raw.get("Created") or ""),
+    )
+    if differing:
+        drift_class = "MATERIAL_DRIFT"
+    elif hash_match:
+        drift_class = "NONE"
+    elif (
+        provenance["working_tree_changed"]
+        or provenance["committed_after_container_creation"]
+    ):
+        drift_class = "REPOSITORY_CHANGE"
+    else:
+        drift_class = "COMPOSE_METADATA"
+    return {
+        "source_semantic_match": not differing,
+        "config_hash_match": hash_match,
+        "config_hash_drift_class": drift_class,
+        "differing_fields": differing,
+        "live_config_hash": live_hash,
+        "rendered_source_config_hash": rendered_hash,
+        "repository_provenance": provenance,
+        "source_files": [str(path.resolve()) for path in args.compose_file],
+        "target_override_in_source_comparison": False,
+    }
+
+
+def print_source_report(report: dict[str, Any]) -> None:
+    print(
+        "SOURCE_SEMANTIC_MATCH="
+        + ("PASS" if report["source_semantic_match"] else "FAIL")
+    )
+    print("CONFIG_HASH_MATCH=" + ("PASS" if report["config_hash_match"] else "FAIL"))
+    print(f"CONFIG_HASH_DRIFT_CLASS={report['config_hash_drift_class']}")
+    for field in report["differing_fields"]:
+        print(f"DIFFERING_FIELD={field}")
+    if not report["differing_fields"]:
+        print("DIFFERING_FIELD=NONE")
+    print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+    print("LIVE_MUTATION=NOT_PERFORMED")
 
 
 def validate_exact_source(snapshot: dict[str, Any]) -> None:
@@ -154,29 +607,51 @@ def validate_target_image_local(runner: Runner) -> str:
     return image_id
 
 
-def prepare_runtime(runner: Runner, args: argparse.Namespace) -> dict[str, Any]:
-    snapshot = migration.inspect_container(runner, args.container)
+def analyze_source_runtime(
+    runner: Runner,
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    values = runner.json(["docker", "inspect", args.container])
+    if not isinstance(values, list) or len(values) != 1:
+        raise Refused("Docker did not return exactly one Stalwart container")
+    raw = values[0]
+    snapshot = migration.snapshot_from_inspect(raw)
+    migration.prepare_compose_environment(runner, args)
+    report = compare_source_semantics(runner, args, raw, snapshot)
+    return raw, snapshot, report
+
+
+def inspect_source_runtime(
+    runner: Runner,
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    _raw, snapshot, report = analyze_source_runtime(runner, args)
+    if not report["source_semantic_match"]:
+        return snapshot, report
     validate_exact_source(snapshot)
     migration.validate_mount_tracking(runner, snapshot, project=args.project_name)
-    migration.prepare_compose_environment(runner, args)
-    migration.require_compose_identity(
-        runner,
-        args,
-        snapshot,
-        include_override=False,
-    )
+    require_compose_container_identity(runner, args, snapshot)
     secret = migration.protected_secret(args.secret_file)
     try:
         migration.secret_matches_container(runner, args.container, secret)
     finally:
         secret = ""
-    return snapshot
+    return snapshot, report
+
+
+def prepare_runtime(runner: Runner, args: argparse.Namespace) -> dict[str, Any]:
+    snapshot, report = inspect_source_runtime(runner, args)
+    if not report["source_semantic_match"]:
+        print_source_report(report)
+        raise Refused("running container has material source-definition drift")
+    return {"snapshot": snapshot, "source_comparison": report}
 
 
 def build_manifest(
     runner: Runner,
     args: argparse.Namespace,
     snapshot: dict[str, Any],
+    source_comparison: dict[str, Any],
 ) -> dict[str, Any]:
     target_image_id = validate_target_image_local(runner)
     target_compose_hash = migration.compose_service_hash(
@@ -184,7 +659,7 @@ def build_manifest(
         args,
         include_override=True,
     )
-    if target_compose_hash == snapshot["compose"]["config_hash"]:
+    if target_compose_hash == source_comparison["rendered_source_config_hash"]:
         raise Refused("v0.16.15 override did not change the Compose service definition")
     return {
         "schema": 1,
@@ -193,6 +668,7 @@ def build_manifest(
         "project": PROJECT,
         "service": SERVICE,
         "source": snapshot,
+        "source_comparison": source_comparison,
         "source_image": SOURCE_IMAGE,
         "target_image": TARGET_IMAGE,
         "target_image_id": target_image_id,
@@ -210,8 +686,10 @@ def build_manifest(
 def inspect_action(runner: Runner, args: argparse.Namespace) -> None:
     require_root()
     require_exact_container_argument(args)
-    snapshot = prepare_runtime(runner, args)
-    manifest = build_manifest(runner, args, snapshot)
+    runtime = prepare_runtime(runner, args)
+    snapshot = runtime["snapshot"]
+    source_comparison = runtime["source_comparison"]
+    manifest = build_manifest(runner, args, snapshot, source_comparison)
     path = manifest_path(args)
     if path.exists():
         if load_protected_artifact(path) != manifest:
@@ -227,8 +705,50 @@ def inspect_action(runner: Runner, args: argparse.Namespace) -> None:
     print("TARGET_IMAGE_LOCAL=APPROVED_V0.16.15")
     print("RESEND_API_KEY_PRESENT=PASS")
     print("RESEND_API_KEY_SOURCE_MATCH=PASS")
+    print_source_report(source_comparison)
+    print("CONFIG_HASH_DRIFT_RECORDED=PASS")
     print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
     print("LIVE_MUTATION=NOT_PERFORMED")
+
+
+def diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
+    require_root()
+    require_exact_container_argument(args)
+    _raw, snapshot, report = analyze_source_runtime(runner, args)
+    auxiliary_differences: list[str] = []
+    try:
+        validate_exact_source(snapshot)
+    except Refused:
+        auxiliary_differences.append("source_invariant")
+    try:
+        migration.validate_mount_tracking(
+            runner,
+            snapshot,
+            project=args.project_name,
+        )
+    except Refused:
+        auxiliary_differences.append("mount_tracking")
+    try:
+        require_compose_container_identity(runner, args, snapshot)
+    except Refused:
+        auxiliary_differences.append("compose_resolution")
+    try:
+        secret = migration.protected_secret(args.secret_file)
+        try:
+            migration.secret_matches_container(runner, args.container, secret)
+        finally:
+            secret = ""
+    except Refused:
+        auxiliary_differences.append("resend_secret_source")
+    if auxiliary_differences:
+        report["source_semantic_match"] = False
+        report["config_hash_drift_class"] = "MATERIAL_DRIFT"
+        report["differing_fields"] = sorted(
+            set([*report["differing_fields"], *auxiliary_differences])
+        )[:MAX_DIFFERING_FIELDS]
+    print_source_report(report)
+    if not report["source_semantic_match"]:
+        raise Refused("running container has material source-definition drift")
 
 
 def read_manifest(args: argparse.Namespace) -> dict[str, Any]:
@@ -289,7 +809,7 @@ def backup_action(runner: Runner, args: argparse.Namespace) -> None:
     ):
         raise Refused("partial backup state exists; refusing to overwrite or resume silently")
 
-    current = prepare_runtime(runner, args)
+    current = prepare_runtime(runner, args)["snapshot"]
     if current != manifest["source"]:
         raise Refused("live Stalwart state changed after pre-upgrade inspection")
 
@@ -471,7 +991,7 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
         raise Refused(
             "v0.16.15 is already running without a success artifact; use verify only"
         )
-    current = prepare_runtime(runner, args)
+    current = prepare_runtime(runner, args)["snapshot"]
     if current != manifest["source"]:
         raise Refused("live Stalwart state changed after the stopped backup")
     if validate_target_image_local(runner) != manifest["target_image_id"]:
@@ -527,7 +1047,10 @@ def parser() -> argparse.ArgumentParser:
     gateway_dir = script_dir.parent
     infra_dir = gateway_dir.parent
     value = argparse.ArgumentParser()
-    value.add_argument("action", choices=("inspect", "backup", "cutover", "verify"))
+    value.add_argument(
+        "action",
+        choices=("diagnose", "inspect", "backup", "cutover", "verify"),
+    )
     value.add_argument("--backup-dir", type=Path, required=True)
     value.add_argument("--container", default=CONTAINER)
     value.add_argument("--project-name", default=PROJECT)
@@ -570,6 +1093,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args.secret_file = args.secret_file.resolve()
     selected_runner = runner or Runner()
     actions = {
+        "diagnose": diagnose_action,
         "inspect": inspect_action,
         "backup": backup_action,
         "cutover": cutover_action,
