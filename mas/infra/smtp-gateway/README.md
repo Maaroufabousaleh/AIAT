@@ -265,6 +265,23 @@ URLs are `http://127.0.0.1:18080` for JMAP and
 `http://127.0.0.1:18080/api` for management. It never exposes JMAP or Stalwart
 administration over WireGuard, the VPS, or the public Internet.
 
+The live container provenance labels identify the original Compose project:
+
+```text
+project=mas
+working_dir=/mnt/c/projects/aiat/mas/infra/compose
+config_files=docker-compose.yml,docker-compose.stalwart-local.yml
+service=stalwart
+config_hash=2eddc16570b6c181bd0f0fbb2079d9aa0b9799ab15665d226e8df6492986fc68
+```
+
+Those aggregate files now parse unrelated MAS dependencies and secrets and can
+be invalid when used as a partial validator bundle. Migration therefore uses
+only `home/docker-compose.stalwart-canonical.yml`. The canonical service must
+reproduce the live config hash, and `docker compose ps -q stalwart` must return
+the exact inspected container ID. Secret injection adds only
+`home/docker-compose.stalwart-resend-secret.yml`.
+
 The live container currently has no `RESEND_API_KEY`; Docker cannot add an
 environment variable in place. Secret injection is therefore a separate
 maintenance migration before route configuration. It recreates only the
@@ -307,57 +324,51 @@ export AIAT_STALWART_MIGRATION_BACKUP=/secure/rollback/stalwart-resend-secret-20
 sudo install -d -o root -g root -m 0700 /secure/rollback
 ```
 
+The shared arguments for all migration actions are:
+
+```sh
+stalwart_migrate() {
+  sudo sh scripts/migrate-stalwart-resend-secret.sh "$@" \
+    --container mas-stalwart-1 \
+    --project-name mas \
+    --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+    --compose-profile mail-local \
+    --compose-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-canonical.yml \
+    --secret-file /etc/aiat/stalwart-resend.env \
+    --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+}
+```
+
+Read-only diagnosis emits only a categorized, bounded, sanitized Compose error:
+
+```sh
+stalwart_migrate diagnose
+```
+
 First inspect the exact live container and write the sanitized manifest. This
 refuses an unpinned image, unhealthy container, missing `/var/lib/stalwart`
 mount, anonymous volume, untracked volume/bind, stale Compose definition, or
 an already-present key:
 
 ```sh
-sudo sh scripts/migrate-stalwart-resend-secret.sh inspect \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+stalwart_migrate inspect
 ```
 
 Run the non-mutating dry-run and review its sanitized output and both mode-0600
 JSON artifacts in the backup directory:
 
 ```sh
-sudo sh scripts/migrate-stalwart-resend-secret.sh dry-run \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+stalwart_migrate dry-run
 ```
 
 Only after explicit operator approval, recreate the Stalwart service with
 `--no-deps --force-recreate --no-build --pull never`. The script compares the
 post-recreation definition to the backup and permits only the new environment
-name and Compose's expected internal configuration-hash label:
+name plus Compose's expected internal config-hash/config-file replacement
+metadata. All configured labels must remain unchanged:
 
 ```sh
-sudo sh scripts/migrate-stalwart-resend-secret.sh apply \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP" \
-  --approve-recreate-stalwart
+stalwart_migrate apply --approve-recreate-stalwart
 ```
 
 Verify the preserved image, mounts, ports, networks, labels, restart policy,
@@ -365,18 +376,9 @@ health, key-source fingerprint, production domain/account, local SMTP/JMAP,
 and WireGuard-only SMTP forward:
 
 ```sh
-sudo sh scripts/migrate-stalwart-resend-secret.sh verify \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
+stalwart_migrate verify \
   --verification-secret-file /etc/aiat/resend-certification.env \
-  --account-id <existing-gateway-test-stalwart-account-id> \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+  --account-id <existing-gateway-test-stalwart-account-id>
 ```
 
 If verification fails before route application, restore the original Compose
@@ -384,17 +386,7 @@ definition without the secret. If the route has already been applied, roll it
 back first with the route rollback command below:
 
 ```sh
-sudo sh scripts/migrate-stalwart-resend-secret.sh rollback \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
-  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP" \
-  --approve-rollback
+stalwart_migrate rollback --approve-rollback
 ```
 
 After migration verification, back up and apply the outbound route:

@@ -1,0 +1,43 @@
+name: mas
+
+# Canonical recreation surface for the already-running local Stalwart service.
+# This is intentionally limited to Stalwart and its existing named resources;
+# it does not parse or require unrelated MAS services or credentials.
+services:
+  stalwart:
+    profiles: [mail-local]
+    image: ghcr.io/stalwartlabs/stalwart:v0.16.7@sha256:6a8ddaa5728a5e78a8611085069f63414cd43c3a669471785dd41aad1ca16e63
+    restart: unless-stopped
+    environment:
+      STALWART_PUBLIC_URL: "${STALWART_LOCAL_PUBLIC_URL:-http://localhost:18080}"
+      STALWART_RECOVERY_ADMIN: "${STALWART_RECOVERY_ADMIN:-}"
+    volumes:
+      - stalwart_local_config:/etc/stalwart
+      - stalwart_local_data:/var/lib/stalwart
+    networks:
+      - public
+      - internal
+    ports:
+      - "127.0.0.1:${STALWART_LOCAL_SMTP_PORT:-2525}:25"
+      - "127.0.0.1:${STALWART_LOCAL_ADMIN_PORT:-18080}:8080"
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: "0.75"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H 'X-Forwarded-For: 127.0.0.1' http://127.0.0.1:8080/healthz/ready"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 8
+
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  stalwart_local_config:
+  stalwart_local_data:

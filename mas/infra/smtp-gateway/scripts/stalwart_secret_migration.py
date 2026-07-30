@@ -25,7 +25,11 @@ EXPECTED_SMTP = ("127.0.0.1", 2525)
 EXPECTED_JMAP = "http://127.0.0.1:18080"
 EXPECTED_WIREGUARD_SMTP = ("10.77.0.2", 2525)
 PINNED_IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
-INTERNAL_COMPOSE_LABELS = {"com.docker.compose.config-hash"}
+INTERNAL_COMPOSE_LABELS = {
+    "com.docker.compose.config-hash",
+    "com.docker.compose.project.config_files",
+    "com.docker.compose.replace",
+}
 
 
 class Refused(RuntimeError):
@@ -56,6 +60,26 @@ class Runner:
             # can contain resolved environment values.
             raise Refused(f"command failed safely: {args[0]} {args[1] if len(args) > 1 else ''}".strip())
         return completed.stdout.strip()
+
+    def diagnostic(
+        self,
+        args: list[str],
+        *,
+        env: dict[str, str],
+        timeout: int = 60,
+    ) -> tuple[int, str]:
+        try:
+            completed = subprocess.run(
+                args,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return 124, "Compose diagnostic timed out"
+        return completed.returncode, completed.stderr
 
     def json(self, args: list[str]) -> Any:
         raw = self.run(args)
@@ -325,6 +349,8 @@ def compose_command(args: argparse.Namespace, include_override: bool) -> list[st
         "--project-directory",
         str(args.project_directory),
     ])
+    for profile in args.compose_profile:
+        command.extend(["--profile", profile])
     for compose_file in args.compose_file:
         command.extend(["-f", str(compose_file)])
     if include_override:
@@ -332,10 +358,46 @@ def compose_command(args: argparse.Namespace, include_override: bool) -> list[st
     return command
 
 
-def compose_environment(secret_file: Path) -> dict[str, str]:
-    values = os.environ.copy()
-    values["STALWART_RESEND_SECRET_FILE"] = str(secret_file)
+def compose_environment(args: argparse.Namespace) -> dict[str, str]:
+    values = dict(getattr(args, "render_environment", {}))
+    values["STALWART_RESEND_SECRET_FILE"] = str(args.secret_file)
     return values
+
+
+def prepare_compose_environment(runner: Runner, args: argparse.Namespace) -> None:
+    values = runner.json(["docker", "inspect", args.container])
+    if not isinstance(values, list) or len(values) != 1:
+        raise Refused("Docker did not return exactly one Stalwart container")
+    raw = values[0]
+    container_env: dict[str, str] = {}
+    for item in (raw.get("Config") or {}).get("Env") or []:
+        if "=" in item:
+            key, value = item.split("=", 1)
+            if key in {"STALWART_PUBLIC_URL", "STALWART_RECOVERY_ADMIN"}:
+                container_env[key] = value
+    ports = ((raw.get("HostConfig") or {}).get("PortBindings") or {})
+    try:
+        container_env["STALWART_LOCAL_SMTP_PORT"] = ports["25/tcp"][0]["HostPort"]
+        container_env["STALWART_LOCAL_ADMIN_PORT"] = ports["8080/tcp"][0]["HostPort"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise Refused("running Stalwart port bindings cannot be rendered safely") from exc
+    safe_host_names = (
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "XDG_RUNTIME_DIR",
+        "WSL_DISTRO_NAME",
+    )
+    environment = {
+        key: os.environ[key]
+        for key in safe_host_names
+        if key in os.environ
+    }
+    environment.update(container_env)
+    args.render_environment = environment
 
 
 def compose_service_hash(
@@ -346,7 +408,7 @@ def compose_service_hash(
 ) -> str:
     output = runner.run(
         compose_command(args, include_override) + ["config", "--hash", args.service],
-        env=compose_environment(args.secret_file),
+        env=compose_environment(args),
     )
     last_line = output.splitlines()[-1] if output else ""
     value = last_line.rsplit(maxsplit=1)[-1] if last_line else ""
@@ -368,7 +430,7 @@ def require_compose_identity(
         raise Refused("container Compose service does not match")
     current_id = runner.run(
         compose_command(args, include_override) + ["ps", "-q", args.service],
-        env=compose_environment(args.secret_file),
+        env=compose_environment(args),
     )
     if current_id != snapshot["container_id"]:
         raise Refused("Compose does not resolve to the inspected Stalwart container")
@@ -411,6 +473,7 @@ def inspect_action(runner: Runner, args: argparse.Namespace) -> None:
     if args.backup_dir.exists():
         raise Refused("backup directory already exists")
     snapshot = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
     validate_snapshot(snapshot, persistent_target=args.persistent_target, require_secret=False)
     validate_mount_tracking(runner, snapshot, project=args.project_name)
     require_compose_identity(runner, args, snapshot, include_override=False)
@@ -441,6 +504,7 @@ def dry_run_action(runner: Runner, args: argparse.Namespace) -> None:
     backup = read_backup(args)
     require_file_hashes(args, backup)
     current = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
     compare_preserved(backup["before"], current, expect_secret=False)
     validate_mount_tracking(runner, current, project=args.project_name)
     require_compose_identity(runner, args, current, include_override=False)
@@ -511,6 +575,7 @@ def apply_action(runner: Runner, args: argparse.Namespace) -> None:
     dry_run = require_dry_run(args, backup)
     require_file_hashes(args, backup)
     current = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
     compare_preserved(backup["before"], current, expect_secret=False)
     require_compose_identity(runner, args, current, include_override=False)
     secret = protected_secret(args.secret_file)
@@ -520,7 +585,7 @@ def apply_action(runner: Runner, args: argparse.Namespace) -> None:
     runner.run(
         compose_command(args, True)
         + ["up", "-d", "--no-deps", "--force-recreate", "--no-build", "--pull", "never", args.service],
-        env=compose_environment(args.secret_file),
+        env=compose_environment(args),
         timeout=180,
     )
     after = wait_for_healthy(runner, args.container)
@@ -625,6 +690,7 @@ def verify_action(runner: Runner, args: argparse.Namespace) -> None:
     backup = read_backup(args)
     require_file_hashes(args, backup)
     after = wait_for_healthy(runner, args.container)
+    prepare_compose_environment(runner, args)
     compare_preserved(backup["before"], after, expect_secret=True)
     validate_mount_tracking(runner, after, project=args.project_name)
     require_compose_identity(runner, args, after, include_override=True)
@@ -656,13 +722,14 @@ def rollback_action(runner: Runner, args: argparse.Namespace) -> None:
     backup = read_backup(args)
     require_file_hashes(args, backup)
     current = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
     compare_preserved(backup["before"], current, expect_secret=True, require_health=False)
     # The original Compose definition is used without the secret override.
     # No volume command and no Compose down operation exists in this workflow.
     runner.run(
         compose_command(args, False)
         + ["up", "-d", "--no-deps", "--force-recreate", "--no-build", "--pull", "never", args.service],
-        env=os.environ.copy(),
+        env=compose_environment(args),
         timeout=180,
     )
     restored = wait_for_healthy(runner, args.container)
@@ -674,15 +741,63 @@ def rollback_action(runner: Runner, args: argparse.Namespace) -> None:
     print("DOCKER_VOLUME_MUTATION=NONE")
 
 
+def sanitize_compose_stderr(stderr: str, args: argparse.Namespace) -> str:
+    value = stderr
+    protected_values = [
+        item
+        for key, item in getattr(args, "render_environment", {}).items()
+        if key in {"STALWART_RECOVERY_ADMIN", "STALWART_PUBLIC_URL"} and item
+    ]
+    for protected in sorted(protected_values, key=len, reverse=True):
+        value = value.replace(protected, "<redacted>")
+    value = re.sub(
+        r"(?i)\b([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY)[A-Z0-9_]*)=([^\s]+)",
+        r"\1=<redacted>",
+        value,
+    )
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    return " | ".join(lines[:8])[:2000]
+
+
+def compose_error_category(stderr: str) -> str:
+    lowered = stderr.lower()
+    if "depends on undefined service" in lowered:
+        return "undefined_service_dependency"
+    if "invalid compose project" in lowered:
+        return "invalid_partial_compose_project"
+    if "required variable" in lowered or "is missing a value" in lowered:
+        return "unrelated_required_variable"
+    return "compose_render_failure"
+
+
+def diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
+    snapshot = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
+    command = compose_command(args, False) + ["config", "--hash", args.service]
+    returncode, stderr = runner.diagnostic(command, env=compose_environment(args))
+    if returncode != 0:
+        print("COMPOSE_DIAGNOSTIC=FAIL")
+        print(f"COMPOSE_ERROR_CATEGORY={compose_error_category(stderr)}")
+        print(f"COMPOSE_STDERR_SANITIZED={sanitize_compose_stderr(stderr, args)}")
+        print("LIVE_MUTATION=NOT_PERFORMED")
+        raise Refused("Compose resolution failed; sanitized diagnostic emitted")
+    require_compose_identity(runner, args, snapshot, include_override=False)
+    print("COMPOSE_DIAGNOSTIC=PASS")
+    print(f"RUNNING_CONTAINER_ID={snapshot['container_id']}")
+    print(f"RUNNING_CONFIG_HASH={snapshot['compose']['config_hash']}")
+    print("LIVE_MUTATION=NOT_PERFORMED")
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("action", choices=("inspect", "dry-run", "apply", "verify", "rollback"))
+    value.add_argument("action", choices=("diagnose", "inspect", "dry-run", "apply", "verify", "rollback"))
     value.add_argument("--container", default="mas-stalwart-1")
     value.add_argument("--service", default="stalwart")
     value.add_argument("--project-name", default="mas")
     value.add_argument("--project-directory", type=Path, required=True)
     value.add_argument("--compose-file", type=Path, action="append", required=True)
     value.add_argument("--compose-env-file", type=Path, action="append", default=[])
+    value.add_argument("--compose-profile", action="append", default=[])
     value.add_argument(
         "--override-file",
         type=Path,
@@ -704,6 +819,8 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args.project_directory = args.project_directory.resolve()
     args.compose_file = [path.resolve() for path in args.compose_file]
     args.compose_env_file = [path.resolve() for path in args.compose_env_file]
+    if not args.compose_profile:
+        args.compose_profile = ["mail-local"]
     args.override_file = args.override_file.resolve()
     args.secret_file = args.secret_file.resolve()
     args.backup_dir = args.backup_dir.resolve()
@@ -713,6 +830,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
         raise Refused("verify requires --verification-secret-file and --account-id")
     active_runner = runner or Runner()
     actions = {
+        "diagnose": diagnose_action,
         "inspect": inspect_action,
         "dry-run": dry_run_action,
         "apply": apply_action,

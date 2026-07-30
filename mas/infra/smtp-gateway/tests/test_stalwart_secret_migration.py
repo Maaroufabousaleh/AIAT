@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -195,3 +196,107 @@ def test_rollback_preserves_definition_and_removes_secret() -> None:
     restored = migration.snapshot_from_inspect(restored_raw)
     migration.compare_preserved(original, restored, expect_secret=False)
     assert restored["resend_secret_present"] is False
+
+
+def resolution_args(tmp_path: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        container="mas-stalwart-1",
+        service="stalwart",
+        project_name="mas",
+        project_directory=tmp_path,
+        compose_file=[tmp_path / "docker-compose.stalwart-canonical.yml"],
+        compose_env_file=[],
+        compose_profile=["mail-local"],
+        override_file=tmp_path / "docker-compose.stalwart-resend-secret.yml",
+        secret_file=tmp_path / "stalwart-resend.env",
+        render_environment={"PATH": "/usr/bin"},
+    )
+
+
+class ResolutionRunner:
+    def __init__(self, *, container_id: str, config_hash: str):
+        self.container_id = container_id
+        self.config_hash = config_hash
+
+    def run(self, args, **_kwargs):
+        if "ps" in args:
+            return self.container_id
+        if "config" in args and "--hash" in args:
+            return f"stalwart {self.config_hash}"
+        raise AssertionError(args)
+
+
+def test_undefined_identity_service_dependency_is_categorized_and_sanitized(tmp_path: Path) -> None:
+    stderr = (
+        'service "tool-service" depends on undefined service "identity-service": '
+        "invalid compose project PASSWORD=do-not-leak"
+    )
+    args = resolution_args(tmp_path)
+    assert migration.compose_error_category(stderr) == "undefined_service_dependency"
+    sanitized = migration.sanitize_compose_stderr(stderr, args)
+    assert "identity-service" in sanitized
+    assert "do-not-leak" not in sanitized
+    assert "PASSWORD=<redacted>" in sanitized
+
+
+def test_invalid_partial_compose_project_is_categorized() -> None:
+    stderr = "service graph is incomplete: invalid compose project"
+    assert migration.compose_error_category(stderr) == "invalid_partial_compose_project"
+
+
+def test_valid_exact_stalwart_compose_resolution(tmp_path: Path) -> None:
+    value = snapshot()
+    runner = ResolutionRunner(
+        container_id=value["container_id"],
+        config_hash=value["compose"]["config_hash"],
+    )
+    assert (
+        migration.require_compose_identity(
+            runner,
+            resolution_args(tmp_path),
+            value,
+            include_override=False,
+        )
+        == value["compose"]["config_hash"]
+    )
+    canonical = (
+        ROOT
+        / "mas"
+        / "infra"
+        / "smtp-gateway"
+        / "home"
+        / "docker-compose.stalwart-canonical.yml"
+    ).read_text(encoding="utf-8")
+    assert "stalwart:" in canonical
+    assert "identity-service:" not in canonical
+    assert "tool-service:" not in canonical
+
+
+def test_running_container_id_mismatch_is_rejected(tmp_path: Path) -> None:
+    value = snapshot()
+    runner = ResolutionRunner(
+        container_id="f" * 64,
+        config_hash=value["compose"]["config_hash"],
+    )
+    with pytest.raises(migration.Refused, match="inspected Stalwart container"):
+        migration.require_compose_identity(
+            runner,
+            resolution_args(tmp_path),
+            value,
+            include_override=False,
+        )
+
+
+def test_running_config_hash_mismatch_is_rejected(tmp_path: Path) -> None:
+    value = snapshot()
+    runner = ResolutionRunner(
+        container_id=value["container_id"],
+        config_hash="f" * 64,
+    )
+    with pytest.raises(migration.Refused, match="selected Compose definition"):
+        migration.require_compose_identity(
+            runner,
+            resolution_args(tmp_path),
+            value,
+            include_override=False,
+        )
