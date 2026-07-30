@@ -66,9 +66,17 @@ MANIFEST_NAME = "pre-upgrade-manifest.json"
 BACKUP_SUCCESS_NAME = "consistent-backup.json"
 CUTOVER_SUCCESS_NAME = "cutover-success.json"
 BACKUP_FAILURE_NAME = "backup-failed.json"
+PRE_STOP_VALIDATION_NAME = "pre-stop-validation.json"
+SOURCE_STOP_INITIATED_NAME = "source-stop-initiated.json"
+SOURCE_STOPPED_NAME = "source-stopped.json"
+TARGET_RECREATION_INITIATED_NAME = "target-recreation-initiated.json"
+TARGET_RUNNING_NAME = "target-running.json"
+VERIFICATION_COMPLETE_NAME = "verification-complete.json"
+CUTOVER_FAILURE_NAME = "cutover-failed.json"
 CONFIG_COPY = "etc-stalwart"
 DATA_COPY = "var-lib-stalwart"
 MAX_DIFFERING_FIELDS = 64
+DEFAULT_STOP_TIMEOUT = 45
 IGNORED_LABEL_CATEGORIES = (
     "com.docker.compose.*",
     "desktop.docker.io/*",
@@ -102,6 +110,24 @@ def cutover_success_path(args: argparse.Namespace) -> Path:
 
 def backup_failure_path(args: argparse.Namespace) -> Path:
     return args.backup_dir / BACKUP_FAILURE_NAME
+
+
+def cutover_state_path(args: argparse.Namespace, name: str) -> Path:
+    return args.backup_dir / name
+
+
+def record_cutover_phase(
+    args: argparse.Namespace,
+    name: str,
+    value: dict[str, Any],
+) -> None:
+    path = cutover_state_path(args, name)
+    if not path.exists():
+        migration.atomic_json(path, value)
+
+
+def cutover_phase_exists(args: argparse.Namespace, name: str) -> bool:
+    return cutover_state_path(args, name).exists()
 
 
 def load_protected_artifact(path: Path) -> dict[str, Any]:
@@ -849,6 +875,117 @@ def wait_for_source_healthy(runner: Runner, args: argparse.Namespace) -> dict[st
     return snapshot
 
 
+def inspect_stopped_source(runner: Runner, args: argparse.Namespace) -> dict[str, Any]:
+    values = runner.json(["docker", "inspect", args.container])
+    if not isinstance(values, list) or len(values) != 1:
+        raise Refused("stopped source container could not be inspected")
+    raw = values[0]
+    state = raw.get("State") or {}
+    if state.get("Running"):
+        raise Refused("source container did not stop")
+    exit_code = int(state.get("ExitCode") or 0)
+    return {
+        "container_id": raw.get("Id") or "",
+        "exit_code": exit_code,
+        "oom_killed": bool(state.get("OOMKilled")),
+        "sigkill_required": exit_code == 137,
+        "graceful_stop": exit_code != 137,
+    }
+
+
+def validate_recovered_source(
+    runner: Runner,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    _raw, snapshot, report = analyze_source_runtime(runner, args)
+    if not report["source_semantic_match"]:
+        raise Refused("recovered v0.16.7 source has material definition drift")
+    validate_exact_source(snapshot)
+    migration.validate_mount_tracking(runner, snapshot, project=args.project_name)
+    require_compose_container_identity(runner, args, snapshot)
+    secret = migration.protected_secret(args.secret_file)
+    try:
+        migration.secret_matches_container(runner, args.container, secret)
+    finally:
+        secret = ""
+    return snapshot
+
+
+def recover_source(
+    runner: Runner,
+    args: argparse.Namespace,
+    *,
+    target_recreation_started: bool,
+) -> dict[str, Any]:
+    recovery_method = "docker-start"
+    try:
+        if target_recreation_started:
+            raise Refused("target recreation began; use the source Compose rollback")
+        runner.run(["docker", "start", args.container], timeout=args.stop_timeout + 30)
+    except Refused:
+        recovery_method = "compose-source-recreate"
+        runner.run(
+            migration.compose_command(args, False)
+            + [
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "--no-build",
+                "--pull",
+                "never",
+                args.service,
+            ],
+            env=migration.compose_environment(args),
+            timeout=300,
+        )
+    recovered = wait_for_source_healthy(runner, args)
+    recovered = validate_recovered_source(runner, args)
+    return {
+        "source_auto_recovery": "PASS",
+        "recovery_method": recovery_method,
+        "container_id": recovered["container_id"],
+        "completed_at": utc_now(),
+    }
+
+
+def record_cutover_failure(
+    args: argparse.Namespace,
+    *,
+    last_completed_phase: str,
+    mutation: bool,
+    recovery: dict[str, Any] | None,
+) -> None:
+    record_cutover_phase(
+        args,
+        CUTOVER_FAILURE_NAME,
+        {
+            "schema": 1,
+            "container": CONTAINER,
+            "last_completed_phase": last_completed_phase,
+            "live_mutation": "PERFORMED" if mutation else "NOT_PERFORMED",
+            "source_auto_recovery": (
+                (recovery or {}).get("source_auto_recovery") or "NOT_ATTEMPTED"
+            ),
+            "recovery_method": (recovery or {}).get("recovery_method") or "",
+            "failed_at": utc_now(),
+            "secret_or_fingerprint_stored": False,
+            "volumes_deleted_or_recreated": False,
+        },
+    )
+
+
+def backup_integrity_action(runner: Runner, args: argparse.Namespace) -> None:
+    require_root()
+    require_exact_container_argument(args)
+    manifest = read_manifest(args)
+    read_backup_success(args, manifest)
+    print("BACKUP_INTEGRITY=PASS")
+    print("LIVE_MUTATION=NOT_PERFORMED")
+    print("DOCKER_VOLUME_MUTATION=NONE")
+    print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+
+
 def backup_action(runner: Runner, args: argparse.Namespace) -> None:
     require_root()
     require_exact_container_argument(args)
@@ -1024,6 +1161,8 @@ def write_cutover_success(
     args: argparse.Namespace,
     manifest: dict[str, Any],
     after: dict[str, Any],
+    *,
+    live_mutation: str = "PERFORMED",
 ) -> None:
     migration.atomic_json(
         cutover_success_path(args),
@@ -1036,7 +1175,19 @@ def write_cutover_success(
             "target_image": TARGET_IMAGE,
             "manifest_fingerprint": migration.canonical_hash(manifest),
             "completed_at": utc_now(),
+            "live_mutation": live_mutation,
             "secret_value_or_fingerprint_stored": False,
+            "volumes_deleted_or_recreated": False,
+        },
+    )
+    record_cutover_phase(
+        args,
+        VERIFICATION_COMPLETE_NAME,
+        {
+            "schema": 1,
+            "container": CONTAINER,
+            "completed_at": utc_now(),
+            "live_mutation": live_mutation,
             "volumes_deleted_or_recreated": False,
         },
     )
@@ -1049,48 +1200,212 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
         raise Refused("--approve-security-upgrade is required")
     manifest = read_manifest(args)
     read_backup_success(args, manifest)
-    if cutover_success_path(args).exists():
+    if cutover_success_path(args).exists() or cutover_phase_exists(
+        args, VERIFICATION_COMPLETE_NAME
+    ):
         raise Refused("security cutover is already complete; refusing a second cutover")
-    current = migration.inspect_container(runner, args.container)
-    if current["definition"]["image_ref"] == TARGET_IMAGE:
+    if cutover_phase_exists(args, TARGET_RECREATION_INITIATED_NAME) or cutover_phase_exists(
+        args, TARGET_RUNNING_NAME
+    ):
         raise Refused(
-            "v0.16.15 is already running without a success artifact; use verify only"
+            "target recreation already began; use verification-only recovery"
         )
-    current = prepare_runtime(runner, args)["snapshot"]
-    if current != manifest["source"]:
-        raise Refused("live Stalwart state changed after the stopped backup")
-    if validate_target_image_local(runner) != manifest["target_image_id"]:
-        raise Refused("local v0.16.15 target image identity changed")
-    target_hash = migration.compose_service_hash(
-        runner,
-        args,
-        include_override=True,
-    )
-    if target_hash != manifest["target_compose_hash"]:
-        raise Refused("target Compose definition changed after inspection")
-    runner.run(
-        migration.compose_command(args, True)
-        + [
-            "up",
-            "-d",
-            "--no-deps",
-            "--force-recreate",
-            "--no-build",
-            "--pull",
-            "never",
-            args.service,
-        ],
-        env=migration.compose_environment(args),
-        timeout=300,
-    )
-    after = validate_upgraded(runner, args, manifest)
-    write_cutover_success(args, manifest, after)
-    print("STALWART_SECURITY_CUTOVER=PASS")
-    print("SOURCE_VERSION=v0.16.7")
-    print("TARGET_VERSION=v0.16.15")
-    print("PERSISTENT_STORAGE_PRESERVED=PASS")
-    print("RESEND_API_KEY_SOURCE_MATCH=PASS")
-    print("DOCKER_VOLUME_MUTATION=NONE")
+    mutation = False
+    target_recreation_started = False
+    last_completed_phase = "PRE_STOP_VALIDATION"
+    recovery: dict[str, Any] | None = None
+    try:
+        if cutover_phase_exists(args, SOURCE_STOP_INITIATED_NAME):
+            current_state = migration.inspect_container(runner, args.container)
+            if not current_state["running"] or current_state["health"] != "healthy":
+                mutation = True
+                last_completed_phase = "SOURCE_STOP"
+                recovery = recover_source(
+                    runner,
+                    args,
+                    target_recreation_started=False,
+                )
+                print("SOURCE_AUTO_RECOVERY=" + recovery["source_auto_recovery"])
+
+        # PRE_STOP_VALIDATION: every source and target precondition is checked
+        # while the approved v0.16.7 container is still running and healthy.
+        current = prepare_runtime(runner, args)["snapshot"]
+        if current != manifest["source"]:
+            raise Refused("live Stalwart state changed after the stopped backup")
+        target_image_id, target_report = target_image_validation(runner)
+        if target_image_id != manifest["target_image_id"]:
+            raise Refused("local v0.16.15 target image identity changed")
+        target_hash = migration.compose_service_hash(
+            runner,
+            args,
+            include_override=True,
+        )
+        if target_hash != manifest["target_compose_hash"]:
+            raise Refused("target Compose definition changed after inspection")
+        record_cutover_phase(
+            args,
+            PRE_STOP_VALIDATION_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                "source_container_id": current["container_id"],
+                "target_image_validation": target_report,
+                "target_compose_hash": target_hash,
+                "completed_at": utc_now(),
+                "live_mutation": "NOT_PERFORMED",
+            },
+        )
+        print("PRE_STOP_VALIDATION=PASS")
+
+        # SOURCE_STOP: mutation is marked before invoking docker stop.
+        record_cutover_phase(
+            args,
+            SOURCE_STOP_INITIATED_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                "stop_timeout_seconds": args.stop_timeout,
+                "initiated_at": utc_now(),
+                "live_mutation": "PERFORMED",
+            },
+        )
+        mutation = True
+        last_completed_phase = "SOURCE_STOP"
+        runner.run(
+            ["docker", "stop", "--time", str(args.stop_timeout), args.container],
+            timeout=args.stop_timeout + 30,
+        )
+        stop_info = inspect_stopped_source(runner, args)
+        record_cutover_phase(
+            args,
+            SOURCE_STOPPED_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                **stop_info,
+                "completed_at": utc_now(),
+                "live_mutation": "PERFORMED",
+            },
+        )
+        last_completed_phase = "SOURCE_STOPPED"
+        print("SOURCE_STOP=PASS")
+        print("SOURCE_STOP_TIMEOUT_SECONDS=" + str(args.stop_timeout))
+        print(
+            "SOURCE_SIGKILL_REQUIRED="
+            + ("PASS" if stop_info["sigkill_required"] else "NO")
+        )
+        if stop_info["sigkill_required"]:
+            raise Refused("source stop required SIGKILL; cutover refused fail-closed")
+
+        # TARGET_RECREATION: no source validator is called after the stop.
+        record_cutover_phase(
+            args,
+            TARGET_RECREATION_INITIATED_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                "initiated_at": utc_now(),
+                "live_mutation": "PERFORMED",
+            },
+        )
+        target_recreation_started = True
+        last_completed_phase = "TARGET_RECREATION"
+        runner.run(
+            migration.compose_command(args, True)
+            + [
+                "up",
+                "-d",
+                "--no-deps",
+                "--force-recreate",
+                "--no-build",
+                "--pull",
+                "never",
+                args.service,
+            ],
+            env=migration.compose_environment(args),
+            timeout=300,
+        )
+
+        # TARGET_HEALTH_WAIT and POST_CUTOVER_VERIFICATION operate only on the
+        # target definition; source running/health validation is not repeated.
+        after = validate_upgraded(runner, args, manifest)
+        record_cutover_phase(
+            args,
+            TARGET_RUNNING_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                "target_container_id": after["container_id"],
+                "completed_at": utc_now(),
+                "live_mutation": "PERFORMED",
+            },
+        )
+        last_completed_phase = "TARGET_RUNNING"
+        write_cutover_success(args, manifest, after)
+        last_completed_phase = "POST_CUTOVER_VERIFICATION"
+        print("STALWART_SECURITY_CUTOVER=PASS")
+        print("SOURCE_VERSION=v0.16.7")
+        print("TARGET_VERSION=v0.16.15")
+        print("PERSISTENT_STORAGE_PRESERVED=PASS")
+        print("RESEND_API_KEY_SOURCE_MATCH=PASS")
+        print("LIVE_MUTATION=PERFORMED")
+        print("LAST_COMPLETED_PHASE=POST_CUTOVER_VERIFICATION")
+        print("DOCKER_VOLUME_MUTATION=NONE")
+    except Exception as exc:
+        if mutation:
+            if not cutover_phase_exists(args, SOURCE_STOPPED_NAME):
+                try:
+                    stop_info = inspect_stopped_source(runner, args)
+                    record_cutover_phase(
+                        args,
+                        SOURCE_STOPPED_NAME,
+                        {
+                            "schema": 1,
+                            "container": CONTAINER,
+                            **stop_info,
+                            "completed_at": utc_now(),
+                            "live_mutation": "PERFORMED",
+                        },
+                    )
+                    last_completed_phase = "SOURCE_STOPPED"
+                except Exception:
+                    pass
+            try:
+                recovery = recover_source(
+                    runner,
+                    args,
+                    target_recreation_started=target_recreation_started,
+                )
+            except Exception:
+                recovery = {
+                    "source_auto_recovery": "FAIL",
+                    "recovery_method": "failed",
+                }
+            record_cutover_failure(
+                args,
+                last_completed_phase=last_completed_phase,
+                mutation=True,
+                recovery=recovery,
+            )
+            print("LIVE_MUTATION=PERFORMED")
+            print(f"LAST_COMPLETED_PHASE={last_completed_phase}")
+            print("SOURCE_AUTO_RECOVERY=" + recovery["source_auto_recovery"])
+            if recovery["source_auto_recovery"] == "PASS":
+                raise Refused(
+                    "cutover failed safely after mutation; source auto-recovery passed"
+                ) from exc
+            raise Refused(
+                "cutover failed after mutation and source auto-recovery failed"
+            ) from exc
+        record_cutover_failure(
+            args,
+            last_completed_phase=last_completed_phase,
+            mutation=False,
+            recovery=None,
+        )
+        print("LIVE_MUTATION=NOT_PERFORMED")
+        print(f"LAST_COMPLETED_PHASE={last_completed_phase}")
+        raise
 
 
 def verify_action(runner: Runner, args: argparse.Namespace) -> None:
@@ -1101,10 +1416,22 @@ def verify_action(runner: Runner, args: argparse.Namespace) -> None:
     if cutover_success_path(args).exists():
         raise Refused("security cutover is already verified")
     after = validate_upgraded(runner, args, manifest)
-    write_cutover_success(args, manifest, after)
+    record_cutover_phase(
+        args,
+        TARGET_RUNNING_NAME,
+        {
+            "schema": 1,
+            "container": CONTAINER,
+            "target_container_id": after["container_id"],
+            "completed_at": utc_now(),
+            "live_mutation": "NOT_PERFORMED",
+        },
+    )
+    write_cutover_success(args, manifest, after, live_mutation="NOT_PERFORMED")
     print("STALWART_SECURITY_CUTOVER_VERIFICATION=PASS")
     print("CONTAINER_RECREATION=NOT_PERFORMED")
     print("RESEND_API_KEY_SOURCE_MATCH=PASS")
+    print("LIVE_MUTATION=NOT_PERFORMED")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1114,7 +1441,14 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
     value.add_argument(
         "action",
-        choices=("diagnose", "inspect", "backup", "cutover", "verify"),
+        choices=(
+            "diagnose",
+            "inspect",
+            "backup-integrity",
+            "backup",
+            "cutover",
+            "verify",
+        ),
     )
     value.add_argument("--backup-dir", type=Path, required=True)
     value.add_argument("--container", default=CONTAINER)
@@ -1144,12 +1478,20 @@ def parser() -> argparse.ArgumentParser:
         default=Path("/etc/aiat/stalwart-resend.env"),
     )
     value.add_argument("--persistent-target", default="/var/lib/stalwart")
+    value.add_argument(
+        "--stop-timeout",
+        type=int,
+        default=DEFAULT_STOP_TIMEOUT,
+        help="graceful source stop timeout in seconds (default: 45)",
+    )
     value.add_argument("--approve-security-upgrade", action="store_true")
     return value
 
 
 def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args = parser().parse_args(argv)
+    if not 30 <= args.stop_timeout <= 300:
+        raise Refused("--stop-timeout must be between 30 and 300 seconds")
     args.backup_dir = args.backup_dir.resolve()
     args.project_directory = args.project_directory.resolve()
     args.compose_file = [path.resolve() for path in args.compose_file]
@@ -1160,6 +1502,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     actions = {
         "diagnose": diagnose_action,
         "inspect": inspect_action,
+        "backup-integrity": backup_integrity_action,
         "backup": backup_action,
         "cutover": cutover_action,
         "verify": verify_action,

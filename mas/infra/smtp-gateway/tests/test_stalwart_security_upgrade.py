@@ -129,6 +129,7 @@ def action_args(tmp_path: Path) -> SimpleNamespace:
         secret_file=secret_file,
         persistent_target="/var/lib/stalwart",
         approve_security_upgrade=False,
+        stop_timeout=45,
     )
 
 
@@ -944,6 +945,233 @@ def test_cutover_cannot_execute_twice(
 
     with pytest.raises(migration.Refused, match="already complete"):
         upgrade.cutover_action(NoCommands(), args)
+
+
+def test_cutover_source_validation_completes_before_stop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    manifest = manifest_for(source_snapshot())
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+
+    class NoMutationRunner:
+        def __init__(self):
+            self.commands: list[list[str]] = []
+
+        def run(self, command, **_kwargs):
+            self.commands.append(command)
+            raise AssertionError(f"unexpected live command: {command}")
+
+    runner = NoMutationRunner()
+
+    def refused_runtime(*_args):
+        raise migration.Refused("material source drift")
+
+    monkeypatch.setattr(upgrade, "prepare_runtime", refused_runtime)
+    with pytest.raises(migration.Refused, match="material source drift"):
+        upgrade.cutover_action(runner, args)
+    output = capsys.readouterr().out
+    assert runner.commands == []
+    assert "LIVE_MUTATION=NOT_PERFORMED" in output
+    assert "SOURCE_STOP_INITIATED" not in output
+
+
+class CutoverFailureRunner:
+    def __init__(self, *, exit_code: int = 0, target_marker: str = ""):
+        self.commands: list[list[str]] = []
+        self.exit_code = exit_code
+        self.target_marker = target_marker
+
+    def run(self, command, **_kwargs):
+        self.commands.append(command)
+        if command[:2] == ["docker", "compose"] and "up" in command:
+            if self.target_marker and self.target_marker in command:
+                raise migration.Refused("simulated target recreation failure")
+            return ""
+        return ""
+
+    def json(self, command):
+        self.commands.append(command)
+        if command[:3] == ["docker", "inspect", upgrade.CONTAINER]:
+            raw = inspect_fixture()
+            raw["State"] = {
+                "Running": False,
+                "ExitCode": self.exit_code,
+                "OOMKilled": False,
+                "Health": {"Status": "unhealthy"},
+            }
+            return [raw]
+        raise AssertionError(f"unexpected JSON command: {command}")
+
+
+def configure_cutover_failure_test(
+    monkeypatch: pytest.MonkeyPatch,
+    manifest: dict,
+    source: dict,
+) -> None:
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: {"snapshot": source, "source_comparison": {}},
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "target_image_validation",
+        lambda *_: (
+            manifest["target_image_id"],
+            {
+                "target_repository_match": "PASS",
+                "target_digest_match": "PASS",
+                "target_platform": "linux/amd64",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        migration,
+        "compose_service_hash",
+        lambda *_args, **_kwargs: manifest["target_compose_hash"],
+    )
+    monkeypatch.setattr(upgrade, "wait_for_source_healthy", lambda *_: source)
+    monkeypatch.setattr(upgrade, "validate_recovered_source", lambda *_: source)
+
+
+def test_cutover_uses_graceful_timeout_and_rolls_back_target_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    configure_cutover_failure_test(monkeypatch, manifest, source)
+    prepare_calls: list[str] = []
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: (prepare_calls.append("pre-stop") or {"snapshot": source, "source_comparison": {}}),
+    )
+    runner = CutoverFailureRunner(target_marker=str(args.override_file))
+    with pytest.raises(migration.Refused, match="source auto-recovery passed"):
+        upgrade.cutover_action(runner, args)
+    output = capsys.readouterr().out
+    stop_index = runner.commands.index(
+        ["docker", "stop", "--time", "45", upgrade.CONTAINER]
+    )
+    source_rollback = next(
+        index
+        for index, command in enumerate(runner.commands)
+        if command[:2] == ["docker", "compose"]
+        and "up" in command
+        and str(args.override_file) not in command
+    )
+    assert stop_index < source_rollback
+    assert "PRE_STOP_VALIDATION=PASS" in output
+    assert "LIVE_MUTATION=PERFORMED" in output
+    assert "SOURCE_AUTO_RECOVERY=PASS" in output
+    assert "LIVE_MUTATION=NOT_PERFORMED" not in output
+    assert prepare_calls == ["pre-stop"]
+    assert (args.backup_dir / upgrade.CUTOVER_FAILURE_NAME).is_file()
+    assert not any("volume" in part or "down" in part for command in runner.commands for part in command)
+
+
+def test_sigkill_is_recorded_and_cutover_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    configure_cutover_failure_test(monkeypatch, manifest, source)
+    runner = CutoverFailureRunner(exit_code=137, target_marker=str(args.override_file))
+    with pytest.raises(migration.Refused, match="source auto-recovery passed"):
+        upgrade.cutover_action(runner, args)
+    output = capsys.readouterr().out
+    assert "SOURCE_SIGKILL_REQUIRED=PASS" in output
+    assert "SOURCE_AUTO_RECOVERY=PASS" in output
+    assert not any(
+        command[:2] == ["docker", "compose"] and str(args.override_file) in command
+        for command in runner.commands
+    )
+
+
+def test_backup_integrity_is_read_only_and_reuses_existing_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    manifest = manifest_for(source_snapshot())
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+
+    class NoLiveCommands:
+        def run(self, command, **_kwargs):
+            raise AssertionError(f"backup integrity mutated live state: {command}")
+
+    upgrade.backup_integrity_action(NoLiveCommands(), args)
+    output = capsys.readouterr().out
+    assert "BACKUP_INTEGRITY=PASS" in output
+    assert "LIVE_MUTATION=NOT_PERFORMED" in output
+
+
+def test_interrupted_pre_recreation_state_is_recovered_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    upgrade.cutover_state_path(args, upgrade.SOURCE_STOP_INITIATED_NAME).write_text(
+        "{}\n", encoding="utf-8"
+    )
+    configure_cutover_failure_test(monkeypatch, manifest, source)
+    monkeypatch.setattr(
+        migration,
+        "inspect_container",
+        lambda *_: {
+            **source,
+            "running": False,
+            "health": "none",
+        },
+    )
+    monkeypatch.setattr(upgrade, "recover_source", lambda *_args, **_kwargs: {"source_auto_recovery": "PASS"})
+    monkeypatch.setattr(upgrade, "validate_upgraded", lambda *_: source)
+    monkeypatch.setattr(upgrade, "write_cutover_success", lambda *_args, **_kwargs: None)
+
+    class SuccessfulRunner:
+        def run(self, command, **_kwargs):
+            return ""
+
+        def json(self, _command):
+            raw = inspect_fixture()
+            raw["State"] = {
+                "Running": False,
+                "ExitCode": 0,
+                "OOMKilled": False,
+                "Health": {"Status": "none"},
+            }
+            return [raw]
+
+    upgrade.cutover_action(SuccessfulRunner(), args)
+    assert upgrade.cutover_state_path(args, upgrade.PRE_STOP_VALIDATION_NAME).is_file()
 
 
 def test_upgrade_source_contains_no_volume_delete_or_compose_down() -> None:

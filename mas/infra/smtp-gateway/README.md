@@ -517,17 +517,29 @@ The explicit operator-approved cutover is:
 ```sh
 sudo sh scripts/stalwart-security-upgrade.sh cutover \
   --backup-dir "$AIAT_STALWART_SECURITY_BACKUP" \
+  --stop-timeout 45 \
   --approve-security-upgrade
 ```
 
-Cutover refuses unless both the matching pre-upgrade manifest and stopped
-backup success artifact exist. It cannot execute twice. If Compose recreated
-the target but the process was interrupted before the success artifact was
-recorded, use verification-only recovery; this command never recreates the
-container:
+Cutover completes all source and target preconditions before issuing
+`docker stop --time 45`. It records each lifecycle phase, never runs the
+source running/health validator after the intentional stop, and automatically
+restores the v0.16.7 definition if target recreation or verification fails.
+SIGKILL-derived exit 137 fails closed and is recorded. It cannot execute twice
+after target recreation begins. If Compose recreated the target but the
+process was interrupted before the success artifact was recorded, use
+verification-only recovery; this command never recreates the container:
 
 ```sh
 sudo sh scripts/stalwart-security-upgrade.sh verify \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+```
+
+To validate the existing stopped consistent backup after an interrupted or
+failed cutover, without contacting Docker or modifying the live host:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh backup-integrity \
   --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
 ```
 
