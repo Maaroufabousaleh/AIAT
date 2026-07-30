@@ -337,24 +337,24 @@ The repository uses these management calls:
 | `preflight-resend-certification.sh` | `x:MtaRoute/get`, `x:MtaOutboundStrategy/get` through `verify-stalwart-relay.sh` |
 | `certify-resend.sh` | none |
 
-Create the management API key:
+Do not add an “API key for programmatic access” under **Management ›
+Directory › Accounts › account › Credentials**. In v0.16.7 the `secret` and
+`createdAt` members exposed there are server-set; attempting to patch the
+embedded `Account.credentials` representation fails with `Cannot modify
+server set property`. API keys are created as standalone `ApiKey` registry
+objects using `x:ApiKey/set`.
 
-1. From the home WSL host, open `http://127.0.0.1:18080/account` in a local
-   browser and sign in as the existing Stalwart operator account. Do not
-   expose this listener over WireGuard or the Internet.
-2. Select **Credentials**, then **API Keys**, and select **Create API Key**.
-3. Set the description to `AIAT Resend certification read-only`.
-4. Set **Permissions** to **Replace**. Select exactly:
-   `authenticate`, `sysAccountQuery`, `sysDomainQuery`,
-   `sysMtaOutboundStrategyGet`, and `sysMtaRouteGet`.
-5. Leave **Allowed IPs** empty for this Docker-published loopback listener:
-   Stalwart may observe Docker's bridge source rather than `127.0.0.1`.
-   Network scope remains enforced by the host binding
-   `127.0.0.1:18080`. Set an operator-governed expiry covering only the
-   certification window.
-6. Create the key and copy its one-time secret into the protected file
-   creation prompt below. Do not grant the Admin role, use **Inherit**, or add
-   create/update/destroy permissions.
+The WebUI bundle currently served by the pinned live instance was inspected
+read-only at both `/account/` and `/admin/`. Both serve
+`assets/index-DEWCe6TU.js`, which has no `ApiKey`, **API Keys**, or
+`sysApiKeyCreate` route/menu entry. Therefore the dedicated API Keys UI is
+unavailable in this installed WebUI bundle; this is not fixed by editing the
+account Credentials form. The supported repository procedure below checks
+the authenticated operator's effective `sysApiKeyCreate` permission before
+making one standalone create call. It never changes the operator account,
+role, or password. Thus the observed missing menu is a route/bundle issue;
+the procedure does not assume the role permission and verifies it
+independently before creation.
 
 Create the mailbox application password:
 
@@ -374,15 +374,49 @@ Create the mailbox application password:
    the one-time application password for the protected prompt. Do not use a
    management API key here.
 
-Create the exact two-line, root-owned mode-0600 file without placing either
-secret in command arguments or shell history:
+After creating the mailbox application password, create the standalone API
+key and the exact two-line, root-owned mode-0600 certification file. Run this
+locally in WSL; all three secrets are read from no-echo prompts and are never
+placed in arguments or shell history:
 
 ```sh
 cd /mnt/c/projects/AIAT/mas/infra/smtp-gateway
-sudo python3 scripts/create-stalwart-certification-env.py \
-  --output /etc/aiat/resend-certification.env
+sudo python3 scripts/provision-stalwart-certification-api-key.py \
+  --output /etc/aiat/resend-certification.env \
+  --expires-in-hours 24
 sudo awk -F= '{print $1"=<redacted>"}' /etc/aiat/resend-certification.env
 ```
+
+At the prompts, provide:
+
+1. The existing regular Stalwart administrator address.
+2. Its existing password.
+3. The one-time application password previously created by
+   `gateway-test@agents.aiat.ca`.
+
+The script first reads `/api/account` and refuses without
+`sysApiKeyCreate`. It then sends exactly one `x:ApiKey/set` create request
+with:
+
+```text
+description: AIAT Resend certification read-only
+permissions mode: Replace
+permissions:
+  authenticate
+  sysAccountQuery
+  sysDomainQuery
+  sysMtaOutboundStrategyGet
+  sysMtaRouteGet
+allowedIps: empty
+expiresAt: current UTC time plus 24 hours
+```
+
+`secret` and `createdAt` are omitted because they are server-set. The
+one-time `API_...` secret returned by Stalwart is written directly to the
+reserved mode-0600 output file and is never printed. If authentication,
+permission validation, creation, or file writing fails, the incomplete
+output is removed. The script does not update or destroy any account or
+credential.
 
 The final `awk` output must contain exactly these two names, in this order:
 
