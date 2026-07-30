@@ -1418,6 +1418,7 @@ def test_governed_retry_archives_previous_attempt_without_overwrite(
         "target_image_validation",
         lambda *_: (manifest["target_image_id"], manifest["target_image_validation"]),
     )
+    monkeypatch.setattr(upgrade, "validate_no_target_container", lambda *_: None)
     invoked: list[str] = []
     monkeypatch.setattr(upgrade, "cutover_action", lambda *_: invoked.append("cutover"))
 
@@ -1450,6 +1451,273 @@ def test_governed_retry_refuses_when_prior_target_exists(
     monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
     with pytest.raises(migration.Refused, match="created a target"):
         upgrade.retry_action(SimpleNamespace(), args)
+
+
+def legacy_failure_for_adoption() -> dict:
+    return {
+        "schema": 1,
+        "container": upgrade.CONTAINER,
+        "last_completed_phase": "TARGET_RECREATION",
+        "live_mutation": "PERFORMED",
+        "source_auto_recovery": "PASS",
+        "recovery_method": "docker-start",
+        "failed_at": "2026-07-30T00:00:00Z",
+        "secret_or_fingerprint_stored": False,
+        "volumes_deleted_or_recreated": False,
+    }
+
+
+def target_recreation_for_adoption() -> dict:
+    return {
+        "schema": 1,
+        "container": upgrade.CONTAINER,
+        "initiated_at": "2026-07-30T00:00:00Z",
+        "live_mutation": "PERFORMED",
+    }
+
+
+def write_protected_test_artifact(path: Path, value: dict) -> None:
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
+def configure_legacy_adoption_test(
+    monkeypatch: pytest.MonkeyPatch,
+    args: SimpleNamespace,
+    manifest: dict,
+    source: dict,
+) -> None:
+    report = {
+        "source_semantic_match": True,
+        "config_hash_match": False,
+        "config_hash_drift_class": "COMPOSE_METADATA",
+        "differing_fields": [],
+    }
+    target_report = manifest["target_image_validation"]
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    monkeypatch.setattr(
+        upgrade,
+        "validate_legacy_current_state",
+        lambda *_: (source, report, target_report),
+    )
+
+
+def test_legacy_failure_adoption_is_idempotent_and_secret_free(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.TARGET_RECREATION_INITIATED_NAME),
+        target_recreation_for_adoption(),
+    )
+    configure_legacy_adoption_test(monkeypatch, args, manifest, source)
+
+    class NoLiveMutation:
+        def run(self, command, **_kwargs):
+            raise AssertionError(f"legacy adoption mutated live state: {command}")
+
+        def json(self, command):
+            raise AssertionError(f"legacy adoption inspected live state: {command}")
+
+    failure_path = upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME)
+    target_path = upgrade.cutover_state_path(args, upgrade.TARGET_RECREATION_INITIATED_NAME)
+    original_failure = failure_path.read_bytes()
+    original_target = target_path.read_bytes()
+    upgrade.adopt_legacy_failure_action(NoLiveMutation(), args)
+    first_output = capsys.readouterr().out
+    upgrade.adopt_legacy_failure_action(NoLiveMutation(), args)
+    second_output = capsys.readouterr().out
+    adoption = json.loads(upgrade.legacy_adoption_path(args).read_text(encoding="utf-8"))
+    assert "LEGACY_FAILURE_ADOPTION=PASS" in first_output
+    assert "ADOPTION_ALREADY_VERIFIED=PASS" in second_output
+    assert "GOVERNED_RETRY_ELIGIBLE=PASS" in second_output
+    assert "re_protected_test_secret" not in first_output + second_output
+    assert hashlib.sha256(b"re_protected_test_secret").hexdigest() not in (
+        first_output + second_output
+    )
+    assert failure_path.read_bytes() == original_failure
+    assert target_path.read_bytes() == original_target
+    archive = upgrade.legacy_adoption_archive_path(args)
+    assert (archive / upgrade.CUTOVER_FAILURE_NAME).read_bytes() == original_failure
+    assert (archive / upgrade.TARGET_RECREATION_INITIATED_NAME).read_bytes() == original_target
+    assert adoption["live_mutation"] == "NOT_PERFORMED"
+    assert adoption["secret_value_or_fingerprint_stored"] is False
+    monkeypatch.setattr(upgrade, "validate_recovered_source", lambda *_: source)
+    upgrade.failure_diagnose_action(NoLiveMutation(), args)
+    diagnosis_output = capsys.readouterr().out
+    assert "FAILURE_DIAGNOSIS=PASS" in diagnosis_output
+    assert "LEGACY_FAILURE_ADOPTION=PASS" in diagnosis_output
+    assert "GOVERNED_RETRY_ELIGIBLE=PASS" in diagnosis_output
+
+
+def test_legacy_adoption_requires_recorded_recovery_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    broken = legacy_failure_for_adoption()
+    broken.pop("source_auto_recovery")
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME), broken
+    )
+    with pytest.raises(migration.Refused, match="sufficient recovery evidence"):
+        upgrade.read_legacy_failure(args)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "current v0.16.7 source does not match",
+        "not healthy",
+        "source semantic validation is not adoption-safe",
+        "secret source mismatch",
+        "v0.16.15 target container still exists",
+    ],
+)
+def test_legacy_adoption_refuses_current_state_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reason: str,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: (_ for _ in ()).throw(migration.Refused(reason)),
+    )
+    with pytest.raises(migration.Refused, match=reason):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_legacy_adoption_rejects_invalid_backup_and_completed_cutover(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(
+        upgrade,
+        "read_backup_success",
+        lambda *_: (_ for _ in ()).throw(migration.Refused("invalid backup")),
+    )
+    with pytest.raises(migration.Refused, match="invalid backup"):
+        upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    upgrade.cutover_success_path(args).write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(upgrade, "read_legacy_failure", lambda *_: legacy_failure_for_adoption())
+    monkeypatch.setattr(
+        upgrade,
+        "read_target_recreation_artifact",
+        lambda *_: target_recreation_for_adoption(),
+    )
+    with pytest.raises(migration.Refused, match="completed cutover"):
+        upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+
+
+def test_legacy_adoption_artifact_tampering_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.TARGET_RECREATION_INITIATED_NAME),
+        target_recreation_for_adoption(),
+    )
+    configure_legacy_adoption_test(monkeypatch, args, manifest, source)
+    upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+    (upgrade.legacy_adoption_archive_path(args) / upgrade.CUTOVER_FAILURE_NAME).write_text(
+        "tampered\n", encoding="utf-8"
+    )
+    (upgrade.legacy_adoption_archive_path(args) / upgrade.CUTOVER_FAILURE_NAME).chmod(0o600)
+    with pytest.raises(migration.Refused, match="tampered"):
+        upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+
+
+def test_governed_retry_accepts_adopted_legacy_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.TARGET_RECREATION_INITIATED_NAME),
+        target_recreation_for_adoption(),
+    )
+    configure_legacy_adoption_test(monkeypatch, args, manifest, source)
+    upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: {"snapshot": source, "source_comparison": {}},
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "target_image_validation",
+        lambda *_: (manifest["target_image_id"], manifest["target_image_validation"]),
+    )
+    monkeypatch.setattr(upgrade, "validate_no_target_container", lambda *_: None)
+    invoked: list[str] = []
+    monkeypatch.setattr(upgrade, "cutover_action", lambda *_: invoked.append("cutover"))
+    upgrade.retry_action(SimpleNamespace(), args)
+    assert invoked == ["cutover"]
+    assert upgrade.backup_success_path(args).exists() is False
+
+
+def test_target_absence_check_is_read_only(tmp_path: Path) -> None:
+    args = action_args(tmp_path)
+    current = source_snapshot()
+    commands: list[list[str]] = []
+
+    class ReadOnlyRunner:
+        def run(self, command, **_kwargs):
+            commands.append(command)
+            if "ancestor=" in " ".join(command):
+                return ""
+            return current["container_id"] + "\n"
+
+        def json(self, command):
+            commands.append(command)
+            return [inspect_fixture()]
+
+    upgrade.validate_no_target_container(ReadOnlyRunner(), args, current)
+    assert all(
+        not any(token in command for token in ("stop", "start", "up", "rm", "volume"))
+        for command in commands
+    )
 
 
 def test_upgrade_source_contains_no_volume_delete_or_compose_down() -> None:

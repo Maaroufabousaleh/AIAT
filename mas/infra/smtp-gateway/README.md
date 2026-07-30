@@ -584,10 +584,43 @@ equivalent action name for automation; neither action deletes an artifact or
 recreates a Docker volume.
 
 An older `cutover-failed.json` from the previous lifecycle version may lack
-the newer bounded error fields. The read-only diagnosis normalizes that record
-as `legacy-failure-artifact`; retry still requires live source revalidation,
-passed source recovery, no target-running artifact, and an intact backup before
-archiving it.
+the newer bounded error fields. It is not silently normalized into retry
+authority. Use this exact read-only adoption sequence:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh failure-diagnose \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
+sudo sh scripts/stalwart-security-upgrade.sh backup-integrity \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
+sudo sh scripts/stalwart-security-upgrade.sh diagnose \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
+sudo sh scripts/stalwart-security-upgrade.sh adopt-legacy-failure \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
+sudo sh scripts/stalwart-security-upgrade.sh failure-diagnose \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+
+sudo sh scripts/stalwart-security-upgrade.sh retry \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP" \
+  --stop-timeout 45 \
+  --approve-security-upgrade
+
+sudo sh scripts/stalwart-security-upgrade.sh verify \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+```
+
+`adopt-legacy-failure` is read-only with respect to Docker and creates only a
+sanitized `legacy-failure-adoption.json` plus a protected copy of the original
+legacy artifacts under `attempt-history/legacy-failure-adoption/`. It requires
+the legacy artifact itself to record mutation, passed source recovery, and
+preserved volumes; current source state alone cannot authorize adoption. It
+also independently verifies the exact source container, backup, target
+absence, source semantics, target image identity, and secret match. Repeating
+adoption returns `ADOPTION_ALREADY_VERIFIED=PASS` only while those hashes and
+live read-only checks still agree.
 
 If verification fails, recreate the old image definition against the same
 volumes:

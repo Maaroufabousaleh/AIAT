@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -76,7 +77,9 @@ TARGET_RECREATION_COMMAND_PASS_NAME = "target-recreation-command-pass.json"
 TARGET_RUNNING_NAME = "target-running.json"
 VERIFICATION_COMPLETE_NAME = "verification-complete.json"
 CUTOVER_FAILURE_NAME = "cutover-failed.json"
+LEGACY_ADOPTION_NAME = "legacy-failure-adoption.json"
 ATTEMPT_HISTORY_DIR = "attempt-history"
+LEGACY_ADOPTION_ARCHIVE_DIR = "legacy-failure-adoption"
 ATTEMPT_ARTIFACT_NAMES = (
     PRE_STOP_VALIDATION_NAME,
     SOURCE_STOP_INITIATED_NAME,
@@ -217,6 +220,25 @@ def cutover_phase_exists(args: argparse.Namespace, name: str) -> bool:
 
 def attempt_history_path(args: argparse.Namespace) -> Path:
     return args.backup_dir / ATTEMPT_HISTORY_DIR
+
+
+def legacy_adoption_path(args: argparse.Namespace) -> Path:
+    return args.backup_dir / LEGACY_ADOPTION_NAME
+
+
+def legacy_adoption_archive_path(args: argparse.Namespace) -> Path:
+    return attempt_history_path(args) / LEGACY_ADOPTION_ARCHIVE_DIR
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise Refused("upgrade artifact could not be hashed") from exc
+    return digest.hexdigest()
 
 
 def load_protected_artifact(path: Path) -> dict[str, Any]:
@@ -1291,9 +1313,9 @@ def read_cutover_failure(args: argparse.Namespace) -> dict[str, Any]:
     }
     if not required.issubset(value):
         # Artifacts written by the immediately preceding lifecycle version did
-        # not yet carry bounded failure classification. They are accepted only
-        # as a legacy, non-target proof; retry still revalidates the live source
-        # and refuses if any target-running artifact exists.
+        # not yet carry bounded failure classification. Keep target state
+        # explicitly unknown; only adopt-legacy-failure may establish target
+        # absence through an independent Docker read-only check.
         value = {
             **value,
             "failure_stage": value.get("last_completed_phase") or "UNKNOWN",
@@ -1302,13 +1324,320 @@ def read_cutover_failure(args: argparse.Namespace) -> dict[str, Any]:
             "sanitized_message": FAILURE_MESSAGES["legacy-failure-artifact"],
             "command_executable_subcommand": "NOT_AVAILABLE",
             "return_code": None,
-            "target_container_created": False,
-            "target_became_healthy": False,
+            "target_container_created": "UNKNOWN",
+            "target_became_healthy": "UNKNOWN",
             "target_container_id": "",
         }
     if value.get("sanitized_message") not in FAILURE_MESSAGES.values():
         raise Refused("cutover failure artifact contains an unapproved message")
     return value
+
+
+LEGACY_FAILURE_PHASES = {
+    "SOURCE_STOPPED",
+    "TARGET_RECREATION",
+    "TARGET_RECREATION_COMMAND_PASS",
+}
+NEW_FAILURE_FIELDS = {
+    "failure_stage",
+    "exception_type",
+    "error_code",
+    "sanitized_message",
+    "command_executable_subcommand",
+    "return_code",
+    "target_container_created",
+    "target_became_healthy",
+    "target_container_id",
+}
+LEGACY_FAILURE_ALLOWED_FIELDS = {
+    "schema",
+    "container",
+    "last_completed_phase",
+    "live_mutation",
+    "source_auto_recovery",
+    "recovery_method",
+    "failed_at",
+    "secret_or_fingerprint_stored",
+    "volumes_deleted_or_recreated",
+}
+
+
+def read_legacy_failure(args: argparse.Namespace) -> dict[str, Any]:
+    value = load_protected_artifact(cutover_state_path(args, CUTOVER_FAILURE_NAME))
+    if NEW_FAILURE_FIELDS.issubset(value):
+        raise Refused("cutover failure artifact is already normalized; adoption is not required")
+    if (
+        not set(value).issubset(LEGACY_FAILURE_ALLOWED_FIELDS)
+        or
+        value.get("schema") != 1
+        or value.get("container") != CONTAINER
+        or value.get("live_mutation") != "PERFORMED"
+        or value.get("source_auto_recovery") != "PASS"
+        or value.get("volumes_deleted_or_recreated") is not False
+        or value.get("secret_or_fingerprint_stored") is not False
+        or value.get("last_completed_phase") not in LEGACY_FAILURE_PHASES
+        or not isinstance(value.get("recovery_method"), str)
+        or not value["recovery_method"]
+        or not isinstance(value.get("failed_at"), str)
+        or not value["failed_at"]
+    ):
+        raise Refused("legacy failure artifact lacks sufficient recovery evidence")
+    return value
+
+
+def read_target_recreation_artifact(args: argparse.Namespace) -> dict[str, Any]:
+    value = load_protected_artifact(
+        cutover_state_path(args, TARGET_RECREATION_INITIATED_NAME)
+    )
+    if (
+        not set(value).issubset({"schema", "container", "initiated_at", "live_mutation"})
+        or
+        value.get("schema") != 1
+        or value.get("container") != CONTAINER
+        or value.get("live_mutation") != "PERFORMED"
+        or not isinstance(value.get("initiated_at"), str)
+        or not value["initiated_at"]
+    ):
+        raise Refused("target recreation evidence is invalid")
+    return value
+
+
+def validate_no_target_container(
+    runner: Runner,
+    args: argparse.Namespace,
+    current: dict[str, Any],
+) -> None:
+    """Require exactly the current source service and no target container."""
+    target_ids = runner.run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--no-trunc",
+            "--filter",
+            f"ancestor={TARGET_IMAGE}",
+            "--format",
+            "{{.ID}}",
+        ]
+    )
+    if any(line.strip() for line in target_ids.splitlines()):
+        raise Refused("v0.16.15 target container still exists")
+    output = runner.run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={PROJECT}",
+            "--filter",
+            f"label=com.docker.compose.service={SERVICE}",
+            "--format",
+            "{{.ID}}",
+        ]
+    )
+    identifiers = [line.strip() for line in output.splitlines() if line.strip()]
+    if not identifiers:
+        raise Refused("Stalwart Compose service container could not be resolved")
+    seen_current = False
+    for identifier in identifiers:
+        if not re.fullmatch(r"[0-9a-f]{12,64}", identifier):
+            raise Refused("Docker returned an invalid Stalwart container identity")
+        values = runner.json(["docker", "inspect", identifier])
+        if not isinstance(values, list) or len(values) != 1:
+            raise Refused("Stalwart service container identity could not be inspected")
+        snapshot = migration.snapshot_from_inspect(values[0])
+        if snapshot["container_id"] == current["container_id"]:
+            seen_current = True
+            if snapshot["definition"]["image_ref"] != SOURCE_IMAGE:
+                raise Refused("the current Stalwart container is not the approved source")
+            continue
+        if snapshot["definition"]["image_ref"] == TARGET_IMAGE:
+            raise Refused("v0.16.15 target container still exists")
+        raise Refused("an unexpected Stalwart service container still exists")
+    if not seen_current:
+        raise Refused("mas-stalwart-1 is not the sole Stalwart service container")
+
+
+def validate_legacy_current_state(
+    runner: Runner,
+    args: argparse.Namespace,
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    if cutover_success_path(args).exists() or cutover_phase_exists(
+        args, VERIFICATION_COMPLETE_NAME
+    ):
+        raise Refused("legacy adoption is unavailable after a completed cutover")
+    if cutover_phase_exists(args, TARGET_RUNNING_NAME):
+        raise Refused("legacy adoption is unavailable after target verification began")
+    runtime = prepare_runtime(runner, args)
+    current = runtime["snapshot"]
+    report = runtime["source_comparison"]
+    if current != manifest["source"]:
+        raise Refused("current v0.16.7 source does not match the approved manifest")
+    if (
+        not report["source_semantic_match"]
+        or report["differing_fields"]
+        or report["config_hash_drift_class"] not in {"NONE", "COMPOSE_METADATA"}
+    ):
+        raise Refused("source semantic validation is not adoption-safe")
+    validate_no_target_container(runner, args, current)
+    target_image_id, target_report = target_image_validation(runner)
+    if target_image_id != manifest["target_image_id"]:
+        raise Refused("local v0.16.15 target image identity changed")
+    return current, report, target_report
+
+
+def validate_adoption_artifact(
+    runner: Runner,
+    args: argparse.Namespace,
+    manifest: dict[str, Any],
+    artifact: dict[str, Any],
+    current: dict[str, Any],
+    report: dict[str, Any],
+    target_report: dict[str, str],
+) -> None:
+    if (
+        artifact.get("schema") != 1
+        or artifact.get("kind") != "stalwart-legacy-failure-adoption"
+        or not isinstance(artifact.get("adopted_at"), str)
+        or not artifact["adopted_at"]
+        or artifact.get("source_image") != SOURCE_IMAGE
+        or artifact.get("adopted_legacy_artifact_sha256")
+        != artifact.get("legacy_failure_artifact_sha256")
+        or artifact.get("backup_manifest_fingerprint")
+        != migration.canonical_hash(manifest)
+        or artifact.get("source_container_id") != current["container_id"]
+        or artifact.get("source_recovery_independently_verified") is not True
+        or artifact.get("target_absence_verified") is not True
+        or artifact.get("secret_source_match_verified") is not True
+        or artifact.get("live_mutation") != "NOT_PERFORMED"
+        or artifact.get("secret_value_or_fingerprint_stored") is not False
+        or artifact.get("volumes_deleted_or_recreated") is not False
+        or artifact.get("source_semantic_drift_class")
+        != report["config_hash_drift_class"]
+        or artifact.get("source_differing_fields") != []
+        or artifact.get("target_image_validation") != target_report
+    ):
+        raise Refused("legacy adoption artifact conflicts with current verified state")
+    archive = args.backup_dir / str(artifact.get("archive_relative_path") or "")
+    if archive != legacy_adoption_archive_path(args):
+        raise Refused("legacy adoption archive path is invalid")
+    if not archive.is_dir():
+        raise Refused("legacy adoption archive is missing")
+    for name, field in (
+        (CUTOVER_FAILURE_NAME, "legacy_failure_artifact_sha256"),
+        (TARGET_RECREATION_INITIATED_NAME, "target_recreation_artifact_sha256"),
+    ):
+        original = cutover_state_path(args, name)
+        archived = archive / name
+        if (
+            not original.is_file()
+            or not archived.is_file()
+            or file_sha256(original) != artifact.get(field)
+            or file_sha256(archived) != artifact.get(field)
+        ):
+            raise Refused("legacy adoption artifact or preserved archive was tampered")
+
+
+def copy_legacy_artifact(source: Path, destination: Path) -> None:
+    if source.is_symlink() or not source.is_file():
+        raise Refused("legacy artifact is not a regular file")
+    if hasattr(os, "geteuid"):
+        details = source.stat()
+        if details.st_uid != 0 or stat.S_IMODE(details.st_mode) != 0o600:
+            raise Refused("legacy artifact is not root-owned mode 0600")
+    if destination.exists():
+        raise Refused("legacy adoption archive is already partially populated")
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp-{os.getpid()}")
+    try:
+        temporary.write_bytes(source.read_bytes())
+        temporary.chmod(0o600)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def adopt_legacy_failure_action(runner: Runner, args: argparse.Namespace) -> None:
+    require_root()
+    require_exact_container_argument(args)
+    manifest = read_manifest(args)
+    read_backup_success(args, manifest)
+    read_legacy_failure(args)
+    read_target_recreation_artifact(args)
+    current, report, target_report = validate_legacy_current_state(
+        runner,
+        args,
+        manifest,
+    )
+    legacy_hash = file_sha256(cutover_state_path(args, CUTOVER_FAILURE_NAME))
+    target_recreation_hash = file_sha256(
+        cutover_state_path(args, TARGET_RECREATION_INITIATED_NAME)
+    )
+    artifact_path = legacy_adoption_path(args)
+    if artifact_path.exists():
+        artifact = load_protected_artifact(artifact_path)
+        validate_adoption_artifact(
+            runner,
+            args,
+            manifest,
+            artifact,
+            current,
+            report,
+            target_report,
+        )
+        print("ADOPTION_ALREADY_VERIFIED=PASS")
+        print("LEGACY_FAILURE_ADOPTION=PASS")
+        print("GOVERNED_RETRY_ELIGIBLE=PASS")
+        print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+        print("LIVE_MUTATION=NOT_PERFORMED")
+        return
+    archive = legacy_adoption_archive_path(args)
+    if archive.exists():
+        raise Refused("partial legacy adoption archive exists; refusing to overwrite it")
+    archive.mkdir(mode=0o700, parents=True)
+    archive.chmod(0o700)
+    copy_legacy_artifact(
+        cutover_state_path(args, CUTOVER_FAILURE_NAME),
+        archive / CUTOVER_FAILURE_NAME,
+    )
+    copy_legacy_artifact(
+        cutover_state_path(args, TARGET_RECREATION_INITIATED_NAME),
+        archive / TARGET_RECREATION_INITIATED_NAME,
+    )
+    if file_sha256(archive / CUTOVER_FAILURE_NAME) != legacy_hash or file_sha256(
+        archive / TARGET_RECREATION_INITIATED_NAME
+    ) != target_recreation_hash:
+        raise Refused("legacy adoption archive verification failed")
+    adoption = {
+        "schema": 1,
+        "kind": "stalwart-legacy-failure-adoption",
+        "adopted_legacy_artifact_sha256": legacy_hash,
+        "legacy_failure_artifact_sha256": legacy_hash,
+        "target_recreation_artifact_sha256": target_recreation_hash,
+        "archive_relative_path": str(archive.relative_to(args.backup_dir)),
+        "adopted_at": utc_now(),
+        "source_container_id": current["container_id"],
+        "source_image": SOURCE_IMAGE,
+        "backup_manifest_fingerprint": migration.canonical_hash(manifest),
+        "source_recovery_independently_verified": True,
+        "source_semantic_drift_class": report["config_hash_drift_class"],
+        "source_differing_fields": [],
+        "target_absence_verified": True,
+        "target_image_validation": target_report,
+        "secret_source_match_verified": True,
+        "live_mutation": "NOT_PERFORMED",
+        "secret_value_or_fingerprint_stored": False,
+        "volumes_deleted_or_recreated": False,
+    }
+    migration.atomic_json(artifact_path, adoption)
+    print("LEGACY_FAILURE_ADOPTION=PASS")
+    print(f"ADOPTION_ARTIFACT={artifact_path}")
+    print(f"ADOPTION_ARCHIVE={archive}")
+    print("GOVERNED_RETRY_ELIGIBLE=PASS")
+    print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+    print("LIVE_MUTATION=NOT_PERFORMED")
 
 
 def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
@@ -1327,16 +1656,48 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
             source_recovered = "PASS"
     except Refused:
         source_recovered = "FAIL"
-    print("FAILURE_DIAGNOSIS=" + ("PASS" if source_recovered == "PASS" else "FAIL"))
+    needs_adoption = failure.get("error_code") == "legacy-failure-artifact"
+    adoption_status = "NOT_REQUIRED"
+    if needs_adoption:
+        adoption_status = "NOT_PERFORMED"
+        if legacy_adoption_path(args).exists():
+            try:
+                current, report, target_report = validate_legacy_current_state(
+                    runner,
+                    args,
+                    manifest,
+                )
+                adoption = load_protected_artifact(legacy_adoption_path(args))
+                validate_adoption_artifact(
+                    runner,
+                    args,
+                    manifest,
+                    adoption,
+                    current,
+                    report,
+                    target_report,
+                )
+                adoption_status = "PASS"
+            except Refused:
+                adoption_status = "FAIL"
+    diagnosis_pass = source_recovered == "PASS" and (
+        not needs_adoption or adoption_status == "PASS"
+    )
+    print("FAILURE_DIAGNOSIS=" + ("PASS" if diagnosis_pass else "FAIL"))
     print(f"FAILURE_STAGE={failure['failure_stage']}")
     print(f"EXCEPTION_TYPE={failure['exception_type']}")
     print(f"ERROR_CODE={failure['error_code']}")
     print(f"SANITIZED_MESSAGE={failure['sanitized_message']}")
     print(f"SOURCE_RECOVERED={source_recovered}")
+    print(f"LEGACY_FAILURE_ADOPTION={adoption_status}")
+    print(
+        "GOVERNED_RETRY_ELIGIBLE="
+        + ("PASS" if diagnosis_pass else "NO")
+    )
     print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
     print("LIVE_MUTATION=NOT_PERFORMED")
-    if source_recovered != "PASS":
-        raise Refused("failed cutover source recovery is not currently verified")
+    if not diagnosis_pass:
+        raise Refused("failed cutover recovery is not currently adoption-safe")
 
 
 def archive_attempt(args: argparse.Namespace) -> Path:
@@ -1379,7 +1740,12 @@ def retry_action(runner: Runner, args: argparse.Namespace) -> None:
     failure = read_cutover_failure(args)
     if failure.get("source_auto_recovery") != "PASS":
         raise Refused("governed retry requires a passed source auto-recovery")
-    if failure.get("target_container_created") or cutover_phase_exists(
+    legacy_adoption = None
+    if failure.get("error_code") == "legacy-failure-artifact":
+        if not legacy_adoption_path(args).exists():
+            raise Refused("legacy failure requires adopt-legacy-failure first")
+        legacy_adoption = load_protected_artifact(legacy_adoption_path(args))
+    if failure.get("target_container_created") is True or cutover_phase_exists(
         args, TARGET_RUNNING_NAME
     ):
         raise Refused("prior attempt created a target; use verification-only recovery")
@@ -1389,6 +1755,22 @@ def retry_action(runner: Runner, args: argparse.Namespace) -> None:
     target_image_id, _target_report = target_image_validation(runner)
     if target_image_id != manifest["target_image_id"]:
         raise Refused("local v0.16.15 target image identity changed")
+    validate_no_target_container(runner, args, current)
+    if legacy_adoption is not None:
+        _current, report, target_report = validate_legacy_current_state(
+            runner,
+            args,
+            manifest,
+        )
+        validate_adoption_artifact(
+            runner,
+            args,
+            manifest,
+            legacy_adoption,
+            _current,
+            report,
+            target_report,
+        )
     archive = archive_attempt(args)
     print(f"PREVIOUS_ATTEMPT_ARCHIVED={archive}")
     print("GOVERNED_RETRY=AUTHORIZED")
@@ -1998,6 +2380,7 @@ def parser() -> argparse.ArgumentParser:
         choices=(
             "diagnose",
             "failure-diagnose",
+            "adopt-legacy-failure",
             "inspect",
             "backup-integrity",
             "backup",
@@ -2059,6 +2442,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     actions = {
         "diagnose": diagnose_action,
         "failure-diagnose": failure_diagnose_action,
+        "adopt-legacy-failure": adopt_legacy_failure_action,
         "inspect": inspect_action,
         "backup-integrity": backup_integrity_action,
         "backup": backup_action,
