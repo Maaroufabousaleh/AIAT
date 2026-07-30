@@ -43,9 +43,13 @@ def test_cannot_modify_server_set_property_regression() -> None:
     assert "'createdAt':" not in payload_text
 
 
-def test_missing_sys_api_key_create_is_refused() -> None:
-    with pytest.raises(provisioning.Refused, match="lacks sysApiKeyCreate"):
-        provisioning.require_create_permission({"permissions": ["sysApiKeyGet"]})
+def test_token_scope_is_reported_but_not_used_as_persisted_account_evidence() -> None:
+    state = provisioning.DiagnosticState(account_permission_persisted="PASS")
+    assert not provisioning.token_scope_contains_create(
+        {"permissions": ["sysApiKeyGet"]}, state
+    )
+    assert state.account_permission_persisted == "PASS"
+    assert state.token_scope_contains_create == "FAIL"
 
 
 def test_server_side_creation_failure_is_sanitized() -> None:
@@ -72,7 +76,7 @@ def test_server_side_creation_failure_is_sanitized() -> None:
 def test_generated_secret_is_extracted_only_from_create_response() -> None:
     secret = "API_" + "a" * 40
     assert (
-        provisioning.extract_created_secret(
+        provisioning.extract_created_credential(
             {
                 "methodResponses": [
                     [
@@ -90,7 +94,7 @@ def test_generated_secret_is_extracted_only_from_create_response() -> None:
                 ]
             }
         )
-        == secret
+        == ("7", secret)
     )
 
 
@@ -135,15 +139,75 @@ def test_diagnostic_error_categories(error_type, authentication, category) -> No
     assert state.error_type.startswith(f"{category}/")
 
 
-def test_missing_create_permission_has_distinct_diagnostic() -> None:
-    state = provisioning.DiagnosticState(administrator_authentication="PASS")
-    with pytest.raises(provisioning.Refused, match="lacks sysApiKeyCreate"):
-        provisioning.require_create_permission(
-            {"permissions": ["sysApiKeyGet", "sysApiKeyQuery"]},
-            state,
+def _method_response(name: str, value: dict) -> dict:
+    return {"methodResponses": [[name, value, "call"]]}
+
+
+class PersistedPermissionTransport:
+    def __init__(self, permissions):
+        self.permissions = permissions
+
+    def json(self, _url, _authorization=None, **kwargs):
+        method = kwargs["payload"]["methodCalls"][0][0]
+        if method == "x:Domain/query":
+            return _method_response(method, {"ids": ["domain-id"]})
+        if method == "x:Account/query":
+            return _method_response(method, {"ids": ["account-id"]})
+        if method == "x:Account/get":
+            return _method_response(
+                method,
+                {
+                    "list": [
+                        {
+                            "id": "account-id",
+                            "permissions": self.permissions,
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(method)
+
+
+def test_persisted_account_permission_absent_from_token_scope() -> None:
+    state = provisioning.DiagnosticState()
+    provisioning.prove_persisted_create_permission(
+        transport=PersistedPermissionTransport(
+            {
+                "@type": "Merge",
+                "enabledPermissions": {"sysApiKeyCreate": True},
+                "disabledPermissions": {},
+            }
+        ),
+        base_url=provisioning.LOCAL_URL,
+        authorization="Bearer redacted",
+        administrator_address="admin@agents.aiat.local",
+        diagnostic=state,
+    )
+    assert state.account_permission_persisted == "PASS"
+    assert not provisioning.token_scope_contains_create(
+        {"permissions": ["sysAccountQuery"]}, state
+    )
+    assert state.token_scope_contains_create == "FAIL"
+
+
+def test_real_missing_persisted_account_permission_is_refused() -> None:
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused, match="persisted administrator"):
+        provisioning.prove_persisted_create_permission(
+            transport=PersistedPermissionTransport(
+                {
+                    "@type": "Merge",
+                    "enabledPermissions": {},
+                    "disabledPermissions": {},
+                }
+            ),
+            base_url=provisioning.LOCAL_URL,
+            authorization="Bearer redacted",
+            administrator_address="admin@agents.aiat.local",
+            diagnostic=state,
         )
-    assert state.error_type == "missing-sysApiKeyCreate/missingPermission"
-    assert state.create_permission_preflight == "FAIL"
+    assert state.account_permission_persisted == "FAIL"
+    assert state.error_type == "missing-persisted-sysApiKeyCreate/missingPermission"
 
 
 def test_diagnostic_output_redacts_all_secret_classes(capsys) -> None:
@@ -157,7 +221,9 @@ def test_diagnostic_output_redacts_all_secret_classes(capsys) -> None:
             "Bearer bearer.secret API_abcdef1234567890 app_abcdef1234567890"
         ),
         administrator_authentication="PASS",
-        create_permission_preflight="PASS",
+        account_permission_persisted="PASS",
+        token_scope_contains_create="PASS",
+        api_key_create_capability="PASS",
         mailbox_authentication="PASS",
         sensitive_values=["unique admin password with spaces"],
     )
@@ -179,6 +245,9 @@ def test_diagnostic_output_redacts_all_secret_classes(capsys) -> None:
     assert len(state.description) <= 180
     assert "ADMINISTRATOR_AUTHENTICATION=PASS" in output
     assert "MAILBOX_APPLICATION_PASSWORD_VALIDATION=PASS" in output
+    assert "ACCOUNT_PERMISSION_PERSISTED=PASS" in output
+    assert "TOKEN_SCOPE_CONTAINS_SYS_API_KEY_CREATE=PASS" in output
+    assert "API_KEY_CREATE_CAPABILITY=PASS" in output
     assert "AUTHENTICATION_MECHANISM=" in output
 
 
@@ -247,7 +316,9 @@ def test_wrong_admin_password_stops_before_permission_and_mailbox_checks() -> No
             diagnostic=state,
         )
     assert state.administrator_authentication == "FAIL"
-    assert state.create_permission_preflight == "NOT_ATTEMPTED"
+    assert state.account_permission_persisted == "NOT_ATTEMPTED"
+    assert state.token_scope_contains_create == "NOT_ATTEMPTED"
+    assert state.api_key_create_capability == "NOT_ATTEMPTED"
     assert state.mailbox_authentication == "NOT_ATTEMPTED"
     assert state.endpoint_path == "/api/auth"
     assert state.error_type.startswith("authentication-failure/")
@@ -288,7 +359,9 @@ def test_exact_401_diagnostic_leaves_downstream_checks_not_attempted(
     output = capsys.readouterr().err
     assert "HTTP_STATUS=401" in output
     assert "ADMINISTRATOR_AUTHENTICATION=FAIL" in output
-    assert "SYS_API_KEY_CREATE_PREFLIGHT=NOT_ATTEMPTED" in output
+    assert "ACCOUNT_PERMISSION_PERSISTED=NOT_ATTEMPTED" in output
+    assert "TOKEN_SCOPE_CONTAINS_SYS_API_KEY_CREATE=NOT_ATTEMPTED" in output
+    assert "API_KEY_CREATE_CAPABILITY=NOT_ATTEMPTED" in output
     assert "MAILBOX_APPLICATION_PASSWORD_VALIDATION=NOT_ATTEMPTED" in output
     assert "AUTHENTICATION_MECHANISM=oauth2-password-to-authorization-code-pkce" in output
 
@@ -327,7 +400,7 @@ def test_legacy_basic_api_account_401_regression(monkeypatch, capsys) -> None:
     assert "HTTP_STATUS=401" in output
     assert "JMAP_ERROR_TYPE=authentication-failure/about:blank" in output
     assert "DESCRIPTION=You have to authenticate first." in output
-    assert "SYS_API_KEY_CREATE_PREFLIGHT=NOT_ATTEMPTED" in output
+    assert "ACCOUNT_PERMISSION_PERSISTED=NOT_ATTEMPTED" in output
     assert "MAILBOX_APPLICATION_PASSWORD_VALIDATION=NOT_ATTEMPTED" in output
 
 
@@ -357,45 +430,182 @@ def test_wrong_authenticated_principal_is_refused() -> None:
     assert state.endpoint_path == "/auth/userinfo"
 
 
-def test_partial_output_is_removed_on_failure(tmp_path: Path, monkeypatch) -> None:
+class ProvisionTransport:
+    def __init__(self, *, duplicate=False, forbid_create=False):
+        self.duplicate = duplicate
+        self.forbid_create = forbid_create
+        self.destroyed = []
+        self.create_calls = 0
+
+    def form(self, _url, **_kwargs):
+        return {"access_token": "access-token"}
+
+    def json(self, url, authorization=None, **kwargs):
+        if url.endswith("/api/auth"):
+            return {"type": "authenticated", "clientCode": "code"}
+        if url.endswith("/auth/userinfo"):
+            return {
+                "preferred_username": "admin@agents.aiat.local",
+                "email": "admin@agents.aiat.local",
+            }
+        if url.endswith("/api/account"):
+            return {"permissions": ["sysApiKeyCreate"]}
+        method, arguments, _call_id = kwargs["payload"]["methodCalls"][0]
+        if method == "x:Domain/query":
+            return _method_response(method, {"ids": ["domain-id"]})
+        if method == "x:Account/query":
+            return _method_response(method, {"ids": ["account-id"]})
+        if method == "x:Account/get":
+            return _method_response(
+                method,
+                {
+                    "list": [
+                        {
+                            "permissions": {
+                                "@type": "Merge",
+                                "enabledPermissions": {"sysApiKeyCreate": True},
+                                "disabledPermissions": {},
+                            }
+                        }
+                    ]
+                },
+            )
+        if method == "x:ApiKey/query":
+            return _method_response(
+                method, {"ids": ["existing-id"] if self.duplicate else []}
+            )
+        if method == "x:ApiKey/get":
+            return _method_response(
+                method,
+                {
+                    "list": [
+                        {
+                            "id": "existing-id",
+                            "description": provisioning.KEY_DESCRIPTION,
+                        }
+                    ]
+                },
+            )
+        if method == "x:ApiKey/set" and "create" in arguments:
+            self.create_calls += 1
+            if self.forbid_create:
+                raise provisioning.Refused("forbidden creation")
+            return _method_response(
+                method,
+                {
+                    "created": {
+                        "aiat-resend-certification": {
+                            "id": "created-id",
+                            "secret": "API_" + "a" * 40,
+                        }
+                    }
+                },
+            )
+        if method == "x:ApiKey/set" and "destroy" in arguments:
+            self.destroyed.extend(arguments["destroy"])
+            return _method_response(method, {"destroyed": arguments["destroy"]})
+        raise AssertionError((method, arguments, authorization))
+
+
+def _reserve_without_root(path: Path) -> int:
+    return __import__("os").open(
+        path,
+        __import__("os").O_WRONLY
+        | __import__("os").O_CREAT
+        | __import__("os").O_EXCL,
+        0o600,
+    )
+
+
+def _provision(
+    tmp_path: Path,
+    monkeypatch,
+    transport: ProvisionTransport,
+) -> tuple[Path, provisioning.DiagnosticState]:
     output = tmp_path / "resend-certification.env"
     state = provisioning.DiagnosticState()
+    monkeypatch.setattr(provisioning, "reserve_output", _reserve_without_root)
+    provisioning.provision(
+        transport=transport,
+        administrator_address="admin@agents.aiat.local",
+        administrator_password="admin-password",
+        app_password="app_redacted",
+        base_url=provisioning.LOCAL_URL,
+        output=output,
+        expires_at="2026-07-31T12:00:00Z",
+        server_image=next(iter(provisioning.PATCHED_IMAGE_REFS)),
+        diagnostic=state,
+    )
+    return output, state
 
-    def reserve(path: Path) -> int:
-        return __import__("os").open(path, __import__("os").O_WRONLY | __import__("os").O_CREAT)
 
-    class FailingTransport:
-        calls = 0
+def test_safe_creation_capability_and_protected_output(tmp_path: Path, monkeypatch) -> None:
+    transport = ProvisionTransport()
+    output, state = _provision(tmp_path, monkeypatch, transport)
+    assert output.exists()
+    assert transport.create_calls == 1
+    assert state.account_permission_persisted == "PASS"
+    assert state.token_scope_contains_create == "PASS"
+    assert state.api_key_create_capability == "PASS"
+    assert state.mailbox_authentication == "PASS"
 
-        def json(self, url, *_args, **_kwargs):
-            self.calls += 1
-            if url.endswith("/api/auth"):
-                return {"type": "authenticated", "clientCode": "code"}
-            if url.endswith("/auth/userinfo"):
-                return {
-                    "preferred_username": "admin@agents.aiat.local",
-                    "email": "admin@agents.aiat.local",
-                }
-            if url.endswith("/api/account") and self.calls == 3:
-                return {"permissions": ["sysApiKeyCreate"]}
-            raise provisioning.Refused("mailbox authentication failed")
 
-        def form(self, *_args, **_kwargs):
-            return {"access_token": "access-token"}
-
-    monkeypatch.setattr(provisioning, "reserve_output", reserve)
-    with pytest.raises(provisioning.Refused):
-        provisioning.provision(
-            transport=FailingTransport(),
-            administrator_address="admin@agents.aiat.local",
-            administrator_password="admin-password",
-            app_password="app_redacted",
-            base_url=provisioning.LOCAL_URL,
-            output=output,
-            expires_at="2026-07-31T12:00:00Z",
-            diagnostic=state,
-        )
+def test_forbidden_creation_removes_partial_output(tmp_path: Path, monkeypatch) -> None:
+    transport = ProvisionTransport(forbid_create=True)
+    output = tmp_path / "resend-certification.env"
+    with pytest.raises(provisioning.Refused, match="forbidden creation"):
+        _provision(tmp_path, monkeypatch, transport)
     assert not output.exists()
+    assert transport.create_calls == 1
+
+
+def test_duplicate_retry_is_refused_before_creation(tmp_path: Path, monkeypatch) -> None:
+    transport = ProvisionTransport(duplicate=True)
+    output = tmp_path / "resend-certification.env"
+    with pytest.raises(provisioning.Refused, match="duplicate"):
+        _provision(tmp_path, monkeypatch, transport)
+    assert not output.exists()
+    assert transport.create_calls == 0
+
+
+def test_file_failure_destroys_created_key_and_removes_partial_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    transport = ProvisionTransport()
+    output = tmp_path / "resend-certification.env"
+    monkeypatch.setattr(provisioning.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError()))
+    with pytest.raises(provisioning.Refused, match="created API key was removed"):
+        _provision(tmp_path, monkeypatch, transport)
+    assert not output.exists()
+    assert transport.destroyed == ["created-id"]
+
+
+def test_v0167_is_blocked_for_scoped_api_key_security_behavior() -> None:
+    state = provisioning.DiagnosticState()
+    vulnerable = (
+        "ghcr.io/stalwartlabs/stalwart:v0.16.7@"
+        "sha256:6a8ddaa5728a5e78a8611085069f63414cd43c3a669471785dd41aad1ca16e63"
+    )
+    with pytest.raises(provisioning.Refused, match="v0.16.15"):
+        provisioning.require_patched_server(vulnerable, state)
+    assert state.error_type == "unsafe-stalwart-version/scopedCredentialEscalation"
+    assert state.administrator_authentication == "NOT_ATTEMPTED"
+    assert state.api_key_create_capability == "NOT_ATTEMPTED"
+
+
+def test_security_upgrade_override_is_digest_pinned_and_stalwart_only() -> None:
+    override = (
+        ROOT
+        / "mas/infra/smtp-gateway/home/"
+        "docker-compose.stalwart-v0.16.15-security-upgrade.yml"
+    ).read_text(encoding="utf-8")
+    assert (
+        "ghcr.io/stalwartlabs/stalwart:v0.16.15@"
+        "sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
+        in override
+    )
+    assert "identity-service" not in override
+    assert "volumes:" not in override
 
 
 def test_administrator_address_is_optional_non_secret_argument() -> None:

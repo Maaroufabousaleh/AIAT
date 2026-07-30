@@ -1,0 +1,6 @@
+# Explicit security upgrade override for the existing local Stalwart service.
+# Combine this with docker-compose.stalwart-canonical.yml and the existing
+# Resend secret override. It changes only the digest-pinned image.
+services:
+  stalwart:
+    image: ghcr.io/stalwartlabs/stalwart:v0.16.15@sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136

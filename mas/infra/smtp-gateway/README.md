@@ -402,19 +402,20 @@ sudo python3 scripts/provision-stalwart-certification-api-key.py \
 
 On failure, diagnostic output is limited to endpoint path, authentication
 mechanism, HTTP status, JMAP method, bounded sanitized error type and
-description, and the three
-preflight states. For example:
+description, and independent preflight states. For example:
 
 ```text
-ENDPOINT_PATH=/api
-AUTHENTICATION_MECHANISM=oauth2-bearer-management-jmap
-HTTP_STATUS=200
-JMAP_METHOD=x:ApiKey/set
-JMAP_ERROR_TYPE=server-side-validation-error/invalidProperties
-DESCRIPTION=Property permissions failed server-side validation
-SYS_API_KEY_CREATE_PREFLIGHT=PASS
-ADMINISTRATOR_AUTHENTICATION=PASS
-MAILBOX_APPLICATION_PASSWORD_VALIDATION=PASS
+ENDPOINT_PATH=local-docker-inspect
+AUTHENTICATION_MECHANISM=none
+HTTP_STATUS=not-applicable
+JMAP_METHOD=not-attempted
+JMAP_ERROR_TYPE=unsafe-stalwart-version/scopedCredentialEscalation
+DESCRIPTION=ApiKey provisioning requires the pinned v0.16.15 security-patched image
+ACCOUNT_PERMISSION_PERSISTED=NOT_ATTEMPTED
+TOKEN_SCOPE_CONTAINS_SYS_API_KEY_CREATE=NOT_ATTEMPTED
+API_KEY_CREATE_CAPABILITY=NOT_ATTEMPTED
+ADMINISTRATOR_AUTHENTICATION=NOT_ATTEMPTED
+MAILBOX_APPLICATION_PASSWORD_VALIDATION=NOT_ATTEMPTED
 ```
 
 The diagnostic mode never prints the administrator password, application
@@ -424,6 +425,121 @@ missing `sysApiKeyCreate`, unsupported method, invalid `x:ApiKey/set`
 payload, forbidden permission assignment, and other server-side validation
 errors. Any reserved but incomplete output file is removed before failure is
 returned.
+
+### Required v0.16.15 security upgrade
+
+Do not run API-key provisioning on v0.16.7. The v0.16.15 release fixes an
+authorization defect where a scoped credential holding `SysApiKeyCreate` or
+`SysApiKeyUpdate` could regain its owning account's full rights. In v0.16.7,
+the `Inherit` and `Disable` branches of credential validation return without
+checking the resulting effective permission set. v0.16.15 computes the
+effective permissions for every mode and passes them through
+`can_grant_permissions`; see the official
+[v0.16.15 release note](https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.15)
+and [security-fix commit](https://github.com/stalwartlabs/stalwart/commit/aa9f47cdb6073eea90835945ac6a5f62c17c79f8).
+Because this workflow necessarily exercises
+`SysApiKeyCreate`, the repository refuses every image except the approved
+v0.16.15 digest before it prompts for credentials or sends a request.
+
+The upgrade is an in-place v0.16 patch upgrade. It recreates only the
+Stalwart container and preserves the two existing named volumes, ports,
+networks, restart policy, healthcheck, Resend secret source, accounts,
+mailboxes, messages, and configuration. It never runs `docker compose down`
+or deletes a volume.
+
+Prepare a root-only rollback directory and render the exact proposed project:
+
+```sh
+cd /mnt/c/projects/AIAT/mas/infra/smtp-gateway
+export AIAT_STALWART_SECURITY_BACKUP=/secure/rollback/stalwart-v01615-$(date -u +%Y%m%dT%H%M%SZ)
+export STALWART_RESEND_SECRET_FILE=/etc/aiat/stalwart-resend.env
+sudo install -d -o root -g root -m 0700 "$AIAT_STALWART_SECURITY_BACKUP"
+
+stalwart_security_compose() {
+  sudo --preserve-env=STALWART_RESEND_SECRET_FILE docker compose \
+    --project-name mas \
+    --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+    --profile mail-local \
+    -f home/docker-compose.stalwart-canonical.yml \
+    -f home/docker-compose.stalwart-resend-secret.yml \
+    -f home/docker-compose.stalwart-v0.16.15-security-upgrade.yml \
+    "$@"
+}
+
+stalwart_security_compose config |
+  sudo tee "$AIAT_STALWART_SECURITY_BACKUP/compose-v0.16.15.yml" >/dev/null
+sudo chmod 0600 "$AIAT_STALWART_SECURITY_BACKUP/compose-v0.16.15.yml"
+stalwart_security_compose pull stalwart
+```
+
+Collect a sanitized definition manifest and make a stopped, consistent copy
+of both persistent trees before recreation:
+
+```sh
+export AIAT_STALWART_MIGRATION_BACKUP="$AIAT_STALWART_SECURITY_BACKUP/manifest"
+sudo sh scripts/migrate-stalwart-resend-secret.sh inspect \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-profile mail-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-canonical.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+
+sudo docker stop mas-stalwart-1
+sudo install -d -o root -g root -m 0700 \
+  "$AIAT_STALWART_SECURITY_BACKUP/etc-stalwart" \
+  "$AIAT_STALWART_SECURITY_BACKUP/var-lib-stalwart"
+sudo docker cp mas-stalwart-1:/etc/stalwart/. \
+  "$AIAT_STALWART_SECURITY_BACKUP/etc-stalwart/"
+sudo docker cp mas-stalwart-1:/var/lib/stalwart/. \
+  "$AIAT_STALWART_SECURITY_BACKUP/var-lib-stalwart/"
+```
+
+The explicit operator-approved cutover and verification are:
+
+```sh
+stalwart_security_compose up -d --no-deps --force-recreate stalwart
+
+test "$(sudo docker inspect mas-stalwart-1 --format '{{.Config.Image}}')" = \
+  "ghcr.io/stalwartlabs/stalwart:v0.16.15@sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
+sudo docker inspect mas-stalwart-1 \
+  --format '{{range .Mounts}}{{println .Name "->" .Destination}}{{end}}'
+sudo docker inspect mas-stalwart-1 \
+  --format '{{json .NetworkSettings.Networks}} {{json .HostConfig.PortBindings}} {{.State.Health.Status}}'
+nc -z -w 5 127.0.0.1 2525
+curl -fsS -o /dev/null http://127.0.0.1:18080/admin
+nc -z -w 5 10.77.0.2 2525
+```
+
+If verification fails, recreate the old image definition against the same
+volumes:
+
+```sh
+sudo --preserve-env=STALWART_RESEND_SECRET_FILE docker compose \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --profile mail-local \
+  -f home/docker-compose.stalwart-canonical.yml \
+  -f home/docker-compose.stalwart-resend-secret.yml \
+  up -d --no-deps --force-recreate stalwart
+```
+
+If a data restore is also required, stop the rollback container, copy the
+root-only backup trees back into the already-mounted paths, then restart it:
+
+```sh
+sudo docker stop mas-stalwart-1
+sudo docker cp "$AIAT_STALWART_SECURITY_BACKUP/etc-stalwart/." \
+  mas-stalwart-1:/etc/stalwart/
+sudo docker cp "$AIAT_STALWART_SECURITY_BACKUP/var-lib-stalwart/." \
+  mas-stalwart-1:/var/lib/stalwart/
+sudo docker start mas-stalwart-1
+```
+
+Do not remove or recreate either named volume. The rollback image remains
+security-blocked for API-key provisioning; rollback is only an availability
+recovery while the v0.16.15 cutover issue is investigated.
 
 At the prompts, provide:
 
@@ -446,12 +562,24 @@ cookies:
    token.
 3. Bearer `GET /auth/userinfo` must report both `preferred_username` and
    `email` as the exact requested administrator address.
-4. Only then does Bearer `GET /api/account` check `sysApiKeyCreate`.
-5. The gateway mailbox application password is separately validated with
+4. Read-only `x:Domain/query`, `x:Account/query`, and `x:Account/get` prove
+   that the exact persisted administrator account explicitly enables
+   `sysApiKeyCreate`.
+5. `GET /api/account` is recorded separately as the Bearer token's current
+   scope. It is not treated as authoritative persisted-account evidence.
+6. Read-only `x:ApiKey/query` and `x:ApiKey/get` refuse a duplicate
+   certification key before creation.
+7. The gateway mailbox application password is separately validated with
    HTTP Basic authentication. This mailbox credential is not the
    administrator management session.
-6. Bearer management JMAP `POST /api` sends exactly one `x:ApiKey/set`
-   request.
+8. Bearer management JMAP `POST /api` sends exactly one `x:ApiKey/set`
+   request. Its authorization result is the create-capability evidence.
+
+v0.16.15 has no separate non-mutating method guarded by
+`sysApiKeyCreate`. Consequently, the script proves persisted account state
+and current token scope with read-only calls first, then treats the one
+operator-approved create response itself as the capability result. It never
+attempts that mutation on v0.16.7.
 
 These endpoints and behaviors are confirmed in the official tagged v0.16.7
 sources for the
@@ -479,8 +607,10 @@ expiresAt: current UTC time plus 24 hours
 one-time `API_...` secret returned by Stalwart is written directly to the
 reserved mode-0600 output file and is never printed. If authentication,
 permission validation, creation, or file writing fails, the incomplete
-output is removed. The script does not update or destroy any account or
-credential.
+output is removed. If the key was created but the protected local write
+fails, the script immediately destroys that exact new key. A retry is refused
+while a key with the certification description already exists, because its
+one-time secret cannot be recovered safely.
 
 The final `awk` output must contain exactly these two names, in this order:
 
