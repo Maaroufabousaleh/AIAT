@@ -51,8 +51,12 @@ require_value OUTBOUND_RELAY_PORT 465
 require_value OUTBOUND_RELAY_TLS_MODE implicit
 
 [ -n "$secret_file" ] && [ -f "$secret_file" ] || fail "protected secret file is required"
-relay_secret_file="${relay_secret_file:-$secret_file}"
-[ -f "$relay_secret_file" ] || fail "protected relay secret file is required"
+credential_names="$(awk -F= '{sub(/\r$/, "", $1); print $1}' "$secret_file")"
+expected_credential_names="$(printf '%s\n%s' STALWART_API_KEY STALWART_JMAP_SERVICE_TOKEN)"
+test "$credential_names" = "$expected_credential_names" || \
+  fail "certification credential file must contain exactly STALWART_API_KEY and STALWART_JMAP_SERVICE_TOKEN in that order"
+[ -n "$relay_secret_file" ] && [ -f "$relay_secret_file" ] || \
+  fail "separate protected --relay-secret-file is required"
 [ -n "$container" ] || fail "--stalwart-container is required"
 [ -n "$account_id" ] || fail "--account-id is required"
 printf '%s\n' "$sender" | grep -Eq '^[^[:space:]@]+@agents\.aiat\.ca$' || fail "--sender must be an agents.aiat.ca address"

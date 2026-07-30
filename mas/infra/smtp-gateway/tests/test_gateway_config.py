@@ -145,12 +145,17 @@ def test_resend_certification_is_local_loopback_only_and_never_uses_wireguard_ht
 
 def _write_resend_secret_file(path: Path) -> Path:
     path.write_text(
-        "RESEND_API_KEY=re_test_key_long_enough_to_be_rejected\n"
         "STALWART_API_KEY=admin-test-token\n"
-        "STALWART_JMAP_SERVICE_TOKEN=jmap-test-token\n",
+        "STALWART_JMAP_SERVICE_TOKEN=Basic Z2F0ZXdheS10ZXN0QGFnZW50cy5haWF0LmNhOmFwcC10ZXN0LXBhc3N3b3Jk\n",
         encoding="utf-8",
     )
     path.chmod(0o600)
+    relay = path.with_name(f"{path.stem}-relay{path.suffix}")
+    relay.write_text(
+        "RESEND_API_KEY=re_test_key_long_enough_to_be_rejected\n",
+        encoding="utf-8",
+    )
+    relay.chmod(0o600)
     return path
 
 
@@ -158,11 +163,13 @@ def _run_resend_preflight(profile: Path, secret: Path, stubs: Path, *options: st
     script = shlex.quote(_wsl_path(GATEWAY / "scripts" / "preflight-resend-certification.sh"))
     profile_path = shlex.quote(_wsl_path(profile))
     secret_path = shlex.quote(_wsl_path(secret))
+    relay_path = shlex.quote(_wsl_path(secret.with_name(f"{secret.stem}-relay{secret.suffix}")))
     stub_path = shlex.quote(_wsl_path(stubs))
     quoted_options = " ".join(shlex.quote(option) for option in options)
     command = (
         f"PATH={stub_path}:/usr/bin:/bin; export PATH; exec {script} {profile_path} "
-        f"--secret-file {secret_path} --stalwart-container stalwart-test "
+        f"--secret-file {secret_path} --relay-secret-file {relay_path} "
+        f"--stalwart-container stalwart-test "
         f"--account-id account-test --sender gateway-test@agents.aiat.ca {quoted_options}"
     )
     return subprocess.run(

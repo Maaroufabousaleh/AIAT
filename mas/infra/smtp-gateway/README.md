@@ -314,8 +314,106 @@ RESEND_API_KEY=<Resend SMTP secret>
 
 ```dotenv
 STALWART_API_KEY=<restricted Stalwart management JMAP key>
-STALWART_JMAP_SERVICE_TOKEN=<Stalwart mail JMAP service credential>
+STALWART_JMAP_SERVICE_TOKEN=Basic <base64 of gateway-test@agents.aiat.ca:application-password>
 ```
+
+### Provision the Stalwart v0.16.7 certification credentials
+
+These are two different Stalwart credential types. An API key is valid only
+for management JMAP and cannot authenticate to mailbox JMAP. The mailbox
+credential must be an application password created by the
+`gateway-test@agents.aiat.ca` account. See the official Stalwart
+[API key](https://stalw.art/docs/auth/authentication/api-key/) and
+[application password](https://stalw.art/docs/auth/authentication/app-password/)
+documentation. The permission identifiers below are the exact serialized
+v0.16.7 names, confirmed against the tagged
+[v0.16.7 permission registry](https://github.com/stalwartlabs/stalwart/blob/v0.16.7/crates/registry/src/schema/enums_impl.rs).
+
+The repository uses these management calls:
+
+| Caller | Read-only management calls |
+| --- | --- |
+| `stalwart_secret_migration.py` | `x:Domain/query`, `x:Account/query` |
+| `preflight-resend-certification.sh` | `x:MtaRoute/get`, `x:MtaOutboundStrategy/get` through `verify-stalwart-relay.sh` |
+| `certify-resend.sh` | none |
+
+Create the management API key:
+
+1. From the home WSL host, open `http://127.0.0.1:18080/account` in a local
+   browser and sign in as the existing Stalwart operator account. Do not
+   expose this listener over WireGuard or the Internet.
+2. Select **Credentials**, then **API Keys**, and select **Create API Key**.
+3. Set the description to `AIAT Resend certification read-only`.
+4. Set **Permissions** to **Replace**. Select exactly:
+   `authenticate`, `sysAccountQuery`, `sysDomainQuery`,
+   `sysMtaOutboundStrategyGet`, and `sysMtaRouteGet`.
+5. Leave **Allowed IPs** empty for this Docker-published loopback listener:
+   Stalwart may observe Docker's bridge source rather than `127.0.0.1`.
+   Network scope remains enforced by the host binding
+   `127.0.0.1:18080`. Set an operator-governed expiry covering only the
+   certification window.
+6. Create the key and copy its one-time secret into the protected file
+   creation prompt below. Do not grant the Admin role, use **Inherit**, or add
+   create/update/destroy permissions.
+
+Create the mailbox application password:
+
+1. Sign out of the operator account. At
+   `http://127.0.0.1:18080/account`, sign in specifically as
+   `gateway-test@agents.aiat.ca`.
+2. Select **Credentials**, then **App Passwords**, and select
+   **Create App Password**. Stalwart does not permit an administrator to
+   create this credential on the mailbox user's behalf.
+3. Set the description to `AIAT one-message Resend certification`.
+4. Set **Permissions** to **Replace**. Select exactly:
+   `authenticate`, `jmapMailboxGet`, `jmapIdentityGet`, `jmapEmailGet`,
+   `jmapEmailCreate`, `jmapEmailUpdate`, and
+   `jmapEmailSubmissionCreate`.
+5. Leave **Allowed IPs** empty for the same Docker source-address reason, set
+   an expiry covering only the certification window, create it, and retain
+   the one-time application password for the protected prompt. Do not use a
+   management API key here.
+
+Create the exact two-line, root-owned mode-0600 file without placing either
+secret in command arguments or shell history:
+
+```sh
+cd /mnt/c/projects/AIAT/mas/infra/smtp-gateway
+sudo python3 scripts/create-stalwart-certification-env.py \
+  --output /etc/aiat/resend-certification.env
+sudo awk -F= '{print $1"=<redacted>"}' /etc/aiat/resend-certification.env
+```
+
+The final `awk` output must contain exactly these two names, in this order:
+
+```text
+STALWART_API_KEY=<redacted>
+STALWART_JMAP_SERVICE_TOKEN=<redacted>
+```
+
+Obtain the server-assigned JMAP accountId. This validates the management
+key's exact effective permission set, resolves `agents.aiat.ca`, and then
+queries `gateway-test` using that domain ID:
+
+```sh
+sudo python3 scripts/validate-stalwart-certification-credentials.py \
+  --secret-file /etc/aiat/resend-certification.env \
+  --lookup-account-id
+```
+
+Record only the reported `ACCOUNT_ID`. Then validate both credentials,
+ownership of that accountId, mailbox access, sender identity, and exact
+effective permissions:
+
+```sh
+sudo python3 scripts/validate-stalwart-certification-credentials.py \
+  --secret-file /etc/aiat/resend-certification.env \
+  --account-id <reported-ACCOUNT_ID>
+```
+
+The validator is read-only. It remains on `127.0.0.1:18080`, never prints a
+secret, rejects missing permissions, and fails if either credential has any
+detectable permission beyond the exact sets above.
 
 Create one new backup directory name and reuse it for every migration command:
 

@@ -316,14 +316,16 @@ def certification_secrets(path: Path) -> dict[str, str]:
         raise Refused("certification credential file is missing") from exc
     if details.st_uid != 0 or stat.S_IMODE(details.st_mode) != 0o600:
         raise Refused("certification credential file must be root-owned mode 0600")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    keys = ("STALWART_API_KEY", "STALWART_JMAP_SERVICE_TOKEN")
+    if len(lines) != len(keys):
+        raise Refused("certification credential file must contain exactly two lines")
     values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            values[key] = value
-    for key in ("STALWART_API_KEY", "STALWART_JMAP_SERVICE_TOKEN"):
-        if not values.get(key):
-            raise Refused(f"{key} is missing from the certification credential file")
+    for index, key in enumerate(keys):
+        prefix = f"{key}="
+        if not lines[index].startswith(prefix) or not lines[index][len(prefix) :]:
+            raise Refused(f"certification credential line {index + 1} must contain exactly {key}")
+        values[key] = lines[index][len(prefix) :]
     return values
 
 
