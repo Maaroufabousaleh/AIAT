@@ -5,18 +5,21 @@ from __future__ import annotations
 
 import argparse
 import base64
-from datetime import datetime, timedelta, timezone
 import getpass
+import hashlib
 import json
 import os
-from pathlib import Path
+import secrets
 import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
-from urllib import error, request
-
+from urllib import error, parse, request
 
 LOCAL_URL = "http://127.0.0.1:18080"
 GATEWAY_ACCOUNT = "gateway-test@agents.aiat.ca"
+OAUTH_CLIENT_ID = "stalwart-webui"
+OAUTH_REDIRECT_PATH = "/admin/oauth/callback"
 REQUIRED_KEY_PERMISSIONS = [
     "authenticate",
     "sysAccountQuery",
@@ -41,16 +44,18 @@ class DiagnosticState:
         endpoint_path: str = "not-reached",
         http_status: str = "not-reached",
         jmap_method: str = "not-reached",
+        authentication_mechanism: str = "not-reached",
         error_type: str = "not-reached",
         description: str = "request did not reach Stalwart",
-        administrator_authentication: bool = False,
-        create_permission_preflight: bool = False,
-        mailbox_authentication: bool = False,
+        administrator_authentication: str = "NOT_ATTEMPTED",
+        create_permission_preflight: str = "NOT_ATTEMPTED",
+        mailbox_authentication: str = "NOT_ATTEMPTED",
         sensitive_values: list[str] | None = None,
     ):
         self.endpoint_path = endpoint_path
         self.http_status = http_status
         self.jmap_method = jmap_method
+        self.authentication_mechanism = authentication_mechanism
         self.error_type = error_type
         self.description = description
         self.administrator_authentication = administrator_authentication
@@ -126,6 +131,7 @@ def fail_with_diagnostic(
     endpoint_path: str,
     http_status: str,
     jmap_method: str,
+    authentication_mechanism: str,
     error_type: str,
     description: Any,
     authentication: bool = False,
@@ -134,6 +140,7 @@ def fail_with_diagnostic(
     state.endpoint_path = endpoint_path
     state.http_status = http_status
     state.jmap_method = jmap_method
+    state.authentication_mechanism = authentication_mechanism
     state.error_type = (
         f"{category}/{sanitize_description(error_type, 64, state.sensitive_values)}"
     )
@@ -150,22 +157,70 @@ class HttpTransport:
     def json(
         self,
         url: str,
-        authorization: str,
+        authorization: str | None = None,
         *,
         payload: dict[str, Any] | None = None,
         endpoint_path: str,
         jmap_method: str,
         authentication: bool = False,
+        authentication_mechanism: str = "none",
     ) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
+        return self._request(
+            url,
+            authorization,
+            body=body,
+            content_type="application/json",
+            method="GET" if body is None else "POST",
+            endpoint_path=endpoint_path,
+            jmap_method=jmap_method,
+            authentication=authentication,
+            authentication_mechanism=authentication_mechanism,
+        )
+
+    def form(
+        self,
+        url: str,
+        *,
+        payload: dict[str, str],
+        endpoint_path: str,
+        jmap_method: str,
+        authentication: bool = False,
+        authentication_mechanism: str = "oauth2-authorization-code-pkce",
+    ) -> dict[str, Any]:
+        return self._request(
+            url,
+            None,
+            body=parse.urlencode(payload).encode(),
+            content_type="application/x-www-form-urlencoded",
+            method="POST",
+            endpoint_path=endpoint_path,
+            jmap_method=jmap_method,
+            authentication=authentication,
+            authentication_mechanism=authentication_mechanism,
+        )
+
+    def _request(
+        self,
+        url: str,
+        authorization: str | None,
+        *,
+        body: bytes | None,
+        content_type: str,
+        method: str,
+        endpoint_path: str,
+        jmap_method: str,
+        authentication: bool,
+        authentication_mechanism: str,
+    ) -> dict[str, Any]:
+        headers = {"Content-Type": content_type}
+        if authorization is not None:
+            headers["Authorization"] = authorization
         message = request.Request(
             url,
             data=body,
-            method="GET" if body is None else "POST",
-            headers={
-                "Authorization": authorization,
-                "Content-Type": "application/json",
-            },
+            method=method,
+            headers=headers,
         )
         try:
             with request.urlopen(message, timeout=20) as response:
@@ -194,6 +249,7 @@ class HttpTransport:
                 endpoint_path=endpoint_path,
                 http_status=str(exc.code),
                 jmap_method=jmap_method,
+                authentication_mechanism=authentication_mechanism,
                 error_type=str(error_type),
                 description=description,
                 authentication=authentication and exc.code in {401, 403},
@@ -204,6 +260,7 @@ class HttpTransport:
                 endpoint_path=endpoint_path,
                 http_status="unavailable",
                 jmap_method=jmap_method,
+                authentication_mechanism=authentication_mechanism,
                 error_type="transportError",
                 description=getattr(exc, "reason", None) or "local endpoint unavailable",
                 authentication=authentication,
@@ -214,6 +271,7 @@ class HttpTransport:
                 endpoint_path=endpoint_path,
                 http_status="200",
                 jmap_method=jmap_method,
+                authentication_mechanism=authentication_mechanism,
                 error_type="notJson",
                 description="Stalwart returned malformed JSON",
             )
@@ -223,6 +281,7 @@ class HttpTransport:
                 endpoint_path=endpoint_path,
                 http_status="200",
                 jmap_method=jmap_method,
+                authentication_mechanism=authentication_mechanism,
                 error_type="invalidResponse",
                 description="Stalwart returned a non-object response",
             )
@@ -233,6 +292,7 @@ class HttpTransport:
                 endpoint_path=endpoint_path,
                 http_status="200",
                 jmap_method=jmap_method,
+                authentication_mechanism=authentication_mechanism,
                 error_type=failure[0],
                 description=failure[1],
             )
@@ -271,13 +331,117 @@ def require_create_permission(account: dict[str, Any], state: DiagnosticState | 
             state.endpoint_path = "/api/account"
             state.http_status = "200"
             state.jmap_method = "GET /api/account"
+            state.authentication_mechanism = "oauth2-bearer"
             state.error_type = "missing-sysApiKeyCreate/missingPermission"
             state.description = "authenticated account lacks sysApiKeyCreate"
+            state.create_permission_preflight = "FAIL"
         raise Refused(
             "authenticated account lacks sysApiKeyCreate; its role/password was not modified"
         )
     if state is not None:
-        state.create_permission_preflight = True
+        state.create_permission_preflight = "PASS"
+
+
+def _base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def authenticate_administrator(
+    *,
+    transport: HttpTransport,
+    base_url: str,
+    administrator_address: str,
+    administrator_password: str,
+    diagnostic: DiagnosticState,
+) -> str:
+    """Authenticate through the v0.16.7 WebUI OAuth code/PKCE flow."""
+
+    verifier = _base64url(secrets.token_bytes(48))
+    challenge = _base64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    redirect_uri = f"{base_url}{OAUTH_REDIRECT_PATH}"
+    diagnostic.sensitive_values.extend([verifier])
+    diagnostic.administrator_authentication = "FAIL"
+    login = transport.json(
+        f"{base_url}/api/auth",
+        payload={
+            "type": "authCode",
+            "accountName": administrator_address,
+            "accountSecret": administrator_password,
+            "clientId": OAUTH_CLIENT_ID,
+            "redirectUri": redirect_uri,
+            "scope": "openid",
+            "codeChallenge": challenge,
+            "codeChallengeMethod": "S256",
+        },
+        endpoint_path="/api/auth",
+        jmap_method="POST /api/auth",
+        authentication=True,
+        authentication_mechanism="oauth2-password-to-authorization-code-pkce",
+    )
+    client_code = login.get("clientCode") or login.get("client_code")
+    if login.get("type") != "authenticated" or not isinstance(client_code, str):
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/api/auth",
+            http_status="200",
+            jmap_method="POST /api/auth",
+            authentication_mechanism="oauth2-password-to-authorization-code-pkce",
+            error_type="authenticationFailed",
+            description="administrator credential was not accepted",
+            authentication=True,
+        )
+    diagnostic.sensitive_values.append(client_code)
+    token_response = transport.form(
+        f"{base_url}/auth/token",
+        payload={
+            "grant_type": "authorization_code",
+            "code": client_code,
+            "code_verifier": verifier,
+            "client_id": OAUTH_CLIENT_ID,
+            "redirect_uri": redirect_uri,
+        },
+        endpoint_path="/auth/token",
+        jmap_method="POST /auth/token",
+        authentication=True,
+        authentication_mechanism="oauth2-authorization-code-pkce",
+    )
+    access_token = token_response.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/auth/token",
+            http_status="200",
+            jmap_method="POST /auth/token",
+            authentication_mechanism="oauth2-authorization-code-pkce",
+            error_type=str(token_response.get("error") or "invalidTokenResponse"),
+            description="Stalwart did not issue an OAuth access token",
+            authentication=True,
+        )
+    diagnostic.sensitive_values.extend([access_token, f"Bearer {access_token}"])
+    userinfo = transport.json(
+        f"{base_url}/auth/userinfo",
+        f"Bearer {access_token}",
+        endpoint_path="/auth/userinfo",
+        jmap_method="GET /auth/userinfo",
+        authentication=True,
+        authentication_mechanism="oauth2-bearer",
+    )
+    if (
+        userinfo.get("preferred_username") != administrator_address
+        or userinfo.get("email") != administrator_address
+    ):
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/auth/userinfo",
+            http_status="200",
+            jmap_method="GET /auth/userinfo",
+            authentication_mechanism="oauth2-bearer",
+            error_type="authenticatedIdentityMismatch",
+            description="authenticated principal does not match administrator address",
+            authentication=True,
+        )
+    diagnostic.administrator_authentication = "PASS"
+    return access_token
 
 
 def extract_created_secret(response: dict[str, Any]) -> str:
@@ -305,8 +469,10 @@ def reserve_output(path: Path) -> int:
 def provision(
     *,
     transport: HttpTransport,
-    admin_authorization: str,
+    administrator_address: str,
+    administrator_password: str,
     app_password: str,
+    base_url: str,
     output: Path,
     expires_at: str,
     diagnostic: DiagnosticState,
@@ -314,14 +480,22 @@ def provision(
     descriptor = reserve_output(output)
     completed = False
     try:
+        access_token = authenticate_administrator(
+            transport=transport,
+            base_url=base_url,
+            administrator_address=administrator_address,
+            administrator_password=administrator_password,
+            diagnostic=diagnostic,
+        )
+        admin_authorization = f"Bearer {access_token}"
         account = transport.json(
-            f"{LOCAL_URL}/api/account",
+            f"{base_url}/api/account",
             admin_authorization,
             endpoint_path="/api/account",
             jmap_method="GET /api/account",
             authentication=True,
+            authentication_mechanism="oauth2-bearer",
         )
-        diagnostic.administrator_authentication = True
         require_create_permission(account, diagnostic)
         mailbox_basic = base64.b64encode(
             f"{GATEWAY_ACCOUNT}:{app_password}".encode()
@@ -329,22 +503,26 @@ def provision(
         diagnostic.sensitive_values.extend(
             [mailbox_basic, f"Basic {mailbox_basic}"]
         )
+        diagnostic.mailbox_authentication = "FAIL"
         transport.json(
-            f"{LOCAL_URL}/api/account",
+            f"{base_url}/api/account",
             f"Basic {mailbox_basic}",
             endpoint_path="/api/account",
             jmap_method="GET /api/account",
             authentication=True,
+            authentication_mechanism="http-basic-application-password",
         )
-        diagnostic.mailbox_authentication = True
+        diagnostic.mailbox_authentication = "PASS"
         response = transport.json(
-            f"{LOCAL_URL}/api",
+            f"{base_url}/api",
             admin_authorization,
             payload=api_key_payload(expires_at),
             endpoint_path="/api",
             jmap_method="x:ApiKey/set",
+            authentication_mechanism="oauth2-bearer-management-jmap",
         )
         api_key = extract_created_secret(response)
+        diagnostic.sensitive_values.append(api_key)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             descriptor = -1
             handle.write(f"STALWART_API_KEY={api_key}\n")
@@ -375,23 +553,24 @@ def parser() -> argparse.ArgumentParser:
 
 def print_diagnostic(state: DiagnosticState) -> None:
     print(f"ENDPOINT_PATH={state.endpoint_path}", file=sys.stderr)
+    print(f"AUTHENTICATION_MECHANISM={state.authentication_mechanism}", file=sys.stderr)
     print(f"HTTP_STATUS={state.http_status}", file=sys.stderr)
     print(f"JMAP_METHOD={state.jmap_method}", file=sys.stderr)
     print(f"JMAP_ERROR_TYPE={state.error_type}", file=sys.stderr)
     print(f"DESCRIPTION={state.description}", file=sys.stderr)
     print(
         "SYS_API_KEY_CREATE_PREFLIGHT="
-        + ("PASS" if state.create_permission_preflight else "FAIL"),
+        + state.create_permission_preflight,
         file=sys.stderr,
     )
     print(
         "ADMINISTRATOR_AUTHENTICATION="
-        + ("PASS" if state.administrator_authentication else "FAIL"),
+        + state.administrator_authentication,
         file=sys.stderr,
     )
     print(
         "MAILBOX_APPLICATION_PASSWORD_VALIDATION="
-        + ("PASS" if state.mailbox_authentication else "FAIL"),
+        + state.mailbox_authentication,
         file=sys.stderr,
     )
 
@@ -414,20 +593,21 @@ def main(argv: list[str] | None = None) -> int:
         raise Refused("existing administrator credential is required")
     if not app_password.startswith("app_") or any(character.isspace() for character in app_password):
         raise Refused("a valid v0.16.7 gateway-test application password is required")
-    admin_basic = base64.b64encode(f"{admin_name}:{admin_password}".encode()).decode()
     expires_at = (
-        datetime.now(timezone.utc) + timedelta(hours=args.expires_in_hours)
+        datetime.now(UTC) + timedelta(hours=args.expires_in_hours)
     ).isoformat(timespec="seconds").replace("+00:00", "Z")
     diagnostic = DiagnosticState()
     diagnostic.sensitive_values.extend(
-        [admin_password, app_password, admin_basic, f"Basic {admin_basic}"]
+        [admin_password, app_password]
     )
     try:
         try:
             provision(
                 transport=HttpTransport(diagnostic),
-                admin_authorization=f"Basic {admin_basic}",
+                administrator_address=admin_name,
+                administrator_password=admin_password,
                 app_password=app_password,
+                base_url=args.url,
                 output=args.output.resolve(),
                 expires_at=expires_at,
                 diagnostic=diagnostic,
@@ -440,7 +620,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         admin_password = ""
         app_password = ""
-        admin_basic = ""
         diagnostic.sensitive_values.clear()
     print("STALWART_API_KEY_PROVISIONING=PASS")
     print(f"PROTECTED_CREDENTIAL_FILE={args.output.resolve()}")
@@ -454,7 +633,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except DiagnosedRefused:
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except Refused as exc:
         print(f"Stalwart ApiKey provisioning refused: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

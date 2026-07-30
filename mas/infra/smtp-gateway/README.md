@@ -400,12 +400,14 @@ sudo python3 scripts/provision-stalwart-certification-api-key.py \
   --diagnose
 ```
 
-On failure, diagnostic output is limited to endpoint path, HTTP status, JMAP
-method, bounded sanitized error type and description, and the three
+On failure, diagnostic output is limited to endpoint path, authentication
+mechanism, HTTP status, JMAP method, bounded sanitized error type and
+description, and the three
 preflight states. For example:
 
 ```text
 ENDPOINT_PATH=/api
+AUTHENTICATION_MECHANISM=oauth2-bearer-management-jmap
 HTTP_STATUS=200
 JMAP_METHOD=x:ApiKey/set
 JMAP_ERROR_TYPE=server-side-validation-error/invalidProperties
@@ -430,9 +432,35 @@ At the prompts, provide:
 3. The one-time application password previously created by
    `gateway-test@agents.aiat.ca`.
 
-The script first reads `/api/account` and refuses without
-`sysApiKeyCreate`. It then sends exactly one `x:ApiKey/set` create request
-with:
+The administrator password is not sent as Basic authentication to
+`GET /api/account`. The pinned v0.16.7 WebUI is an OAuth client named
+`stalwart-webui`: it uses an authorization-code flow with PKCE, exchanges
+the one-time code at `/auth/token`, and sends the resulting access token as
+Bearer authentication on management requests. The local script follows the
+same server-supported flow without launching a browser or using browser
+cookies:
+
+1. `POST /api/auth` authenticates the administrator address/password and
+   obtains a one-time authorization code protected by an S256 PKCE challenge.
+2. `POST /auth/token` exchanges the code and verifier for an in-memory Bearer
+   token.
+3. Bearer `GET /auth/userinfo` must report both `preferred_username` and
+   `email` as the exact requested administrator address.
+4. Only then does Bearer `GET /api/account` check `sysApiKeyCreate`.
+5. The gateway mailbox application password is separately validated with
+   HTTP Basic authentication. This mailbox credential is not the
+   administrator management session.
+6. Bearer management JMAP `POST /api` sends exactly one `x:ApiKey/set`
+   request.
+
+These endpoints and behaviors are confirmed in the official tagged v0.16.7
+sources for the
+[management login route](https://github.com/stalwartlabs/stalwart/blob/v0.16.7/crates/http/src/api/mod.rs),
+[OAuth password authentication and PKCE code issuance](https://github.com/stalwartlabs/stalwart/blob/v0.16.7/crates/http/src/auth/oauth/auth.rs),
+[token exchange](https://github.com/stalwartlabs/stalwart/blob/v0.16.7/crates/http/src/auth/oauth/token.rs),
+and [OpenID user-info identity](https://github.com/stalwartlabs/stalwart/blob/v0.16.7/crates/http/src/auth/oauth/openid.rs).
+
+The create request contains:
 
 ```text
 description: AIAT Resend certification read-only
