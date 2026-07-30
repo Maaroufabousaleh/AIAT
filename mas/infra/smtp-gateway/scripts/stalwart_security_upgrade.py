@@ -56,9 +56,10 @@ BACKUP_FAILURE_NAME = "backup-failed.json"
 CONFIG_COPY = "etc-stalwart"
 DATA_COPY = "var-lib-stalwart"
 MAX_DIFFERING_FIELDS = 64
-SOURCE_CONFIG_FILES = (
-    "docker-compose.stalwart-canonical.yml",
-    "docker-compose.stalwart-resend-secret.yml",
+IGNORED_LABEL_CATEGORIES = (
+    "com.docker.compose.*",
+    "desktop.docker.io/*",
+    "org.opencontainers.image.*",
 )
 
 Refused = migration.Refused
@@ -131,9 +132,19 @@ def normalized_labels(values: dict[str, Any]) -> dict[str, str]:
     configured = {
         key: value
         for key, value in values.items()
-        if not key.startswith("com.docker.compose.")
+        if not (
+            key.startswith("com.docker.compose.")
+            or key.startswith("desktop.docker.io/")
+            or key.startswith("org.opencontainers.image.")
+        )
     }
     return migration.normalized_label_hashes(configured)
+
+
+def compose_file_label_values(value: Any) -> list[str]:
+    if not value:
+        return []
+    return sorted(item.strip() for item in str(value).split(",") if item.strip())
 
 
 def normalized_healthcheck(values: dict[str, Any]) -> dict[str, Any]:
@@ -214,6 +225,13 @@ def live_semantics(raw: dict[str, Any]) -> dict[str, Any]:
         "container_name": str(raw.get("Name") or "").lstrip("/"),
         "compose_project": labels.get("com.docker.compose.project") or "",
         "compose_service": labels.get("com.docker.compose.service") or "",
+        "compose_working_directory": labels.get(
+            "com.docker.compose.project.working_dir"
+        )
+        or "",
+        "compose_config_files": compose_file_label_values(
+            labels.get("com.docker.compose.project.config_files")
+        ),
         "running": bool((raw.get("State") or {}).get("Running")),
         "health": ((raw.get("State") or {}).get("Health") or {}).get("Status")
         or "none",
@@ -360,6 +378,10 @@ def rendered_semantics(
         "container_name": CONTAINER,
         "compose_project": args.project_name,
         "compose_service": args.service,
+        "compose_working_directory": str(args.project_directory.resolve()),
+        "compose_config_files": sorted(
+            str(path.resolve()) for path in args.compose_file
+        ),
         "running": True,
         "health": "healthy",
         "command": command,
@@ -535,6 +557,7 @@ def compare_source_semantics(
         "rendered_source_config_hash": rendered_hash,
         "repository_provenance": provenance,
         "source_files": [str(path.resolve()) for path in args.compose_file],
+        "ignored_label_categories": list(IGNORED_LABEL_CATEGORIES),
         "target_override_in_source_comparison": False,
     }
 
@@ -546,6 +569,10 @@ def print_source_report(report: dict[str, Any]) -> None:
     )
     print("CONFIG_HASH_MATCH=" + ("PASS" if report["config_hash_match"] else "FAIL"))
     print(f"CONFIG_HASH_DRIFT_CLASS={report['config_hash_drift_class']}")
+    print(
+        "IGNORED_LABEL_CATEGORIES="
+        + ",".join(report.get("ignored_label_categories", IGNORED_LABEL_CATEGORIES))
+    )
     for field in report["differing_fields"]:
         print(f"DIFFERING_FIELD={field}")
     if not report["differing_fields"]:

@@ -284,6 +284,16 @@ def semantic_case(
     compose["services"]["stalwart"]["env_file"] = [
         {"path": str(args.secret_file), "format": "raw"}
     ]
+    raw["Config"]["Labels"].update(
+        {
+            "com.docker.compose.project.working_dir": str(
+                args.project_directory.resolve()
+            ),
+            "com.docker.compose.project.config_files": ",".join(
+                str(path.resolve()) for path in args.compose_file
+            ),
+        }
+    )
     return args, raw, compose
 
 
@@ -434,7 +444,6 @@ def test_lifecycle_label_drift_is_ignored(tmp_path: Path) -> None:
     raw["Config"]["Labels"].update(
         {
             "com.docker.compose.replace": "old-container",
-            "com.docker.compose.project.config_files": "different-path-list",
             "com.docker.compose.version": "different-version",
         }
     )
@@ -445,6 +454,114 @@ def test_lifecycle_label_drift_is_ignored(tmp_path: Path) -> None:
         migration.snapshot_from_inspect(raw),
     )
     assert report["source_semantic_match"] is True
+
+
+def test_image_oci_and_docker_desktop_metadata_are_ignored(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"].update(
+        {
+            "org.opencontainers.image.created": "2026-07-30T00:00:00Z",
+            "org.opencontainers.image.revision": "opaque-revision",
+            "desktop.docker.io/wsl-distro": "Ubuntu",
+            "com.docker.compose.container-number": "1",
+            "com.docker.compose.depends_on": "",
+            "com.docker.compose.image": "opaque-image-id",
+            "com.docker.compose.oneoff": "False",
+            "com.docker.compose.replace": "old-container",
+            "com.docker.compose.version": "2.39.1",
+        }
+    )
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["source_semantic_match"] is True
+    assert report["differing_fields"] == []
+    assert report["ignored_label_categories"] == [
+        "com.docker.compose.*",
+        "desktop.docker.io/*",
+        "org.opencontainers.image.*",
+    ]
+
+
+@pytest.mark.parametrize(
+    "label_key",
+    [
+        "com.docker.compose.config-hash",
+        "com.docker.compose.container-number",
+        "com.docker.compose.depends_on",
+        "com.docker.compose.image",
+        "com.docker.compose.oneoff",
+        "com.docker.compose.replace",
+        "com.docker.compose.version",
+    ],
+)
+def test_observed_compose_lifecycle_labels_are_not_service_labels(
+    tmp_path: Path,
+    label_key: str,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"][label_key] = "runtime-only"
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert "labels" not in report["differing_fields"]
+    assert report["source_semantic_match"] is True
+
+
+@pytest.mark.parametrize(
+    ("label_key", "expected_field"),
+    [
+        ("com.docker.compose.project", "compose_project"),
+        ("com.docker.compose.service", "compose_service"),
+    ],
+)
+def test_compose_project_and_service_identity_remain_strict(
+    tmp_path: Path,
+    label_key: str,
+    expected_field: str,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"][label_key] = "wrong"
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert expected_field in report["differing_fields"]
+    assert report["source_semantic_match"] is False
+
+
+def test_explicit_configured_service_label_mismatch_fails(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    compose["services"]["stalwart"]["labels"] = {"aiat.role": "mail-authority"}
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert "labels" in report["differing_fields"]
+    assert report["source_semantic_match"] is False
+
+
+def test_unknown_live_label_fails_closed(tmp_path: Path) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    raw["Config"]["Labels"]["aiat.unknown-runtime-label"] = "unknown"
+    report = upgrade.compare_source_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert "labels" in report["differing_fields"]
+    assert report["source_semantic_match"] is False
 
 
 def test_repository_change_is_recorded_when_semantics_still_match(
@@ -587,6 +704,8 @@ def test_diagnostic_output_is_bounded_and_never_contains_secret_or_fingerprint(
     assert secret not in output
     assert hashlib.sha256(secret.encode()).hexdigest() not in output
     assert "DIFFERING_FIELD=command" in output
+    assert "IGNORED_LABEL_CATEGORIES=com.docker.compose.*,desktop.docker.io/*,org.opencontainers.image.*" in output
+    assert "label-value" not in output
     assert len(output) < 2048
 
 

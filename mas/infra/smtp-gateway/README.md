@@ -476,6 +476,11 @@ after a Compose hash-algorithm/version change. `REPOSITORY_CHANGE` means the
 semantics still match but Git records a working-tree or committed source change
 after container creation. `MATERIAL_DRIFT` blocks inspection and identifies
 each differing field. Secret values and secret fingerprints are never printed.
+The sanitized manifest records only the ignored label category names
+(`com.docker.compose.*`, `desktop.docker.io/*`, and
+`org.opencontainers.image.*`), never label values. Compose project/service,
+working-directory, and source-file provenance remain independently validated;
+unknown or explicit configured-label differences remain material.
 
 `inspect` verifies the exact live `mas-stalwart-1` source semantics, protected
 secret source, canonical source-only Compose resolution, and separately cached
