@@ -447,7 +447,10 @@ networks, restart policy, healthcheck, Resend secret source, accounts,
 mailboxes, messages, and configuration. It never runs `docker compose down`
 or deletes a volume.
 
-Prepare a root-only rollback directory and render the exact proposed project:
+Pull the approved target by digest, then run the dedicated read-only
+pre-upgrade inspection. This action is intentionally separate from
+`migrate-stalwart-resend-secret.sh inspect`: the latter must continue refusing
+a container that already has `RESEND_API_KEY`.
 
 ```sh
 cd /mnt/c/projects/AIAT/mas/infra/smtp-gateway
@@ -455,61 +458,50 @@ export AIAT_STALWART_SECURITY_BACKUP=/secure/rollback/stalwart-v01615-$(date -u 
 export STALWART_RESEND_SECRET_FILE=/etc/aiat/stalwart-resend.env
 sudo install -d -o root -g root -m 0700 "$AIAT_STALWART_SECURITY_BACKUP"
 
-stalwart_security_compose() {
-  sudo --preserve-env=STALWART_RESEND_SECRET_FILE docker compose \
-    --project-name mas \
-    --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-    --profile mail-local \
-    -f home/docker-compose.stalwart-canonical.yml \
-    -f home/docker-compose.stalwart-resend-secret.yml \
-    -f home/docker-compose.stalwart-v0.16.15-security-upgrade.yml \
-    "$@"
-}
-
-stalwart_security_compose config |
-  sudo tee "$AIAT_STALWART_SECURITY_BACKUP/compose-v0.16.15.yml" >/dev/null
-sudo chmod 0600 "$AIAT_STALWART_SECURITY_BACKUP/compose-v0.16.15.yml"
-stalwart_security_compose pull stalwart
-```
-
-Collect a sanitized definition manifest and make a stopped, consistent copy
-of both persistent trees before recreation:
-
-```sh
-export AIAT_STALWART_MIGRATION_BACKUP="$AIAT_STALWART_SECURITY_BACKUP/manifest"
-sudo sh scripts/migrate-stalwart-resend-secret.sh inspect \
-  --container mas-stalwart-1 \
-  --project-name mas \
-  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
-  --compose-profile mail-local \
-  --compose-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-canonical.yml \
-  --secret-file /etc/aiat/stalwart-resend.env \
-  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
-
-sudo docker stop mas-stalwart-1
-sudo install -d -o root -g root -m 0700 \
-  "$AIAT_STALWART_SECURITY_BACKUP/etc-stalwart" \
-  "$AIAT_STALWART_SECURITY_BACKUP/var-lib-stalwart"
-sudo docker cp mas-stalwart-1:/etc/stalwart/. \
-  "$AIAT_STALWART_SECURITY_BACKUP/etc-stalwart/"
-sudo docker cp mas-stalwart-1:/var/lib/stalwart/. \
-  "$AIAT_STALWART_SECURITY_BACKUP/var-lib-stalwart/"
-```
-
-The explicit operator-approved cutover and verification are:
-
-```sh
-stalwart_security_compose up -d --no-deps --force-recreate stalwart
-
-test "$(sudo docker inspect mas-stalwart-1 --format '{{.Config.Image}}')" = \
+sudo docker pull \
   "ghcr.io/stalwartlabs/stalwart:v0.16.15@sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
-sudo docker inspect mas-stalwart-1 \
-  --format '{{range .Mounts}}{{println .Name "->" .Destination}}{{end}}'
-sudo docker inspect mas-stalwart-1 \
-  --format '{{json .NetworkSettings.Networks}} {{json .HostConfig.PortBindings}} {{.State.Health.Status}}'
-nc -z -w 5 127.0.0.1 2525
-curl -fsS -o /dev/null http://127.0.0.1:18080/admin
-nc -z -w 5 10.77.0.2 2525
+
+sudo sh scripts/stalwart-security-upgrade.sh inspect \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+```
+
+`inspect` verifies the exact live `mas-stalwart-1` source definition, protected
+secret source, canonical Compose resolution, and locally cached target digest.
+It writes only a root-owned mode-`0600` sanitized
+`pre-upgrade-manifest.json`; it does not stop, restart, recreate, or write into
+the live volumes. Rerunning it is read-only with respect to Stalwart and only
+accepts the identical manifest.
+
+Make the stopped, consistent backup:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh backup \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+```
+
+The backup action stops only `mas-stalwart-1`, copies `/etc/stalwart` and
+`/var/lib/stalwart` to new root-only trees, and restarts the same v0.16.7
+container. A copy failure triggers an automatic restart and records a
+fail-closed partial state. A completed or partial backup is never silently
+overwritten.
+
+The explicit operator-approved cutover is:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh cutover \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP" \
+  --approve-security-upgrade
+```
+
+Cutover refuses unless both the matching pre-upgrade manifest and stopped
+backup success artifact exist. It cannot execute twice. If Compose recreated
+the target but the process was interrupted before the success artifact was
+recorded, use verification-only recovery; this command never recreates the
+container:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh verify \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
 ```
 
 If verification fails, recreate the old image definition against the same
