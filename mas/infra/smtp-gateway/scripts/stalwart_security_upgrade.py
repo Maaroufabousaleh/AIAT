@@ -7,7 +7,9 @@ import argparse
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -70,9 +72,20 @@ PRE_STOP_VALIDATION_NAME = "pre-stop-validation.json"
 SOURCE_STOP_INITIATED_NAME = "source-stop-initiated.json"
 SOURCE_STOPPED_NAME = "source-stopped.json"
 TARGET_RECREATION_INITIATED_NAME = "target-recreation-initiated.json"
+TARGET_RECREATION_COMMAND_PASS_NAME = "target-recreation-command-pass.json"
 TARGET_RUNNING_NAME = "target-running.json"
 VERIFICATION_COMPLETE_NAME = "verification-complete.json"
 CUTOVER_FAILURE_NAME = "cutover-failed.json"
+ATTEMPT_HISTORY_DIR = "attempt-history"
+ATTEMPT_ARTIFACT_NAMES = (
+    PRE_STOP_VALIDATION_NAME,
+    SOURCE_STOP_INITIATED_NAME,
+    SOURCE_STOPPED_NAME,
+    TARGET_RECREATION_INITIATED_NAME,
+    TARGET_RECREATION_COMMAND_PASS_NAME,
+    TARGET_RUNNING_NAME,
+    CUTOVER_FAILURE_NAME,
+)
 CONFIG_COPY = "etc-stalwart"
 DATA_COPY = "var-lib-stalwart"
 MAX_DIFFERING_FIELDS = 64
@@ -84,7 +97,79 @@ IGNORED_LABEL_CATEGORIES = (
 )
 
 Refused = migration.Refused
-Runner = migration.Runner
+
+
+class LifecycleError(Refused):
+    def __init__(self, message: str, *, code: str, stage: str):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
+class CommandError(Refused):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        command: list[str],
+        return_code: int | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.command = command
+        self.return_code = return_code
+
+
+class Runner:
+    """Run Docker/Compose commands without exposing captured output."""
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 120,
+    ) -> str:
+        try:
+            completed = subprocess.run(
+                args,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CommandError(
+                "command timed out safely",
+                code="command-timeout",
+                command=args,
+            ) from exc
+        if completed.returncode != 0:
+            code = (
+                "compose-command-failure"
+                if len(args) > 1 and args[0:2] == ["docker", "compose"]
+                else "command-failure"
+            )
+            raise CommandError(
+                "command failed safely",
+                code=code,
+                command=args,
+                return_code=completed.returncode,
+            )
+        return completed.stdout.strip()
+
+    def json(self, args: list[str]) -> Any:
+        raw = self.run(args)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CommandError(
+                "command returned invalid JSON",
+                code="json-parse-failure",
+                command=args,
+            ) from exc
 
 
 def utc_now() -> str:
@@ -128,6 +213,10 @@ def record_cutover_phase(
 
 def cutover_phase_exists(args: argparse.Namespace, name: str) -> bool:
     return cutover_state_path(args, name).exists()
+
+
+def attempt_history_path(args: argparse.Namespace) -> Path:
+    return args.backup_dir / ATTEMPT_HISTORY_DIR
 
 
 def load_protected_artifact(path: Path) -> dict[str, Any]:
@@ -309,9 +398,14 @@ def live_semantics(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def parse_compose_json(runner: Runner, args: argparse.Namespace) -> dict[str, Any]:
+def parse_compose_json(
+    runner: Runner,
+    args: argparse.Namespace,
+    *,
+    include_override: bool = False,
+) -> dict[str, Any]:
     raw = runner.run(
-        migration.compose_command(args, False)
+        migration.compose_command(args, include_override)
         + ["config", "--format", "json", "--no-env-resolution"],
         env=migration.compose_environment(args),
     )
@@ -355,13 +449,16 @@ def rendered_semantics(
     runner: Runner,
     args: argparse.Namespace,
     compose: dict[str, Any],
+    *,
+    expected_image: str = SOURCE_IMAGE,
+    include_override: bool = False,
 ) -> dict[str, Any]:
     service = (compose.get("services") or {}).get(args.service)
     if not isinstance(service, dict):
         raise Refused("canonical Compose source does not define stalwart")
     image = str(service.get("image") or "")
-    if image != SOURCE_IMAGE:
-        raise Refused("canonical Compose source image is not approved v0.16.7")
+    if image != expected_image:
+        raise Refused("rendered Compose image is not the approved lifecycle image")
     image_values = image_config(runner, image)
     environment_names = set(env_names(image_values.get("Env") or []))
     environment_names.update((service.get("environment") or {}).keys())
@@ -419,7 +516,11 @@ def rendered_semantics(
         "compose_service": args.service,
         "compose_working_directory": str(args.project_directory.resolve()),
         "compose_config_files": sorted(
-            str(path.resolve()) for path in args.compose_file
+            str(path.resolve())
+            for path in [
+                *args.compose_file,
+                *( [args.override_file] if include_override else []),
+            ]
         ),
         "running": True,
         "health": "healthy",
@@ -490,13 +591,15 @@ def require_compose_container_identity(
     runner: Runner,
     args: argparse.Namespace,
     snapshot: dict[str, Any],
+    *,
+    include_override: bool = False,
 ) -> None:
     if snapshot["compose"]["project"] != args.project_name:
         raise Refused("container Compose project does not match")
     if snapshot["compose"]["service"] != args.service:
         raise Refused("container Compose service does not match")
     current_id = runner.run(
-        migration.compose_command(args, False) + ["ps", "-q", args.service],
+        migration.compose_command(args, include_override) + ["ps", "-q", args.service],
         env=migration.compose_environment(args),
     )
     if current_id != snapshot["container_id"]:
@@ -543,20 +646,30 @@ def repository_drift(
     return result
 
 
-def compare_source_semantics(
+def compare_service_semantics(
     runner: Runner,
     args: argparse.Namespace,
     raw: dict[str, Any],
     snapshot: dict[str, Any],
+    *,
+    expected_image: str,
+    include_override: bool,
+    classify_repository_drift: bool,
 ) -> dict[str, Any]:
-    compose = parse_compose_json(runner, args)
+    compose = parse_compose_json(runner, args, include_override=include_override)
     live = live_semantics(raw)
-    rendered = rendered_semantics(runner, args, compose)
+    rendered = rendered_semantics(
+        runner,
+        args,
+        compose,
+        expected_image=expected_image,
+        include_override=include_override,
+    )
     differing = sorted(
         field for field in rendered if live.get(field) != rendered.get(field)
     )
     service = (compose.get("services") or {}).get(args.service) or {}
-    source_image_config = image_config(runner, SOURCE_IMAGE)
+    source_image_config = image_config(runner, expected_image)
     if not environment_values_match(raw, service, source_image_config):
         differing.append("environment_values")
     if not secret_override_matches(service, args):
@@ -567,22 +680,26 @@ def compare_source_semantics(
     rendered_hash = migration.compose_service_hash(
         runner,
         args,
-        include_override=False,
+        include_override=include_override,
     )
     live_hash = snapshot["compose"]["config_hash"]
     hash_match = live_hash == rendered_hash
-    provenance = repository_drift(
-        runner,
-        args,
-        created_at=str(raw.get("Created") or ""),
+    provenance = (
+        repository_drift(
+            runner,
+            args,
+            created_at=str(raw.get("Created") or ""),
+        )
+        if classify_repository_drift
+        else {}
     )
     if differing:
         drift_class = "MATERIAL_DRIFT"
     elif hash_match:
         drift_class = "NONE"
     elif (
-        provenance["working_tree_changed"]
-        or provenance["committed_after_container_creation"]
+        provenance.get("working_tree_changed", False)
+        or provenance.get("committed_after_container_creation", False)
     ):
         drift_class = "REPOSITORY_CHANGE"
     else:
@@ -599,6 +716,40 @@ def compare_source_semantics(
         "ignored_label_categories": list(IGNORED_LABEL_CATEGORIES),
         "target_override_in_source_comparison": False,
     }
+
+
+def compare_source_semantics(
+    runner: Runner,
+    args: argparse.Namespace,
+    raw: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return compare_service_semantics(
+        runner,
+        args,
+        raw,
+        snapshot,
+        expected_image=SOURCE_IMAGE,
+        include_override=False,
+        classify_repository_drift=True,
+    )
+
+
+def compare_target_semantics(
+    runner: Runner,
+    args: argparse.Namespace,
+    raw: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return compare_service_semantics(
+        runner,
+        args,
+        raw,
+        snapshot,
+        expected_image=TARGET_IMAGE,
+        include_override=True,
+        classify_repository_drift=False,
+    )
 
 
 def print_source_report(report: dict[str, Any]) -> None:
@@ -949,13 +1100,135 @@ def recover_source(
     }
 
 
+FAILURE_MESSAGES = {
+    "command-timeout": "command timed out",
+    "compose-command-failure": "Compose command failed",
+    "command-failure": "command failed",
+    "json-parse-failure": "command returned invalid JSON",
+    "health-timeout": "target health wait timed out",
+    "target-image-mismatch": "target image validation failed",
+    "target-container-id-mismatch": "target container identity validation failed",
+    "target-semantic-mismatch": "target semantic validation failed",
+    "compose-resolution-mismatch": "target Compose identity validation failed",
+    "target-inspect-failure": "target inspection failed",
+    "secret-verification-failure": "target secret verification failed",
+    "source-stop-sigkill": "source stop required SIGKILL",
+    "legacy-failure-artifact": "legacy failed-attempt artifact",
+    "operation-refused": "upgrade operation refused",
+}
+SAFE_EXCEPTION_TYPES = {
+    "CommandError",
+    "LifecycleError",
+    "Refused",
+    "TimeoutError",
+    "OSError",
+    "Exception",
+}
+
+
+def safe_command_scope(exc: Exception) -> str:
+    command = getattr(exc, "command", None)
+    if not isinstance(command, list) or not command:
+        return "NOT_AVAILABLE"
+    executable = str(command[0])
+    subcommand = str(command[1]) if len(command) > 1 else ""
+    if executable == "docker" and subcommand in {
+        "compose",
+        "image",
+        "inspect",
+        "start",
+        "stop",
+    }:
+        return f"docker {subcommand}"
+    if executable == "docker":
+        return "docker"
+    return executable
+
+
+def target_failure_evidence(
+    runner: Runner,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Collect only safe target lifecycle facts before recovery begins."""
+    evidence: dict[str, Any] = {
+        "target_container_created": False,
+        "target_became_healthy": False,
+        "target_container_id": "",
+    }
+    try:
+        values = runner.json(["docker", "inspect", args.container])
+        if not isinstance(values, list) or len(values) != 1:
+            return evidence
+        raw = values[0]
+        config = raw.get("Config") or {}
+        if config.get("Image") != TARGET_IMAGE:
+            return evidence
+        target_id = str(raw.get("Id") or "")
+        if re.fullmatch(r"[0-9a-f]{12,64}", target_id):
+            evidence["target_container_id"] = target_id
+        state = raw.get("State") or {}
+        evidence["target_container_created"] = True
+        evidence["target_became_healthy"] = bool(
+            state.get("Running")
+            and (state.get("Health") or {}).get("Status") == "healthy"
+        )
+    except Exception:
+        pass
+    return evidence
+
+
+def failure_details(
+    exc: Exception,
+    *,
+    last_completed_phase: str,
+    target_recreation_started: bool,
+    target_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    stage = getattr(exc, "stage", None)
+    code = getattr(exc, "code", None)
+    if not isinstance(stage, str) or not re.fullmatch(r"[A-Z0-9_]+", stage):
+        stage = (
+            "TARGET_RECREATION_COMMAND"
+            if target_recreation_started and last_completed_phase == "SOURCE_STOPPED"
+            else last_completed_phase
+        )
+    if not isinstance(code, str) or not re.fullmatch(r"[a-z0-9-]+", code):
+        code = "source-stop-sigkill" if "SIGKILL" in str(exc) else "operation-refused"
+    message = FAILURE_MESSAGES.get(code, FAILURE_MESSAGES["operation-refused"])
+    exception_type = type(exc).__name__
+    if exception_type not in SAFE_EXCEPTION_TYPES:
+        exception_type = "Exception"
+    return {
+        "failure_stage": stage,
+        "exception_type": exception_type,
+        "error_code": code,
+        "sanitized_message": message,
+        "command_executable_subcommand": safe_command_scope(exc),
+        "return_code": (
+            getattr(exc, "return_code", None)
+            if isinstance(getattr(exc, "return_code", None), int)
+            else None
+        ),
+        **target_evidence,
+    }
+
+
 def record_cutover_failure(
     args: argparse.Namespace,
     *,
     last_completed_phase: str,
     mutation: bool,
     recovery: dict[str, Any] | None,
+    exc: Exception,
+    target_recreation_started: bool,
+    target_evidence: dict[str, Any],
 ) -> None:
+    details = failure_details(
+        exc,
+        last_completed_phase=last_completed_phase,
+        target_recreation_started=target_recreation_started,
+        target_evidence=target_evidence,
+    )
     record_cutover_phase(
         args,
         CUTOVER_FAILURE_NAME,
@@ -971,6 +1244,7 @@ def record_cutover_failure(
             "failed_at": utc_now(),
             "secret_or_fingerprint_stored": False,
             "volumes_deleted_or_recreated": False,
+            **details,
         },
     )
 
@@ -984,6 +1258,141 @@ def backup_integrity_action(runner: Runner, args: argparse.Namespace) -> None:
     print("LIVE_MUTATION=NOT_PERFORMED")
     print("DOCKER_VOLUME_MUTATION=NONE")
     print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+
+
+def read_cutover_failure(args: argparse.Namespace) -> dict[str, Any]:
+    value = load_protected_artifact(cutover_state_path(args, CUTOVER_FAILURE_NAME))
+    base_required = {
+        "schema",
+        "container",
+        "last_completed_phase",
+        "source_auto_recovery",
+        "volumes_deleted_or_recreated",
+    }
+    if not base_required.issubset(value):
+        raise Refused("cutover failure artifact is incomplete")
+    if value.get("schema") != 1 or value.get("container") != CONTAINER:
+        raise Refused("cutover failure artifact is invalid")
+    if value.get("volumes_deleted_or_recreated") is not False:
+        raise Refused("cutover failure artifact records forbidden volume mutation")
+    if value.get("source_auto_recovery") not in {"PASS", "FAIL", "NOT_ATTEMPTED"}:
+        raise Refused("cutover failure artifact has invalid recovery state")
+    required = {
+        "failure_stage",
+        "exception_type",
+        "error_code",
+        "sanitized_message",
+        "command_executable_subcommand",
+        "return_code",
+        "target_container_created",
+        "target_became_healthy",
+        "source_auto_recovery",
+        "volumes_deleted_or_recreated",
+    }
+    if not required.issubset(value):
+        # Artifacts written by the immediately preceding lifecycle version did
+        # not yet carry bounded failure classification. They are accepted only
+        # as a legacy, non-target proof; retry still revalidates the live source
+        # and refuses if any target-running artifact exists.
+        value = {
+            **value,
+            "failure_stage": value.get("last_completed_phase") or "UNKNOWN",
+            "exception_type": "LegacyFailureArtifact",
+            "error_code": "legacy-failure-artifact",
+            "sanitized_message": FAILURE_MESSAGES["legacy-failure-artifact"],
+            "command_executable_subcommand": "NOT_AVAILABLE",
+            "return_code": None,
+            "target_container_created": False,
+            "target_became_healthy": False,
+            "target_container_id": "",
+        }
+    if value.get("sanitized_message") not in FAILURE_MESSAGES.values():
+        raise Refused("cutover failure artifact contains an unapproved message")
+    return value
+
+
+def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
+    require_root()
+    require_exact_container_argument(args)
+    failure = read_cutover_failure(args)
+    manifest = read_manifest(args)
+    read_backup_success(args, manifest)
+    source_recovered = "FAIL"
+    try:
+        current = validate_recovered_source(runner, args)
+        if (
+            current["container_id"] == manifest["source"]["container_id"]
+            and current["definition"] == manifest["source"]["definition"]
+        ):
+            source_recovered = "PASS"
+    except Refused:
+        source_recovered = "FAIL"
+    print("FAILURE_DIAGNOSIS=" + ("PASS" if source_recovered == "PASS" else "FAIL"))
+    print(f"FAILURE_STAGE={failure['failure_stage']}")
+    print(f"EXCEPTION_TYPE={failure['exception_type']}")
+    print(f"ERROR_CODE={failure['error_code']}")
+    print(f"SANITIZED_MESSAGE={failure['sanitized_message']}")
+    print(f"SOURCE_RECOVERED={source_recovered}")
+    print("SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE")
+    print("LIVE_MUTATION=NOT_PERFORMED")
+    if source_recovered != "PASS":
+        raise Refused("failed cutover source recovery is not currently verified")
+
+
+def archive_attempt(args: argparse.Namespace) -> Path:
+    history = attempt_history_path(args)
+    history.mkdir(mode=0o700, parents=True, exist_ok=True)
+    history.chmod(0o700)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    destination = history / f"attempt-{stamp}"
+    suffix = 0
+    while destination.exists():
+        suffix += 1
+        destination = history / f"attempt-{stamp}-{suffix}"
+    destination.mkdir(mode=0o700)
+    for name in ATTEMPT_ARTIFACT_NAMES:
+        source = cutover_state_path(args, name)
+        if not source.exists():
+            continue
+        if source.is_symlink() or not source.is_file():
+            raise Refused("cutover attempt artifact is not a regular file")
+        details = source.stat()
+        if hasattr(os, "geteuid") and (
+            details.st_uid != 0 or stat.S_IMODE(details.st_mode) != 0o600
+        ):
+            raise Refused("cutover attempt artifact is not protected")
+        shutil.move(str(source), str(destination / name))
+    return destination
+
+
+def retry_action(runner: Runner, args: argparse.Namespace) -> None:
+    require_root()
+    require_exact_container_argument(args)
+    if not args.approve_security_upgrade:
+        raise Refused("--approve-security-upgrade is required for governed retry")
+    manifest = read_manifest(args)
+    read_backup_success(args, manifest)
+    if cutover_success_path(args).exists() or cutover_phase_exists(
+        args, VERIFICATION_COMPLETE_NAME
+    ):
+        raise Refused("security cutover is already complete; use verification only")
+    failure = read_cutover_failure(args)
+    if failure.get("source_auto_recovery") != "PASS":
+        raise Refused("governed retry requires a passed source auto-recovery")
+    if failure.get("target_container_created") or cutover_phase_exists(
+        args, TARGET_RUNNING_NAME
+    ):
+        raise Refused("prior attempt created a target; use verification-only recovery")
+    current = prepare_runtime(runner, args)["snapshot"]
+    if current != manifest["source"]:
+        raise Refused("recovered v0.16.7 source does not match the approved manifest")
+    target_image_id, _target_report = target_image_validation(runner)
+    if target_image_id != manifest["target_image_id"]:
+        raise Refused("local v0.16.15 target image identity changed")
+    archive = archive_attempt(args)
+    print(f"PREVIOUS_ATTEMPT_ARCHIVED={archive}")
+    print("GOVERNED_RETRY=AUTHORIZED")
+    cutover_action(runner, args)
 
 
 def backup_action(runner: Runner, args: argparse.Namespace) -> None:
@@ -1123,13 +1532,38 @@ def validate_upgraded(
     args: argparse.Namespace,
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    after = migration.wait_for_healthy(runner, args.container)
+    try:
+        after = migration.wait_for_healthy(runner, args.container)
+    except CommandError as exc:
+        exc.stage = "TARGET_HEALTH_WAIT"
+        raise
+    except Refused as exc:
+        raise LifecycleError(
+            "target did not become healthy",
+            code="health-timeout",
+            stage="TARGET_HEALTH_WAIT",
+        ) from exc
+    args._target_post_validation = {"health": "PASS"}
     before = manifest["source"]
     definition = after["definition"]
     if definition["image_ref"] != TARGET_IMAGE:
-        raise Refused("cutover did not start the approved v0.16.15 target digest")
+        raise LifecycleError(
+            "target image mismatch",
+            code="target-image-mismatch",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        )
+    if definition["image_id"] != manifest["target_image_id"]:
+        raise LifecycleError(
+            "target image identity mismatch",
+            code="target-image-mismatch",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        )
     if after["container_id"] == before["container_id"]:
-        raise Refused("cutover did not recreate the Stalwart container")
+        raise LifecycleError(
+            "target container ID was not newly created",
+            code="target-container-id-mismatch",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        )
     for field, message in (
         ("name", "container name changed"),
         ("mounts", "volume names, sources, or destinations changed"),
@@ -1139,21 +1573,95 @@ def validate_upgraded(
         ("healthcheck", "healthcheck changed"),
     ):
         if definition[field] != before["definition"][field]:
-            raise Refused(message)
+            raise LifecycleError(
+                message,
+                code="target-semantic-mismatch",
+                stage="TARGET_SEMANTIC_VALIDATION",
+            )
     if not after["resend_secret_present"]:
-        raise Refused("RESEND_API_KEY was not preserved during cutover")
-    migration.prepare_compose_environment(runner, args)
-    migration.require_compose_identity(
-        runner,
-        args,
-        after,
-        include_override=True,
+        raise LifecycleError(
+            "target secret environment is missing",
+            code="target-secret-mismatch",
+            stage="TARGET_SECRET_MATCH",
+        )
+    try:
+        values = runner.json(["docker", "inspect", args.container])
+    except CommandError as exc:
+        exc.stage = "TARGET_SEMANTIC_VALIDATION"
+        raise
+    if not isinstance(values, list) or len(values) != 1:
+        raise LifecycleError(
+            "target container could not be inspected",
+            code="target-inspect-failure",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        )
+    target_raw = values[0]
+    try:
+        target_report = compare_target_semantics(
+            runner,
+            args,
+            target_raw,
+            after,
+        )
+    except CommandError as exc:
+        exc.stage = "TARGET_SEMANTIC_VALIDATION"
+        raise
+    except Refused as exc:
+        raise LifecycleError(
+            "target service could not be semantically validated",
+            code="target-semantic-mismatch",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        ) from exc
+    args._target_post_validation.update(
+        {
+            "semantic": "PASS",
+            "semantic_report": target_report,
+        }
     )
+    if not target_report["source_semantic_match"]:
+        raise LifecycleError(
+            "target service has material semantic drift",
+            code="target-semantic-mismatch",
+            stage="TARGET_SEMANTIC_VALIDATION",
+        )
+    try:
+        migration.prepare_compose_environment(runner, args)
+    except CommandError as exc:
+        exc.stage = "TARGET_COMPOSE_IDENTITY"
+        raise
+    except Refused as exc:
+        raise LifecycleError(
+            "target Compose environment could not be prepared",
+            code="compose-resolution-mismatch",
+            stage="TARGET_COMPOSE_IDENTITY",
+        ) from exc
+    try:
+        require_compose_container_identity(
+            runner,
+            args,
+            after,
+            include_override=True,
+        )
+    except Refused as exc:
+        raise LifecycleError(
+            "target Compose resolution mismatch",
+            code="compose-resolution-mismatch",
+            stage="TARGET_COMPOSE_IDENTITY",
+        ) from exc
+    args._target_post_validation["compose_identity"] = "PASS"
     secret = migration.protected_secret(args.secret_file)
     try:
-        migration.secret_matches_container(runner, args.container, secret)
+        try:
+            migration.secret_matches_container(runner, args.container, secret)
+        except Refused as exc:
+            raise LifecycleError(
+                "target secret source mismatch",
+                code="secret-verification-failure",
+                stage="TARGET_SECRET_MATCH",
+            ) from exc
     finally:
         secret = ""
+    args._target_post_validation["secret"] = "PASS"
     return after
 
 
@@ -1214,6 +1722,11 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
     target_recreation_started = False
     last_completed_phase = "PRE_STOP_VALIDATION"
     recovery: dict[str, Any] | None = None
+    target_evidence = {
+        "target_container_created": False,
+        "target_became_healthy": False,
+        "target_container_id": "",
+    }
     try:
         if cutover_phase_exists(args, SOURCE_STOP_INITIATED_NAME):
             current_state = migration.inspect_container(runner, args.container)
@@ -1309,7 +1822,7 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
             },
         )
         target_recreation_started = True
-        last_completed_phase = "TARGET_RECREATION"
+        print("TARGET_RECREATION_INITIATED=PASS")
         runner.run(
             migration.compose_command(args, True)
             + [
@@ -1325,10 +1838,35 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
             env=migration.compose_environment(args),
             timeout=300,
         )
+        record_cutover_phase(
+            args,
+            TARGET_RECREATION_COMMAND_PASS_NAME,
+            {
+                "schema": 1,
+                "container": CONTAINER,
+                "completed_at": utc_now(),
+                "live_mutation": "PERFORMED",
+            },
+        )
+        last_completed_phase = "TARGET_RECREATION_COMMAND_PASS"
+        print("TARGET_RECREATION_COMMAND_PASS=PASS")
 
         # TARGET_HEALTH_WAIT and POST_CUTOVER_VERIFICATION operate only on the
         # target definition; source running/health validation is not repeated.
         after = validate_upgraded(runner, args, manifest)
+        post_validation = getattr(args, "_target_post_validation", None)
+        if not isinstance(post_validation, dict) or not isinstance(
+            post_validation.get("semantic_report"), dict
+        ):
+            raise LifecycleError(
+                "target post-start validation did not produce a semantic report",
+                code="target-semantic-mismatch",
+                stage="POST_CUTOVER_VERIFICATION",
+            )
+        print("TARGET_HEALTH_PASS=PASS")
+        print("TARGET_SEMANTIC_VALIDATION_PASS=PASS")
+        print("TARGET_COMPOSE_IDENTITY_PASS=PASS")
+        print("TARGET_SECRET_MATCH_PASS=PASS")
         record_cutover_phase(
             args,
             TARGET_RUNNING_NAME,
@@ -1336,6 +1874,15 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
                 "schema": 1,
                 "container": CONTAINER,
                 "target_container_id": after["container_id"],
+                "target_live_config_hash": post_validation["semantic_report"].get(
+                    "live_config_hash", "NOT_RECORDED"
+                ),
+                "target_rendered_config_hash": post_validation[
+                    "semantic_report"
+                ].get("rendered_source_config_hash", "NOT_RECORDED"),
+                "target_config_hash_drift_class": post_validation[
+                    "semantic_report"
+                ]["config_hash_drift_class"],
                 "completed_at": utc_now(),
                 "live_mutation": "PERFORMED",
             },
@@ -1352,6 +1899,7 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
         print("LAST_COMPLETED_PHASE=POST_CUTOVER_VERIFICATION")
         print("DOCKER_VOLUME_MUTATION=NONE")
     except Exception as exc:
+        target_evidence = target_failure_evidence(runner, args)
         if mutation:
             if not cutover_phase_exists(args, SOURCE_STOPPED_NAME):
                 try:
@@ -1386,6 +1934,9 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
                 last_completed_phase=last_completed_phase,
                 mutation=True,
                 recovery=recovery,
+                exc=exc,
+                target_recreation_started=target_recreation_started,
+                target_evidence=target_evidence,
             )
             print("LIVE_MUTATION=PERFORMED")
             print(f"LAST_COMPLETED_PHASE={last_completed_phase}")
@@ -1402,6 +1953,9 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
             last_completed_phase=last_completed_phase,
             mutation=False,
             recovery=None,
+            exc=exc,
+            target_recreation_started=target_recreation_started,
+            target_evidence=target_evidence,
         )
         print("LIVE_MUTATION=NOT_PERFORMED")
         print(f"LAST_COMPLETED_PHASE={last_completed_phase}")
@@ -1443,10 +1997,13 @@ def parser() -> argparse.ArgumentParser:
         "action",
         choices=(
             "diagnose",
+            "failure-diagnose",
             "inspect",
             "backup-integrity",
             "backup",
             "cutover",
+            "retry",
+            "resume",
             "verify",
         ),
     )
@@ -1501,10 +2058,13 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     selected_runner = runner or Runner()
     actions = {
         "diagnose": diagnose_action,
+        "failure-diagnose": failure_diagnose_action,
         "inspect": inspect_action,
         "backup-integrity": backup_integrity_action,
         "backup": backup_action,
         "cutover": cutover_action,
+        "retry": retry_action,
+        "resume": retry_action,
         "verify": verify_action,
     }
     actions[args.action](selected_runner, args)

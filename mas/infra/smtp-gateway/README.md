@@ -526,9 +526,16 @@ Cutover completes all source and target preconditions before issuing
 source running/health validator after the intentional stop, and automatically
 restores the v0.16.7 definition if target recreation or verification fails.
 SIGKILL-derived exit 137 fails closed and is recorded. It cannot execute twice
-after target recreation begins. If Compose recreated the target but the
-process was interrupted before the success artifact was recorded, use
-verification-only recovery; this command never recreates the container:
+after target recreation begins. Post-start validation is split into
+`TARGET_RECREATION_COMMAND_PASS`, `TARGET_HEALTH_PASS`,
+`TARGET_SEMANTIC_VALIDATION_PASS`, `TARGET_COMPOSE_IDENTITY_PASS`,
+`TARGET_SECRET_MATCH_PASS`, and `POST_CUTOVER_VERIFICATION`. A target
+config-hash mismatch is accepted only when the field-by-field target semantics
+match and the mismatch is classified as Compose metadata; the hash remains
+recorded provenance and is never a blanket bypass. If Compose recreated the
+target but the process was interrupted before the success artifact was
+recorded, use verification-only recovery; this command never recreates the
+container:
 
 ```sh
 sudo sh scripts/stalwart-security-upgrade.sh verify \
@@ -542,6 +549,45 @@ failed cutover, without contacting Docker or modifying the live host:
 sudo sh scripts/stalwart-security-upgrade.sh backup-integrity \
   --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
 ```
+
+If cutover writes `cutover-failed.json`, inspect the bounded failure reason and
+verify that the recovered source is the approved v0.16.7 definition:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh failure-diagnose \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP"
+```
+
+The diagnostic is read-only. It prints only an allowlisted failure stage,
+error code, sanitized message, recovery state, and `SOURCE_RECOVERED`; it
+never prints Docker output, environment values, secret fingerprints, or a
+target container's config. A cutover that created a target is not eligible
+for retry; use `verify` or the rollback procedure instead.
+
+For the governed state represented by a failed attempt with no target,
+passed source auto-recovery, and an intact backup, authorize a new attempt
+without deleting artifacts or taking another backup:
+
+```sh
+sudo sh scripts/stalwart-security-upgrade.sh retry \
+  --backup-dir "$AIAT_STALWART_SECURITY_BACKUP" \
+  --stop-timeout 45 \
+  --approve-security-upgrade
+```
+
+`retry` first validates the existing manifest, backup trees, target image, and
+healthy recovered v0.16.7 source. It then archives the previous attempt's
+protected phase files under `attempt-history/` and invokes the normal cutover
+state machine. It refuses a completed cutover, an existing target, partial
+backup state, source/volume drift, or a failed source recovery. `resume` is an
+equivalent action name for automation; neither action deletes an artifact or
+recreates a Docker volume.
+
+An older `cutover-failed.json` from the previous lifecycle version may lack
+the newer bounded error fields. The read-only diagnosis normalizes that record
+as `legacy-failure-artifact`; retry still requires live source revalidation,
+passed source recovery, no target-running artifact, and an intact backup before
+archiving it.
 
 If verification fails, recreate the old image definition against the same
 volumes:

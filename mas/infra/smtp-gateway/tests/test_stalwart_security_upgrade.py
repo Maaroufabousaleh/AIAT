@@ -519,6 +519,123 @@ def test_same_semantics_with_different_compose_hash_is_allowed(
     assert report["differing_fields"] == []
 
 
+def test_healthy_target_with_metadata_only_hash_drift_is_allowed(
+    tmp_path: Path,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    compose["services"]["stalwart"]["image"] = upgrade.TARGET_IMAGE
+    raw["Config"]["Image"] = upgrade.TARGET_IMAGE
+    raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
+        [*(str(path.resolve()) for path in args.compose_file), str(args.override_file.resolve())]
+    )
+    snapshot = migration.snapshot_from_inspect(raw)
+    report = upgrade.compare_target_semantics(
+        SemanticRunner(raw, compose, rendered_hash="e" * 64),
+        args,
+        raw,
+        snapshot,
+    )
+    assert report["source_semantic_match"] is True
+    assert report["config_hash_match"] is False
+    assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
+    assert report["differing_fields"] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "field"),
+    [
+        (
+            lambda _raw, compose: compose["services"]["stalwart"].update(
+                command=["--different", "/etc/stalwart/config.toml"]
+            ),
+            "command",
+        ),
+        (
+            lambda raw, _compose: raw["HostConfig"]["PortBindings"]["25/tcp"][0].update(
+                HostPort="2526"
+            ),
+            "ports",
+        ),
+        (
+            lambda raw, _compose: raw["NetworkSettings"]["Networks"].update(
+                unexpected={}
+            ),
+            "networks",
+        ),
+    ],
+)
+def test_target_material_drift_is_rejected(
+    tmp_path: Path,
+    mutation,
+    field: str,
+) -> None:
+    args, raw, compose = semantic_case(tmp_path)
+    compose["services"]["stalwart"]["image"] = upgrade.TARGET_IMAGE
+    raw["Config"]["Image"] = upgrade.TARGET_IMAGE
+    raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
+        [*(str(path.resolve()) for path in args.compose_file), str(args.override_file.resolve())]
+    )
+    mutation(raw, compose)
+    report = upgrade.compare_target_semantics(
+        SemanticRunner(raw, compose),
+        args,
+        raw,
+        migration.snapshot_from_inspect(raw),
+    )
+    assert report["source_semantic_match"] is False
+    assert report["config_hash_drift_class"] == "MATERIAL_DRIFT"
+    assert field in report["differing_fields"]
+
+
+def test_validate_upgraded_requires_new_exact_target_image_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    source = source_snapshot()
+    manifest = manifest_for(source)
+    target_raw = inspect_fixture()
+    target_raw["Id"] = "e" * 64
+    target_raw["Config"]["Image"] = upgrade.TARGET_IMAGE
+    target_raw["Image"] = manifest["target_image_id"]
+    target_raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
+        [*(str(path.resolve()) for path in args.compose_file), str(args.override_file.resolve())]
+    )
+    target = migration.snapshot_from_inspect(target_raw)
+    monkeypatch.setattr(migration, "wait_for_healthy", lambda *_: target)
+    monkeypatch.setattr(migration, "prepare_compose_environment", lambda *_: None)
+    monkeypatch.setattr(
+        upgrade,
+        "compare_target_semantics",
+        lambda *_: {
+            "source_semantic_match": True,
+            "config_hash_match": False,
+            "config_hash_drift_class": "COMPOSE_METADATA",
+            "differing_fields": [],
+            "live_config_hash": "a" * 64,
+            "rendered_source_config_hash": "b" * 64,
+        },
+    )
+    monkeypatch.setattr(upgrade, "require_compose_container_identity", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(migration, "protected_secret", lambda *_: "re_protected_test_secret")
+    monkeypatch.setattr(migration, "secret_matches_container", lambda *_: None)
+
+    class TargetRunner:
+        def json(self, _command):
+            return [target_raw]
+
+    result = upgrade.validate_upgraded(TargetRunner(), args, manifest)
+    assert result["container_id"] == target["container_id"]
+    assert args._target_post_validation["semantic_report"]["config_hash_drift_class"] == (
+        "COMPOSE_METADATA"
+    )
+
+    target["definition"]["image_id"] = "sha256:" + "f" * 64
+    monkeypatch.setattr(migration, "wait_for_healthy", lambda *_: target)
+    with pytest.raises(upgrade.LifecycleError, match="image identity"):
+        upgrade.validate_upgraded(TargetRunner(), args, manifest)
+
+
 def test_compose_hash_algorithm_drift_is_not_material_drift(tmp_path: Path) -> None:
     args, raw, compose = semantic_case(tmp_path, live_hash="1" * 64)
     report = upgrade.compare_source_semantics(
@@ -1153,7 +1270,14 @@ def test_interrupted_pre_recreation_state_is_recovered_before_retry(
         },
     )
     monkeypatch.setattr(upgrade, "recover_source", lambda *_args, **_kwargs: {"source_auto_recovery": "PASS"})
-    monkeypatch.setattr(upgrade, "validate_upgraded", lambda *_: source)
+    def validate_target(_runner, target_args, _manifest):
+        target_args._target_post_validation = {
+            "health": "PASS",
+            "semantic_report": {"config_hash_drift_class": "COMPOSE_METADATA"},
+        }
+        return source
+
+    monkeypatch.setattr(upgrade, "validate_upgraded", validate_target)
     monkeypatch.setattr(upgrade, "write_cutover_success", lambda *_args, **_kwargs: None)
 
     class SuccessfulRunner:
@@ -1172,6 +1296,160 @@ def test_interrupted_pre_recreation_state_is_recovered_before_retry(
 
     upgrade.cutover_action(SuccessfulRunner(), args)
     assert upgrade.cutover_state_path(args, upgrade.PRE_STOP_VALIDATION_NAME).is_file()
+
+
+def safe_failure_artifact(*, target_created: bool = False) -> dict:
+    return {
+        "schema": 1,
+        "container": upgrade.CONTAINER,
+        "last_completed_phase": "SOURCE_STOPPED",
+        "live_mutation": "PERFORMED",
+        "source_auto_recovery": "PASS",
+        "recovery_method": "docker-start",
+        "failed_at": "2026-07-30T00:00:00Z",
+        "secret_or_fingerprint_stored": False,
+        "volumes_deleted_or_recreated": False,
+        "failure_stage": "TARGET_RECREATION_COMMAND",
+        "exception_type": "CommandError",
+        "error_code": "compose-command-failure",
+        "sanitized_message": "Compose command failed",
+        "command_executable_subcommand": "docker compose",
+        "return_code": 1,
+        "target_container_created": target_created,
+        "target_became_healthy": False,
+        "target_container_id": "e" * 64 if target_created else "",
+    }
+
+
+def test_failed_cutover_artifact_is_sanitized_and_phase_accurate(
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    secret = "re_secret_that_must_not_be_recorded"
+    exc = upgrade.CommandError(
+        f"raw stderr {secret}",
+        code="compose-command-failure",
+        command=["docker", "compose", "--env", secret, "up"],
+        return_code=17,
+    )
+    upgrade.record_cutover_failure(
+        args,
+        last_completed_phase="SOURCE_STOPPED",
+        mutation=True,
+        recovery={"source_auto_recovery": "PASS", "recovery_method": "docker-start"},
+        exc=exc,
+        target_recreation_started=True,
+        target_evidence={
+            "target_container_created": False,
+            "target_became_healthy": False,
+            "target_container_id": "",
+        },
+    )
+    content = upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).read_text(
+        encoding="utf-8"
+    )
+    assert secret not in content
+    assert hashlib.sha256(secret.encode()).hexdigest() not in content
+    artifact = json.loads(content)
+    assert artifact["failure_stage"] == "TARGET_RECREATION_COMMAND"
+    assert artifact["error_code"] == "compose-command-failure"
+    assert artifact["command_executable_subcommand"] == "docker compose"
+    assert artifact["return_code"] == 17
+
+
+def test_failure_diagnose_is_read_only_and_reports_recovered_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    manifest = manifest_for(source_snapshot())
+    upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).write_text(
+        json.dumps(safe_failure_artifact()) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    monkeypatch.setattr(upgrade, "validate_recovered_source", lambda *_: manifest["source"])
+
+    class NoLiveCommands:
+        def run(self, command, **_kwargs):
+            raise AssertionError(f"failure diagnose mutated live state: {command}")
+
+        def json(self, command):
+            raise AssertionError(f"failure diagnose inspected live state: {command}")
+
+    upgrade.failure_diagnose_action(NoLiveCommands(), args)
+    output = capsys.readouterr().out
+    assert "FAILURE_DIAGNOSIS=PASS" in output
+    assert "SOURCE_RECOVERED=PASS" in output
+    assert "SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE" in output
+    assert "Compose command failed" in output
+
+
+def test_governed_retry_archives_previous_attempt_without_overwrite(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    manifest = manifest_for(source_snapshot())
+    for name, value in (
+        (upgrade.CUTOVER_FAILURE_NAME, safe_failure_artifact()),
+        (upgrade.TARGET_RECREATION_INITIATED_NAME, {}),
+    ):
+        path = upgrade.cutover_state_path(args, name)
+        path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: {"snapshot": manifest["source"], "source_comparison": {}},
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "target_image_validation",
+        lambda *_: (manifest["target_image_id"], manifest["target_image_validation"]),
+    )
+    invoked: list[str] = []
+    monkeypatch.setattr(upgrade, "cutover_action", lambda *_: invoked.append("cutover"))
+
+    upgrade.retry_action(SimpleNamespace(), args)
+    output = capsys.readouterr().out
+    archive_dirs = list((args.backup_dir / upgrade.ATTEMPT_HISTORY_DIR).iterdir())
+    assert len(archive_dirs) == 1
+    assert (archive_dirs[0] / upgrade.CUTOVER_FAILURE_NAME).is_file()
+    assert (archive_dirs[0] / upgrade.TARGET_RECREATION_INITIATED_NAME).is_file()
+    assert not upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).exists()
+    assert invoked == ["cutover"]
+    assert "GOVERNED_RETRY=AUTHORIZED" in output
+    assert "secret" not in output.lower()
+
+
+def test_governed_retry_refuses_when_prior_target_exists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    manifest = manifest_for(source_snapshot())
+    artifact = safe_failure_artifact(target_created=True)
+    upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).write_text(
+        json.dumps(artifact) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    with pytest.raises(migration.Refused, match="created a target"):
+        upgrade.retry_action(SimpleNamespace(), args)
 
 
 def test_upgrade_source_contains_no_volume_delete_or_compose_down() -> None:
