@@ -25,10 +25,23 @@ TARGET_IMAGE = (
     "ghcr.io/stalwartlabs/stalwart:v0.16.15@"
     "sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
 )
-TARGET_PLATFORM_DIGEST = (
-    "ghcr.io/stalwartlabs/stalwart@"
-    "sha256:258b76c783f298500c5c065bebf09e1f9d773040803c5715b7c35357e529713c"
-)
+
+
+def normalize_repository_digest(image_ref: str) -> str:
+    repository, separator, digest = image_ref.rpartition("@")
+    if not separator or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise ValueError("image reference must contain a sha256 digest")
+    slash = repository.rfind("/")
+    colon = repository.rfind(":")
+    if colon > slash:
+        repository = repository[:colon]
+    if not repository:
+        raise ValueError("image reference must contain a repository")
+    return f"{repository}@{digest}"
+
+
+TARGET_REPOSITORY_DIGEST = normalize_repository_digest(TARGET_IMAGE)
+TARGET_PLATFORM = "linux/amd64"
 EXPECTED_MOUNTS = {
     (
         "volume",
@@ -581,6 +594,13 @@ def print_source_report(report: dict[str, Any]) -> None:
     print("LIVE_MUTATION=NOT_PERFORMED")
 
 
+def print_target_report(report: dict[str, str]) -> None:
+    print("TARGET_IMAGE_LOCAL=PASS")
+    print("TARGET_REPOSITORY_MATCH=" + report["target_repository_match"])
+    print("TARGET_DIGEST_MATCH=" + report["target_digest_match"])
+    print("TARGET_PLATFORM=" + report["target_platform"])
+
+
 def validate_exact_source(snapshot: dict[str, Any]) -> None:
     migration.validate_snapshot(
         snapshot,
@@ -620,17 +640,31 @@ def validate_exact_source(snapshot: dict[str, Any]) -> None:
         raise Refused("Stalwart Compose project/service identity drifted")
 
 
-def validate_target_image_local(runner: Runner) -> str:
+def target_image_validation(runner: Runner) -> tuple[str, dict[str, str]]:
     values = runner.json(["docker", "image", "inspect", TARGET_IMAGE])
     if not isinstance(values, list) or len(values) != 1:
         raise Refused("approved v0.16.15 target digest is not locally present")
     raw = values[0]
     image_id = str(raw.get("Id") or "")
-    repo_digests = set(raw.get("RepoDigests") or [])
-    if not image_id.startswith("sha256:") or not (
-        TARGET_IMAGE in repo_digests or TARGET_PLATFORM_DIGEST in repo_digests
-    ):
-        raise Refused("local v0.16.15 image does not match the approved target digest")
+    repo_metadata = set(raw.get("RepoDigests") or []) | set(raw.get("RepoTags") or [])
+    repository_match = TARGET_REPOSITORY_DIGEST in repo_metadata
+    platform = f"{raw.get('Os') or ''}/{raw.get('Architecture') or ''}"
+    digest_match = repository_match
+    if not image_id.startswith("sha256:"):
+        raise Refused("local v0.16.15 image has no immutable image ID")
+    if not repository_match:
+        raise Refused("local v0.16.15 image does not match the approved repository@digest")
+    if platform != TARGET_PLATFORM:
+        raise Refused("local v0.16.15 image platform is not linux/amd64")
+    return image_id, {
+        "target_repository_match": "PASS" if repository_match else "FAIL",
+        "target_digest_match": "PASS" if digest_match else "FAIL",
+        "target_platform": platform,
+    }
+
+
+def validate_target_image_local(runner: Runner) -> str:
+    image_id, _report = target_image_validation(runner)
     return image_id
 
 
@@ -680,7 +714,7 @@ def build_manifest(
     snapshot: dict[str, Any],
     source_comparison: dict[str, Any],
 ) -> dict[str, Any]:
-    target_image_id = validate_target_image_local(runner)
+    target_image_id, target_validation = target_image_validation(runner)
     target_compose_hash = migration.compose_service_hash(
         runner,
         args,
@@ -699,6 +733,7 @@ def build_manifest(
         "source_image": SOURCE_IMAGE,
         "target_image": TARGET_IMAGE,
         "target_image_id": target_image_id,
+        "target_image_validation": target_validation,
         "target_compose_hash": target_compose_hash,
         "compose_file_hashes": migration.compose_file_hashes(args),
         "sanitization": {
@@ -729,7 +764,8 @@ def inspect_action(runner: Runner, args: argparse.Namespace) -> None:
         print("INSPECTION_RESUME=NEW")
     print(f"MANIFEST={path}")
     print("SOURCE_IMAGE=APPROVED_V0.16.7")
-    print("TARGET_IMAGE_LOCAL=APPROVED_V0.16.15")
+    target_validation = manifest["target_image_validation"]
+    print_target_report(target_validation)
     print("RESEND_API_KEY_PRESENT=PASS")
     print("RESEND_API_KEY_SOURCE_MATCH=PASS")
     print_source_report(source_comparison)
@@ -741,6 +777,7 @@ def inspect_action(runner: Runner, args: argparse.Namespace) -> None:
 def diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
     require_root()
     require_exact_container_argument(args)
+    _target_id, target_report = target_image_validation(runner)
     _raw, snapshot, report = analyze_source_runtime(runner, args)
     auxiliary_differences: list[str] = []
     try:
@@ -774,6 +811,7 @@ def diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
             set([*report["differing_fields"], *auxiliary_differences])
         )[:MAX_DIFFERING_FIELDS]
     print_source_report(report)
+    print_target_report(target_report)
     if not report["source_semantic_match"]:
         raise Refused("running container has material source-definition drift")
 

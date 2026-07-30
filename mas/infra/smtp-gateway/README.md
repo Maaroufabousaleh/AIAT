@@ -484,7 +484,10 @@ unknown or explicit configured-label differences remain material.
 
 `inspect` verifies the exact live `mas-stalwart-1` source semantics, protected
 secret source, canonical source-only Compose resolution, and separately cached
-target digest. The v0.16.15 override does not participate in source comparison.
+target digest. The target check inspects the exact tag-plus-digest Compose
+reference but compares Docker's normalized `repository@digest` metadata, and
+requires `linux/amd64`; it does not use the stale platform-manifest digest.
+The v0.16.15 override does not participate in source comparison.
 An otherwise identical source is permitted to have a different
 `com.docker.compose.config-hash`; both live and rendered hashes, the drift
 classification, Git provenance result, and semantic result are recorded in

@@ -143,6 +143,11 @@ def manifest_for(snapshot: dict) -> dict:
         "source_image": upgrade.SOURCE_IMAGE,
         "target_image": upgrade.TARGET_IMAGE,
         "target_image_id": "sha256:" + "d" * 64,
+        "target_image_validation": {
+            "target_repository_match": "PASS",
+            "target_digest_match": "PASS",
+            "target_platform": "linux/amd64",
+        },
         "target_compose_hash": "e" * 64,
         "compose_file_hashes": {},
         "sanitization": {
@@ -396,17 +401,103 @@ def test_stopped_or_unhealthy_source_is_rejected(state_change, message: str) -> 
 
 
 class ImageRunner:
-    def __init__(self, repo_digests: list[str]):
+    def __init__(
+        self,
+        repo_digests: list[str],
+        *,
+        repo_tags: list[str] | None = None,
+        image_id: str | None = None,
+        os_name: str = "linux",
+        architecture: str = "amd64",
+    ):
         self.repo_digests = repo_digests
+        self.repo_tags = repo_tags or []
+        self.image_id = image_id or "sha256:" + "d" * 64
+        self.os_name = os_name
+        self.architecture = architecture
 
     def json(self, _args):
-        return [{"Id": "sha256:" + "d" * 64, "RepoDigests": self.repo_digests}]
+        return [
+            {
+                "Id": self.image_id,
+                "RepoDigests": self.repo_digests,
+                "RepoTags": self.repo_tags,
+                "Os": self.os_name,
+                "Architecture": self.architecture,
+            }
+        ]
 
 
 def test_wrong_target_digest_is_rejected() -> None:
     with pytest.raises(migration.Refused, match="does not match"):
         upgrade.validate_target_image_local(
             ImageRunner(["ghcr.io/stalwartlabs/stalwart@sha256:" + "f" * 64])
+        )
+
+
+def test_exact_live_docker_desktop_target_identity_passes() -> None:
+    expected = upgrade.TARGET_REPOSITORY_DIGEST
+    image_id, report = upgrade.target_image_validation(
+        ImageRunner(
+            [expected],
+            repo_tags=[expected],
+            image_id="sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136",
+        )
+    )
+    assert image_id.endswith("4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136")
+    assert report == {
+        "target_repository_match": "PASS",
+        "target_digest_match": "PASS",
+        "target_platform": "linux/amd64",
+    }
+
+
+def test_tag_at_digest_is_normalized_to_repository_at_digest() -> None:
+    assert upgrade.normalize_repository_digest(upgrade.TARGET_IMAGE) == (
+        upgrade.TARGET_REPOSITORY_DIGEST
+    )
+    with pytest.raises(ValueError):
+        upgrade.normalize_repository_digest(
+            "ghcr.io/stalwartlabs/stalwart:v0.16.15"
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"repo_digests": ["ghcr.io/other/stalwart@sha256:" + "4" * 64]},
+        {"repo_digests": ["ghcr.io/stalwartlabs/stalwart@sha256:" + "f" * 64]},
+        {"repo_digests": [], "repo_tags": ["ghcr.io/stalwartlabs/stalwart:v0.16.15"]},
+        {
+            "repo_digests": [
+                "ghcr.io/stalwartlabs/stalwart@sha256:258b76c783f298500c5c065bebf09e1f9d773040803c5715b7c35357e529713c"
+            ]
+        },
+    ],
+)
+def test_wrong_repository_digest_tag_only_and_stale_platform_identity_fail(metadata) -> None:
+    with pytest.raises(migration.Refused, match="repository@digest"):
+        upgrade.validate_target_image_local(ImageRunner(**metadata))
+
+
+def test_missing_repo_digests_accepts_exact_docker_desktop_digest_tag() -> None:
+    upgrade.validate_target_image_local(
+        ImageRunner([], repo_tags=[upgrade.TARGET_REPOSITORY_DIGEST])
+    )
+
+
+@pytest.mark.parametrize(
+    ("os_name", "architecture"),
+    [("windows", "amd64"), ("linux", "arm64"), ("", "")],
+)
+def test_wrong_target_platform_fails_closed(os_name: str, architecture: str) -> None:
+    with pytest.raises(migration.Refused, match="linux/amd64"):
+        upgrade.validate_target_image_local(
+            ImageRunner(
+                [upgrade.TARGET_REPOSITORY_DIGEST],
+                os_name=os_name,
+                architecture=architecture,
+            )
         )
 
 
