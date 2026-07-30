@@ -5,6 +5,7 @@ set -eu
 base_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 profile="${1:-}"
 secret_file=""
+relay_secret_file=""
 container=""
 account_id=""
 sender=""
@@ -13,7 +14,7 @@ admin_url="http://127.0.0.1:18080/api"
 output=""
 
 usage() {
-  echo "usage: $0 PROFILE --secret-file FILE --stalwart-container NAME --account-id ID --sender ADDRESS [--jmap-url URL --admin-url URL --output FILE]" >&2
+  echo "usage: $0 PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --account-id ID --sender ADDRESS [--jmap-url URL --admin-url URL --output FILE]" >&2
   exit 2
 }
 fail() { echo "Resend certification preflight refused: $1" >&2; exit 1; }
@@ -23,6 +24,7 @@ shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --secret-file) [ "$#" -ge 2 ] || usage; secret_file="$2"; shift 2 ;;
+    --relay-secret-file) [ "$#" -ge 2 ] || usage; relay_secret_file="$2"; shift 2 ;;
     --stalwart-container) [ "$#" -ge 2 ] || usage; container="$2"; shift 2 ;;
     --account-id) [ "$#" -ge 2 ] || usage; account_id="$2"; shift 2 ;;
     --sender) [ "$#" -ge 2 ] || usage; sender="$2"; shift 2 ;;
@@ -35,6 +37,7 @@ done
 
 env_value() { awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$profile"; }
 secret_value() { awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$secret_file"; }
+relay_secret_value() { awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$relay_secret_file"; }
 require_value() { test "$(env_value "$1")" = "$2" || fail "$1 must be $2"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "$1 is required"; }
 
@@ -48,6 +51,8 @@ require_value OUTBOUND_RELAY_PORT 465
 require_value OUTBOUND_RELAY_TLS_MODE implicit
 
 [ -n "$secret_file" ] && [ -f "$secret_file" ] || fail "protected secret file is required"
+relay_secret_file="${relay_secret_file:-$secret_file}"
+[ -f "$relay_secret_file" ] || fail "protected relay secret file is required"
 [ -n "$container" ] || fail "--stalwart-container is required"
 [ -n "$account_id" ] || fail "--account-id is required"
 printf '%s\n' "$sender" | grep -Eq '^[^[:space:]@]+@agents\.aiat\.ca$' || fail "--sender must be an agents.aiat.ca address"
@@ -55,13 +60,15 @@ test "$jmap_url" = http://127.0.0.1:18080 || fail "JMAP must remain local at htt
 test "$admin_url" = http://127.0.0.1:18080/api || fail "admin JMAP must remain local at http://127.0.0.1:18080/api"
 
 for command in awk curl jq docker grep sha256sum ss stat mktemp nc openssl timeout; do require_command "$command"; done
-mode="$(stat -c '%a' "$secret_file" 2>/dev/null || true)"
-case "$mode" in 400|600) ;; *) fail "secret file must have mode 0400 or 0600" ;; esac
-owner="$(stat -c '%u' "$secret_file" 2>/dev/null || true)"
 uid="$(id -u)"
-test "$owner" = 0 || test "$owner" = "$uid" || fail "secret file owner must be root or current user"
+for protected_file in "$secret_file" "$relay_secret_file"; do
+  mode="$(stat -c '%a' "$protected_file" 2>/dev/null || true)"
+  case "$mode" in 400|600) ;; *) fail "secret files must have mode 0400 or 0600" ;; esac
+  owner="$(stat -c '%u' "$protected_file" 2>/dev/null || true)"
+  test "$owner" = 0 || test "$owner" = "$uid" || fail "secret file owner must be root or current user"
+done
 
-resend_api_key="$(secret_value RESEND_API_KEY)"
+resend_api_key="$(relay_secret_value RESEND_API_KEY)"
 stalwart_api_key="$(secret_value STALWART_API_KEY)"
 service_token="$(secret_value STALWART_JMAP_SERVICE_TOKEN)"
 [ "${#resend_api_key}" -ge 20 ] || fail "RESEND_API_KEY is missing or too short"

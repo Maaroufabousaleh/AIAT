@@ -265,71 +265,183 @@ URLs are `http://127.0.0.1:18080` for JMAP and
 `http://127.0.0.1:18080/api` for management. It never exposes JMAP or Stalwart
 administration over WireGuard, the VPS, or the public Internet.
 
-Provision the credentials first, using Stalwart's local bootstrap/admin path:
+The live container currently has no `RESEND_API_KEY`; Docker cannot add an
+environment variable in place. Secret injection is therefore a separate
+maintenance migration before route configuration. It recreates only the
+Compose `stalwart` service. It never runs `docker compose down`, deletes a
+volume, changes an account, or renders the secret through `docker compose
+config`.
 
-- Create a restricted management API key for route read/write only.
-- Create a separate mail/JMAP service credential that can use the approved
-  production sender account.
-- Add the exact protected Resend secret to Stalwart's existing environment and
-  restart/reload only under a separately authorized Stalwart maintenance
-  procedure. Do not put the value in route JSON.
-
-Store the credentials in this root-owned, mode-0600 file outside Git:
-
-```dotenv
-RESEND_API_KEY=<Resend SMTP/API secret; never copy into evidence>
-STALWART_API_KEY=<Stalwart management JMAP key>
-STALWART_JMAP_SERVICE_TOKEN=<Stalwart mail JMAP bearer token>
-```
-
-The local preflight compares non-reversible SHA-256 fingerprints in memory:
-the protected `RESEND_API_KEY` versus the `RESEND_API_KEY` in the exact running
-Stalwart container. It records only `RELAY_SECRET_SOURCE_MATCH=PASS`, never a
-key or fingerprint. It also checks the local listener, both credentials, the
-production sender, exactly one environment-backed `resend-relay`, no Mx/direct
-route, and implicit TLS on `smtp.resend.com:465`.
+Create two separate root-owned files. The injected file contains exactly one
+variable and is referenced by
+`home/docker-compose.stalwart-resend-secret.yml`:
 
 ```sh
-sudo sh scripts/preflight-resend-certification.sh \
-  profiles/oci-e2.1-micro-host.env.active \
-  --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
-  --account-id <existing-production-stalwart-account-id> \
-  --sender gateway-test@agents.aiat.ca
+sudo install -d -o root -g root -m 0700 /etc/aiat
+sudo test ! -e /etc/aiat/stalwart-resend.env
+sudo install -o root -g root -m 0600 /dev/null /etc/aiat/stalwart-resend.env
+sudoedit /etc/aiat/stalwart-resend.env
+
+sudo test ! -e /etc/aiat/resend-certification.env
+sudo install -o root -g root -m 0600 /dev/null /etc/aiat/resend-certification.env
+sudoedit /etc/aiat/resend-certification.env
 ```
 
-If the route is not yet configured, make a configuration backup before the
-explicit apply operation. These commands alter only Stalwart remote route and
-outbound-strategy objects; they do not recreate containers, volumes, accounts,
-mailboxes, or messages.
+`/etc/aiat/stalwart-resend.env`:
+
+```dotenv
+RESEND_API_KEY=<Resend SMTP secret>
+```
+
+`/etc/aiat/resend-certification.env`:
+
+```dotenv
+STALWART_API_KEY=<restricted Stalwart management JMAP key>
+STALWART_JMAP_SERVICE_TOKEN=<Stalwart mail JMAP service credential>
+```
+
+Create one new backup directory name and reuse it for every migration command:
+
+```sh
+export AIAT_STALWART_MIGRATION_BACKUP=/secure/rollback/stalwart-resend-secret-20260729T000000Z
+sudo install -d -o root -g root -m 0700 /secure/rollback
+```
+
+First inspect the exact live container and write the sanitized manifest. This
+refuses an unpinned image, unhealthy container, missing `/var/lib/stalwart`
+mount, anonymous volume, untracked volume/bind, stale Compose definition, or
+an already-present key:
+
+```sh
+sudo sh scripts/migrate-stalwart-resend-secret.sh inspect \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+```
+
+Run the non-mutating dry-run and review its sanitized output and both mode-0600
+JSON artifacts in the backup directory:
+
+```sh
+sudo sh scripts/migrate-stalwart-resend-secret.sh dry-run \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+```
+
+Only after explicit operator approval, recreate the Stalwart service with
+`--no-deps --force-recreate --no-build --pull never`. The script compares the
+post-recreation definition to the backup and permits only the new environment
+name and Compose's expected internal configuration-hash label:
+
+```sh
+sudo sh scripts/migrate-stalwart-resend-secret.sh apply \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP" \
+  --approve-recreate-stalwart
+```
+
+Verify the preserved image, mounts, ports, networks, labels, restart policy,
+health, key-source fingerprint, production domain/account, local SMTP/JMAP,
+and WireGuard-only SMTP forward:
+
+```sh
+sudo sh scripts/migrate-stalwart-resend-secret.sh verify \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --verification-secret-file /etc/aiat/resend-certification.env \
+  --account-id <existing-gateway-test-stalwart-account-id> \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP"
+```
+
+If verification fails before route application, restore the original Compose
+definition without the secret. If the route has already been applied, roll it
+back first with the route rollback command below:
+
+```sh
+sudo sh scripts/migrate-stalwart-resend-secret.sh rollback \
+  --container mas-stalwart-1 \
+  --project-name mas \
+  --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env \
+  --compose-env-file /mnt/c/projects/AIAT/mas/infra/compose/.env.stalwart-local \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.yml \
+  --compose-file /mnt/c/projects/AIAT/mas/infra/compose/docker-compose.stalwart-local.yml \
+  --secret-file /etc/aiat/stalwart-resend.env \
+  --backup-dir "$AIAT_STALWART_MIGRATION_BACKUP" \
+  --approve-rollback
+```
+
+After migration verification, back up and apply the outbound route:
 
 ```sh
 sudo sh scripts/configure-stalwart-resend-route.sh backup \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
   --backup /secure/rollback/stalwart-remote-route.json
 
 sudo sh scripts/configure-stalwart-resend-route.sh apply \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
   --backup /secure/rollback/stalwart-remote-route.json
 
 sudo sh scripts/configure-stalwart-resend-route.sh verify \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
   --backup /secure/rollback/stalwart-remote-route.json
 ```
 
-Rollback restores only the backed-up remote route/strategy objects:
+Then run the local certification preflight:
+
+```sh
+sudo sh scripts/preflight-resend-certification.sh \
+  profiles/oci-e2.1-micro-host.env.active \
+  --secret-file /etc/aiat/resend-certification.env \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
+  --account-id <existing-gateway-test-stalwart-account-id> \
+  --sender gateway-test@agents.aiat.ca
+```
+
+Route rollback:
 
 ```sh
 sudo sh scripts/configure-stalwart-resend-route.sh rollback \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
   --backup /secure/rollback/stalwart-remote-route.json
 ```
 
@@ -339,8 +451,9 @@ Run only after an operator has approved the exact sender and external mailbox:
 sudo sh scripts/certify-resend.sh \
   profiles/oci-e2.1-micro-host.env.active \
   --secret-file /etc/aiat/resend-certification.env \
-  --stalwart-container <running-stalwart-container> \
-  --account-id <existing-production-stalwart-account-id> \
+  --relay-secret-file /etc/aiat/stalwart-resend.env \
+  --stalwart-container mas-stalwart-1 \
+  --account-id <existing-gateway-test-stalwart-account-id> \
   --sender gateway-test@agents.aiat.ca \
   --external-recipient <operator-external-mailbox> \
   --approve-one-message \

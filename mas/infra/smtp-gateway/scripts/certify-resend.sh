@@ -7,6 +7,7 @@ set -eu
 base_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 profile="${1:-}"
 secret_file=""
+relay_secret_file=""
 container=""
 account_id=""
 sender=""
@@ -17,7 +18,7 @@ admin_url="http://127.0.0.1:18080/api"
 subject=""
 
 usage() {
-  echo "usage: $0 PROFILE --secret-file FILE --stalwart-container NAME --account-id ID --sender ADDRESS --external-recipient ADDRESS --approve-one-message --output PENDING_RECORD [--jmap-url http://127.0.0.1:18080 --admin-url http://127.0.0.1:18080/api --subject TEXT]" >&2
+  echo "usage: $0 PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --account-id ID --sender ADDRESS --external-recipient ADDRESS --approve-one-message --output PENDING_RECORD [--jmap-url http://127.0.0.1:18080 --admin-url http://127.0.0.1:18080/api --subject TEXT]" >&2
   exit 2
 }
 fail() { echo "Resend certification submission refused: $1" >&2; exit 1; }
@@ -28,6 +29,7 @@ approved=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --secret-file) [ "$#" -ge 2 ] || usage; secret_file="$2"; shift 2 ;;
+    --relay-secret-file) [ "$#" -ge 2 ] || usage; relay_secret_file="$2"; shift 2 ;;
     --stalwart-container) [ "$#" -ge 2 ] || usage; container="$2"; shift 2 ;;
     --account-id) [ "$#" -ge 2 ] || usage; account_id="$2"; shift 2 ;;
     --sender) [ "$#" -ge 2 ] || usage; sender="$2"; shift 2 ;;
@@ -55,9 +57,14 @@ payload_file=""
 tmp_output=""
 trap cleanup EXIT INT TERM
 
-"$base_dir/scripts/preflight-resend-certification.sh" "$profile" \
-  --secret-file "$secret_file" --stalwart-container "$container" --account-id "$account_id" --sender "$sender" \
-  --jmap-url "$jmap_url" --admin-url "$admin_url" >"$preflight_log"
+set -- "$base_dir/scripts/preflight-resend-certification.sh" "$profile" \
+  --secret-file "$secret_file" --stalwart-container "$container" \
+  --account-id "$account_id" --sender "$sender"
+if [ -n "$relay_secret_file" ]; then
+  set -- "$@" --relay-secret-file "$relay_secret_file"
+fi
+set -- "$@" --jmap-url "$jmap_url" --admin-url "$admin_url"
+"$@" >"$preflight_log"
 
 secret_value() { awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$secret_file"; }
 service_token="$(secret_value STALWART_JMAP_SERVICE_TOKEN)"
