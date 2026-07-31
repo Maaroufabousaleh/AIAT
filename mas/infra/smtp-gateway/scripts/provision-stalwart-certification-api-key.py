@@ -9,6 +9,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -30,6 +31,7 @@ PATCHED_IMAGE_REFS = {
     "sha256:258b76c783f298500c5c065bebf09e1f9d773040803c5715b7c35357e529713c",
 }
 KEY_DESCRIPTION = "AIAT Resend certification read-only"
+API_KEY_CREATE_ID = "certification-key"
 REQUIRED_KEY_PERMISSIONS = [
     "authenticate",
     "sysAccountQuery",
@@ -90,6 +92,9 @@ class DiagnosticState:
         self.api_key_create_capability = api_key_create_capability
         self.mailbox_authentication = mailbox_authentication
         self.sensitive_values = sensitive_values or []
+        self.api_key_create_fields: list[str] = []
+        self.api_key_create_field_types: list[str] = []
+        self.api_key_invalid_properties: list[str] = []
         self.attempts: list[dict[str, str]] = []
 
     def record_attempt(
@@ -139,8 +144,6 @@ def sanitize_description(
     limit: int = 180,
     sensitive_values: list[str] | None = None,
 ) -> str:
-    import re
-
     text = " ".join(str(value or "").split())
     for secret in sorted(sensitive_values or [], key=len, reverse=True):
         if secret:
@@ -149,6 +152,65 @@ def sanitize_description(
         text = re.sub(pattern, replacement, text)
     text = "".join(character for character in text if character.isprintable())
     return (text or "no description supplied")[:limit]
+
+
+def _safe_property_name(value: Any) -> str:
+    """Return a bounded property name without ever exposing a property value."""
+    text = "".join(character for character in str(value) if character.isprintable())
+    text = re.sub(r"[^A-Za-z0-9_.@-]", "_", text)
+    return text[:64] or "<empty>"
+
+
+def _safe_value_type(value: Any) -> str:
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, (int, float)):
+        return "number"
+    if value is None:
+        return "null"
+    return "other"
+
+
+def record_api_key_create_payload(
+    diagnostic: DiagnosticState, payload: dict[str, Any]
+) -> None:
+    """Record only create property names and JSON-safe value types."""
+    for item in payload.get("methodCalls") or []:
+        if not isinstance(item, list) or len(item) < 2 or item[0] != "x:ApiKey/set":
+            continue
+        arguments = item[1]
+        if not isinstance(arguments, dict):
+            continue
+        creates = arguments.get("create")
+        if not isinstance(creates, dict):
+            continue
+        create_object = creates.get(API_KEY_CREATE_ID)
+        if not isinstance(create_object, dict):
+            continue
+        diagnostic.api_key_create_fields = [
+            _safe_property_name(name) for name in create_object
+        ]
+        diagnostic.api_key_create_field_types = [
+            f"{_safe_property_name(name)}:{_safe_value_type(value)}"
+            for name, value in create_object.items()
+        ]
+        return
+
+
+def record_invalid_api_key_properties(
+    diagnostic: DiagnosticState, properties: Any
+) -> None:
+    if not isinstance(properties, list):
+        return
+    diagnostic.api_key_invalid_properties = [
+        _safe_property_name(value) for value in properties if isinstance(value, str)
+    ][:32]
 
 
 def classify_error(error_type: str, *, authentication: bool = False) -> str:
@@ -164,25 +226,37 @@ def classify_error(error_type: str, *, authentication: bool = False) -> str:
     return "server-side-validation-error"
 
 
-def response_error(value: dict[str, Any]) -> tuple[str, str] | None:
+def response_failure(value: dict[str, Any]) -> tuple[str, str, Any] | None:
     for item in value.get("methodResponses") or []:
         if not isinstance(item, list) or len(item) < 2 or not isinstance(item[1], dict):
             continue
         if item[0] == "error":
-            return str(item[1].get("type") or "jmapError"), str(
-                item[1].get("description") or "JMAP method failed"
+            return (
+                str(item[1].get("type") or "jmapError"),
+                str(item[1].get("description") or "JMAP method failed"),
+                item[1].get("properties"),
             )
         if item[0] == "x:ApiKey/set":
-            failed = (item[1].get("notCreated") or {}) | (
-                item[1].get("notDestroyed") or {}
-            )
+            failed: dict[str, Any] = {}
+            for key in ("notCreated", "notDestroyed"):
+                values = item[1].get(key)
+                if isinstance(values, dict):
+                    failed.update(values)
             if isinstance(failed, dict) and failed:
                 failure = next(iter(failed.values()))
                 if isinstance(failure, dict):
-                    return str(failure.get("type") or "setError"), str(
-                        failure.get("description") or "ApiKey creation failed"
+                    return (
+                        str(failure.get("type") or "setError"),
+                        str(failure.get("description") or "ApiKey creation failed"),
+                        failure.get("properties"),
                     )
     return None
+
+
+def response_error(value: dict[str, Any]) -> tuple[str, str] | None:
+    """Compatibility helper for callers that only need the type and description."""
+    failure = response_failure(value)
+    return failure[:2] if failure else None
 
 
 def fail_with_diagnostic(
@@ -258,6 +332,8 @@ class HttpTransport:
         authentication: bool = False,
         authentication_mechanism: str = "none",
     ) -> dict[str, Any]:
+        if payload is not None:
+            record_api_key_create_payload(self.diagnostic, payload)
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
         return self._request(
             url,
@@ -382,8 +458,10 @@ class HttpTransport:
                 description="Stalwart returned a non-object response",
                 exception_class="ResponseValidationError",
             )
-        failure = response_error(value)
+        failure = response_failure(value)
         if failure:
+            if jmap_method == "x:ApiKey/set" and failure[0].lower() == "invalidpatch":
+                record_invalid_api_key_properties(self.diagnostic, failure[2])
             if (
                 jmap_method == "x:ApiKey/query"
                 and failure[0].lower() == "forbidden"
@@ -421,7 +499,34 @@ class HttpTransport:
         return value
 
 
-def api_key_payload(expires_at: str) -> dict[str, Any]:
+def api_key_permissions(
+    *, permission_mode: str = "replace", permissions: list[str] | None = None
+) -> dict[str, Any]:
+    if permission_mode == "inherit":
+        return {"@type": "Inherit"}
+    if permission_mode != "replace":
+        raise ValueError("permission_mode must be replace or inherit")
+    selected = list(REQUIRED_KEY_PERMISSIONS if permissions is None else permissions)
+    if not selected or any(not isinstance(value, str) or not value for value in selected):
+        raise ValueError("a Replace API key requires non-empty permission names")
+    return {"@type": "Replace", "permissions": selected}
+
+
+def api_key_payload(
+    expires_at: str,
+    *,
+    permission_mode: str = "replace",
+    allowed_ips: Any = None,
+) -> dict[str, Any]:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", expires_at):
+        raise ValueError("expires_at must be an RFC 3339 UTC timestamp without fractions")
+    create_object: dict[str, Any] = {
+        "description": KEY_DESCRIPTION,
+        "expiresAt": expires_at,
+        "permissions": api_key_permissions(permission_mode=permission_mode),
+    }
+    if allowed_ips:
+        create_object["allowedIps"] = allowed_ips
     return {
         "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
         "methodCalls": [
@@ -429,18 +534,10 @@ def api_key_payload(expires_at: str) -> dict[str, Any]:
                 "x:ApiKey/set",
                 {
                     "create": {
-                        "aiat-resend-certification": {
-                            "description": KEY_DESCRIPTION,
-                            "expiresAt": expires_at,
-                            "permissions": {
-                                "@type": "Replace",
-                                "permissions": REQUIRED_KEY_PERMISSIONS,
-                            },
-                            "allowedIps": {},
-                        }
+                        API_KEY_CREATE_ID: create_object,
                     }
                 },
-                "create-api-key",
+                "create-certification-api-key",
             ]
         ],
     }
@@ -823,7 +920,7 @@ def extract_created_credential(response: dict[str, Any]) -> tuple[str, str]:
         if isinstance(item, list) and len(item) >= 2 and item[0] == "x:ApiKey/set":
             result = item[1] if isinstance(item[1], dict) else {}
             created = result.get("created") or {}
-            value = created.get("aiat-resend-certification") or {}
+            value = created.get(API_KEY_CREATE_ID) or {}
             secret = value.get("secret") if isinstance(value, dict) else None
             credential_id = value.get("id") if isinstance(value, dict) else None
             if (
@@ -1121,6 +1218,21 @@ def print_diagnostic(state: DiagnosticState) -> None:
     print(
         "MAILBOX_APPLICATION_PASSWORD_VALIDATION="
         + state.mailbox_authentication,
+        file=sys.stderr,
+    )
+    print(
+        "API_KEY_CREATE_FIELDS="
+        + (",".join(state.api_key_create_fields) or "NONE"),
+        file=sys.stderr,
+    )
+    print(
+        "API_KEY_CREATE_FIELD_TYPES="
+        + (",".join(state.api_key_create_field_types) or "NONE"),
+        file=sys.stderr,
+    )
+    print(
+        "API_KEY_CREATE_INVALID_PROPERTIES="
+        + (",".join(state.api_key_invalid_properties) or "NONE"),
         file=sys.stderr,
     )
     for index, attempt in enumerate(state.attempts, start=1):

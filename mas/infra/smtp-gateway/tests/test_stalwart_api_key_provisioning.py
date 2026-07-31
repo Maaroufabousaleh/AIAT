@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 from urllib import error
 
@@ -26,14 +27,77 @@ def test_payload_creates_standalone_api_key_object() -> None:
     assert method == "x:ApiKey/set"
     assert "x:Account/set" not in str(payload)
     assert "credentials" not in str(payload)
-    created = arguments["create"]["aiat-resend-certification"]
-    assert created["allowedIps"] == {}
+    created = arguments["create"][provisioning.API_KEY_CREATE_ID]
+    assert "allowedIps" not in created
     assert created["permissions"] == {
         "@type": "Replace",
         "permissions": provisioning.REQUIRED_KEY_PERMISSIONS,
     }
+    assert created["description"]
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created["expiresAt"]
+    )
+    assert created["permissions"]["permissions"]
+    assert all(isinstance(value, str) and value for value in created["permissions"]["permissions"])
+    for prohibited in (
+        "accountId",
+        "name",
+        "owner",
+        "scope",
+        "expiresInHours",
+        "createdAt",
+        "secret",
+    ):
+        assert prohibited not in created
     assert "secret" not in created
     assert "createdAt" not in created
+
+
+def test_payload_is_exact_schema_safe_create_envelope() -> None:
+    payload = provisioning.api_key_payload("2026-08-01T15:00:00Z")
+    assert payload == {
+        "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+        "methodCalls": [
+            [
+                "x:ApiKey/set",
+                {
+                    "create": {
+                        "certification-key": {
+                            "description": "AIAT Resend certification read-only",
+                            "expiresAt": "2026-08-01T15:00:00Z",
+                            "permissions": {
+                                "@type": "Replace",
+                                "permissions": [
+                                    "authenticate",
+                                    "sysAccountQuery",
+                                    "sysDomainQuery",
+                                    "sysMtaOutboundStrategyGet",
+                                    "sysMtaRouteGet",
+                                ],
+                            },
+                        }
+                    }
+                },
+                "create-certification-api-key",
+            ]
+        ],
+    }
+
+
+def test_inherit_permissions_never_carries_a_permission_list() -> None:
+    payload = provisioning.api_key_payload(
+        "2026-08-01T15:00:00Z", permission_mode="inherit"
+    )
+    permissions = payload["methodCalls"][0][1]["create"]["certification-key"]["permissions"]
+    assert permissions == {"@type": "Inherit"}
+    assert "permissions" not in permissions
+
+
+def test_payload_rejects_non_utc_or_fractional_expiry() -> None:
+    with pytest.raises(ValueError):
+        provisioning.api_key_payload("2026-08-01T15:00:00+00:00")
+    with pytest.raises(ValueError):
+        provisioning.api_key_payload("2026-08-01T15:00:00.123Z")
 
 
 def test_cannot_modify_server_set_property_regression() -> None:
@@ -109,7 +173,7 @@ def test_generated_secret_is_extracted_only_from_create_response() -> None:
                         "x:ApiKey/set",
                         {
                             "created": {
-                                "aiat-resend-certification": {
+                                "certification-key": {
                                     "id": "7",
                                     "secret": secret,
                                 }
@@ -408,6 +472,86 @@ class _JsonHttpResponse:
         return False
 
 
+def test_live_invalid_patch_records_safe_create_fields_and_properties(
+    monkeypatch, capsys
+) -> None:
+    def rejected(_message, timeout):
+        return _JsonHttpResponse(
+            {
+                "methodResponses": [
+                    [
+                        "error",
+                        {
+                            "type": "invalidPatch",
+                            "description": "Invalid value for object property",
+                            "properties": ["allowedIps"],
+                        },
+                        "create-certification-api-key",
+                    ]
+                ]
+            }
+        )
+
+    monkeypatch.setattr(provisioning.request, "urlopen", rejected)
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused):
+        provisioning.HttpTransport(state).json(
+            f"{provisioning.LOCAL_URL}/jmap/",
+            "Bearer redacted",
+            payload=provisioning.api_key_payload("2026-08-01T15:00:00Z"),
+            endpoint_path="/jmap/",
+            jmap_method="x:ApiKey/set",
+            authentication_mechanism="oauth2-bearer-management-jmap",
+        )
+    provisioning.print_diagnostic(state)
+    output = capsys.readouterr().err
+    assert "API_KEY_CREATE_FIELDS=description,expiresAt,permissions" in output
+    assert (
+        "API_KEY_CREATE_FIELD_TYPES=description:string,expiresAt:string,permissions:object"
+        in output
+    )
+    assert "API_KEY_CREATE_INVALID_PROPERTIES=allowedIps" in output
+    assert "Invalid value for object property" in output
+    assert "API_aaaaaaaaaaaaaaaaaaaaaaaa" not in output
+    assert "Bearer redacted" not in output
+
+
+def test_precise_live_invalid_patch_response_is_classified_as_payload_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        provisioning.request,
+        "urlopen",
+        lambda _message, timeout: _JsonHttpResponse(
+            {
+                "methodResponses": [
+                    [
+                        "error",
+                        {
+                            "type": "invalidPatch",
+                            "description": "Invalid value for object property",
+                        },
+                        "create-certification-api-key",
+                    ]
+                ]
+            }
+        ),
+    )
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused):
+        provisioning.HttpTransport(state).json(
+            f"{provisioning.LOCAL_URL}/jmap/",
+            "Bearer redacted",
+            payload=provisioning.api_key_payload("2026-08-01T15:00:00Z"),
+            endpoint_path="/jmap/",
+            jmap_method="x:ApiKey/set",
+            authentication_mechanism="oauth2-bearer-management-jmap",
+        )
+    assert state.error_type.startswith("invalid-api-key-set-payload/invalidPatch")
+    assert state.exception_class == "JmapMethodError"
+    assert state.api_key_invalid_properties == []
+
+
 def test_recovery_administrator_account_not_found_is_classified_not_transport(
     monkeypatch,
 ) -> None:
@@ -646,7 +790,7 @@ class ProvisionTransport:
                 method,
                 {
                     "created": {
-                        "aiat-resend-certification": {
+                        "certification-key": {
                             "id": "created-id",
                             "secret": "API_" + "a" * 40,
                         }
