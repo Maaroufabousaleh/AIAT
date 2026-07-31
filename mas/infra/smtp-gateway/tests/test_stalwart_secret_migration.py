@@ -429,6 +429,7 @@ def adopted_args(tmp_path: Path) -> SimpleNamespace:
         override_file=override,
         secret_file=tmp_path / "stalwart-resend.env",
         verification_secret_file=tmp_path / "resend-certification.env",
+        upgrade_evidence_dir=tmp_path / "upgrade-evidence",
         backup_dir=tmp_path / "new-adoption",
         persistent_target="/var/lib/stalwart",
         account_id="w",
@@ -478,9 +479,69 @@ class AdoptionRunner:
 def prepare_adoption_test(monkeypatch, tmp_path: Path):
     args = adopted_args(tmp_path)
     raw = adopted_raw(args, secret="adoption-secret")
-    runner = AdoptionRunner(raw, raw["Config"]["Labels"]["com.docker.compose.config-hash"])
+    rendered_hash = "d" * 64
+    runner = AdoptionRunner(raw, rendered_hash)
     monkeypatch.setattr(migration, "protected_secret", lambda _path: "adoption-secret")
-    monkeypatch.setattr(migration, "validate_adopted_compose_semantics", lambda *_args: None)
+    monkeypatch.setattr(
+        migration,
+        "validate_adopted_compose_semantics",
+        lambda *_args: {
+            "source_semantic_match": True,
+            "config_hash_match": False,
+            "config_hash_drift_class": "COMPOSE_METADATA",
+            "differing_fields": [],
+            "live_config_hash": raw["Config"]["Labels"]["com.docker.compose.config-hash"],
+            "rendered_source_config_hash": rendered_hash,
+        },
+    )
+    args.upgrade_evidence_dir.mkdir(mode=0o700)
+    source_hashes = migration.compose_file_hashes(args)
+    evidence = {
+        "pre-upgrade-manifest.json": {
+            "schema": 1,
+            "kind": "stalwart-v0.16.15-security-upgrade",
+            "container": args.container,
+            "project": args.project_name,
+            "service": args.service,
+            "target_image": migration.ADOPTED_TARGET_IMAGE,
+            "target_image_id": migration.ADOPTED_TARGET_IMAGE_ID,
+            "target_compose_hash": rendered_hash,
+            "compose_file_hashes": source_hashes,
+            "sanitization": {
+                "environment_values_stored": False,
+                "secret_value_stored": False,
+                "secret_fingerprint_stored": False,
+                "label_values_stored": False,
+            },
+        },
+        "target-running.json": {
+            "schema": 1,
+            "container": args.container,
+            "target_container_id": raw["Id"],
+            "target_live_config_hash": raw["Config"]["Labels"]["com.docker.compose.config-hash"],
+            "target_rendered_config_hash": rendered_hash,
+            "target_config_hash_drift_class": "COMPOSE_METADATA",
+        },
+        "cutover-success.json": {
+            "schema": 1,
+            "container": args.container,
+            "target_container_id": raw["Id"],
+            "target_image": migration.ADOPTED_TARGET_IMAGE,
+            "live_mutation": "PERFORMED",
+            "volumes_deleted_or_recreated": False,
+            "secret_value_or_fingerprint_stored": False,
+        },
+        "verification-complete.json": {
+            "schema": 1,
+            "container": args.container,
+            "live_mutation": "PERFORMED",
+            "volumes_deleted_or_recreated": False,
+        },
+    }
+    for name, value in evidence.items():
+        path = args.upgrade_evidence_dir / name
+        path.write_text(json.dumps(value), encoding="utf-8")
+        path.chmod(0o600)
     monkeypatch.setattr(
         migration,
         "certification_secrets",
@@ -601,8 +662,136 @@ def test_adopt_existing_refuses_untracked_mount(monkeypatch, tmp_path: Path) -> 
 def test_adopt_existing_refuses_stale_compose_hash(monkeypatch, tmp_path: Path) -> None:
     args, runner = prepare_adoption_test(monkeypatch, tmp_path)
     runner.config_hash = "f" * 64
-    with pytest.raises(migration.Refused, match="selected Compose definition"):
+    with pytest.raises(migration.Refused, match="rendered Compose hash"):
         migration.adopt_existing_action(runner, args)
+
+
+def adoption_evidence_inputs(args: SimpleNamespace, runner: AdoptionRunner):
+    snapshot = migration.snapshot_from_inspect(runner.raw)
+    source_hashes = migration.compose_file_hashes(args)
+    report = {
+        "source_semantic_match": True,
+        "config_hash_match": False,
+        "config_hash_drift_class": "COMPOSE_METADATA",
+        "differing_fields": [],
+        "live_config_hash": snapshot["compose"]["config_hash"],
+        "rendered_source_config_hash": "d" * 64,
+    }
+    return snapshot, report, source_hashes
+
+
+def test_certified_metadata_only_hash_mismatch_is_accepted(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    evidence = migration.validate_adopted_upgrade_evidence(
+        args, snapshot, report, source_hashes
+    )
+    assert evidence["drift_class"] == "COMPOSE_METADATA"
+    assert evidence["live_config_hash"] != evidence["rendered_config_hash"]
+
+
+def test_exact_hash_match_is_accepted(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    live_hash = runner.raw["Config"]["Labels"]["com.docker.compose.config-hash"]
+    manifest_path = args.upgrade_evidence_dir / "pre-upgrade-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["target_compose_hash"] = live_hash
+    manifest_path.write_text(json.dumps(manifest))
+    target_path = args.upgrade_evidence_dir / "target-running.json"
+    target = json.loads(target_path.read_text())
+    target["target_rendered_config_hash"] = live_hash
+    target["target_config_hash_drift_class"] = "NONE"
+    target_path.write_text(json.dumps(target))
+    snapshot = migration.snapshot_from_inspect(runner.raw)
+    report = {
+        "source_semantic_match": True,
+        "config_hash_match": True,
+        "config_hash_drift_class": "NONE",
+        "differing_fields": [],
+        "live_config_hash": live_hash,
+        "rendered_source_config_hash": live_hash,
+    }
+    assert migration.validate_adopted_upgrade_evidence(
+        args, snapshot, report, migration.compose_file_hashes(args)
+    )["drift_class"] == "NONE"
+
+
+def test_metadata_mismatch_without_evidence_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    args.upgrade_evidence_dir = tmp_path / "missing-upgrade-evidence"
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="evidence directory is missing"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_incomplete_upgrade_evidence_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    (args.upgrade_evidence_dir / "verification-complete.json").unlink()
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="required governed upgrade evidence"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_evidence_hash_pair_mismatch_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    target_path = args.upgrade_evidence_dir / "target-running.json"
+    target = json.loads(target_path.read_text())
+    target["target_rendered_config_hash"] = "f" * 64
+    target_path.write_text(json.dumps(target))
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="target-running evidence"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_evidence_container_mismatch_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    target_path = args.upgrade_evidence_dir / "target-running.json"
+    target = json.loads(target_path.read_text())
+    target["target_container_id"] = "f" * 64
+    target_path.write_text(json.dumps(target))
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="target-running evidence"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_evidence_source_hash_mismatch_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    manifest_path = args.upgrade_evidence_dir / "pre-upgrade-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["compose_file_hashes"][str(args.compose_file[0].resolve())] = "f" * 64
+    manifest_path.write_text(json.dumps(manifest))
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="pre-upgrade manifest"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_evidence_image_mismatch_fails(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    manifest_path = args.upgrade_evidence_dir / "pre-upgrade-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["target_image_id"] = "sha256:" + "f" * 64
+    manifest_path.write_text(json.dumps(manifest))
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    with pytest.raises(migration.Refused, match="pre-upgrade manifest"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_semantic_drift_is_rejected_even_with_metadata_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    report["source_semantic_match"] = False
+    with pytest.raises(migration.Refused, match="runtime semantics"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
+
+
+def test_unknown_drift_class_is_rejected(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    snapshot, report, source_hashes = adoption_evidence_inputs(args, runner)
+    report["config_hash_drift_class"] = "UNKNOWN"
+    with pytest.raises(migration.Refused, match="not classified"):
+        migration.validate_adopted_upgrade_evidence(args, snapshot, report, source_hashes)
 
 
 def test_adopt_existing_refuses_reused_backup_directory(monkeypatch, tmp_path: Path) -> None:
@@ -636,6 +825,14 @@ def test_verify_succeeds_against_adopted_baseline_without_recreation(monkeypatch
     migration.verify_action(runner, args)
 
     assert not any("up" in command for command in runner.commands)
+
+
+def test_later_adopted_verify_detects_hash_pair_change(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    migration.adopt_existing_action(runner, args)
+    runner.raw["Config"]["Labels"]["com.docker.compose.config-hash"] = "e" * 64
+    with pytest.raises(migration.Refused, match="target-running evidence"):
+        migration.verify_action(runner, args)
 
 
 def test_adopted_verify_rejects_reordered_cli_inputs(monkeypatch, tmp_path: Path) -> None:

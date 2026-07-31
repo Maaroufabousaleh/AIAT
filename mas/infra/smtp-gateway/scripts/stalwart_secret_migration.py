@@ -47,6 +47,13 @@ SUCCESS_ARTIFACT = "post-migration-success.json"
 ADOPTED_BASELINE_ARTIFACT = "adopted-existing-baseline.json"
 ADOPTED_SUCCESS_ARTIFACT = "adopted-existing-success.json"
 ADOPTED_ARTIFACT_SCHEMA = 2
+ADOPTED_UPGRADE_ARTIFACTS = (
+    "pre-upgrade-manifest.json",
+    "target-running.json",
+    "cutover-success.json",
+    "verification-complete.json",
+)
+ADOPTED_METADATA_DRIFT = "COMPOSE_METADATA"
 
 
 class Refused(RuntimeError):
@@ -312,7 +319,7 @@ def validate_adopted_compose_semantics(
     runner: Runner,
     args: argparse.Namespace,
     snapshot: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     """Reuse the security-upgrade field-by-field target comparison."""
     module_name = "stalwart_secret_migration"
     if module_name not in sys.modules:
@@ -335,6 +342,9 @@ def validate_adopted_compose_semantics(
     if not report["source_semantic_match"]:
         fields = ",".join(report.get("differing_fields") or ["unknown"])
         raise Refused(f"adopted-existing Compose semantic drift: {fields}")
+    if report.get("config_hash_drift_class") not in {"NONE", ADOPTED_METADATA_DRIFT}:
+        raise Refused("adopted-existing Compose hash drift is unclassified")
+    return report
 
 
 def require_compose_provenance(
@@ -601,6 +611,7 @@ def require_compose_identity(
     include_override: bool,
     require_provenance: bool = False,
     ordered_files: list[Path] | None = None,
+    allow_adopted_metadata_drift: bool = False,
 ) -> str:
     if snapshot["compose"]["project"] != args.project_name:
         raise Refused("container Compose project does not match")
@@ -620,7 +631,10 @@ def require_compose_identity(
     if current_id != snapshot["container_id"]:
         raise Refused("Compose does not resolve to the inspected Stalwart container")
     config_hash = compose_service_hash(runner, args, include_override=include_override)
-    if snapshot["compose"]["config_hash"] != config_hash:
+    if snapshot["compose"]["config_hash"] != config_hash and not (
+        allow_adopted_metadata_drift
+        and getattr(args, "_adopted_hash_relaxation", False)
+    ):
         raise Refused("running container does not match the selected Compose definition")
     return config_hash
 
@@ -687,6 +701,158 @@ def adopted_artifact(value: dict[str, Any], *, action: str) -> None:
         raise Refused("adopted-existing artifact has invalid ordered Compose provenance")
     if value.get("secret_value_or_fingerprint_stored") is not False:
         raise Refused("adopted-existing artifact has unsafe secret material")
+    for key in (
+        "live_config_hash",
+        "rendered_config_hash",
+        "config_hash_drift_class",
+        "upgrade_evidence_dir",
+    ):
+        if not isinstance(value.get(key), str) or not value[key]:
+            raise Refused("adopted-existing artifact is missing hash/evidence provenance")
+    if value["config_hash_drift_class"] not in {"NONE", ADOPTED_METADATA_DRIFT}:
+        raise Refused("adopted-existing artifact has an invalid drift classification")
+    artifacts = value.get("upgrade_evidence_artifacts")
+    if artifacts != list(ADOPTED_UPGRADE_ARTIFACTS):
+        raise Refused("adopted-existing artifact has incomplete upgrade evidence provenance")
+    if not isinstance(value.get("upgrade_source_file_hashes"), dict):
+        raise Refused("adopted-existing artifact is missing source hash provenance")
+
+
+def _protected_upgrade_json(path: Path) -> dict[str, Any]:
+    if path.is_symlink():
+        raise Refused("governed upgrade evidence must not contain symlinks")
+    try:
+        details = path.stat()
+    except (FileNotFoundError, OSError) as exc:
+        raise Refused("required governed upgrade evidence is missing") from exc
+    if stat.S_IMODE(details.st_mode) != 0o600:
+        raise Refused("governed upgrade evidence must have mode 0600")
+    if hasattr(os, "geteuid") and os.geteuid() == 0 and details.st_uid != 0:
+        raise Refused("governed upgrade evidence must be root-owned")
+    return load_json(path)
+
+
+def _validate_evidence_sanitization(value: dict[str, Any]) -> None:
+    serialized = json.dumps(value, sort_keys=True)
+    if any(
+        marker in serialized.lower()
+        for marker in ("api_key=", "bearer ", "basic ", "password=", "resend_api_key")
+    ):
+        raise Refused("governed upgrade evidence contains secret-bearing material")
+    for key in value:
+        if key in {"secret_value_or_fingerprint_stored", "sanitization"}:
+            continue
+        if re.search(r"(?:^|_)(?:secret|token|password|credential)(?:$|_)", key.lower()):
+            raise Refused("governed upgrade evidence contains an unsafe field")
+
+
+def validate_adopted_upgrade_evidence(
+    args: argparse.Namespace,
+    snapshot: dict[str, Any],
+    semantic_report: dict[str, Any],
+    source_hashes: dict[str, str],
+) -> dict[str, Any]:
+    """Bind adoption to the already-completed, metadata-only upgrade."""
+    evidence_dir = getattr(args, "upgrade_evidence_dir", None)
+    if not isinstance(evidence_dir, Path) or not evidence_dir.is_absolute():
+        raise Refused("adopt-existing requires an absolute upgrade evidence directory")
+    if evidence_dir.is_symlink():
+        raise Refused("governed upgrade evidence directory must not be a symlink")
+    try:
+        directory = evidence_dir.stat()
+    except (FileNotFoundError, OSError) as exc:
+        raise Refused("governed upgrade evidence directory is missing") from exc
+    if not evidence_dir.is_dir() or stat.S_IMODE(directory.st_mode) != 0o700:
+        raise Refused("governed upgrade evidence directory must be mode 0700")
+    if hasattr(os, "geteuid") and os.geteuid() == 0 and directory.st_uid != 0:
+        raise Refused("governed upgrade evidence directory must be root-owned")
+
+    artifacts = {
+        name: _protected_upgrade_json(evidence_dir / name)
+        for name in ADOPTED_UPGRADE_ARTIFACTS
+    }
+    for value in artifacts.values():
+        _validate_evidence_sanitization(value)
+
+    live_hash = str(snapshot["compose"].get("config_hash") or "")
+    rendered_hash = str(semantic_report.get("rendered_source_config_hash") or "")
+    if not HASH_VALUE.fullmatch(live_hash) or not HASH_VALUE.fullmatch(rendered_hash):
+        raise Refused("adopted-existing config hash evidence is malformed")
+    if semantic_report.get("source_semantic_match") is not True:
+        raise Refused("adopted-existing runtime semantics are not equivalent")
+    drift_class = semantic_report.get("config_hash_drift_class")
+    if drift_class not in {"NONE", ADOPTED_METADATA_DRIFT}:
+        raise Refused("adopted-existing config hash drift is not classified")
+    if drift_class == ADOPTED_METADATA_DRIFT and live_hash == rendered_hash:
+        raise Refused("metadata drift classification conflicts with an equal hash pair")
+    if drift_class == "NONE" and live_hash != rendered_hash:
+        raise Refused("equal-hash classification conflicts with a mismatched hash pair")
+
+    manifest = artifacts["pre-upgrade-manifest.json"]
+    if (
+        manifest.get("schema") != 1
+        or manifest.get("kind") != "stalwart-v0.16.15-security-upgrade"
+        or manifest.get("container") != args.container
+        or manifest.get("project") != args.project_name
+        or manifest.get("service") != args.service
+        or manifest.get("target_image") != ADOPTED_TARGET_IMAGE
+        or manifest.get("target_image_id") != ADOPTED_TARGET_IMAGE_ID
+        or manifest.get("target_compose_hash") != rendered_hash
+        or manifest.get("compose_file_hashes") != source_hashes
+    ):
+        raise Refused("pre-upgrade manifest does not match the current governed state")
+    sanitization = manifest.get("sanitization") or {}
+    if any(sanitization.get(key) is not False for key in (
+        "environment_values_stored",
+        "secret_value_stored",
+        "secret_fingerprint_stored",
+        "label_values_stored",
+    )):
+        raise Refused("pre-upgrade manifest sanitization is incomplete")
+
+    target = artifacts["target-running.json"]
+    if (
+        target.get("schema") != 1
+        or target.get("container") != args.container
+        or target.get("target_container_id") != snapshot["container_id"]
+        or target.get("target_live_config_hash") != live_hash
+        or target.get("target_rendered_config_hash") != rendered_hash
+        or target.get("target_config_hash_drift_class") != drift_class
+    ):
+        raise Refused("target-running evidence does not match the current container")
+
+    cutover = artifacts["cutover-success.json"]
+    if (
+        cutover.get("schema") != 1
+        or cutover.get("container") != args.container
+        or cutover.get("target_container_id") != snapshot["container_id"]
+        or cutover.get("target_image") != ADOPTED_TARGET_IMAGE
+        or cutover.get("live_mutation") != "PERFORMED"
+        or cutover.get("volumes_deleted_or_recreated") is not False
+        or cutover.get("secret_value_or_fingerprint_stored") is not False
+    ):
+        raise Refused("cutover success evidence is incomplete or mismatched")
+
+    verification = artifacts["verification-complete.json"]
+    if (
+        verification.get("schema") != 1
+        or verification.get("container") != args.container
+        or verification.get("live_mutation") != "PERFORMED"
+        or verification.get("volumes_deleted_or_recreated") is not False
+    ):
+        raise Refused("verification-complete evidence is incomplete")
+
+    return {
+        "directory": str(evidence_dir),
+        "artifacts": list(ADOPTED_UPGRADE_ARTIFACTS),
+        "live_config_hash": live_hash,
+        "rendered_config_hash": rendered_hash,
+        "drift_class": drift_class,
+        "source_file_hashes": source_hashes,
+        "target_container_id": snapshot["container_id"],
+        "target_image": ADOPTED_TARGET_IMAGE,
+        "target_image_id": ADOPTED_TARGET_IMAGE_ID,
+    }
 
 
 def write_or_match_artifact(path: Path, value: dict[str, Any]) -> None:
@@ -706,6 +872,8 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         raise Refused("adopt-existing requires a new, non-existing backup directory")
     if not args.verification_secret_file or not args.account_id:
         raise Refused("adopt-existing requires --verification-secret-file and --account-id")
+    if not args.upgrade_evidence_dir:
+        raise Refused("adopt-existing requires --upgrade-evidence-dir")
     require_adopted_compose_inputs(args)
     ordered_files = adopted_compose_files(args)
     args._adopted_ordered_stack = True
@@ -714,8 +882,18 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
     prepare_compose_environment(runner, args)
     validate_snapshot(snapshot, persistent_target=args.persistent_target, require_secret=True)
     validate_adopted_runtime(snapshot)
-    validate_adopted_compose_semantics(runner, args, snapshot)
+    semantic_report = validate_adopted_compose_semantics(runner, args, snapshot)
     validate_mount_tracking(runner, snapshot, project=args.project_name)
+    source_hashes = compose_file_hashes(args)
+    evidence = validate_adopted_upgrade_evidence(
+        args,
+        snapshot,
+        semantic_report,
+        source_hashes,
+    )
+    args._adopted_hash_relaxation = (
+        semantic_report["config_hash_drift_class"] == ADOPTED_METADATA_DRIFT
+    )
     config_hash = require_compose_identity(
         runner,
         args,
@@ -723,8 +901,10 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         include_override=True,
         require_provenance=True,
         ordered_files=ordered_files,
+        allow_adopted_metadata_drift=True,
     )
-    source_hashes = compose_file_hashes(args)
+    if config_hash != evidence["rendered_config_hash"]:
+        raise Refused("adopted-existing rendered Compose hash changed during validation")
     secret = protected_secret(args.secret_file)
     credentials = certification_secrets(args.verification_secret_file)
     try:
@@ -761,8 +941,14 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
             normalized_definition(snapshot["definition"])
         ),
         "compose_config_hash": config_hash,
+        "live_config_hash": evidence["live_config_hash"],
+        "rendered_config_hash": evidence["rendered_config_hash"],
+        "config_hash_drift_class": evidence["drift_class"],
         "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": source_hashes,
+        "upgrade_evidence_dir": evidence["directory"],
+        "upgrade_evidence_artifacts": evidence["artifacts"],
+        "upgrade_source_file_hashes": evidence["source_file_hashes"],
         "live_snapshot": snapshot,
         "account_id": args.account_id,
         "account_address": EXPECTED_ACCOUNT,
@@ -785,8 +971,14 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         "image_id": snapshot["definition"]["image_id"],
         "normalized_definition_fingerprint": baseline["normalized_definition_fingerprint"],
         "compose_config_hash": config_hash,
+        "live_config_hash": evidence["live_config_hash"],
+        "rendered_config_hash": evidence["rendered_config_hash"],
+        "config_hash_drift_class": evidence["drift_class"],
         "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": source_hashes,
+        "upgrade_evidence_dir": evidence["directory"],
+        "upgrade_evidence_artifacts": evidence["artifacts"],
+        "upgrade_source_file_hashes": evidence["source_file_hashes"],
         "account_id": args.account_id,
         "account_address": EXPECTED_ACCOUNT,
         "verification_results": verification_results,
@@ -1215,17 +1407,38 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         raise Refused("adopted-existing Compose source changed after certification")
     if baseline.get("account_id") != args.account_id:
         raise Refused("adopted-existing accountId does not match the certified baseline")
+    baseline_evidence_dir = Path(str(baseline.get("upgrade_evidence_dir") or ""))
+    if args.upgrade_evidence_dir and args.upgrade_evidence_dir != baseline_evidence_dir:
+        raise Refused("adopted-existing upgrade evidence directory changed")
+    args.upgrade_evidence_dir = baseline_evidence_dir
     current = inspect_container(runner, args.container)
     prepare_compose_environment(runner, args)
     if current["container_id"] != baseline.get("live_container_id"):
         raise Refused("adopted-existing container identity changed")
     validate_snapshot(current, persistent_target=args.persistent_target, require_secret=True)
     validate_adopted_runtime(current)
-    validate_adopted_compose_semantics(runner, args, current)
+    semantic_report = validate_adopted_compose_semantics(runner, args, current)
     current_fingerprint = canonical_hash(normalized_definition(current["definition"]))
     if current_fingerprint != baseline.get("normalized_definition_fingerprint"):
         raise Refused("adopted-existing runtime definition changed")
     validate_mount_tracking(runner, current, project=args.project_name)
+    source_hashes = compose_file_hashes(args)
+    evidence = validate_adopted_upgrade_evidence(
+        args,
+        current,
+        semantic_report,
+        source_hashes,
+    )
+    if (
+        baseline.get("live_config_hash") != evidence["live_config_hash"]
+        or baseline.get("rendered_config_hash") != evidence["rendered_config_hash"]
+        or baseline.get("config_hash_drift_class") != evidence["drift_class"]
+        or baseline.get("upgrade_source_file_hashes") != evidence["source_file_hashes"]
+    ):
+        raise Refused("adopted-existing upgrade provenance changed")
+    args._adopted_hash_relaxation = (
+        semantic_report["config_hash_drift_class"] == ADOPTED_METADATA_DRIFT
+    )
     config_hash = require_compose_identity(
         runner,
         args,
@@ -1233,7 +1446,10 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         include_override=True,
         require_provenance=True,
         ordered_files=ordered_files,
+        allow_adopted_metadata_drift=True,
     )
+    if config_hash != evidence["rendered_config_hash"]:
+        raise Refused("adopted-existing rendered Compose hash changed during validation")
     if config_hash != baseline.get("compose_config_hash"):
         raise Refused("adopted-existing Compose config hash changed")
     secret = protected_secret(args.secret_file)
@@ -1257,8 +1473,14 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         "image_id": current["definition"]["image_id"],
         "normalized_definition_fingerprint": current_fingerprint,
         "compose_config_hash": config_hash,
+        "live_config_hash": evidence["live_config_hash"],
+        "rendered_config_hash": evidence["rendered_config_hash"],
+        "config_hash_drift_class": evidence["drift_class"],
         "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": baseline["compose_file_hashes"],
+        "upgrade_evidence_dir": evidence["directory"],
+        "upgrade_evidence_artifacts": evidence["artifacts"],
+        "upgrade_source_file_hashes": evidence["source_file_hashes"],
         "account_id": args.account_id,
         "account_address": EXPECTED_ACCOUNT,
         "verification_results": baseline.get("verification_results"),
@@ -1392,6 +1614,7 @@ def parser() -> argparse.ArgumentParser:
     )
     value.add_argument("--secret-file", type=Path, required=True)
     value.add_argument("--verification-secret-file", type=Path)
+    value.add_argument("--upgrade-evidence-dir", type=Path)
     value.add_argument("--backup-dir", type=Path, required=True)
     value.add_argument("--persistent-target", default="/var/lib/stalwart")
     value.add_argument("--account-id")
@@ -1414,6 +1637,8 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args.backup_dir = args.backup_dir.resolve()
     if args.verification_secret_file:
         args.verification_secret_file = args.verification_secret_file.resolve()
+    if args.upgrade_evidence_dir:
+        args.upgrade_evidence_dir = args.upgrade_evidence_dir.resolve()
     if args.action in {"adopt-existing", "recover", "verify"} and (
         not args.verification_secret_file or not args.account_id
     ):
