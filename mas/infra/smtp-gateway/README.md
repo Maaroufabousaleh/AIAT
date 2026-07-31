@@ -867,7 +867,7 @@ use a new directory that does not exist yet. The command below uses the
 approved pinned v0.16.15 Compose definition and the existing secret override:
 
 ```sh
-export AIAT_STALWART_ADOPTION_BACKUP=/secure/rollback/stalwart-resend-secret-adopt-20260731T120000Z
+export AIAT_STALWART_ADOPTION_BACKUP=/secure/rollback/stalwart-resend-secret-adopt-20260731T171900Z
 sudo install -d -o root -g root -m 0700 /secure/rollback
 
 stalwart_adopt_existing() {
@@ -899,16 +899,31 @@ least-privilege certification credentials. It rejects unknown service labels,
 stale Compose hashes, reused/partial backup directories, wrong account IDs,
 and overprivileged credentials.
 
-The two mode-0600 JSON files are:
+The two mode-0600 JSON files use adoption artifact schema `2` and are:
 
-* `adopted-existing-baseline.json`: schema `1`, `action_type:
+* `adopted-existing-baseline.json`: schema `2`, `action_type:
   "adopt-existing"`, live container/image identity, normalized definition
-  fingerprint, Compose config/source hashes, sanitized live snapshot, account
-  ID/address, verification results, timestamp, `secret_source_match: "PASS"`,
+  fingerprint, the ordered `compose_file_order` below, Compose config/source
+  hashes, sanitized live snapshot, account ID/address, verification results,
+  timestamp, `secret_source_match: "PASS"`,
   and explicit `live_mutation: "NOT_PERFORMED"`,
   `compose_recreation: "NOT_PERFORMED"`, `volume_mutation: "NONE"`.
-* `adopted-existing-success.json`: the same immutable identity and verification
-  contract, written only after all checks pass.
+* `adopted-existing-success.json`: the same immutable identity, ordered file
+  provenance, and verification contract, written only after all checks pass.
+
+The certified Compose file order is exactly:
+
+```text
+docker-compose.stalwart-canonical.yml
+docker-compose.stalwart-resend-secret.yml
+docker-compose.stalwart-v0.16.15-security-upgrade.yml
+```
+
+The live `com.docker.compose.project.config_files` label is checked as this
+ordered list, with exactly three unique approved repository paths. Per-file
+SHA-256 hashes and the Compose config hash must also match during later
+verification. The normal pre-secret migration lifecycle retains its existing
+Compose ordering behavior; only `adopt-existing` uses this ordered stack.
 
 Neither artifact contains the Resend key, a key fingerprint, credential values,
 or environment values. Later verification automatically recognizes this

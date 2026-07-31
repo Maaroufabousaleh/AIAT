@@ -410,16 +410,19 @@ def test_running_config_hash_mismatch_is_rejected(tmp_path: Path) -> None:
 
 
 def adopted_args(tmp_path: Path) -> SimpleNamespace:
-    compose = tmp_path / "docker-compose.stalwart-canonical.yml"
-    target = tmp_path / migration.ADOPTED_TARGET_COMPOSE_NAME
-    override = tmp_path / migration.ADOPTED_SECRET_OVERRIDE_NAME
+    project_directory = tmp_path / "infra" / "compose"
+    home = project_directory.parent / "smtp-gateway" / "home"
+    home.mkdir(parents=True)
+    compose = home / "docker-compose.stalwart-canonical.yml"
+    target = home / migration.ADOPTED_TARGET_COMPOSE_NAME
+    override = home / migration.ADOPTED_SECRET_OVERRIDE_NAME
     for path in (compose, target, override):
         path.write_text("services:\n  stalwart:\n    image: pinned\n", encoding="utf-8")
     return SimpleNamespace(
         container="mas-stalwart-1",
         service="stalwart",
         project_name="mas",
-        project_directory=tmp_path,
+        project_directory=project_directory,
         compose_file=[compose, target],
         compose_env_file=[],
         compose_profile=["mail-local"],
@@ -443,7 +446,7 @@ def adopted_raw(args: SimpleNamespace, *, secret: str) -> dict:
         args.project_directory
     )
     raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
-        [str(path) for path in [*args.compose_file, args.override_file]]
+        str(path) for path in migration.adopted_compose_files(args)
     )
     return raw
 
@@ -513,6 +516,67 @@ def test_adopt_existing_certifies_without_compose_recreation_or_old_evidence_mut
     )
     assert "adoption-secret" not in serialized
     assert migration.sha256_text("adoption-secret") not in serialized
+    baseline = json.loads(
+        (args.backup_dir / migration.ADOPTED_BASELINE_ARTIFACT).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert baseline["schema"] == migration.ADOPTED_ARTIFACT_SCHEMA
+    assert baseline["compose_file_order"] == [
+        str(path) for path in migration.adopted_compose_files(args)
+    ]
+
+    compose_commands = [
+        command
+        for command in runner.commands
+        if "ps" in command or ("config" in command and "--hash" in command)
+    ]
+    expected_order = [str(path) for path in migration.adopted_compose_files(args)]
+    for command in compose_commands:
+        actual_order = [
+            command[index + 1]
+            for index, value in enumerate(command[:-1])
+            if value == "-f"
+        ]
+        assert actual_order == expected_order
+
+
+def test_adopted_compose_stack_is_exactly_ordered(tmp_path: Path) -> None:
+    args = adopted_args(tmp_path)
+    assert migration.adopted_compose_files(args) == [
+        args.compose_file[0].resolve(),
+        args.override_file.resolve(),
+        args.compose_file[1].resolve(),
+    ]
+
+
+def test_adopt_existing_rejects_live_compose_order_mismatch(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    ordered = migration.adopted_compose_files(args)
+    runner.raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
+        str(path) for path in [ordered[0], ordered[2], ordered[1]]
+    )
+    with pytest.raises(migration.Refused, match="file provenance"):
+        migration.adopt_existing_action(runner, args)
+    assert not args.backup_dir.exists()
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "missing", "fourth"])
+def test_adopt_existing_rejects_invalid_selected_compose_stack(
+    monkeypatch, tmp_path: Path, mutation: str
+) -> None:
+    args, _runner = prepare_adoption_test(monkeypatch, tmp_path)
+    if mutation == "duplicate":
+        args.compose_file = [args.compose_file[0], args.override_file, args.compose_file[1]]
+    elif mutation == "missing":
+        args.compose_file[1].unlink()
+    else:
+        fourth = args.project_directory.parent / "smtp-gateway" / "home" / "unexpected.yml"
+        fourth.write_text("services: {}\n", encoding="utf-8")
+        args.compose_file.append(fourth)
+    with pytest.raises(migration.Refused, match="adoption"):
+        migration.adopt_existing_action(_runner, args)
+    assert not args.backup_dir.exists()
 
 
 def test_adopt_existing_refuses_image_mismatch(monkeypatch, tmp_path: Path) -> None:
@@ -572,6 +636,14 @@ def test_verify_succeeds_against_adopted_baseline_without_recreation(monkeypatch
     migration.verify_action(runner, args)
 
     assert not any("up" in command for command in runner.commands)
+
+
+def test_adopted_verify_rejects_reordered_cli_inputs(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    migration.adopt_existing_action(runner, args)
+    args.compose_file.reverse()
+    with pytest.raises(migration.Refused, match="canonical and v0.16.15"):
+        migration.verify_action(runner, args)
 
 
 def test_verify_stalwart_data_posts_only_to_discovered_jmap_endpoint(monkeypatch) -> None:

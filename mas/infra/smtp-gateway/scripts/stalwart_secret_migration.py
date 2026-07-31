@@ -46,6 +46,7 @@ HASH_VALUE = re.compile(r"^[0-9a-f]{64}$")
 SUCCESS_ARTIFACT = "post-migration-success.json"
 ADOPTED_BASELINE_ARTIFACT = "adopted-existing-baseline.json"
 ADOPTED_SUCCESS_ARTIFACT = "adopted-existing-success.json"
+ADOPTED_ARTIFACT_SCHEMA = 2
 
 
 class Refused(RuntimeError):
@@ -275,11 +276,34 @@ def validate_adopted_runtime(snapshot: dict[str, Any]) -> None:
         raise Refused("unexpected live Stalwart service label")
 
 
-def require_adopted_compose_inputs(args: argparse.Namespace) -> None:
-    if not any(path.name == ADOPTED_TARGET_COMPOSE_NAME for path in args.compose_file):
-        raise Refused("adoption requires the approved v0.16.15 Compose override")
-    if args.override_file.name != ADOPTED_SECRET_OVERRIDE_NAME:
+def adopted_compose_files(args: argparse.Namespace) -> list[Path]:
+    home = args.project_directory.parent / "smtp-gateway" / "home"
+    expected = [
+        (home / "docker-compose.stalwart-canonical.yml").resolve(),
+        (home / ADOPTED_SECRET_OVERRIDE_NAME).resolve(),
+        (home / ADOPTED_TARGET_COMPOSE_NAME).resolve(),
+    ]
+    selected = [path.resolve() for path in args.compose_file]
+    expected_compose_inputs = [expected[0], expected[2]]
+    if selected != expected_compose_inputs:
+        raise Refused(
+            "adoption requires the canonical and v0.16.15 Compose files in order"
+        )
+    if len(selected) != len(set(selected)):
+        raise Refused("adoption Compose inputs contain duplicate files")
+    if args.override_file.resolve() != expected[1]:
         raise Refused("adoption requires the canonical Resend secret Compose override")
+    ordered = [*expected]
+    if len(ordered) != len(set(ordered)):
+        raise Refused("adoption Compose stack contains duplicate files")
+    for path in ordered:
+        if not path.is_file():
+            raise Refused(f"approved adoption Compose file is missing: {path.name}")
+    return ordered
+
+
+def require_adopted_compose_inputs(args: argparse.Namespace) -> None:
+    adopted_compose_files(args)
     if args.backup_dir == LEGACY_V0_16_7_EVIDENCE:
         raise Refused("the v0.16.7 migration evidence directory cannot be adopted")
 
@@ -318,15 +342,17 @@ def require_compose_provenance(
     args: argparse.Namespace,
     *,
     include_override: bool,
+    ordered_files: list[Path] | None = None,
 ) -> None:
     compose = snapshot["compose"]
     if compose.get("working_dir") and Path(compose["working_dir"]).resolve() != args.project_directory:
         raise Refused("container Compose working directory does not match")
     files = [item for item in compose.get("config_files", "").split(",") if item]
-    expected = {str(path.resolve()) for path in args.compose_file}
-    if include_override:
-        expected.add(str(args.override_file.resolve()))
-    if not files or set(files) != expected:
+    expected_files = ordered_files or [*args.compose_file]
+    if not ordered_files and include_override:
+        expected_files.append(args.override_file)
+    expected = [str(path.resolve()) for path in expected_files]
+    if files != expected:
         raise Refused("container Compose file provenance does not match")
 
 
@@ -479,7 +505,10 @@ def inspect_container(runner: Runner, container: str) -> dict[str, Any]:
     return snapshot_from_inspect(values[0])
 
 
-def compose_command(args: argparse.Namespace, include_override: bool) -> list[str]:
+def compose_command_for_files(
+    args: argparse.Namespace,
+    ordered_files: list[Path],
+) -> list[str]:
     command = ["docker", "compose"]
     for env_file in args.compose_env_file:
         command.extend(["--env-file", str(env_file)])
@@ -491,11 +520,18 @@ def compose_command(args: argparse.Namespace, include_override: bool) -> list[st
     ])
     for profile in args.compose_profile:
         command.extend(["--profile", profile])
-    for compose_file in args.compose_file:
+    for compose_file in ordered_files:
         command.extend(["-f", str(compose_file)])
-    if include_override:
-        command.extend(["-f", str(args.override_file)])
     return command
+
+
+def compose_command(args: argparse.Namespace, include_override: bool) -> list[str]:
+    if include_override and getattr(args, "_adopted_ordered_stack", False):
+        return compose_command_for_files(args, adopted_compose_files(args))
+    ordered_files = [*args.compose_file]
+    if include_override:
+        ordered_files.append(args.override_file)
+    return compose_command_for_files(args, ordered_files)
 
 
 def compose_environment(args: argparse.Namespace) -> dict[str, str]:
@@ -564,13 +600,19 @@ def require_compose_identity(
     *,
     include_override: bool,
     require_provenance: bool = False,
+    ordered_files: list[Path] | None = None,
 ) -> str:
     if snapshot["compose"]["project"] != args.project_name:
         raise Refused("container Compose project does not match")
     if snapshot["compose"]["service"] != args.service:
         raise Refused("container Compose service does not match")
     if require_provenance:
-        require_compose_provenance(snapshot, args, include_override=include_override)
+        require_compose_provenance(
+            snapshot,
+            args,
+            include_override=include_override,
+            ordered_files=ordered_files,
+        )
     current_id = runner.run(
         compose_command(args, include_override) + ["ps", "-q", args.service],
         env=compose_environment(args),
@@ -585,7 +627,11 @@ def require_compose_identity(
 
 def compose_file_hashes(args: argparse.Namespace) -> dict[str, str]:
     values: dict[str, str] = {}
-    for path in [*args.compose_file, *args.compose_env_file, args.override_file]:
+    if getattr(args, "_adopted_ordered_stack", False):
+        paths = [*adopted_compose_files(args), *args.compose_env_file]
+    else:
+        paths = [*args.compose_file, *args.compose_env_file, args.override_file]
+    for path in paths:
         if not path.is_file():
             raise Refused(f"Compose source is missing: {path}")
         values[str(path.resolve())] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -619,7 +665,7 @@ def adopted_success_path(args: argparse.Namespace) -> Path:
 
 def adopted_artifact(value: dict[str, Any], *, action: str) -> None:
     if (
-        value.get("schema") != 1
+        value.get("schema") != ADOPTED_ARTIFACT_SCHEMA
         or value.get("action_type") != "adopt-existing"
         or value.get("container") != "mas-stalwart-1"
         or value.get("account_address") != EXPECTED_ACCOUNT
@@ -631,6 +677,14 @@ def adopted_artifact(value: dict[str, Any], *, action: str) -> None:
         or value.get("volume_mutation") != "NONE"
     ):
         raise Refused(f"invalid adopted-existing {action} artifact")
+    order = value.get("compose_file_order")
+    if (
+        not isinstance(order, list)
+        or len(order) != 3
+        or len(set(order)) != 3
+        or not all(isinstance(item, str) and item for item in order)
+    ):
+        raise Refused("adopted-existing artifact has invalid ordered Compose provenance")
     if value.get("secret_value_or_fingerprint_stored") is not False:
         raise Refused("adopted-existing artifact has unsafe secret material")
 
@@ -653,6 +707,8 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
     if not args.verification_secret_file or not args.account_id:
         raise Refused("adopt-existing requires --verification-secret-file and --account-id")
     require_adopted_compose_inputs(args)
+    ordered_files = adopted_compose_files(args)
+    args._adopted_ordered_stack = True
 
     snapshot = inspect_container(runner, args.container)
     prepare_compose_environment(runner, args)
@@ -666,6 +722,7 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         snapshot,
         include_override=True,
         require_provenance=True,
+        ordered_files=ordered_files,
     )
     source_hashes = compose_file_hashes(args)
     secret = protected_secret(args.secret_file)
@@ -690,7 +747,7 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         "secret_source_match": "PASS",
     }
     baseline = {
-        "schema": 1,
+        "schema": ADOPTED_ARTIFACT_SCHEMA,
         "status": "PASS",
         "action_type": "adopt-existing",
         "container": args.container,
@@ -704,6 +761,7 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
             normalized_definition(snapshot["definition"])
         ),
         "compose_config_hash": config_hash,
+        "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": source_hashes,
         "live_snapshot": snapshot,
         "account_id": args.account_id,
@@ -718,7 +776,7 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         "statement": "Existing injected container adopted after independently verified image upgrade; no recreation or volume mutation occurred.",
     }
     success = {
-        "schema": 1,
+        "schema": ADOPTED_ARTIFACT_SCHEMA,
         "status": "PASS",
         "action_type": "adopt-existing",
         "container": args.container,
@@ -727,6 +785,7 @@ def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
         "image_id": snapshot["definition"]["image_id"],
         "normalized_definition_fingerprint": baseline["normalized_definition_fingerprint"],
         "compose_config_hash": config_hash,
+        "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": source_hashes,
         "account_id": args.account_id,
         "account_address": EXPECTED_ACCOUNT,
@@ -1148,6 +1207,10 @@ def verify_completed_recreation(
 def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
     baseline = load_json(adopted_baseline_path(args))
     adopted_artifact(baseline, action="baseline")
+    ordered_files = adopted_compose_files(args)
+    args._adopted_ordered_stack = True
+    if baseline.get("compose_file_order") != [str(path) for path in ordered_files]:
+        raise Refused("adopted-existing Compose file order changed after certification")
     if baseline.get("compose_file_hashes") != compose_file_hashes(args):
         raise Refused("adopted-existing Compose source changed after certification")
     if baseline.get("account_id") != args.account_id:
@@ -1169,6 +1232,7 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         current,
         include_override=True,
         require_provenance=True,
+        ordered_files=ordered_files,
     )
     if config_hash != baseline.get("compose_config_hash"):
         raise Refused("adopted-existing Compose config hash changed")
@@ -1184,7 +1248,7 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         secret = ""
         credentials.clear()
     success = {
-        "schema": 1,
+        "schema": ADOPTED_ARTIFACT_SCHEMA,
         "status": "PASS",
         "action_type": "adopt-existing",
         "container": args.container,
@@ -1193,6 +1257,7 @@ def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
         "image_id": current["definition"]["image_id"],
         "normalized_definition_fingerprint": current_fingerprint,
         "compose_config_hash": config_hash,
+        "compose_file_order": [str(path) for path in ordered_files],
         "compose_file_hashes": baseline["compose_file_hashes"],
         "account_id": args.account_id,
         "account_address": EXPECTED_ACCOUNT,
