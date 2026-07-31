@@ -107,6 +107,22 @@ def source_snapshot(*, secret: str = "re_protected_test_secret") -> dict:
     return migration.snapshot_from_inspect(inspect_fixture(secret=secret))
 
 
+ORIGINAL_RECOVERY_SOURCE_ID = (
+    "c39df8e08f6d38367fdddbafe6a5e9f126576f375ef7a58ea9921273618c6dff"
+)
+RECOVERED_SOURCE_ID = (
+    "50575adb3fb60538612bba80611301a118f23c1e77c3e2bf49cdab50fd205938"
+)
+
+
+def recovered_source_pair() -> tuple[dict, dict]:
+    original = source_snapshot()
+    original["container_id"] = ORIGINAL_RECOVERY_SOURCE_ID
+    recovered = copy.deepcopy(original)
+    recovered["container_id"] = RECOVERED_SOURCE_ID
+    return original, recovered
+
+
 def action_args(tmp_path: Path) -> SimpleNamespace:
     canonical = tmp_path / "canonical.yml"
     secret_override = tmp_path / "secret.yml"
@@ -1574,6 +1590,261 @@ def test_legacy_adoption_requires_recorded_recovery_evidence(
     )
     with pytest.raises(migration.Refused, match="sufficient recovery evidence"):
         upgrade.read_legacy_failure(args)
+
+
+def configure_recreated_source_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    manifest: dict,
+    recovered: dict,
+    *,
+    report_class: str = "COMPOSE_METADATA",
+) -> None:
+    report = {
+        "source_semantic_match": True,
+        "config_hash_match": report_class == "NONE",
+        "config_hash_drift_class": report_class,
+        "differing_fields": [],
+    }
+    monkeypatch.setattr(
+        upgrade,
+        "prepare_runtime",
+        lambda *_: {"snapshot": recovered, "source_comparison": report},
+    )
+    monkeypatch.setattr(upgrade, "validate_no_target_container", lambda *_: None)
+    monkeypatch.setattr(
+        upgrade,
+        "target_image_validation",
+        lambda *_: (manifest["target_image_id"], manifest["target_image_validation"]),
+    )
+
+
+def write_legacy_recovery_evidence(args: SimpleNamespace) -> None:
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.TARGET_RECREATION_INITIATED_NAME),
+        target_recreation_for_adoption(),
+    )
+
+
+def test_recreated_source_id_is_accepted_with_verified_recovery_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+
+    current, report, _target_report = upgrade.validate_legacy_current_state(
+        SimpleNamespace(), args, manifest
+    )
+    assert current["container_id"] == RECOVERED_SOURCE_ID
+    assert current["definition"] == original["definition"]
+    assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
+
+
+def test_recreated_source_id_is_refused_without_recovery_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_recreated_source_id_requires_target_recreation_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_failure_diagnose_reports_stable_identity_error_without_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_protected_test_artifact(
+        upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME),
+        legacy_failure_for_adoption(),
+    )
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    with pytest.raises(migration.Refused, match="not currently adoption-safe"):
+        upgrade.failure_diagnose_action(SimpleNamespace(), args)
+    output = capsys.readouterr().out
+    assert "SOURCE_RECOVERED=FAIL" in output
+    assert "ERROR_CODE=source-recovery-identity-unverified" in output
+    assert "re_protected_test_secret" not in output
+    assert hashlib.sha256(b"re_protected_test_secret").hexdigest() not in output
+
+
+@pytest.mark.parametrize(
+    "field, mutate",
+    [
+        ("image_ref", lambda value: upgrade.TARGET_IMAGE),
+        ("mounts", lambda value: [*value[:-1], {**value[-1], "rw": False}]),
+        (
+            "mounts",
+            lambda value: [*value[:-1], {**value[-1], "propagation": "rprivate"}],
+        ),
+        ("ports", lambda value: {**value, "25/tcp": [{"host_ip": "0.0.0.0", "host_port": "2525"}]}),
+        ("networks", lambda value: ["mas_internal"]),
+        ("restart_policy", lambda value: {"Name": "always", "MaximumRetryCount": 0}),
+        ("security_opt", lambda value: []),
+        ("cmd_hash", lambda value: "f" * 64),
+    ],
+)
+def test_recreated_source_definition_drift_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    mutate,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    recovered["definition"][field] = mutate(recovered["definition"][field])
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_recreated_source_metadata_hash_drift_is_recorded_not_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    recovered["compose"]["config_hash"] = "d" * 64
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered, report_class="NONE")
+    _current, report, _target_report = upgrade.validate_legacy_current_state(
+        SimpleNamespace(), args, manifest
+    )
+    assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
+
+
+def test_recreated_source_adoption_binds_recovered_id_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+
+    class NoLiveMutation:
+        def run(self, command, **_kwargs):
+            raise AssertionError(f"adoption mutated live state: {command}")
+
+        def json(self, command):
+            raise AssertionError(f"adoption inspected live state: {command}")
+
+    upgrade.adopt_legacy_failure_action(NoLiveMutation(), args)
+    first = capsys.readouterr().out
+    upgrade.adopt_legacy_failure_action(NoLiveMutation(), args)
+    second = capsys.readouterr().out
+    artifact = json.loads(upgrade.legacy_adoption_path(args).read_text(encoding="utf-8"))
+    assert artifact["original_source_container_id"] == ORIGINAL_RECOVERY_SOURCE_ID
+    assert artifact["recovered_source_container_id"] == RECOVERED_SOURCE_ID
+    assert artifact["source_container_recreated"] is True
+    assert artifact["source_container_id"] == RECOVERED_SOURCE_ID
+    assert "LEGACY_FAILURE_ADOPTION=PASS" in first
+    assert "ADOPTION_ALREADY_VERIFIED=PASS" in second
+    assert "SECRET_VALUE_OR_FINGERPRINT_OUTPUT=NONE" in second
+    upgrade.failure_diagnose_action(NoLiveMutation(), args)
+    diagnosis = capsys.readouterr().out
+    assert "SOURCE_RECOVERED=PASS" in diagnosis
+    assert "SOURCE_CONTAINER_RECREATED=PASS" in diagnosis
+    assert f"ORIGINAL_SOURCE_CONTAINER_ID={ORIGINAL_RECOVERY_SOURCE_ID}" in diagnosis
+    assert f"RECOVERED_SOURCE_CONTAINER_ID={RECOVERED_SOURCE_ID}" in diagnosis
+    assert "GOVERNED_RETRY_ELIGIBLE=PASS" in diagnosis
+
+
+def test_governed_retry_accepts_recreated_source_after_adoption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.approve_security_upgrade = True
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+    upgrade.adopt_legacy_failure_action(SimpleNamespace(), args)
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        upgrade,
+        "cutover_action",
+        lambda _runner, retry_args: seen.append(
+            getattr(retry_args, "_legacy_recovery_artifact", {})
+        ),
+    )
+    upgrade.retry_action(SimpleNamespace(), args)
+    assert len(seen) == 1
+    assert seen[0]["recovered_source_container_id"] == RECOVERED_SOURCE_ID
+    current, report, target_report = upgrade.validate_legacy_current_state(
+        SimpleNamespace(), args, manifest, recovery_artifact=seen[0]
+    )
+    upgrade.validate_adoption_artifact(
+        SimpleNamespace(),
+        args,
+        manifest,
+        seen[0],
+        current,
+        report,
+        target_report,
+    )
 
 
 @pytest.mark.parametrize(

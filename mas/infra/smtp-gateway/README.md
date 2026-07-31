@@ -622,6 +622,23 @@ absence, source semantics, target image identity, and secret match. Repeating
 adoption returns `ADOPTION_ALREADY_VERIFIED=PASS` only while those hashes and
 live read-only checks still agree.
 
+Successful Compose source recovery may recreate `mas-stalwart-1`, so the
+recovered container ID can legitimately differ from the ID recorded in the
+original pre-cutover manifest. Adoption preserves that original ID as
+provenance and binds the idempotent adoption artifact to the recovered ID.
+The acceptance rule is therefore canonical source-definition equality,
+including volume source, destination, read/write mode and propagation, plus
+healthy runtime, Compose identity, protected secret-source equality, target
+absence, and the legacy failure/target-recreation evidence. A changed ID
+without that evidence fails with
+`ERROR_CODE=source-recovery-identity-unverified`; a material definition drift
+never becomes acceptable merely because recovery was recorded.
+
+After adoption, `failure-diagnose` reports
+`SOURCE_RECOVERED=PASS`, `SOURCE_CONTAINER_RECREATED=PASS`, the original and
+recovered source IDs, and `GOVERNED_RETRY_ELIGIBLE=PASS`. It remains a
+verification-only diagnostic and performs no Docker mutation.
+
 If verification fails, recreate the old image definition against the same
 volumes:
 

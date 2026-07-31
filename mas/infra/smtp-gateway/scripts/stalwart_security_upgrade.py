@@ -124,6 +124,15 @@ class CommandError(Refused):
         self.return_code = return_code
 
 
+class RecoveryIdentityError(Refused):
+    """The recovered source cannot be bound to the governed legacy attempt."""
+
+    code = "source-recovery-identity-unverified"
+
+    def __init__(self, message: str = "source recovery identity is unverified"):
+        super().__init__(f"{self.code}: {message}")
+
+
 class Runner:
     """Run Docker/Compose commands without exposing captured output."""
 
@@ -398,6 +407,7 @@ def live_semantics(raw: dict[str, Any]) -> dict[str, Any]:
                 "name": item["name"],
                 "destination": item["destination"],
                 "rw": item["rw"],
+                "propagation": item["propagation"],
             }
             for item in migration.normalized_mounts(raw)
         ],
@@ -499,6 +509,7 @@ def rendered_semantics(
                 ),
                 "destination": item.get("target") or "",
                 "rw": not bool(item.get("read_only")),
+                "propagation": "",
             }
         )
     ports: dict[str, list[dict[str, str]]] = {}
@@ -1463,6 +1474,8 @@ def validate_legacy_current_state(
     runner: Runner,
     args: argparse.Namespace,
     manifest: dict[str, Any],
+    *,
+    recovery_artifact: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
     if cutover_success_path(args).exists() or cutover_phase_exists(
         args, VERIFICATION_COMPLETE_NAME
@@ -1473,14 +1486,55 @@ def validate_legacy_current_state(
     runtime = prepare_runtime(runner, args)
     current = runtime["snapshot"]
     report = runtime["source_comparison"]
-    if current != manifest["source"]:
-        raise Refused("current v0.16.7 source does not match the approved manifest")
     if (
         not report["source_semantic_match"]
         or report["differing_fields"]
         or report["config_hash_drift_class"] not in {"NONE", "COMPOSE_METADATA"}
     ):
         raise Refused("source semantic validation is not adoption-safe")
+
+    original = manifest["source"]
+    current_definition = migration.normalized_definition(current["definition"])
+    original_definition = migration.normalized_definition(original["definition"])
+    if current_definition != original_definition:
+        raise RecoveryIdentityError("source definition differs from the approved manifest")
+    if current.get("compose", {}).get("project") != original.get("compose", {}).get(
+        "project"
+    ) or current.get("compose", {}).get("service") != original.get("compose", {}).get(
+        "service"
+    ):
+        raise RecoveryIdentityError("Compose project or service identity changed")
+
+    original_id = str(original.get("container_id") or "")
+    recovered_id = str(current.get("container_id") or "")
+    if not re.fullmatch(r"[0-9a-f]{12,64}", recovered_id):
+        raise RecoveryIdentityError("recovered source container identity is invalid")
+    if recovered_id != original_id:
+        if recovery_artifact is None:
+            try:
+                read_legacy_failure(args)
+                read_target_recreation_artifact(args)
+            except Refused as exc:
+                raise RecoveryIdentityError(
+                    "recreated source lacks legacy recovery and target-recreation evidence"
+                ) from exc
+        elif (
+            recovery_artifact.get("original_source_container_id") != original_id
+            or recovery_artifact.get("recovered_source_container_id") != recovered_id
+            or recovery_artifact.get("source_recovery_independently_verified") is not True
+        ):
+            raise RecoveryIdentityError("adoption artifact is not bound to the recovered source")
+
+    if current.get("compose", {}).get("config_hash") != original.get("compose", {}).get(
+        "config_hash"
+    ):
+        # A Compose recreation commonly changes this provenance label even when
+        # the canonical runtime definition is unchanged. Make that allowance
+        # explicit in the returned sanitized report rather than silently
+        # treating the old hash as equivalent.
+        if report["config_hash_drift_class"] not in {"NONE", "COMPOSE_METADATA"}:
+            raise RecoveryIdentityError("config-hash drift is not metadata-only")
+        report = {**report, "config_hash_drift_class": "COMPOSE_METADATA"}
     validate_no_target_container(runner, args, current)
     target_image_id, target_report = target_image_validation(runner)
     if target_image_id != manifest["target_image_id"]:
@@ -1507,7 +1561,11 @@ def validate_adoption_artifact(
         != artifact.get("legacy_failure_artifact_sha256")
         or artifact.get("backup_manifest_fingerprint")
         != migration.canonical_hash(manifest)
+        or artifact.get("original_source_container_id") != manifest["source"]["container_id"]
+        or artifact.get("recovered_source_container_id") != current["container_id"]
         or artifact.get("source_container_id") != current["container_id"]
+        or artifact.get("source_container_recreated")
+        != (manifest["source"]["container_id"] != current["container_id"])
         or artifact.get("source_recovery_independently_verified") is not True
         or artifact.get("target_absence_verified") is not True
         or artifact.get("secret_source_match_verified") is not True
@@ -1531,12 +1589,9 @@ def validate_adoption_artifact(
     ):
         original = cutover_state_path(args, name)
         archived = archive / name
-        if (
-            not original.is_file()
-            or not archived.is_file()
-            or file_sha256(original) != artifact.get(field)
-            or file_sha256(archived) != artifact.get(field)
-        ):
+        original_valid = original.is_file() and file_sha256(original) == artifact.get(field)
+        archived_valid = archived.is_file() and file_sha256(archived) == artifact.get(field)
+        if not archived_valid or (original.exists() and not original_valid):
             raise Refused("legacy adoption artifact or preserved archive was tampered")
 
 
@@ -1618,7 +1673,14 @@ def adopt_legacy_failure_action(runner: Runner, args: argparse.Namespace) -> Non
         "target_recreation_artifact_sha256": target_recreation_hash,
         "archive_relative_path": str(archive.relative_to(args.backup_dir)),
         "adopted_at": utc_now(),
+        "original_source_container_id": manifest["source"]["container_id"],
+        "recovered_source_container_id": current["container_id"],
+        # Retain the compatibility alias for consumers of the previous
+        # artifact schema; it is always bound to the recovered live ID.
         "source_container_id": current["container_id"],
+        "source_container_recreated": (
+            manifest["source"]["container_id"] != current["container_id"]
+        ),
         "source_image": SOURCE_IMAGE,
         "backup_manifest_fingerprint": migration.canonical_hash(manifest),
         "source_recovery_independently_verified": True,
@@ -1646,34 +1708,56 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
     failure = read_cutover_failure(args)
     manifest = read_manifest(args)
     read_backup_success(args, manifest)
+    needs_adoption = failure.get("error_code") == "legacy-failure-artifact"
     source_recovered = "FAIL"
+    source_recreated = "NO"
+    original_source_id = str(manifest["source"].get("container_id") or "")
+    recovered_source_id = "UNKNOWN"
+    source_error_code = ""
+    current_source: dict[str, Any] | None = None
+    report: dict[str, Any] | None = None
+    target_report: dict[str, str] | None = None
     try:
-        current = validate_recovered_source(runner, args)
-        if (
-            current["container_id"] == manifest["source"]["container_id"]
-            and current["definition"] == manifest["source"]["definition"]
-        ):
-            source_recovered = "PASS"
+        if needs_adoption:
+            current_source, report, target_report = validate_legacy_current_state(
+                runner,
+                args,
+                manifest,
+            )
+        else:
+            current_source = validate_recovered_source(runner, args)
+            if (
+                current_source["container_id"] != manifest["source"]["container_id"]
+                or migration.normalized_definition(current_source["definition"])
+                != migration.normalized_definition(manifest["source"]["definition"])
+            ):
+                raise Refused("recovered source does not match the approved manifest")
+        source_recovered = "PASS"
+        recovered_source_id = str(current_source.get("container_id") or "UNKNOWN")
+        if recovered_source_id != original_source_id:
+            source_recreated = "PASS"
+    except RecoveryIdentityError:
+        source_error_code = RecoveryIdentityError.code
     except Refused:
         source_recovered = "FAIL"
-    needs_adoption = failure.get("error_code") == "legacy-failure-artifact"
     adoption_status = "NOT_REQUIRED"
     if needs_adoption:
         adoption_status = "NOT_PERFORMED"
         if legacy_adoption_path(args).exists():
             try:
-                current, report, target_report = validate_legacy_current_state(
-                    runner,
-                    args,
-                    manifest,
-                )
+                if current_source is None or report is None or target_report is None:
+                    current_source, report, target_report = validate_legacy_current_state(
+                        runner,
+                        args,
+                        manifest,
+                    )
                 adoption = load_protected_artifact(legacy_adoption_path(args))
                 validate_adoption_artifact(
                     runner,
                     args,
                     manifest,
                     adoption,
-                    current,
+                    current_source,
                     report,
                     target_report,
                 )
@@ -1686,9 +1770,12 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
     print("FAILURE_DIAGNOSIS=" + ("PASS" if diagnosis_pass else "FAIL"))
     print(f"FAILURE_STAGE={failure['failure_stage']}")
     print(f"EXCEPTION_TYPE={failure['exception_type']}")
-    print(f"ERROR_CODE={failure['error_code']}")
+    print(f"ERROR_CODE={source_error_code or failure['error_code']}")
     print(f"SANITIZED_MESSAGE={failure['sanitized_message']}")
     print(f"SOURCE_RECOVERED={source_recovered}")
+    print(f"SOURCE_CONTAINER_RECREATED={source_recreated}")
+    print(f"ORIGINAL_SOURCE_CONTAINER_ID={original_source_id or 'UNKNOWN'}")
+    print(f"RECOVERED_SOURCE_CONTAINER_ID={recovered_source_id}")
     print(f"LEGACY_FAILURE_ADOPTION={adoption_status}")
     print(
         "GOVERNED_RETRY_ELIGIBLE="
@@ -1749,15 +1836,8 @@ def retry_action(runner: Runner, args: argparse.Namespace) -> None:
         args, TARGET_RUNNING_NAME
     ):
         raise Refused("prior attempt created a target; use verification-only recovery")
-    current = prepare_runtime(runner, args)["snapshot"]
-    if current != manifest["source"]:
-        raise Refused("recovered v0.16.7 source does not match the approved manifest")
-    target_image_id, _target_report = target_image_validation(runner)
-    if target_image_id != manifest["target_image_id"]:
-        raise Refused("local v0.16.15 target image identity changed")
-    validate_no_target_container(runner, args, current)
     if legacy_adoption is not None:
-        _current, report, target_report = validate_legacy_current_state(
+        current, report, target_report = validate_legacy_current_state(
             runner,
             args,
             manifest,
@@ -1767,11 +1847,25 @@ def retry_action(runner: Runner, args: argparse.Namespace) -> None:
             args,
             manifest,
             legacy_adoption,
-            _current,
+            current,
             report,
             target_report,
         )
+    else:
+        current = prepare_runtime(runner, args)["snapshot"]
+        if current != manifest["source"]:
+            raise Refused("recovered v0.16.7 source does not match the approved manifest")
+        target_image_id, _target_report = target_image_validation(runner)
+        if target_image_id != manifest["target_image_id"]:
+            raise Refused("local v0.16.15 target image identity changed")
+        validate_no_target_container(runner, args, current)
     archive = archive_attempt(args)
+    if legacy_adoption is not None:
+        # The retry archives the legacy phase files before entering cutover.
+        # Pass the already verified, immutable adoption artifact so the
+        # cutover pre-stop phase can validate the recovered ID against the
+        # archive rather than the now-moved root paths.
+        args._legacy_recovery_artifact = legacy_adoption
     print(f"PREVIOUS_ATTEMPT_ARCHIVED={archive}")
     print("GOVERNED_RETRY=AUTHORIZED")
     cutover_action(runner, args)
@@ -2124,12 +2218,30 @@ def cutover_action(runner: Runner, args: argparse.Namespace) -> None:
 
         # PRE_STOP_VALIDATION: every source and target precondition is checked
         # while the approved v0.16.7 container is still running and healthy.
-        current = prepare_runtime(runner, args)["snapshot"]
-        if current != manifest["source"]:
-            raise Refused("live Stalwart state changed after the stopped backup")
-        target_image_id, target_report = target_image_validation(runner)
-        if target_image_id != manifest["target_image_id"]:
-            raise Refused("local v0.16.15 target image identity changed")
+        adopted_retry = getattr(args, "_legacy_recovery_artifact", None)
+        if adopted_retry is not None:
+            current, source_report, target_report = validate_legacy_current_state(
+                runner,
+                args,
+                manifest,
+                recovery_artifact=adopted_retry,
+            )
+            validate_adoption_artifact(
+                runner,
+                args,
+                manifest,
+                adopted_retry,
+                current,
+                source_report,
+                target_report,
+            )
+        else:
+            current = prepare_runtime(runner, args)["snapshot"]
+            if current != manifest["source"]:
+                raise Refused("live Stalwart state changed after the stopped backup")
+            target_image_id, target_report = target_image_validation(runner)
+            if target_image_id != manifest["target_image_id"]:
+                raise Refused("local v0.16.15 target image identity changed")
         target_hash = migration.compose_service_hash(
             runner,
             args,
