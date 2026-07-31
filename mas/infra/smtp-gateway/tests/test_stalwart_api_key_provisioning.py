@@ -121,11 +121,11 @@ def test_token_scope_is_reported_but_not_used_as_persisted_account_evidence() ->
     assert state.token_scope_contains_create == "NOT_OBSERVABLE"
 
 
-def test_jmap_session_authority_is_replaced_but_path_query_and_slash_are_preserved() -> None:
+def test_jmap_session_localhost_is_rewritten_and_normalized_to_jmap_root() -> None:
     assert provisioning.resolve_jmap_api_url(
         provisioning.LOCAL_URL,
-        "http://localhost:18080/jmap/?capabilities=1",
-    ) == "http://127.0.0.1:18080/jmap/?capabilities=1"
+        "http://localhost:18080/jmap",
+    ) == "http://127.0.0.1:18080/jmap/"
 
 
 def test_jmap_session_must_advertise_a_valid_absolute_api_url() -> None:

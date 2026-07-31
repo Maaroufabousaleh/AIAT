@@ -1,9 +1,7 @@
-from pathlib import Path
-import os
 import re
 import shlex
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 GATEWAY = ROOT / "mas" / "infra" / "smtp-gateway"
@@ -138,9 +136,10 @@ def test_resend_certification_is_local_loopback_only_and_never_uses_wireguard_ht
         )
     )
     assert "http://127.0.0.1:18080" in scripts
+    assert "stalwart_jmap_endpoint.py" in scripts
     assert "10.77.0.2:8080" not in scripts
     assert "10.77.0.1:8080" not in scripts
-    assert 'test "$jmap_url" = http://127.0.0.1:18080' in scripts
+    assert 'url = "http://127.0.0.1:18080/api"' not in scripts
 
 
 def _write_resend_secret_file(path: Path) -> Path:
@@ -220,7 +219,7 @@ def test_no_private_keys_are_in_templates() -> None:
 
 def _write_stub(directory: Path, name: str, body: str) -> None:
     path = directory / name
-    path.write_bytes(f"#!/bin/sh\nset -eu\n{body}\n".encode("utf-8"))
+    path.write_bytes(f"#!/bin/sh\nset -eu\n{body}\n".encode())
     path.chmod(0o755)
 
 

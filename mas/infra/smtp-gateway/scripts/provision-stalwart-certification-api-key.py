@@ -7,6 +7,7 @@ import argparse
 import base64
 import getpass
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +18,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
+
+_JMAP_ENDPOINT_SPEC = importlib.util.spec_from_file_location(
+    "stalwart_jmap_endpoint",
+    Path(__file__).with_name("stalwart_jmap_endpoint.py"),
+)
+if _JMAP_ENDPOINT_SPEC is None or _JMAP_ENDPOINT_SPEC.loader is None:
+    raise RuntimeError("Stalwart JMAP endpoint helper is unavailable")
+_JMAP_ENDPOINT = importlib.util.module_from_spec(_JMAP_ENDPOINT_SPEC)
+_JMAP_ENDPOINT_SPEC.loader.exec_module(_JMAP_ENDPOINT)
 
 LOCAL_URL = "http://127.0.0.1:18080"
 GATEWAY_ACCOUNT = "gateway-test@agents.aiat.ca"
@@ -607,27 +617,11 @@ def endpoint_path(url: str) -> str:
 
 
 def resolve_jmap_api_url(base_url: str, advertised_url: str) -> str:
-    """Keep the advertised JMAP path/query while binding it to base_url."""
-    base = parse.urlsplit(base_url)
-    advertised = parse.urlsplit(advertised_url)
-    if (
-        base.scheme not in {"http", "https"}
-        or not base.hostname
-        or base.username is not None
-        or base.password is not None
-        or advertised.scheme not in {"http", "https"}
-        or not advertised.hostname
-        or advertised.username is not None
-        or advertised.password is not None
-        or not advertised.path.startswith("/")
-        or advertised.fragment
-    ):
-        raise ValueError("JMAP session apiUrl is not a valid absolute URL")
-    # urlsplit preserves the advertised path exactly, including a trailing
-    # slash and query string, while the configured base supplies authority.
-    return parse.urlunsplit(
-        (base.scheme, base.netloc, advertised.path, advertised.query, "")
-    )
+    """Return the strict local, normalized JMAP endpoint."""
+    try:
+        return _JMAP_ENDPOINT.resolve_jmap_api_url(base_url, advertised_url)
+    except _JMAP_ENDPOINT.JmapEndpointError as exc:
+        raise ValueError(str(exc)) from None
 
 
 def discover_jmap_api_url(
@@ -637,8 +631,21 @@ def discover_jmap_api_url(
     authorization: str,
     diagnostic: DiagnosticState,
 ) -> str:
+    try:
+        session_endpoint = _JMAP_ENDPOINT.session_url(base_url)
+    except _JMAP_ENDPOINT.JmapEndpointError:
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/jmap/session",
+            http_status="not-reached",
+            jmap_method="GET /jmap/session",
+            authentication_mechanism="oauth2-bearer-jmap-session",
+            error_type="malformedJmapSession",
+            description="Stalwart JMAP base URL was invalid",
+            exception_class="SessionValidationError",
+        )
     response = transport.json(
-        f"{base_url}/jmap/session",
+        session_endpoint,
         authorization,
         endpoint_path="/jmap/session",
         jmap_method="GET /jmap/session",

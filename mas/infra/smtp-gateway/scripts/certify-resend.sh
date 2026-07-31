@@ -14,11 +14,12 @@ sender=""
 external_recipient=""
 output=""
 jmap_url="http://127.0.0.1:18080"
-admin_url="http://127.0.0.1:18080/api"
+admin_url="http://127.0.0.1:18080"
 subject=""
+jmap_helper="$base_dir/scripts/stalwart_jmap_endpoint.py"
 
 usage() {
-  echo "usage: $0 PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --account-id ID --sender ADDRESS --external-recipient ADDRESS --approve-one-message --output PENDING_RECORD [--jmap-url http://127.0.0.1:18080 --admin-url http://127.0.0.1:18080/api --subject TEXT]" >&2
+  echo "usage: $0 PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --account-id ID --sender ADDRESS --external-recipient ADDRESS --approve-one-message --output PENDING_RECORD [--jmap-url http://127.0.0.1:18080 --admin-url http://127.0.0.1:18080 --subject TEXT]" >&2
   exit 2
 }
 fail() { echo "Resend certification submission refused: $1" >&2; exit 1; }
@@ -46,8 +47,11 @@ done
 [ "$approved" -eq 1 ] || fail "--approve-one-message is required"
 [ -n "$output" ] || fail "--output is required"
 test ! -e "$output" || fail "refusing to overwrite an existing pending record"
-test "$jmap_url" = http://127.0.0.1:18080 || fail "JMAP must remain local at http://127.0.0.1:18080"
-test "$admin_url" = http://127.0.0.1:18080/api || fail "admin JMAP must remain local at http://127.0.0.1:18080/api"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+python3 "$jmap_helper" --base-url "$jmap_url" --validate-only >/dev/null 2>&1 || \
+  fail "JMAP must remain local on an HTTP loopback Stalwart base or session URL"
+python3 "$jmap_helper" --base-url "$admin_url" --validate-only >/dev/null 2>&1 || \
+  fail "admin URL must remain local on an HTTP loopback Stalwart base or session URL"
 for command in awk curl jq openssl grep sha256sum stat mktemp; do command -v "$command" >/dev/null 2>&1 || fail "$command is required"; done
 
 preflight_log="$(mktemp)"
@@ -77,7 +81,10 @@ curl_config="$(mktemp)"
 payload_file="$(mktemp)"
 chmod 600 "$curl_config" "$payload_file"
 case "$service_token" in Bearer\ *|Basic\ *|OAuth\ *) auth_header="$service_token" ;; *) auth_header="Bearer $service_token" ;; esac
-printf 'url = "http://127.0.0.1:18080/jmap"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$auth_header" >"$curl_config"
+if ! jmap_url="$(STALWART_JMAP_AUTHORIZATION="$auth_header" python3 "$jmap_helper" --base-url "$jmap_url")"; then
+  fail "could not discover the local Stalwart JMAP endpoint"
+fi
+printf 'url = "%s"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$jmap_url" "$auth_header" >"$curl_config"
 jmap() { printf '%s' "$1" >"$payload_file"; curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file"; }
 
 prerequisite_payload="$(jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],methodCalls:[["Mailbox/get",{accountId:$account},"mailboxes"],["Identity/get",{accountId:$account},"identities"]]}')"
@@ -120,7 +127,7 @@ tmp_output="${output}.tmp.$$"
   echo "RESEND_CERTIFICATION_SUBMISSION=PASS"
   echo "CERTIFICATION_STATE=PENDING_EXTERNAL_CONFIRMATION"
   echo "CERTIFICATION_SCOPE=local_wsl_loopback"
-  echo "JMAP_URL=http://127.0.0.1:18080"
+  echo "JMAP_URL=$jmap_url"
   echo "STALWART_SUBMISSION_ID=$stalwart_submission_id"
   echo "RESEND_PROVIDER_MESSAGE_ID=PENDING_EXTERNAL_PROVIDER_CORRELATION"
   echo "ORIGINAL_MESSAGE_ID=$original_message_id"

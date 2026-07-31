@@ -10,11 +10,12 @@ secret_file=""
 relay_secret_file=""
 container=""
 backup=""
-admin_url="http://127.0.0.1:18080/api"
+admin_url="http://127.0.0.1:18080"
 policy="$base_dir/../mail-edge/stalwart-relay-policy.json"
+jmap_helper="$base_dir/scripts/stalwart_jmap_endpoint.py"
 
 usage() {
-  echo "usage: $0 backup|apply|verify|rollback PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --backup FILE [--admin-url http://127.0.0.1:18080/api --policy FILE]" >&2
+  echo "usage: $0 backup|apply|verify|rollback PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --backup FILE [--admin-url http://127.0.0.1:18080 --policy FILE]" >&2
   exit 2
 }
 fail() { echo "Stalwart Resend route $action refused: $1" >&2; exit 1; }
@@ -53,7 +54,9 @@ relay_secret_file="${relay_secret_file:-$secret_file}"
 [ -f "$relay_secret_file" ] || fail "protected relay secret file is required"
 [ -n "$container" ] || fail "--stalwart-container is required"
 [ -n "$backup" ] || fail "--backup is required"
-test "$admin_url" = http://127.0.0.1:18080/api || fail "admin JMAP must remain local at http://127.0.0.1:18080/api"
+require_command python3
+python3 "$jmap_helper" --base-url "$admin_url" --validate-only >/dev/null 2>&1 || \
+  fail "admin URL must be an HTTP loopback Stalwart base or session URL"
 for command in awk curl jq docker grep sha256sum stat mktemp; do require_command "$command"; done
 
 uid="$(id -u)"
@@ -85,7 +88,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 chmod 600 "$curl_config" "$payload_file"
-printf 'url = "http://127.0.0.1:18080/api"\nrequest = POST\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$stalwart_api_key" >"$curl_config"
+if ! jmap_url="$(STALWART_JMAP_AUTHORIZATION="Bearer $stalwart_api_key" python3 "$jmap_helper" --base-url "$admin_url")"; then
+  fail "could not discover the local Stalwart JMAP endpoint"
+fi
+printf 'url = "%s"\nrequest = POST\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$jmap_url" "$stalwart_api_key" >"$curl_config"
 jmap() { printf '%s' "$1" >"$payload_file"; curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file"; }
 routes_payload='{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:MtaRoute/get",{},"routes"]]}'
 strategy_payload='{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:MtaOutboundStrategy/get",{"ids":["singleton"]},"strategy"]]}'

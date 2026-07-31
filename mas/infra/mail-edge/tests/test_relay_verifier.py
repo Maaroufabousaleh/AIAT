@@ -34,8 +34,28 @@ def _route(name: str, kind: str = "Relay") -> dict[str, Any]:
 
 
 def _run_verifier(routes: list[dict[str, Any]]) -> subprocess.CompletedProcess[str]:
+    paths: list[str] = []
+
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+            paths.append(self.path)
+            if self.path != "/jmap/session":
+                self.send_error(404)
+                return
+            payload = json.dumps(
+                {"apiUrl": f"http://localhost:{server.server_port}/jmap/"}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
         def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
+            paths.append(self.path)
+            if self.path != "/jmap/":
+                self.send_error(404)
+                return
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
             method = request["methodCalls"][0][0]
@@ -63,7 +83,7 @@ def _run_verifier(routes: list[dict[str, Any]]) -> subprocess.CompletedProcess[s
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        return subprocess.run(
+        result = subprocess.run(
             [str(SCRIPT)],
             env={
                 **os.environ,
@@ -78,7 +98,9 @@ def _run_verifier(routes: list[dict[str, Any]]) -> subprocess.CompletedProcess[s
         server.shutdown()
         thread.join()
         server.server_close()
-
+    assert paths and paths[0] == "/jmap/session"
+    assert all(path == "/jmap/" for path in paths[1:])
+    return result
 
 pytestmark = pytest.mark.skipif(
     shutil.which("curl") is None or shutil.which("jq") is None,

@@ -260,10 +260,12 @@ requires the production hostname, TCP/25, a `250 2.0.0` acceptance, an
 
 ## Safe one-message Resend certification
 
-Certification runs locally in the home WSL instance only. The only supported
-URLs are `http://127.0.0.1:18080` for JMAP and
-`http://127.0.0.1:18080/api` for management. It never exposes JMAP or Stalwart
-administration over WireGuard, the VPS, or the public Internet.
+Certification runs locally in the home WSL instance only. The supported
+Stalwart input is a loopback base or session URL such as
+`http://127.0.0.1:18080`; scripts discover `GET /jmap/session` and send JMAP
+method calls to the normalized `http://127.0.0.1:18080/jmap/` endpoint. REST
+operations such as `/api/account` remain separate. It never exposes JMAP or
+Stalwart administration over WireGuard, the VPS, or the public Internet.
 
 The live container provenance labels identify the original Compose project:
 
@@ -709,7 +711,7 @@ cookies:
 7. The gateway mailbox application password is separately validated with
    HTTP Basic authentication. This mailbox credential is not the
    administrator management session.
-8. Bearer management JMAP `POST /api` sends exactly one `x:ApiKey/set`
+8. Bearer management JMAP `POST /jmap/` sends exactly one `x:ApiKey/set`
    request. Its authorization result is the create-capability evidence.
 
 v0.16.15 has no separate non-mutating method guarded by

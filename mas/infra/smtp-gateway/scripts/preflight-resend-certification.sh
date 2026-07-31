@@ -10,7 +10,7 @@ container=""
 account_id=""
 sender=""
 jmap_url="http://127.0.0.1:18080"
-admin_url="http://127.0.0.1:18080/api"
+admin_url="http://127.0.0.1:18080"
 output=""
 
 usage() {
@@ -60,8 +60,11 @@ test "$credential_names" = "$expected_credential_names" || \
 [ -n "$container" ] || fail "--stalwart-container is required"
 [ -n "$account_id" ] || fail "--account-id is required"
 printf '%s\n' "$sender" | grep -Eq '^[^[:space:]@]+@agents\.aiat\.ca$' || fail "--sender must be an agents.aiat.ca address"
-test "$jmap_url" = http://127.0.0.1:18080 || fail "JMAP must remain local at http://127.0.0.1:18080"
-test "$admin_url" = http://127.0.0.1:18080/api || fail "admin JMAP must remain local at http://127.0.0.1:18080/api"
+require_command python3
+python3 "$base_dir/scripts/stalwart_jmap_endpoint.py" --base-url "$jmap_url" --validate-only >/dev/null 2>&1 || \
+  fail "JMAP must remain local on an HTTP loopback Stalwart base or session URL"
+python3 "$base_dir/scripts/stalwart_jmap_endpoint.py" --base-url "$admin_url" --validate-only >/dev/null 2>&1 || \
+  fail "admin URL must remain local on an HTTP loopback Stalwart base or session URL"
 
 for command in awk curl jq docker grep sha256sum ss stat mktemp nc openssl timeout; do require_command "$command"; done
 uid="$(id -u)"
@@ -102,12 +105,20 @@ umask 077
 cleanup() {
   rm -f "$curl_config" "$payload_file"
   if [ -n "$tmp_output" ]; then rm -f "$tmp_output"; fi
-  unset resend_api_key stalwart_api_key service_token local_fingerprint container_fingerprint
+  unset resend_api_key stalwart_api_key service_token auth_header local_fingerprint container_fingerprint
 }
 trap cleanup EXIT INT TERM
 chmod 600 "$curl_config" "$payload_file"
 case "$service_token" in Bearer\ *|Basic\ *|OAuth\ *) auth_header="$service_token" ;; *) auth_header="Bearer $service_token" ;; esac
-printf 'url = "http://127.0.0.1:18080/jmap"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$auth_header" >"$curl_config"
+if ! discovered_jmap_url="$(STALWART_JMAP_AUTHORIZATION="$auth_header" python3 "$base_dir/scripts/stalwart_jmap_endpoint.py" --base-url "$jmap_url")"; then
+  fail "could not discover the local Stalwart JMAP endpoint"
+fi
+if ! admin_jmap_url="$(STALWART_JMAP_AUTHORIZATION="Bearer $stalwart_api_key" python3 "$base_dir/scripts/stalwart_jmap_endpoint.py" --base-url "$admin_url")"; then
+  fail "could not discover the local Stalwart management JMAP endpoint"
+fi
+[ "$discovered_jmap_url" = "$admin_jmap_url" ] || fail "JMAP inputs resolved to different local endpoints"
+jmap_url="$discovered_jmap_url"
+printf 'url = "%s"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$jmap_url" "$auth_header" >"$curl_config"
 jmap() { printf '%s' "$1" >"$payload_file"; curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file"; }
 
 mail_payload="$(jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Mailbox/get",{accountId:$account},"mailboxes"],["Identity/get",{accountId:$account},"identities"]]}')"
@@ -127,8 +138,8 @@ if [ -n "$output" ]; then
   {
     echo "RESEND_CERTIFICATION_PREFLIGHT=PASS"
     echo "CERTIFICATION_SCOPE=local_wsl_loopback"
-    echo "JMAP_URL=http://127.0.0.1:18080"
-    echo "ADMIN_URL=http://127.0.0.1:18080/api"
+    echo "JMAP_URL=$jmap_url"
+    echo "ADMIN_URL=$admin_url"
     echo "STALWART_CONTAINER=$container"
     echo "PRODUCTION_SENDER=$sender"
     echo "JMAP_SERVICE_CREDENTIAL=PASS"
