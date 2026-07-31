@@ -634,10 +634,20 @@ without that evidence fails with
 `ERROR_CODE=source-recovery-identity-unverified`; a material definition drift
 never becomes acceptable merely because recovery was recorded.
 
+Docker may also regenerate the default container hostname from the new
+container ID during that Compose recreation. Adoption permits this single
+hostname difference only when Compose has no explicit `hostname`, the original
+and recovered hostnames exactly equal the first 12 characters of their
+corresponding verified container IDs, and every other canonical field matches.
+The adoption artifact records the sanitized original/recovered hostnames and
+`hostname_source=DOCKER_CONTAINER_ID`; arbitrary or explicitly configured
+hostname changes remain fail-closed.
+
 After adoption, `failure-diagnose` reports
 `SOURCE_RECOVERED=PASS`, `SOURCE_CONTAINER_RECREATED=PASS`, the original and
-recovered source IDs, and `GOVERNED_RETRY_ELIGIBLE=PASS`. It remains a
-verification-only diagnostic and performs no Docker mutation.
+recovered source IDs, `SOURCE_HOSTNAME_REGENERATED=PASS` when applicable, and
+`GOVERNED_RETRY_ELIGIBLE=PASS`. It remains a verification-only diagnostic and
+performs no Docker mutation.
 
 If verification fails, recreate the old image definition against the same
 volumes:

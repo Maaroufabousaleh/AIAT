@@ -588,6 +588,81 @@ def rendered_semantics(
     }
 
 
+def source_definition_differences(
+    original: dict[str, Any],
+    recovered: dict[str, Any],
+) -> list[str]:
+    """Return canonical source-definition fields that changed."""
+    original_definition = migration.normalized_definition(original["definition"])
+    recovered_definition = migration.normalized_definition(recovered["definition"])
+    return sorted(
+        field
+        for field in set(original_definition) | set(recovered_definition)
+        if original_definition.get(field) != recovered_definition.get(field)
+    )
+
+
+def is_expected_docker_generated_hostname_change(
+    original_snapshot: dict[str, Any],
+    recovered_snapshot: dict[str, Any],
+    rendered_service: dict[str, Any],
+) -> bool:
+    """Allow only Docker's ID-derived hostname change after source recovery."""
+    if "hostname" in rendered_service:
+        return False
+    original_id = str(original_snapshot.get("container_id") or "")
+    recovered_id = str(recovered_snapshot.get("container_id") or "")
+    if (
+        original_id == recovered_id
+        or not re.fullmatch(r"[0-9a-f]{12,64}", original_id)
+        or not re.fullmatch(r"[0-9a-f]{12,64}", recovered_id)
+    ):
+        return False
+    original_hostname = str(
+        original_snapshot.get("definition", {}).get("hostname") or ""
+    )
+    recovered_hostname = str(
+        recovered_snapshot.get("definition", {}).get("hostname") or ""
+    )
+    return (
+        bool(original_hostname)
+        and bool(recovered_hostname)
+        and re.fullmatch(r"[0-9a-f]{12}", original_hostname) is not None
+        and re.fullmatch(r"[0-9a-f]{12}", recovered_hostname) is not None
+        and original_hostname == original_id[:12]
+        and recovered_hostname == recovered_id[:12]
+        and original_hostname != recovered_hostname
+    )
+
+
+def source_hostname_metadata(
+    original_snapshot: dict[str, Any],
+    recovered_snapshot: dict[str, Any],
+    *,
+    hostname_regenerated: bool,
+) -> dict[str, Any]:
+    original_hostname = str(
+        original_snapshot.get("definition", {}).get("hostname") or ""
+    )
+    recovered_hostname = str(
+        recovered_snapshot.get("definition", {}).get("hostname") or ""
+    )
+    original_id = str(original_snapshot.get("container_id") or "")
+    recovered_id = str(recovered_snapshot.get("container_id") or "")
+    generated_for_both = (
+        re.fullmatch(r"[0-9a-f]{12,64}", original_id) is not None
+        and re.fullmatch(r"[0-9a-f]{12,64}", recovered_id) is not None
+        and original_hostname == original_id[:12]
+        and recovered_hostname == recovered_id[:12]
+    )
+    return {
+        "original_source_hostname": original_hostname,
+        "recovered_source_hostname": recovered_hostname,
+        "source_hostname_regenerated": hostname_regenerated,
+        "hostname_source": "DOCKER_CONTAINER_ID" if generated_for_both else "UNCHANGED",
+    }
+
+
 def secret_override_matches(service: dict[str, Any], args: argparse.Namespace) -> bool:
     env_files = service.get("env_file") or []
     if len(env_files) != 1 or not isinstance(env_files[0], dict):
@@ -1494,10 +1569,6 @@ def validate_legacy_current_state(
         raise Refused("source semantic validation is not adoption-safe")
 
     original = manifest["source"]
-    current_definition = migration.normalized_definition(current["definition"])
-    original_definition = migration.normalized_definition(original["definition"])
-    if current_definition != original_definition:
-        raise RecoveryIdentityError("source definition differs from the approved manifest")
     if current.get("compose", {}).get("project") != original.get("compose", {}).get(
         "project"
     ) or current.get("compose", {}).get("service") != original.get("compose", {}).get(
@@ -1507,6 +1578,8 @@ def validate_legacy_current_state(
 
     original_id = str(original.get("container_id") or "")
     recovered_id = str(current.get("container_id") or "")
+    if not re.fullmatch(r"[0-9a-f]{12,64}", original_id):
+        raise RecoveryIdentityError("original source container identity is invalid")
     if not re.fullmatch(r"[0-9a-f]{12,64}", recovered_id):
         raise RecoveryIdentityError("recovered source container identity is invalid")
     if recovered_id != original_id:
@@ -1525,6 +1598,25 @@ def validate_legacy_current_state(
         ):
             raise RecoveryIdentityError("adoption artifact is not bound to the recovered source")
 
+    differing_fields = source_definition_differences(original, current)
+    hostname_regenerated = False
+    if "hostname" in differing_fields:
+        compose = parse_compose_json(runner, args, include_override=False)
+        rendered_service = (compose.get("services") or {}).get(args.service)
+        if not isinstance(rendered_service, dict) or not is_expected_docker_generated_hostname_change(
+            original,
+            current,
+            rendered_service,
+        ):
+            raise RecoveryIdentityError("hostname change is not Docker-generated and recovery-safe")
+        differing_fields.remove("hostname")
+        hostname_regenerated = True
+    if differing_fields:
+        raise RecoveryIdentityError(
+            "source definition differs from the approved manifest: "
+            + ",".join(differing_fields)
+        )
+
     if current.get("compose", {}).get("config_hash") != original.get("compose", {}).get(
         "config_hash"
     ):
@@ -1535,6 +1627,14 @@ def validate_legacy_current_state(
         if report["config_hash_drift_class"] not in {"NONE", "COMPOSE_METADATA"}:
             raise RecoveryIdentityError("config-hash drift is not metadata-only")
         report = {**report, "config_hash_drift_class": "COMPOSE_METADATA"}
+    report = {
+        **report,
+        **source_hostname_metadata(
+            original,
+            current,
+            hostname_regenerated=hostname_regenerated,
+        ),
+    }
     validate_no_target_container(runner, args, current)
     target_image_id, target_report = target_image_validation(runner)
     if target_image_id != manifest["target_image_id"]:
@@ -1551,6 +1651,11 @@ def validate_adoption_artifact(
     report: dict[str, Any],
     target_report: dict[str, str],
 ) -> None:
+    hostname_metadata = source_hostname_metadata(
+        manifest["source"],
+        current,
+        hostname_regenerated=bool(report.get("source_hostname_regenerated")),
+    )
     if (
         artifact.get("schema") != 1
         or artifact.get("kind") != "stalwart-legacy-failure-adoption"
@@ -1566,6 +1671,13 @@ def validate_adoption_artifact(
         or artifact.get("source_container_id") != current["container_id"]
         or artifact.get("source_container_recreated")
         != (manifest["source"]["container_id"] != current["container_id"])
+        or artifact.get("original_source_hostname")
+        != hostname_metadata["original_source_hostname"]
+        or artifact.get("recovered_source_hostname")
+        != hostname_metadata["recovered_source_hostname"]
+        or artifact.get("source_hostname_regenerated")
+        != hostname_metadata["source_hostname_regenerated"]
+        or artifact.get("hostname_source") != hostname_metadata["hostname_source"]
         or artifact.get("source_recovery_independently_verified") is not True
         or artifact.get("target_absence_verified") is not True
         or artifact.get("secret_source_match_verified") is not True
@@ -1681,6 +1793,11 @@ def adopt_legacy_failure_action(runner: Runner, args: argparse.Namespace) -> Non
         "source_container_recreated": (
             manifest["source"]["container_id"] != current["container_id"]
         ),
+        **source_hostname_metadata(
+            manifest["source"],
+            current,
+            hostname_regenerated=bool(report.get("source_hostname_regenerated")),
+        ),
         "source_image": SOURCE_IMAGE,
         "backup_manifest_fingerprint": migration.canonical_hash(manifest),
         "source_recovery_independently_verified": True,
@@ -1711,6 +1828,7 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
     needs_adoption = failure.get("error_code") == "legacy-failure-artifact"
     source_recovered = "FAIL"
     source_recreated = "NO"
+    source_hostname_regenerated = "NO"
     original_source_id = str(manifest["source"].get("container_id") or "")
     recovered_source_id = "UNKNOWN"
     source_error_code = ""
@@ -1736,6 +1854,8 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
         recovered_source_id = str(current_source.get("container_id") or "UNKNOWN")
         if recovered_source_id != original_source_id:
             source_recreated = "PASS"
+        if report and report.get("source_hostname_regenerated") is True:
+            source_hostname_regenerated = "PASS"
     except RecoveryIdentityError:
         source_error_code = RecoveryIdentityError.code
     except Refused:
@@ -1774,6 +1894,7 @@ def failure_diagnose_action(runner: Runner, args: argparse.Namespace) -> None:
     print(f"SANITIZED_MESSAGE={failure['sanitized_message']}")
     print(f"SOURCE_RECOVERED={source_recovered}")
     print(f"SOURCE_CONTAINER_RECREATED={source_recreated}")
+    print(f"SOURCE_HOSTNAME_REGENERATED={source_hostname_regenerated}")
     print(f"ORIGINAL_SOURCE_CONTAINER_ID={original_source_id or 'UNKNOWN'}")
     print(f"RECOVERED_SOURCE_CONTAINER_ID={recovered_source_id}")
     print(f"LEGACY_FAILURE_ADOPTION={adoption_status}")

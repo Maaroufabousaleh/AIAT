@@ -115,11 +115,14 @@ RECOVERED_SOURCE_ID = (
 )
 
 
-def recovered_source_pair() -> tuple[dict, dict]:
+def recovered_source_pair(*, docker_generated_hostnames: bool = False) -> tuple[dict, dict]:
     original = source_snapshot()
     original["container_id"] = ORIGINAL_RECOVERY_SOURCE_ID
     recovered = copy.deepcopy(original)
     recovered["container_id"] = RECOVERED_SOURCE_ID
+    if docker_generated_hostnames:
+        original["definition"]["hostname"] = ORIGINAL_RECOVERY_SOURCE_ID[:12]
+        recovered["definition"]["hostname"] = RECOVERED_SOURCE_ID[:12]
     return original, recovered
 
 
@@ -1598,6 +1601,7 @@ def configure_recreated_source_validation(
     recovered: dict,
     *,
     report_class: str = "COMPOSE_METADATA",
+    rendered_compose: dict | None = None,
 ) -> None:
     report = {
         "source_semantic_match": True,
@@ -1616,6 +1620,12 @@ def configure_recreated_source_validation(
         "target_image_validation",
         lambda *_: (manifest["target_image_id"], manifest["target_image_validation"]),
     )
+    if rendered_compose is not None:
+        monkeypatch.setattr(
+            upgrade,
+            "parse_compose_json",
+            lambda *_args, **_kwargs: rendered_compose,
+        )
 
 
 def write_legacy_recovery_evidence(args: SimpleNamespace) -> None:
@@ -1648,6 +1658,141 @@ def test_recreated_source_id_is_accepted_with_verified_recovery_evidence(
     assert report["config_hash_drift_class"] == "COMPOSE_METADATA"
 
 
+def test_live_docker_generated_hostname_change_is_accepted_and_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair(docker_generated_hostnames=True)
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(
+        monkeypatch,
+        manifest,
+        recovered,
+        rendered_compose=matching_compose(),
+    )
+    current, report, _target_report = upgrade.validate_legacy_current_state(
+        SimpleNamespace(), args, manifest
+    )
+    assert current["container_id"] == RECOVERED_SOURCE_ID
+    assert report["differing_fields"] == []
+    assert report["source_hostname_regenerated"] is True
+    assert report["hostname_source"] == "DOCKER_CONTAINER_ID"
+
+    monkeypatch.setattr(upgrade, "require_root", lambda: None)
+    monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
+    monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
+
+    class NoLiveMutation:
+        def run(self, command, **_kwargs):
+            raise AssertionError(f"hostname adoption mutated live state: {command}")
+
+        def json(self, command):
+            raise AssertionError(f"hostname adoption inspected live state: {command}")
+
+    upgrade.adopt_legacy_failure_action(NoLiveMutation(), args)
+    adoption_output = capsys.readouterr().out
+    artifact = json.loads(upgrade.legacy_adoption_path(args).read_text(encoding="utf-8"))
+    assert artifact["original_source_hostname"] == ORIGINAL_RECOVERY_SOURCE_ID[:12]
+    assert artifact["recovered_source_hostname"] == RECOVERED_SOURCE_ID[:12]
+    assert artifact["source_hostname_regenerated"] is True
+    assert artifact["hostname_source"] == "DOCKER_CONTAINER_ID"
+    assert "re_protected_test_secret" not in adoption_output
+    assert hashlib.sha256(b"re_protected_test_secret").hexdigest() not in adoption_output
+
+    upgrade.failure_diagnose_action(NoLiveMutation(), args)
+    diagnosis = capsys.readouterr().out
+    assert "SOURCE_RECOVERED=PASS" in diagnosis
+    assert "SOURCE_CONTAINER_RECREATED=PASS" in diagnosis
+    assert "SOURCE_HOSTNAME_REGENERATED=PASS" in diagnosis
+    assert "GOVERNED_RETRY_ELIGIBLE=PASS" in diagnosis
+
+
+@pytest.mark.parametrize(
+    "original_hostname, recovered_hostname, rendered_service",
+    [
+        ("not-derived", RECOVERED_SOURCE_ID[:12], {}),
+        (ORIGINAL_RECOVERY_SOURCE_ID[:12], "not-derived", {}),
+        ("aaaaaaaaaaaa", "bbbbbbbbbbbb", {}),
+        (ORIGINAL_RECOVERY_SOURCE_ID[:12], RECOVERED_SOURCE_ID[:12], {"hostname": "fixed"}),
+    ],
+)
+def test_hostname_change_is_refused_when_not_strictly_docker_generated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    original_hostname: str,
+    recovered_hostname: str,
+    rendered_service: dict,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair()
+    original["definition"]["hostname"] = original_hostname
+    recovered["definition"]["hostname"] = recovered_hostname
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    rendered = matching_compose()
+    rendered["services"]["stalwart"].update(rendered_service)
+    configure_recreated_source_validation(
+        monkeypatch,
+        manifest,
+        recovered,
+        rendered_compose=rendered,
+    )
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_hostname_change_plus_material_definition_drift_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair(docker_generated_hostnames=True)
+    recovered["definition"]["user"] = "untrusted"
+    manifest = manifest_for(original)
+    write_legacy_recovery_evidence(args)
+    configure_recreated_source_validation(
+        monkeypatch,
+        manifest,
+        recovered,
+        rendered_compose=matching_compose(),
+    )
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_generated_hostname_change_requires_recovery_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original, recovered = recovered_source_pair(docker_generated_hostnames=True)
+    manifest = manifest_for(original)
+    configure_recreated_source_validation(
+        monkeypatch,
+        manifest,
+        recovered,
+        rendered_compose=matching_compose(),
+    )
+    with pytest.raises(
+        upgrade.RecoveryIdentityError,
+        match="source-recovery-identity-unverified",
+    ):
+        upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
 def test_recreated_source_id_is_refused_without_recovery_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1662,6 +1807,23 @@ def test_recreated_source_id_is_refused_without_recovery_evidence(
         match="source-recovery-identity-unverified",
     ):
         upgrade.validate_legacy_current_state(SimpleNamespace(), args, manifest)
+
+
+def test_unchanged_source_container_and_hostname_are_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    args = action_args(tmp_path)
+    args.backup_dir.mkdir(mode=0o700)
+    original = source_snapshot()
+    recovered = copy.deepcopy(original)
+    manifest = manifest_for(original)
+    configure_recreated_source_validation(monkeypatch, manifest, recovered)
+    current, report, _target_report = upgrade.validate_legacy_current_state(
+        SimpleNamespace(), args, manifest
+    )
+    assert current["container_id"] == original["container_id"]
+    assert report["source_hostname_regenerated"] is False
 
 
 def test_recreated_source_id_requires_target_recreation_evidence(
