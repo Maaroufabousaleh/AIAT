@@ -17,6 +17,7 @@ jmap_url="http://127.0.0.1:18080"
 admin_url="http://127.0.0.1:18080"
 subject=""
 jmap_helper="$base_dir/scripts/stalwart_jmap_endpoint.py"
+response_validator="$base_dir/scripts/stalwart_jmap_response.py"
 
 usage() {
   echo "usage: $0 PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --account-id ID --sender ADDRESS --external-recipient ADDRESS --approve-one-message --output PENDING_RECORD [--jmap-url http://127.0.0.1:18080 --admin-url http://127.0.0.1:18080 --subject TEXT]" >&2
@@ -54,10 +55,12 @@ python3 "$jmap_helper" --base-url "$admin_url" --validate-only >/dev/null 2>&1 |
   fail "admin URL must remain local on an HTTP loopback Stalwart base or session URL"
 for command in awk curl jq openssl grep sha256sum stat mktemp; do command -v "$command" >/dev/null 2>&1 || fail "$command is required"; done
 
+umask 077
 preflight_log="$(mktemp)"
-cleanup() { rm -f "$preflight_log" "$curl_config" "$payload_file" "$tmp_output"; }
+cleanup() { rm -f "$preflight_log" "$curl_config" "$payload_file" "$response_file" "$tmp_output"; }
 curl_config=""
 payload_file=""
+response_file=""
 tmp_output=""
 trap cleanup EXIT INT TERM
 
@@ -76,16 +79,29 @@ service_token="$(secret_value STALWART_JMAP_SERVICE_TOKEN)"
 printf '%s\n' "$external_recipient" | grep -Eq '^[^[:space:]@]+@[^[:space:]@]+$' || fail "external recipient is malformed"
 case "$external_recipient" in *@agents.aiat.ca) fail "external recipient must be outside agents.aiat.ca" ;; esac
 
-umask 077
 curl_config="$(mktemp)"
 payload_file="$(mktemp)"
-chmod 600 "$curl_config" "$payload_file"
+response_file="$(mktemp)"
+chmod 600 "$curl_config" "$payload_file" "$response_file"
 case "$service_token" in Bearer\ *|Basic\ *|OAuth\ *) auth_header="$service_token" ;; *) auth_header="Bearer $service_token" ;; esac
 if ! jmap_url="$(STALWART_JMAP_AUTHORIZATION="$auth_header" python3 "$jmap_helper" --base-url "$jmap_url")"; then
   fail "could not discover the local Stalwart JMAP endpoint"
 fi
 printf 'url = "%s"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$jmap_url" "$auth_header" >"$curl_config"
-jmap() { printf '%s' "$1" >"$payload_file"; curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file"; }
+jmap() {
+  printf '%s' "$1" >"$payload_file"
+  http_status="$(curl --silent --show-error --config "$curl_config" --data-binary "@$payload_file" \
+    --output "$response_file" --write-out '%{http_code}' 2>/dev/null || true)"
+  if [ "$http_status" != 200 ]; then
+    python3 "$response_validator" --request-file "$payload_file" --action certification \
+      --http-status "${http_status:-transport-failure}" --endpoint-path "/jmap/" \
+      <"$response_file" >&2 || true
+    return 1
+  fi
+  python3 "$response_validator" --request-file "$payload_file" --action certification \
+    --http-status "$http_status" --endpoint-path "/jmap/" <"$response_file" || return 1
+  cat "$response_file"
+}
 
 prerequisite_payload="$(jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],methodCalls:[["Mailbox/get",{accountId:$account},"mailboxes"],["Identity/get",{accountId:$account},"identities"]]}')"
 prerequisites="$(jmap "$prerequisite_payload")" || fail "local JMAP prerequisite lookup failed; no message was sent"

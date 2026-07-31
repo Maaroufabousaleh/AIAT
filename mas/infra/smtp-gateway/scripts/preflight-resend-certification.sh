@@ -3,6 +3,7 @@
 set -eu
 
 base_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+response_validator="$base_dir/scripts/stalwart_jmap_response.py"
 profile="${1:-}"
 secret_file=""
 relay_secret_file=""
@@ -100,15 +101,16 @@ test -n "$container_fingerprint" && test "$container_fingerprint" = "$local_fing
 
 curl_config="$(mktemp)"
 payload_file="$(mktemp)"
+response_file="$(mktemp)"
 tmp_output=""
 umask 077
 cleanup() {
-  rm -f "$curl_config" "$payload_file"
+  rm -f "$curl_config" "$payload_file" "$response_file"
   if [ -n "$tmp_output" ]; then rm -f "$tmp_output"; fi
   unset resend_api_key stalwart_api_key service_token auth_header local_fingerprint container_fingerprint
 }
 trap cleanup EXIT INT TERM
-chmod 600 "$curl_config" "$payload_file"
+chmod 600 "$curl_config" "$payload_file" "$response_file"
 case "$service_token" in Bearer\ *|Basic\ *|OAuth\ *) auth_header="$service_token" ;; *) auth_header="Bearer $service_token" ;; esac
 if ! discovered_jmap_url="$(STALWART_JMAP_AUTHORIZATION="$auth_header" python3 "$base_dir/scripts/stalwart_jmap_endpoint.py" --base-url "$jmap_url")"; then
   fail "could not discover the local Stalwart JMAP endpoint"
@@ -119,7 +121,21 @@ fi
 [ "$discovered_jmap_url" = "$admin_jmap_url" ] || fail "JMAP inputs resolved to different local endpoints"
 jmap_url="$discovered_jmap_url"
 printf 'url = "%s"\nrequest = POST\nheader = "Authorization: %s"\nheader = "Content-Type: application/json"\n' "$jmap_url" "$auth_header" >"$curl_config"
-jmap() { printf '%s' "$1" >"$payload_file"; curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file"; }
+jmap() {
+  printf '%s' "$1" >"$payload_file"
+  : >"$response_file"
+  http_status="$(curl --silent --show-error --fail --config "$curl_config" --data-binary "@$payload_file" \
+    --output "$response_file" --write-out '%{http_code}' 2>/dev/null || true)"
+  if [ "$http_status" != 200 ]; then
+    python3 "$response_validator" --request-file "$payload_file" --action preflight \
+      --http-status "${http_status:-transport-failure}" --endpoint-path "/jmap/" \
+      <"$response_file" >&2 || true
+    return 1
+  fi
+  python3 "$response_validator" --request-file "$payload_file" --action preflight \
+    --http-status "$http_status" --endpoint-path "/jmap/" <"$response_file" || return 1
+  cat "$response_file"
+}
 
 mail_payload="$(jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Mailbox/get",{accountId:$account},"mailboxes"],["Identity/get",{accountId:$account},"identities"]]}')"
 mail_response="$(jmap "$mail_payload")" || fail "local JMAP service credential was rejected"

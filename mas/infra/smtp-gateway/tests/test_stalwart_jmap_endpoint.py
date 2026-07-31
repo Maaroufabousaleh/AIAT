@@ -35,6 +35,8 @@ def _start_server(
     fail_method: str | None = None,
 ):
     paths: list[str] = []
+    routes: list[dict[str, object]] = []
+    strategy: dict[str, object] = {"id": "singleton", "route": {"else": "'local'"}}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
@@ -64,11 +66,27 @@ def _start_server(
                 self.send_error(500)
                 return
             if method == "x:MtaRoute/get":
-                body = {"methodResponses": [[method, {"list": []}, "routes"]]}
+                body = {"methodResponses": [[method, {"list": routes}, "routes"]]}
+            elif method == "x:MtaRoute/set":
+                destroyed = payload["methodCalls"][0][1].get("destroy", [])
+                routes[:] = [route for route in routes if route.get("id") not in destroyed]
+                created = {}
+                for key, route in payload["methodCalls"][0][1].get("create", {}).items():
+                    created[key] = {"id": f"created-{key}"}
+                    routes.append({**route, "id": f"created-{key}"})
+                arguments = {}
+                if created:
+                    arguments["created"] = created
+                if destroyed:
+                    arguments["destroyed"] = destroyed
+                body = {"methodResponses": [[method, arguments, payload["methodCalls"][0][2]]]}
+            elif method == "x:MtaOutboundStrategy/set":
+                strategy["route"] = payload["methodCalls"][0][1]["update"]["singleton"].get("route", payload["methodCalls"][0][1]["update"]["singleton"])
+                body = {"methodResponses": [[method, {"updated": {"singleton": {}}}, payload["methodCalls"][0][2]]]}
             else:
                 body = {
                     "methodResponses": [
-                        [method, {"list": [{"id": "singleton", "route": {"else": "'local'"}}]}, "strategy"]
+                        [method, {"list": [strategy]}, "strategy"]
                     ]
                 }
             _response(self, body)
@@ -343,7 +361,7 @@ def test_route_apply_requires_a_valid_backup_before_any_jmap_mutation(tmp_path: 
             capture_output=True,
         )
         assert result.returncode != 0
-        assert "prior route/strategy backup is required" in result.stderr
+        assert "backup validation failed" in result.stderr
         assert paths == ["/jmap/session"]
         assert management_key not in result.stdout + result.stderr
     finally:
@@ -369,6 +387,7 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
         json.dumps(
             {
                 "version": 1,
+                "scope": "stalwart-remote-route-and-strategy",
                 "routes": {
                     "methodResponses": [
                         [
