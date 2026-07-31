@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "mas" / "infra" / "smtp-gateway" / "scripts" / "stalwart_secret_migration.py"
 SPEC = importlib.util.spec_from_file_location("stalwart_secret_migration", SCRIPT)
@@ -408,3 +407,197 @@ def test_running_config_hash_mismatch_is_rejected(tmp_path: Path) -> None:
             value,
             include_override=False,
         )
+
+
+def adopted_args(tmp_path: Path) -> SimpleNamespace:
+    compose = tmp_path / "docker-compose.stalwart-canonical.yml"
+    target = tmp_path / migration.ADOPTED_TARGET_COMPOSE_NAME
+    override = tmp_path / migration.ADOPTED_SECRET_OVERRIDE_NAME
+    for path in (compose, target, override):
+        path.write_text("services:\n  stalwart:\n    image: pinned\n", encoding="utf-8")
+    return SimpleNamespace(
+        container="mas-stalwart-1",
+        service="stalwart",
+        project_name="mas",
+        project_directory=tmp_path,
+        compose_file=[compose, target],
+        compose_env_file=[],
+        compose_profile=["mail-local"],
+        override_file=override,
+        secret_file=tmp_path / "stalwart-resend.env",
+        verification_secret_file=tmp_path / "resend-certification.env",
+        backup_dir=tmp_path / "new-adoption",
+        persistent_target="/var/lib/stalwart",
+        account_id="w",
+        approve_adopt_existing_secret=True,
+        render_environment={"PATH": "/usr/bin"},
+    )
+
+
+def adopted_raw(args: SimpleNamespace, *, secret: str) -> dict:
+    raw = inspect_fixture(secret=secret)
+    raw["Image"] = migration.ADOPTED_TARGET_IMAGE_ID
+    raw["Config"]["Image"] = migration.ADOPTED_TARGET_IMAGE
+    raw["Config"]["Labels"].pop("aiat.role", None)
+    raw["Config"]["Labels"]["com.docker.compose.project.working_dir"] = str(
+        args.project_directory
+    )
+    raw["Config"]["Labels"]["com.docker.compose.project.config_files"] = ",".join(
+        [str(path) for path in [*args.compose_file, args.override_file]]
+    )
+    return raw
+
+
+class AdoptionRunner:
+    def __init__(self, raw: dict, config_hash: str):
+        self.raw = raw
+        self.config_hash = config_hash
+        self.commands: list[list[str]] = []
+
+    def json(self, args):
+        if args[:3] == ["docker", "inspect", "mas-stalwart-1"]:
+            return [self.raw]
+        if args[:3] == ["docker", "volume", "inspect"]:
+            return [{"Labels": {"com.docker.compose.project": "mas"}}]
+        raise AssertionError(args)
+
+    def run(self, args, **_kwargs):
+        self.commands.append(args)
+        if "ps" in args:
+            return self.raw["Id"]
+        if "config" in args and "--hash" in args:
+            return f"stalwart {self.config_hash}"
+        if "exec" in args:
+            return migration.sha256_text("adoption-secret")
+        raise AssertionError(args)
+
+
+def prepare_adoption_test(monkeypatch, tmp_path: Path):
+    args = adopted_args(tmp_path)
+    raw = adopted_raw(args, secret="adoption-secret")
+    runner = AdoptionRunner(raw, raw["Config"]["Labels"]["com.docker.compose.config-hash"])
+    monkeypatch.setattr(migration, "protected_secret", lambda _path: "adoption-secret")
+    monkeypatch.setattr(migration, "validate_adopted_compose_semantics", lambda *_args: None)
+    monkeypatch.setattr(
+        migration,
+        "certification_secrets",
+        lambda _path: {
+            "STALWART_API_KEY": "management",
+            "STALWART_JMAP_SERVICE_TOKEN": "mail",
+        },
+    )
+    monkeypatch.setattr(migration, "validate_certification_credentials", lambda *_args: None)
+    monkeypatch.setattr(migration, "verify_stalwart_data", lambda *_args: None)
+    monkeypatch.setattr(migration, "smtp_reachable", lambda *_args: None)
+    return args, runner
+
+
+def test_adopt_existing_certifies_without_compose_recreation_or_old_evidence_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    old_evidence = tmp_path / "old-v0.16.7-evidence"
+    old_evidence.mkdir()
+    old_marker = old_evidence / "pre-migration-manifest.json"
+    old_marker.write_text("immutable", encoding="utf-8")
+
+    migration.adopt_existing_action(runner, args)
+
+    assert not any("up" in command for command in runner.commands)
+    assert old_marker.read_text(encoding="utf-8") == "immutable"
+    assert (args.backup_dir / migration.ADOPTED_BASELINE_ARTIFACT).exists()
+    assert (args.backup_dir / migration.ADOPTED_SUCCESS_ARTIFACT).exists()
+    serialized = " ".join(
+        path.read_text(encoding="utf-8")
+        for path in args.backup_dir.iterdir()
+    )
+    assert "adoption-secret" not in serialized
+    assert migration.sha256_text("adoption-secret") not in serialized
+
+
+def test_adopt_existing_refuses_image_mismatch(monkeypatch, tmp_path: Path) -> None:
+    args, _runner = prepare_adoption_test(monkeypatch, tmp_path)
+    value = migration.snapshot_from_inspect(adopted_raw(args, secret="adoption-secret"))
+    value["definition"]["image_id"] = "sha256:" + "f" * 64
+    with pytest.raises(migration.Refused, match="image ID"):
+        migration.validate_adopted_runtime(value)
+
+
+def test_adopt_existing_refuses_untracked_mount(monkeypatch, tmp_path: Path) -> None:
+    args, _runner = prepare_adoption_test(monkeypatch, tmp_path)
+    value = migration.snapshot_from_inspect(adopted_raw(args, secret="adoption-secret"))
+    class UntrackedRunner:
+        def json(self, _args):
+            return [{"Labels": {}}]
+
+    with pytest.raises(migration.Refused, match="not tracked"):
+        migration.validate_mount_tracking(UntrackedRunner(), value, project="mas")
+
+
+def test_adopt_existing_refuses_stale_compose_hash(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    runner.config_hash = "f" * 64
+    with pytest.raises(migration.Refused, match="selected Compose definition"):
+        migration.adopt_existing_action(runner, args)
+
+
+def test_adopt_existing_refuses_reused_backup_directory(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    args.backup_dir.mkdir()
+    with pytest.raises(migration.Refused, match="new, non-existing"):
+        migration.adopt_existing_action(runner, args)
+
+
+def test_adopt_existing_refuses_invalid_credentials_without_artifacts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        migration,
+        "validate_certification_credentials",
+        lambda *_args: (_ for _ in ()).throw(
+            migration.Refused("certification credential validation failed")
+        ),
+    )
+    with pytest.raises(migration.Refused, match="certification credential validation failed"):
+        migration.adopt_existing_action(runner, args)
+    assert not args.backup_dir.exists()
+
+
+def test_verify_succeeds_against_adopted_baseline_without_recreation(monkeypatch, tmp_path: Path) -> None:
+    args, runner = prepare_adoption_test(monkeypatch, tmp_path)
+    migration.adopt_existing_action(runner, args)
+    runner.commands.clear()
+
+    migration.verify_action(runner, args)
+
+    assert not any("up" in command for command in runner.commands)
+
+
+def test_verify_stalwart_data_posts_only_to_discovered_jmap_endpoint(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_session(_url, _authorization):
+        return {"apiUrl": "http://localhost:18080/jmap/"}
+
+    def fake_post(url, _authorization, payload):
+        calls.append(url)
+        method = payload["methodCalls"][0][0]
+        if method == "x:Domain/query":
+            return {"methodResponses": [[method, {"ids": ["domain-id"]}, "domain"]]}
+        if method == "x:Account/query":
+            return {"methodResponses": [[method, {"ids": ["w"]}, "account"]]}
+        return {"methodResponses": [["Mailbox/get", {"list": [{"id": "mailbox"}]}, "mailboxes"]]}
+
+    monkeypatch.setattr(migration, "get_json", fake_session)
+    monkeypatch.setattr(migration, "post_json", fake_post)
+    migration.verify_stalwart_data(
+        SimpleNamespace(account_id="w"),
+        {
+            "STALWART_API_KEY": "management",
+            "STALWART_JMAP_SERVICE_TOKEN": "Bearer mailbox",
+        },
+    )
+    assert calls
+    assert all(url == "http://127.0.0.1:18080/jmap/" for url in calls)
+    assert all(not url.endswith("/api") for url in calls)

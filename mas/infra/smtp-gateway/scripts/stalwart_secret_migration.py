@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import socket
 import stat
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
-from urllib import request
-
+from urllib import parse, request
 
 SECRET_NAME = "RESEND_API_KEY"
 EXPECTED_DOMAIN = "agents.aiat.ca"
@@ -25,6 +25,18 @@ EXPECTED_SMTP = ("127.0.0.1", 2525)
 EXPECTED_JMAP = "http://127.0.0.1:18080"
 EXPECTED_WIREGUARD_SMTP = ("10.77.0.2", 2525)
 PINNED_IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+ADOPTED_TARGET_IMAGE = (
+    "ghcr.io/stalwartlabs/stalwart:v0.16.15@"
+    "sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
+)
+ADOPTED_TARGET_IMAGE_ID = (
+    "sha256:4f926193e5dd9ceb1e24ba48160702310381b12e51972c2fb0cc9de020388136"
+)
+ADOPTED_TARGET_COMPOSE_NAME = "docker-compose.stalwart-v0.16.15-security-upgrade.yml"
+ADOPTED_SECRET_OVERRIDE_NAME = "docker-compose.stalwart-resend-secret.yml"
+LEGACY_V0_16_7_EVIDENCE = Path(
+    "/secure/rollback/stalwart-resend-secret-20260730T005027Z"
+)
 INTERNAL_COMPOSE_LABELS = {
     "com.docker.compose.config-hash",
     "com.docker.compose.project.config_files",
@@ -32,6 +44,8 @@ INTERNAL_COMPOSE_LABELS = {
 }
 HASH_VALUE = re.compile(r"^[0-9a-f]{64}$")
 SUCCESS_ARTIFACT = "post-migration-success.json"
+ADOPTED_BASELINE_ARTIFACT = "adopted-existing-baseline.json"
+ADOPTED_SUCCESS_ARTIFACT = "adopted-existing-success.json"
 
 
 class Refused(RuntimeError):
@@ -209,8 +223,111 @@ def snapshot_from_inspect(raw: dict[str, Any]) -> dict[str, Any]:
             "project": labels.get("com.docker.compose.project") or "",
             "service": labels.get("com.docker.compose.service") or "",
             "config_hash": labels.get("com.docker.compose.config-hash") or "",
+            "working_dir": labels.get("com.docker.compose.project.working_dir") or "",
+            "config_files": str(labels.get("com.docker.compose.project.config_files") or ""),
         },
     }
+
+
+def validate_adopted_runtime(snapshot: dict[str, Any]) -> None:
+    """Validate the immutable runtime shape approved for the upgraded host.
+
+    The Compose hash and source-file hashes below remain authoritative for the
+    complete definition. These explicit checks make the high-impact runtime
+    invariants visible and fail closed even if a caller supplies the wrong
+    Compose project files.
+    """
+    definition = snapshot["definition"]
+    if definition["image_ref"] != ADOPTED_TARGET_IMAGE:
+        raise Refused("live Stalwart image is not the approved v0.16.15 image")
+    if definition["image_id"] != ADOPTED_TARGET_IMAGE_ID:
+        raise Refused("live Stalwart image ID is not the approved v0.16.15 image")
+    if definition["name"] != "mas-stalwart-1":
+        raise Refused("live Stalwart container name is not mas-stalwart-1")
+    expected_ports = {
+        "25/tcp": [{"host_ip": "127.0.0.1", "host_port": "2525"}],
+        "8080/tcp": [{"host_ip": "127.0.0.1", "host_port": "18080"}],
+    }
+    if definition["ports"] != expected_ports:
+        raise Refused("live Stalwart published ports are not the approved loopback bindings")
+    if definition["networks"] != ["mas_internal", "mas_public"]:
+        raise Refused("live Stalwart networks changed")
+    if definition["restart_policy"] != {"Name": "unless-stopped", "MaximumRetryCount": 0}:
+        raise Refused("live Stalwart restart policy changed")
+    if definition["healthcheck"] == canonical_hash({}):
+        raise Refused("live Stalwart healthcheck is missing")
+    if definition["security_opt"] != ["no-new-privileges:true"]:
+        raise Refused("live Stalwart security options changed")
+    if definition["cap_add"] or definition["cap_drop"]:
+        raise Refused("live Stalwart capabilities changed")
+    if definition["privileged"] or definition["read_only_rootfs"]:
+        raise Refused("live Stalwart privilege or read-only setting changed")
+    configured_labels = [
+        key
+        for key in definition["labels"]
+        if not (
+            key.startswith("com.docker.compose.")
+            or key.startswith("desktop.docker.io/")
+            or key.startswith("org.opencontainers.image.")
+        )
+    ]
+    if configured_labels:
+        raise Refused("unexpected live Stalwart service label")
+
+
+def require_adopted_compose_inputs(args: argparse.Namespace) -> None:
+    if not any(path.name == ADOPTED_TARGET_COMPOSE_NAME for path in args.compose_file):
+        raise Refused("adoption requires the approved v0.16.15 Compose override")
+    if args.override_file.name != ADOPTED_SECRET_OVERRIDE_NAME:
+        raise Refused("adoption requires the canonical Resend secret Compose override")
+    if args.backup_dir == LEGACY_V0_16_7_EVIDENCE:
+        raise Refused("the v0.16.7 migration evidence directory cannot be adopted")
+
+
+def validate_adopted_compose_semantics(
+    runner: Runner,
+    args: argparse.Namespace,
+    snapshot: dict[str, Any],
+) -> None:
+    """Reuse the security-upgrade field-by-field target comparison."""
+    module_name = "stalwart_secret_migration"
+    if module_name not in sys.modules:
+        sys.modules[module_name] = sys.modules[__name__]
+    upgrade_path = Path(__file__).with_name("stalwart_security_upgrade.py")
+    spec = importlib.util.spec_from_file_location("aiat_stalwart_security_upgrade", upgrade_path)
+    if spec is None or spec.loader is None:
+        raise Refused("Stalwart security-upgrade semantic validator is unavailable")
+    upgrade = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(upgrade)
+    values = runner.json(["docker", "inspect", args.container])
+    if not isinstance(values, list) or len(values) != 1:
+        raise Refused("Docker did not return exactly one Stalwart container")
+    report = upgrade.compare_target_semantics(
+        runner,
+        args,
+        values[0],
+        snapshot,
+    )
+    if not report["source_semantic_match"]:
+        fields = ",".join(report.get("differing_fields") or ["unknown"])
+        raise Refused(f"adopted-existing Compose semantic drift: {fields}")
+
+
+def require_compose_provenance(
+    snapshot: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    include_override: bool,
+) -> None:
+    compose = snapshot["compose"]
+    if compose.get("working_dir") and Path(compose["working_dir"]).resolve() != args.project_directory:
+        raise Refused("container Compose working directory does not match")
+    files = [item for item in compose.get("config_files", "").split(",") if item]
+    expected = {str(path.resolve()) for path in args.compose_file}
+    if include_override:
+        expected.add(str(args.override_file.resolve()))
+    if not files or set(files) != expected:
+        raise Refused("container Compose file provenance does not match")
 
 
 def validate_snapshot(
@@ -446,11 +563,14 @@ def require_compose_identity(
     snapshot: dict[str, Any],
     *,
     include_override: bool,
+    require_provenance: bool = False,
 ) -> str:
     if snapshot["compose"]["project"] != args.project_name:
         raise Refused("container Compose project does not match")
     if snapshot["compose"]["service"] != args.service:
         raise Refused("container Compose service does not match")
+    if require_provenance:
+        require_compose_provenance(snapshot, args, include_override=include_override)
     current_id = runner.run(
         compose_command(args, include_override) + ["ps", "-q", args.service],
         env=compose_environment(args),
@@ -487,6 +607,148 @@ def dry_run_path(args: argparse.Namespace) -> Path:
 
 def success_path(args: argparse.Namespace) -> Path:
     return args.backup_dir / SUCCESS_ARTIFACT
+
+
+def adopted_baseline_path(args: argparse.Namespace) -> Path:
+    return args.backup_dir / ADOPTED_BASELINE_ARTIFACT
+
+
+def adopted_success_path(args: argparse.Namespace) -> Path:
+    return args.backup_dir / ADOPTED_SUCCESS_ARTIFACT
+
+
+def adopted_artifact(value: dict[str, Any], *, action: str) -> None:
+    if (
+        value.get("schema") != 1
+        or value.get("action_type") != "adopt-existing"
+        or value.get("container") != "mas-stalwart-1"
+        or value.get("account_address") != EXPECTED_ACCOUNT
+        or value.get("pinned_image_ref") != ADOPTED_TARGET_IMAGE
+        or value.get("image_id") != ADOPTED_TARGET_IMAGE_ID
+        or value.get("status") != "PASS"
+        or value.get("live_mutation") != "NOT_PERFORMED"
+        or value.get("compose_recreation") != "NOT_PERFORMED"
+        or value.get("volume_mutation") != "NONE"
+    ):
+        raise Refused(f"invalid adopted-existing {action} artifact")
+    if value.get("secret_value_or_fingerprint_stored") is not False:
+        raise Refused("adopted-existing artifact has unsafe secret material")
+
+
+def write_or_match_artifact(path: Path, value: dict[str, Any]) -> None:
+    if path.exists():
+        existing = load_json(path)
+        stable_keys = set(value) - {"verified_at"}
+        if any(existing.get(key) != value.get(key) for key in stable_keys):
+            raise Refused(f"adopted-existing artifact does not match the verified state: {path}")
+        return
+    atomic_json(path, value)
+
+
+def adopt_existing_action(runner: Runner, args: argparse.Namespace) -> None:
+    if not args.approve_adopt_existing_secret:
+        raise Refused("--approve-adopt-existing-secret is required")
+    if args.backup_dir.exists():
+        raise Refused("adopt-existing requires a new, non-existing backup directory")
+    if not args.verification_secret_file or not args.account_id:
+        raise Refused("adopt-existing requires --verification-secret-file and --account-id")
+    require_adopted_compose_inputs(args)
+
+    snapshot = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
+    validate_snapshot(snapshot, persistent_target=args.persistent_target, require_secret=True)
+    validate_adopted_runtime(snapshot)
+    validate_adopted_compose_semantics(runner, args, snapshot)
+    validate_mount_tracking(runner, snapshot, project=args.project_name)
+    config_hash = require_compose_identity(
+        runner,
+        args,
+        snapshot,
+        include_override=True,
+        require_provenance=True,
+    )
+    source_hashes = compose_file_hashes(args)
+    secret = protected_secret(args.secret_file)
+    credentials = certification_secrets(args.verification_secret_file)
+    try:
+        secret_matches_container(runner, args.container, secret)
+        validate_certification_credentials(args, credentials)
+        verify_stalwart_data(args, credentials)
+        smtp_reachable(*EXPECTED_SMTP)
+        smtp_reachable(*EXPECTED_WIREGUARD_SMTP)
+    finally:
+        secret = ""
+        credentials.clear()
+
+    verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    verification_results = {
+        "administrator_and_mailbox_credentials": "PASS",
+        "production_domain_and_account": "PASS",
+        "local_smtp": "PASS",
+        "local_jmap": "PASS",
+        "wireguard_smtp": "PASS",
+        "secret_source_match": "PASS",
+    }
+    baseline = {
+        "schema": 1,
+        "status": "PASS",
+        "action_type": "adopt-existing",
+        "container": args.container,
+        "service": args.service,
+        "project": args.project_name,
+        "persistent_target": args.persistent_target,
+        "live_container_id": snapshot["container_id"],
+        "pinned_image_ref": snapshot["definition"]["image_ref"],
+        "image_id": snapshot["definition"]["image_id"],
+        "normalized_definition_fingerprint": canonical_hash(
+            normalized_definition(snapshot["definition"])
+        ),
+        "compose_config_hash": config_hash,
+        "compose_file_hashes": source_hashes,
+        "live_snapshot": snapshot,
+        "account_id": args.account_id,
+        "account_address": EXPECTED_ACCOUNT,
+        "verification_results": verification_results,
+        "verified_at": verified_at,
+        "secret_source_match": "PASS",
+        "secret_value_or_fingerprint_stored": False,
+        "live_mutation": "NOT_PERFORMED",
+        "compose_recreation": "NOT_PERFORMED",
+        "volume_mutation": "NONE",
+        "statement": "Existing injected container adopted after independently verified image upgrade; no recreation or volume mutation occurred.",
+    }
+    success = {
+        "schema": 1,
+        "status": "PASS",
+        "action_type": "adopt-existing",
+        "container": args.container,
+        "live_container_id": snapshot["container_id"],
+        "pinned_image_ref": snapshot["definition"]["image_ref"],
+        "image_id": snapshot["definition"]["image_id"],
+        "normalized_definition_fingerprint": baseline["normalized_definition_fingerprint"],
+        "compose_config_hash": config_hash,
+        "compose_file_hashes": source_hashes,
+        "account_id": args.account_id,
+        "account_address": EXPECTED_ACCOUNT,
+        "verification_results": verification_results,
+        "verified_at": verified_at,
+        "secret_source_match": "PASS",
+        "secret_value_or_fingerprint_stored": False,
+        "live_mutation": "NOT_PERFORMED",
+        "compose_recreation": "NOT_PERFORMED",
+        "volume_mutation": "NONE",
+    }
+    atomic_json(adopted_baseline_path(args), baseline)
+    atomic_json(adopted_success_path(args), success)
+    print("ADOPT_EXISTING_SECRET=PASS")
+    print("ADOPTED_IMAGE_AND_RUNTIME=PASS")
+    print("CERTIFICATION_CREDENTIALS=PASS")
+    print("RESEND_API_KEY_SOURCE_MATCH=PASS")
+    print("COMPOSE_RECREATION=NOT_PERFORMED")
+    print("DOCKER_VOLUME_MUTATION=NONE")
+    print("LIVE_MUTATION=NOT_PERFORMED")
+    print(f"ADOPTED_BASELINE={adopted_baseline_path(args)}")
+    print(f"ADOPTED_SUCCESS_ARTIFACT={adopted_success_path(args)}")
 
 
 def read_backup(args: argparse.Namespace) -> dict[str, Any]:
@@ -535,7 +797,7 @@ def dry_run_action(runner: Runner, args: argparse.Namespace) -> None:
     compare_preserved(backup["before"], current, expect_secret=False)
     validate_mount_tracking(runner, current, project=args.project_name)
     require_compose_identity(runner, args, current, include_override=False)
-    secret = protected_secret(args.secret_file)
+    protected_secret(args.secret_file)
     proposed_hash = compose_service_hash(runner, args, include_override=True)
     if not proposed_hash or proposed_hash == current["compose"]["config_hash"]:
         raise Refused("secret-injection override did not produce a distinct Compose definition")
@@ -551,7 +813,6 @@ def dry_run_action(runner: Runner, args: argparse.Namespace) -> None:
             "compose_definition_hash_stored": True,
         },
     )
-    secret = ""
     print("DRY_RUN=PASS")
     print("ONLY_CONTAINER_TO_RECREATE=stalwart")
     print("PRESERVE_IMAGE_MOUNTS_PORTS_NETWORKS_RESTART_LABELS=PASS")
@@ -647,6 +908,52 @@ def apply_action(runner: Runner, args: argparse.Namespace) -> None:
     print("DOCKER_VOLUME_MUTATION=NONE")
 
 
+def endpoint_path(url: str) -> str:
+    return parse.urlsplit(url).path or "/"
+
+
+def resolve_jmap_api_url(base_url: str, advertised_url: str) -> str:
+    """Keep the advertised path while binding it to the configured authority."""
+    base = parse.urlsplit(base_url)
+    advertised = parse.urlsplit(advertised_url)
+    if (
+        base.scheme not in {"http", "https"}
+        or not base.hostname
+        or base.username is not None
+        or base.password is not None
+        or advertised.scheme not in {"http", "https"}
+        or not advertised.hostname
+        or advertised.username is not None
+        or advertised.password is not None
+        or not advertised.path.startswith("/")
+        or advertised.fragment
+    ):
+        raise Refused("Stalwart advertised an invalid JMAP apiUrl")
+    return parse.urlunsplit(
+        (base.scheme, base.netloc, advertised.path, advertised.query, "")
+    )
+
+
+def _read_json_response(message: request.Request, *, path: str) -> dict[str, Any]:
+    try:
+        with request.urlopen(message, timeout=15) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise Refused(f"local Stalwart endpoint verification failed at {path}") from exc
+    if not isinstance(value, dict):
+        raise Refused("local Stalwart returned an invalid response")
+    return value
+
+
+def get_json(url: str, authorization: str) -> dict[str, Any]:
+    message = request.Request(
+        url,
+        method="GET",
+        headers={"Authorization": authorization, "Content-Type": "application/json"},
+    )
+    return _read_json_response(message, path=endpoint_path(url))
+
+
 def post_json(url: str, authorization: str, payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     message = request.Request(
@@ -655,14 +962,17 @@ def post_json(url: str, authorization: str, payload: dict[str, Any]) -> dict[str
         method="POST",
         headers={"Authorization": authorization, "Content-Type": "application/json"},
     )
-    try:
-        with request.urlopen(message, timeout=15) as response:
-            value = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        raise Refused(f"local Stalwart endpoint verification failed at {url}") from exc
-    if not isinstance(value, dict):
-        raise Refused("local Stalwart returned an invalid response")
-    return value
+    return _read_json_response(message, path=endpoint_path(url))
+
+
+def discover_jmap_api_url(base_url: str, authorization: str) -> str:
+    if base_url != EXPECTED_JMAP:
+        raise Refused(f"Stalwart verification must remain local at {EXPECTED_JMAP}")
+    session = get_json(f"{base_url}/jmap/session", authorization)
+    advertised = session.get("apiUrl")
+    if not isinstance(advertised, str) or not advertised:
+        raise Refused("Stalwart JMAP session did not contain a valid apiUrl")
+    return resolve_jmap_api_url(base_url, advertised)
 
 
 def first_method_response(value: dict[str, Any], name: str) -> dict[str, Any]:
@@ -674,8 +984,9 @@ def first_method_response(value: dict[str, Any], name: str) -> dict[str, Any]:
 
 def verify_stalwart_data(args: argparse.Namespace, credentials: dict[str, str]) -> None:
     admin_auth = f"Bearer {credentials['STALWART_API_KEY']}"
+    jmap_url = discover_jmap_api_url(EXPECTED_JMAP, admin_auth)
     domain_result = post_json(
-        f"{EXPECTED_JMAP}/api",
+        jmap_url,
         admin_auth,
         {
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -688,7 +999,7 @@ def verify_stalwart_data(args: argparse.Namespace, credentials: dict[str, str]) 
     if len(domain_ids) != 1:
         raise Refused(f"production domain {EXPECTED_DOMAIN} was not preserved")
     account_result = post_json(
-        f"{EXPECTED_JMAP}/api",
+        jmap_url,
         admin_auth,
         {
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -707,7 +1018,7 @@ def verify_stalwart_data(args: argparse.Namespace, credentials: dict[str, str]) 
     token = credentials["STALWART_JMAP_SERVICE_TOKEN"]
     authorization = token if token.startswith(("Bearer ", "Basic ", "OAuth ")) else f"Bearer {token}"
     mailbox_result = post_json(
-        f"{EXPECTED_JMAP}/jmap",
+        jmap_url,
         authorization,
         {
             "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
@@ -716,6 +1027,35 @@ def verify_stalwart_data(args: argparse.Namespace, credentials: dict[str, str]) 
     )
     if not (first_method_response(mailbox_result, "Mailbox/get").get("list") or []):
         raise Refused("production mailbox data is unavailable through local JMAP")
+
+
+def validate_certification_credentials(
+    args: argparse.Namespace,
+    credentials: dict[str, str],
+) -> None:
+    """Reuse the read-only validator's exact least-privilege checks."""
+    validator_path = Path(__file__).with_name(
+        "validate-stalwart-certification-credentials.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "aiat_stalwart_certification_validator", validator_path
+    )
+    if spec is None or spec.loader is None:
+        raise Refused("certification credential validator is unavailable")
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    transport = validator.HttpTransport(list(credentials.values()))
+    try:
+        validator.validate_live(
+            credentials,
+            args.account_id,
+            transport,
+            base_url=EXPECTED_JMAP,
+        )
+    except validator.Refused as exc:
+        raise Refused(f"certification credential validation failed: {exc}") from exc
+    finally:
+        transport.sensitive_values.clear()
 
 
 def smtp_reachable(host: str, port: int) -> None:
@@ -805,7 +1145,78 @@ def verify_completed_recreation(
     print(f"SUCCESS_ARTIFACT={completed}")
 
 
+def verify_adopted_existing(runner: Runner, args: argparse.Namespace) -> None:
+    baseline = load_json(adopted_baseline_path(args))
+    adopted_artifact(baseline, action="baseline")
+    if baseline.get("compose_file_hashes") != compose_file_hashes(args):
+        raise Refused("adopted-existing Compose source changed after certification")
+    if baseline.get("account_id") != args.account_id:
+        raise Refused("adopted-existing accountId does not match the certified baseline")
+    current = inspect_container(runner, args.container)
+    prepare_compose_environment(runner, args)
+    if current["container_id"] != baseline.get("live_container_id"):
+        raise Refused("adopted-existing container identity changed")
+    validate_snapshot(current, persistent_target=args.persistent_target, require_secret=True)
+    validate_adopted_runtime(current)
+    validate_adopted_compose_semantics(runner, args, current)
+    current_fingerprint = canonical_hash(normalized_definition(current["definition"]))
+    if current_fingerprint != baseline.get("normalized_definition_fingerprint"):
+        raise Refused("adopted-existing runtime definition changed")
+    validate_mount_tracking(runner, current, project=args.project_name)
+    config_hash = require_compose_identity(
+        runner,
+        args,
+        current,
+        include_override=True,
+        require_provenance=True,
+    )
+    if config_hash != baseline.get("compose_config_hash"):
+        raise Refused("adopted-existing Compose config hash changed")
+    secret = protected_secret(args.secret_file)
+    credentials = certification_secrets(args.verification_secret_file)
+    try:
+        secret_matches_container(runner, args.container, secret)
+        validate_certification_credentials(args, credentials)
+        verify_stalwart_data(args, credentials)
+        smtp_reachable(*EXPECTED_SMTP)
+        smtp_reachable(*EXPECTED_WIREGUARD_SMTP)
+    finally:
+        secret = ""
+        credentials.clear()
+    success = {
+        "schema": 1,
+        "status": "PASS",
+        "action_type": "adopt-existing",
+        "container": args.container,
+        "live_container_id": current["container_id"],
+        "pinned_image_ref": current["definition"]["image_ref"],
+        "image_id": current["definition"]["image_id"],
+        "normalized_definition_fingerprint": current_fingerprint,
+        "compose_config_hash": config_hash,
+        "compose_file_hashes": baseline["compose_file_hashes"],
+        "account_id": args.account_id,
+        "account_address": EXPECTED_ACCOUNT,
+        "verification_results": baseline.get("verification_results"),
+        "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "secret_source_match": "PASS",
+        "secret_value_or_fingerprint_stored": False,
+        "live_mutation": "NOT_PERFORMED",
+        "compose_recreation": "NOT_PERFORMED",
+        "volume_mutation": "NONE",
+    }
+    write_or_match_artifact(adopted_success_path(args), success)
+    print("ADOPTED_EXISTING_VERIFICATION=PASS")
+    print("RESEND_API_KEY_SOURCE_MATCH=PASS")
+    print("COMPOSE_RECREATION=NOT_PERFORMED")
+    print("DOCKER_VOLUME_MUTATION=NONE")
+    print("LIVE_MUTATION=NOT_PERFORMED")
+    print(f"ADOPTED_SUCCESS_ARTIFACT={adopted_success_path(args)}")
+
+
 def verify_action(runner: Runner, args: argparse.Namespace) -> None:
+    if adopted_baseline_path(args).exists():
+        verify_adopted_existing(runner, args)
+        return
     verify_completed_recreation(runner, args, recovery=False)
 
 
@@ -891,7 +1302,16 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
     value.add_argument(
         "action",
-        choices=("diagnose", "inspect", "dry-run", "apply", "recover", "verify", "rollback"),
+        choices=(
+            "diagnose",
+            "inspect",
+            "dry-run",
+            "apply",
+            "adopt-existing",
+            "recover",
+            "verify",
+            "rollback",
+        ),
     )
     value.add_argument("--container", default="mas-stalwart-1")
     value.add_argument("--service", default="stalwart")
@@ -911,6 +1331,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--persistent-target", default="/var/lib/stalwart")
     value.add_argument("--account-id")
     value.add_argument("--approve-recreate-stalwart", action="store_true")
+    value.add_argument("--approve-adopt-existing-secret", action="store_true")
     value.add_argument("--approve-rollback", action="store_true")
     return value
 
@@ -928,7 +1349,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
     args.backup_dir = args.backup_dir.resolve()
     if args.verification_secret_file:
         args.verification_secret_file = args.verification_secret_file.resolve()
-    if args.action in {"recover", "verify"} and (
+    if args.action in {"adopt-existing", "recover", "verify"} and (
         not args.verification_secret_file or not args.account_id
     ):
         raise Refused(f"{args.action} requires --verification-secret-file and --account-id")
@@ -938,6 +1359,7 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
         "inspect": inspect_action,
         "dry-run": dry_run_action,
         "apply": apply_action,
+        "adopt-existing": adopt_existing_action,
         "recover": recover_action,
         "verify": verify_action,
         "rollback": rollback_action,
@@ -951,4 +1373,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Refused as exc:
         print(f"Stalwart secret migration refused: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

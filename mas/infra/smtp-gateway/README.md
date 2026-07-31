@@ -857,6 +857,75 @@ stalwart_migrate verify \
   --account-id <existing-gateway-test-stalwart-account-id>
 ```
 
+### Adopt an already-injected container after the security upgrade
+
+If the v0.16.15 image upgrade was completed and separately verified before
+secret-migration evidence was available, use the explicitly separate
+`adopt-existing` action. It never runs Compose `up`, stops a container, or
+changes a volume. The existing v0.16.7 evidence directory remains immutable;
+use a new directory that does not exist yet. The command below uses the
+approved pinned v0.16.15 Compose definition and the existing secret override:
+
+```sh
+export AIAT_STALWART_ADOPTION_BACKUP=/secure/rollback/stalwart-resend-secret-adopt-20260731T120000Z
+sudo install -d -o root -g root -m 0700 /secure/rollback
+
+stalwart_adopt_existing() {
+  sudo sh scripts/migrate-stalwart-resend-secret.sh "$@" \
+    --container mas-stalwart-1 \
+    --project-name mas \
+    --project-directory /mnt/c/projects/AIAT/mas/infra/compose \
+    --compose-profile mail-local \
+    --compose-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-canonical.yml \
+    --compose-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-v0.16.15-security-upgrade.yml \
+    --override-file /mnt/c/projects/AIAT/mas/infra/smtp-gateway/home/docker-compose.stalwart-resend-secret.yml \
+    --secret-file /etc/aiat/stalwart-resend.env \
+    --backup-dir "$AIAT_STALWART_ADOPTION_BACKUP"
+}
+
+stalwart_adopt_existing adopt-existing \
+  --approve-adopt-existing-secret \
+  --verification-secret-file /etc/aiat/resend-certification.env \
+  --account-id w
+```
+
+The directory must be absent before the command starts. Adoption requires the
+exact v0.16.15 image and image ID, healthy `mas-stalwart-1`, tracked named
+mounts, loopback ports `127.0.0.1:2525` and `127.0.0.1:18080`, `mas_internal`
+and `mas_public`, the approved restart policy/healthcheck/security settings,
+Compose project/service/file provenance, the injected secret source match,
+the production domain/account, local SMTP/JMAP, WireGuard SMTP, and the exact
+least-privilege certification credentials. It rejects unknown service labels,
+stale Compose hashes, reused/partial backup directories, wrong account IDs,
+and overprivileged credentials.
+
+The two mode-0600 JSON files are:
+
+* `adopted-existing-baseline.json`: schema `1`, `action_type:
+  "adopt-existing"`, live container/image identity, normalized definition
+  fingerprint, Compose config/source hashes, sanitized live snapshot, account
+  ID/address, verification results, timestamp, `secret_source_match: "PASS"`,
+  and explicit `live_mutation: "NOT_PERFORMED"`,
+  `compose_recreation: "NOT_PERFORMED"`, `volume_mutation: "NONE"`.
+* `adopted-existing-success.json`: the same immutable identity and verification
+  contract, written only after all checks pass.
+
+Neither artifact contains the Resend key, a key fingerprint, credential values,
+or environment values. Later verification automatically recognizes this
+baseline and remains read-only:
+
+```sh
+stalwart_adopt_existing verify \
+  --verification-secret-file /etc/aiat/resend-certification.env \
+  --account-id w
+```
+
+The migration verifier discovers the authenticated JMAP endpoint from
+`GET /jmap/session`, safely replaces an advertised `localhost` authority with
+`http://127.0.0.1:18080`, and sends all management JMAP POSTs to the resolved
+`/jmap/` URL. `POST /api` is never used for JMAP; `GET /api/account` remains
+available only for permission introspection in the certification validator.
+
 Until verification succeeds, restore the original Compose definition without
 the secret with the following command. Successful verification closes this
 rollback window. If the route has already been applied, roll it back first
