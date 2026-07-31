@@ -44,6 +44,8 @@ def test_route_preflight_certification_and_verifier_use_strict_jmap_validation()
 
 
 def _json_response(handler: BaseHTTPRequestHandler, body: dict[str, Any], status: int = 200) -> None:
+    if "methodResponses" in body and "sessionState" not in body:
+        body = {**body, "sessionState": "session-state"}
     payload = json.dumps(body).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
@@ -219,12 +221,14 @@ class RouteServer:
             "version": 1,
             "scope": "stalwart-remote-route-and-strategy",
             "routes": {
-                "methodResponses": [["x:MtaRoute/get", {"list": self.routes}, "routes"]]
+                "methodResponses": [["x:MtaRoute/get", {"list": self.routes}, "routes"]],
+                "sessionState": "session-state",
             },
             "strategy": {
                 "methodResponses": [
                     ["x:MtaOutboundStrategy/get", {"list": [self.strategy]}, "strategy"]
-                ]
+                ],
+                "sessionState": "session-state",
             },
         }
 

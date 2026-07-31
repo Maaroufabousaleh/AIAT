@@ -22,7 +22,7 @@ def _set_response(
     arguments: dict | None = None,
     tag: str = "call",
 ) -> dict:
-    return {"methodResponses": [[method, arguments or {}, tag]]}
+    return {"methodResponses": [[method, arguments or {}, tag]], "sessionState": "session-state"}
 
 
 @pytest.mark.parametrize(
@@ -91,6 +91,72 @@ def test_successful_route_create_update_and_destroy_are_accepted() -> None:
         destroy_request,
         _set_response(arguments={"destroyed": ["route-1"]}),
     )
+
+
+def test_live_style_route_get_backup_envelope_is_accepted() -> None:
+    validator.validate_jmap_response(
+        {"methodCalls": [["x:MtaRoute/get", {}, "routes"]]},
+        {
+            "methodResponses": [
+                [
+                    "x:MtaRoute/get",
+                    {"accountId": "...", "list": [], "notFound": []},
+                    "routes",
+                ]
+            ],
+            "sessionState": "...",
+        },
+    )
+
+
+def test_live_style_strategy_get_backup_envelope_is_accepted() -> None:
+    validator.validate_jmap_response(
+        {"methodCalls": [["x:MtaOutboundStrategy/get", {"ids": ["singleton"]}, "strategy"]]},
+        {
+            "methodResponses": [
+                [
+                    "x:MtaOutboundStrategy/get",
+                    {"accountId": "...", "list": [{"id": "singleton", "route": {}}], "notFound": []},
+                    "strategy",
+                ]
+            ],
+            "sessionState": "...",
+        },
+    )
+
+
+def test_session_state_must_be_a_nonempty_string() -> None:
+    request_body = _request(arguments={"create": {"relay": {}}})
+    for value in (None, "", 17, []):
+        response = _set_response(arguments={"created": {"relay": {"id": "route-1"}}})
+        response["sessionState"] = value
+        with pytest.raises(validator.JmapResponseError):
+            validator.validate_jmap_response(request_body, response)
+
+
+def test_unexpected_top_level_field_is_rejected() -> None:
+    response = _set_response(arguments={"created": {"relay": {"id": "route-1"}}})
+    response["unexpected"] = "field"
+    with pytest.raises(validator.JmapResponseError):
+        validator.validate_jmap_response(_request(arguments={"create": {"relay": {}}}), response)
+
+
+def test_created_ids_are_allowed_only_when_requested_and_are_string_maps() -> None:
+    response = _set_response(arguments={"created": {"relay": {"id": "route-1"}}})
+    response["createdIds"] = {"relay": "route-1"}
+    with pytest.raises(validator.JmapResponseError):
+        validator.validate_jmap_response(_request(arguments={"create": {"relay": {}}}), response)
+
+    request_body = {
+        "createdIds": {"prior": "route-0"},
+        "methodCalls": [["x:MtaRoute/set", {"create": {"relay": {}}}, "call"]],
+    }
+    validator.validate_jmap_response(request_body, response)
+
+    malformed = dict(response)
+    malformed["createdIds"] = {"relay": 17}
+    with pytest.raises(validator.JmapResponseError):
+        validator.validate_jmap_response(request_body, malformed)
 
 
 def test_get_requires_a_list_and_no_unknown_response_shape() -> None:

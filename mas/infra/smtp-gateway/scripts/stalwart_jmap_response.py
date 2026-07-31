@@ -138,6 +138,18 @@ def _request_calls(request_body: Any, *, action: str, http_status: str, endpoint
             http_status=http_status,
             endpoint_path=endpoint_path,
         )
+    if "createdIds" in request_body and (
+        not isinstance(request_body["createdIds"], dict)
+        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in request_body["createdIds"].items())
+    ):
+        _raise(
+            request_method="unknown-method",
+            tag="unknown-tag",
+            action=action,
+            description="JMAP request createdIds is malformed",
+            http_status=http_status,
+            endpoint_path=endpoint_path,
+        )
     expected: list[dict[str, Any]] = []
     for call in calls:
         if not isinstance(call, list) or len(call) != 3:
@@ -388,12 +400,53 @@ def validate_jmap_response(
             http_status=http_status,
             endpoint_path=endpoint_path,
         )
-    if set(response_body) != {"methodResponses"}:
+    allowed_fields = {"methodResponses", "sessionState"}
+    if "createdIds" in request_body:
+        allowed_fields.add("createdIds")
+    unknown_fields = set(response_body) - allowed_fields
+    if unknown_fields:
         _raise(
             request_method=expected[0]["method"],
             tag=expected[0]["tag"],
             action=action,
             description="JMAP response envelope contains unknown fields",
+            invalid_properties=",".join(sorted(_safe_identifier(field) for field in unknown_fields)),
+            http_status=http_status,
+            endpoint_path=endpoint_path,
+        )
+    missing_fields = {"methodResponses", "sessionState"} - set(response_body)
+    if missing_fields:
+        _raise(
+            request_method=expected[0]["method"],
+            tag=expected[0]["tag"],
+            action=action,
+            description="JMAP response envelope is missing required fields",
+            invalid_properties=",".join(sorted(missing_fields)),
+            http_status=http_status,
+            endpoint_path=endpoint_path,
+        )
+    if not isinstance(response_body["sessionState"], str) or not response_body["sessionState"]:
+        _raise(
+            request_method=expected[0]["method"],
+            tag=expected[0]["tag"],
+            action=action,
+            description="JMAP response sessionState is malformed",
+            http_status=http_status,
+            endpoint_path=endpoint_path,
+        )
+    if "createdIds" in response_body and (
+        "createdIds" not in request_body
+        or not isinstance(response_body["createdIds"], dict)
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in response_body["createdIds"].items()
+        )
+    ):
+        _raise(
+            request_method=expected[0]["method"],
+            tag=expected[0]["tag"],
+            action=action,
+            description="JMAP response createdIds is unsupported or malformed",
             http_status=http_status,
             endpoint_path=endpoint_path,
         )

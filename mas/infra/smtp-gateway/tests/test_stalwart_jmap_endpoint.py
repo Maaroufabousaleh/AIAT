@@ -20,6 +20,8 @@ SPEC.loader.exec_module(jmap_endpoint)
 
 
 def _response(handler: BaseHTTPRequestHandler, body: dict, status: int = 200) -> None:
+    if "methodResponses" in body and "sessionState" not in body:
+        body = {**body, "sessionState": "session-state"}
     payload = json.dumps(body).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
@@ -405,7 +407,8 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
                             },
                             "routes",
                         ]
-                    ]
+                    ],
+                    "sessionState": "session-state"
                 },
                 "strategy": {
                     "methodResponses": [
@@ -414,7 +417,8 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
                             {"list": [{"id": "singleton", "route": {"else": "'local'"}}]},
                             "strategy",
                         ]
-                    ]
+                    ],
+                    "sessionState": "session-state"
                 },
             }
         ),
