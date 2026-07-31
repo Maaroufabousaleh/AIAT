@@ -118,7 +118,7 @@ def test_token_scope_is_reported_but_not_used_as_persisted_account_evidence() ->
         {"permissions": ["sysApiKeyGet"]}, state
     )
     assert state.account_permission_persisted == "PASS"
-    assert state.token_scope_contains_create == "FAIL"
+    assert state.token_scope_contains_create == "NOT_OBSERVABLE"
 
 
 def test_jmap_session_authority_is_replaced_but_path_query_and_slash_are_preserved() -> None:
@@ -282,7 +282,7 @@ def test_persisted_account_permission_absent_from_token_scope() -> None:
     assert not provisioning.token_scope_contains_create(
         {"permissions": ["sysAccountQuery"]}, state
     )
-    assert state.token_scope_contains_create == "FAIL"
+    assert state.token_scope_contains_create == "NOT_OBSERVABLE"
 
 
 def test_real_missing_persisted_account_permission_is_refused() -> None:
@@ -721,15 +721,14 @@ class ProvisionTransport:
         self,
         *,
         duplicate=False,
+        forbid_query=False,
         forbid_create=False,
         scope_permissions=None,
     ):
         self.duplicate = duplicate
+        self.forbid_query = forbid_query
         self.forbid_create = forbid_create
-        self.scope_permissions = scope_permissions or [
-            "sysApiKeyCreate",
-            "sysApiKeyQuery",
-        ]
+        self.scope_permissions = [] if scope_permissions is None else scope_permissions
         self.destroyed = []
         self.create_calls = 0
         self.calls = []
@@ -772,6 +771,8 @@ class ProvisionTransport:
                 },
             )
         if method == "x:ApiKey/query":
+            if self.forbid_query:
+                raise provisioning.Refused("forbidden query")
             return _method_response(
                 method, {"ids": ["existing-id"] if self.duplicate else []}
             )
@@ -822,9 +823,10 @@ def _provision(
     tmp_path: Path,
     monkeypatch,
     transport: ProvisionTransport,
+    state: provisioning.DiagnosticState | None = None,
 ) -> tuple[Path, provisioning.DiagnosticState]:
     output = tmp_path / "resend-certification.env"
-    state = provisioning.DiagnosticState()
+    state = state or provisioning.DiagnosticState()
     monkeypatch.setattr(provisioning, "reserve_output", _reserve_without_root)
     provisioning.provision(
         transport=transport,
@@ -846,7 +848,8 @@ def test_safe_creation_capability_and_protected_output(tmp_path: Path, monkeypat
     assert output.exists()
     assert transport.create_calls == 1
     assert state.account_permission_persisted == "PASS"
-    assert state.token_scope_contains_create == "PASS"
+    assert state.token_scope_contains_create == "NOT_OBSERVABLE"
+    assert state.token_scope_contains_query == "NOT_OBSERVABLE"
     assert state.api_key_create_capability == "PASS"
     assert state.mailbox_authentication == "PASS"
     assert state.api_key_query == "PASS"
@@ -869,21 +872,28 @@ def test_safe_creation_capability_and_protected_output(tmp_path: Path, monkeypat
 def test_forbidden_creation_removes_partial_output(tmp_path: Path, monkeypatch) -> None:
     transport = ProvisionTransport(forbid_create=True)
     output = tmp_path / "resend-certification.env"
+    state = provisioning.DiagnosticState()
     with pytest.raises(provisioning.Refused, match="forbidden creation"):
-        _provision(tmp_path, monkeypatch, transport)
+        _provision(tmp_path, monkeypatch, transport, state)
     assert not output.exists()
     assert transport.create_calls == 1
+    assert state.api_key_create_capability == "FAIL"
+    assert state.token_scope_contains_create == "NOT_OBSERVABLE"
 
 
 def test_missing_api_key_query_permission_removes_partial_output(
     tmp_path: Path, monkeypatch
 ) -> None:
-    transport = ProvisionTransport(scope_permissions=["sysApiKeyCreate"])
+    transport = ProvisionTransport(forbid_query=True)
     output = tmp_path / "resend-certification.env"
-    with pytest.raises(provisioning.Refused, match="sysApiKeyQuery"):
-        _provision(tmp_path, monkeypatch, transport)
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused, match="forbidden query"):
+        _provision(tmp_path, monkeypatch, transport, state)
     assert not output.exists()
     assert transport.create_calls == 0
+    assert state.api_key_query == "FAIL"
+    assert state.api_key_create_capability == "NOT_ATTEMPTED"
+    assert state.token_scope_contains_query == "NOT_OBSERVABLE"
 
 
 def test_duplicate_retry_is_refused_before_creation(tmp_path: Path, monkeypatch) -> None:

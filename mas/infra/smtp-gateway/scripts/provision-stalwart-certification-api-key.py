@@ -549,21 +549,22 @@ def api_key_payload(
 def token_scope_contains_create(
     account: dict[str, Any], state: DiagnosticState | None = None
 ) -> bool:
-    permissions = account.get("permissions")
-    present = isinstance(permissions, list) and "sysApiKeyCreate" in permissions
     if state is not None:
-        state.token_scope_contains_create = "PASS" if present else "FAIL"
-    return present
+        state.token_scope_contains_create = "NOT_OBSERVABLE"
+    # /api/account intentionally omits internal/system-only permissions. Keep
+    # this compatibility helper non-authoritative; the real x:ApiKey/set
+    # operation is the create-capability gate.
+    return False
 
 
 def token_scope_contains_query(
     account: dict[str, Any], state: DiagnosticState | None = None
 ) -> bool:
-    permissions = account.get("permissions")
-    present = isinstance(permissions, list) and "sysApiKeyQuery" in permissions
     if state is not None:
-        state.token_scope_contains_query = "PASS" if present else "FAIL"
-    return present
+        state.token_scope_contains_query = "NOT_OBSERVABLE"
+    # /api/account is account introspection only; query authorization is
+    # established by the actual x:ApiKey/query operation.
+    return False
 
 
 def require_permanent_directory_principal(
@@ -1062,7 +1063,7 @@ def provision(
             diagnostic=diagnostic,
         )
         admin_authorization = f"Bearer {access_token}"
-        account = transport.json(
+        transport.json(
             f"{base_url}/api/account",
             admin_authorization,
             endpoint_path="/api/account",
@@ -1070,26 +1071,12 @@ def provision(
             authentication=True,
             authentication_mechanism="oauth2-bearer",
         )
-        if not token_scope_contains_create(account, diagnostic):
-            diagnostic.endpoint_path = "/api/account"
-            diagnostic.http_status = "200"
-            diagnostic.jmap_method = "GET /api/account"
-            diagnostic.authentication_mechanism = "oauth2-bearer"
-            diagnostic.error_type = "token-scope-missing-sysApiKeyCreate/missingPermission"
-            diagnostic.description = (
-                "authenticated account lacks sysApiKeyCreate"
-            )
-            raise Refused("OAuth Bearer token lacks sysApiKeyCreate")
-        if not token_scope_contains_query(account, diagnostic):
-            diagnostic.endpoint_path = "/api/account"
-            diagnostic.http_status = "200"
-            diagnostic.jmap_method = "GET /api/account"
-            diagnostic.authentication_mechanism = "oauth2-bearer"
-            diagnostic.error_type = "token-scope-missing-sysApiKeyQuery/missingPermission"
-            diagnostic.description = (
-                "authenticated account lacks sysApiKeyQuery"
-            )
-            raise Refused("OAuth Bearer token lacks sysApiKeyQuery")
+        # Stalwart filters internal/system-only permissions from this
+        # introspection response. Their omission is not an authorization
+        # failure; the actual x:ApiKey/query and x:ApiKey/set calls below are
+        # the authoritative capability checks.
+        diagnostic.token_scope_contains_create = "NOT_OBSERVABLE"
+        diagnostic.token_scope_contains_query = "NOT_OBSERVABLE"
         jmap_url = discover_jmap_api_url(
             transport=transport,
             base_url=base_url,
