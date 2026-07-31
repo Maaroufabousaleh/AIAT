@@ -7,12 +7,12 @@ import argparse
 import base64
 import json
 import os
-from pathlib import Path
+import re
 import stat
 import sys
+from pathlib import Path
 from typing import Any
-from urllib import error, request
-
+from urllib import error, parse, request
 
 EXPECTED_DOMAIN = "agents.aiat.ca"
 EXPECTED_ADDRESS = "gateway-test@agents.aiat.ca"
@@ -37,6 +37,48 @@ MAIL_PERMISSIONS = {
 
 class Refused(RuntimeError):
     pass
+
+
+def endpoint_path(url: str) -> str:
+    return parse.urlsplit(url).path or "/"
+
+
+def resolve_jmap_api_url(base_url: str, advertised_url: str) -> str:
+    """Keep the session's path/query while using the explicitly configured authority."""
+    base = parse.urlsplit(base_url)
+    advertised = parse.urlsplit(advertised_url)
+    if (
+        base.scheme not in {"http", "https"}
+        or not base.hostname
+        or base.username is not None
+        or base.password is not None
+        or advertised.scheme not in {"http", "https"}
+        or not advertised.hostname
+        or advertised.username is not None
+        or advertised.password is not None
+        or not advertised.path.startswith("/")
+        or advertised.fragment
+    ):
+        raise Refused("Stalwart advertised an invalid JMAP apiUrl")
+    return parse.urlunsplit(
+        (base.scheme, base.netloc, advertised.path, advertised.query, "")
+    )
+
+
+def sanitize_diagnostic(value: Any, sensitive_values: list[str], limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    for secret in sorted(sensitive_values, key=len, reverse=True):
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    for pattern, replacement in (
+        (r"API_[A-Za-z0-9_-]+", "<redacted-api-key>"),
+        (r"(?i)\bBasic\s+[A-Za-z0-9+/=_-]+", "Basic <redacted>"),
+        (r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+", "Bearer <redacted>"),
+        (r"(?i)(password|secret|authorization|token)\s*[:=]\s*[^,\s]+", r"\1=<redacted>"),
+    ):
+        text = re.sub(pattern, replacement, text)
+    text = "".join(character for character in text if character.isprintable())
+    return (text or "no description supplied")[:limit]
 
 
 def read_credentials(path: Path) -> dict[str, str]:
@@ -87,13 +129,66 @@ def require_exact_permissions(actual: Any, expected: set[str], credential: str) 
 
 
 class HttpTransport:
+    def __init__(self, sensitive_values: list[str] | None = None):
+        self.sensitive_values = list(sensitive_values or [])
+        self.attempts: list[dict[str, str]] = []
+
+    def _record(
+        self,
+        *,
+        url: str,
+        jmap_method: str,
+        http_status: str,
+        error_type: str,
+        description: Any,
+    ) -> None:
+        self.attempts.append(
+            {
+                "endpoint_path": endpoint_path(url),
+                "http_status": http_status,
+                "jmap_method": jmap_method,
+                "error_type": error_type,
+                "description": sanitize_diagnostic(
+                    description, self.sensitive_values
+                ),
+            }
+        )
+
+    def _refuse(
+        self,
+        *,
+        url: str,
+        jmap_method: str,
+        http_status: str,
+        error_type: str,
+        description: Any,
+    ) -> None:
+        self._record(
+            url=url,
+            jmap_method=jmap_method,
+            http_status=http_status,
+            error_type=error_type,
+            description=description,
+        )
+        attempt = self.attempts[-1]
+        raise Refused(
+            "Stalwart request failed: "
+            f"ENDPOINT_PATH={attempt['endpoint_path']} "
+            f"HTTP_STATUS={attempt['http_status']} "
+            f"JMAP_METHOD={attempt['jmap_method']} "
+            f"JMAP_ERROR_TYPE={attempt['error_type']} "
+            f"DESCRIPTION={attempt['description']}"
+        )
+
     def json(
         self,
         url: str,
         authorization: str,
         *,
         payload: dict[str, Any] | None = None,
+        jmap_method: str | None = None,
     ) -> dict[str, Any]:
+        method_name = jmap_method or ("GET " + endpoint_path(url) if payload is None else "JMAP")
         body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
         message = request.Request(
             url,
@@ -107,19 +202,124 @@ class HttpTransport:
         try:
             with request.urlopen(message, timeout=15) as response:
                 value = json.loads(response.read().decode("utf-8"))
-        except (error.HTTPError, error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise Refused("Stalwart rejected a certification credential or request") from exc
+        except error.HTTPError as exc:
+            raw = exc.read(8192)
+            try:
+                problem = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                problem = {}
+            error_type = problem.get("type") if isinstance(problem, dict) else None
+            description = (
+                problem.get("description") or problem.get("detail")
+                if isinstance(problem, dict)
+                else None
+            ) or exc.reason or "HTTP request failed"
+            self._refuse(
+                url=url,
+                jmap_method=method_name,
+                http_status=str(exc.code),
+                error_type=str(error_type or "httpError"),
+                description=description,
+            )
+        except (error.URLError, TimeoutError, OSError) as exc:
+            self._refuse(
+                url=url,
+                jmap_method=method_name,
+                http_status="unavailable",
+                error_type="transportError",
+                description=f"request did not reach Stalwart ({type(exc).__name__})",
+            )
+        except json.JSONDecodeError:
+            self._refuse(
+                url=url,
+                jmap_method=method_name,
+                http_status="200",
+                error_type="notJson",
+                description="Stalwart returned malformed JSON",
+            )
         if not isinstance(value, dict):
-            raise Refused("Stalwart returned an invalid JSON response")
+            self._refuse(
+                url=url,
+                jmap_method=method_name,
+                http_status="200",
+                error_type="invalidResponse",
+                description="Stalwart returned an invalid JSON response",
+            )
+        for item in value.get("methodResponses") or []:
+            if isinstance(item, list) and len(item) >= 2 and item[0] == "error":
+                details = item[1] if isinstance(item[1], dict) else {}
+                self._refuse(
+                    url=url,
+                    jmap_method=method_name,
+                    http_status="200",
+                    error_type=str(details.get("type") or "jmapError"),
+                    description=details.get("description") or "JMAP method failed",
+                )
+        self._record(
+            url=url,
+            jmap_method=method_name,
+            http_status="200",
+            error_type="none",
+            description="request succeeded",
+        )
         return value
 
 
-def method_result(response: dict[str, Any], method: str) -> dict[str, Any]:
+def method_result(
+    response: dict[str, Any], method: str, *, transport: HttpTransport | None = None
+) -> dict[str, Any]:
     for item in response.get("methodResponses") or []:
-        if isinstance(item, list) and len(item) >= 2 and item[0] == method:
-            if isinstance(item[1], dict):
-                return item[1]
+        if (
+            isinstance(item, list)
+            and len(item) >= 2
+            and item[0] == method
+            and isinstance(item[1], dict)
+        ):
+            return item[1]
+    if transport and transport.attempts:
+        attempt = transport.attempts[-1]
+        raise Refused(
+            "Stalwart JMAP response missing method: "
+            f"ENDPOINT_PATH={attempt['endpoint_path']} "
+            f"HTTP_STATUS={attempt['http_status']} "
+            f"JMAP_METHOD={method} "
+            "JMAP_ERROR_TYPE=missingMethod "
+            f"DESCRIPTION={sanitize_diagnostic('method response was not returned', transport.sensitive_values)}"
+        )
     raise Refused(f"Stalwart did not authorize {method}")
+
+
+def discover_jmap_api_url(
+    credentials: dict[str, str],
+    transport: HttpTransport,
+    *,
+    base_url: str,
+) -> str:
+    if base_url != EXPECTED_URL:
+        raise Refused(f"credential validation must remain local at {EXPECTED_URL}")
+    management_auth = f"Bearer {credentials['STALWART_API_KEY']}"
+    response = transport.json(
+        f"{base_url}/jmap/session",
+        management_auth,
+        jmap_method="GET /jmap/session",
+    )
+    advertised = response.get("apiUrl")
+    if not isinstance(advertised, str) or not advertised:
+        raise Refused(
+            "Stalwart JMAP session failed: ENDPOINT_PATH=/jmap/session "
+            "HTTP_STATUS=200 JMAP_METHOD=GET /jmap/session "
+            "JMAP_ERROR_TYPE=malformedJmapSession "
+            "DESCRIPTION=apiUrl was missing or invalid"
+        )
+    try:
+        return resolve_jmap_api_url(base_url, advertised)
+    except Refused as exc:
+        raise Refused(
+            "Stalwart JMAP session failed: ENDPOINT_PATH=/jmap/session "
+            "HTTP_STATUS=200 JMAP_METHOD=GET /jmap/session "
+            "JMAP_ERROR_TYPE=malformedJmapSession "
+            "DESCRIPTION=apiUrl was not a safe absolute URL"
+        ) from exc
 
 
 def validate_live(
@@ -138,11 +338,15 @@ def validate_live(
         raise Refused(f"accountId does not belong to {EXPECTED_ADDRESS}")
     mail_auth = basic_mail_authorization(credentials["STALWART_JMAP_SERVICE_TOKEN"])
 
-
-    mail_account = transport.json(f"{base_url}/api/account", mail_auth)
+    mail_account = transport.json(
+        f"{base_url}/api/account",
+        mail_auth,
+        jmap_method="GET /api/account",
+    )
     require_exact_permissions(mail_account.get("permissions"), MAIL_PERMISSIONS, "mail credential")
+    jmap_url = discover_jmap_api_url(credentials, transport, base_url=base_url)
     mail_response = transport.json(
-        f"{base_url}/jmap",
+        jmap_url,
         mail_auth,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
@@ -151,10 +355,11 @@ def validate_live(
                 ["Identity/get", {"accountId": account_id}, "identities"],
             ],
         },
+        jmap_method="Mailbox/get+Identity/get",
     )
-    if not (method_result(mail_response, "Mailbox/get").get("list") or []):
+    if not (method_result(mail_response, "Mailbox/get", transport=transport).get("list") or []):
         raise Refused("mail credential cannot read the gateway-test mailbox")
-    identities = method_result(mail_response, "Identity/get").get("list") or []
+    identities = method_result(mail_response, "Identity/get", transport=transport).get("list") or []
     if not any(
         isinstance(identity, dict)
         and str(identity.get("email") or "").lower() == EXPECTED_ADDRESS
@@ -172,23 +377,31 @@ def lookup_account_id(
     if base_url != EXPECTED_URL:
         raise Refused(f"credential validation must remain local at {EXPECTED_URL}")
     management_auth = f"Bearer {credentials['STALWART_API_KEY']}"
-    management_account = transport.json(f"{base_url}/api/account", management_auth)
+    management_account = transport.json(
+        f"{base_url}/api/account",
+        management_auth,
+        jmap_method="GET /api/account",
+    )
     require_exact_permissions(
         management_account.get("permissions"), MANAGEMENT_PERMISSIONS, "management key"
     )
+    jmap_url = discover_jmap_api_url(credentials, transport, base_url=base_url)
     domain_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         management_auth,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
             "methodCalls": [["x:Domain/query", {"filter": {"name": EXPECTED_DOMAIN}, "limit": 2}, "domain"]],
         },
+        jmap_method="x:Domain/query",
     )
-    domain_ids = method_result(domain_response, "x:Domain/query").get("ids") or []
+    domain_ids = method_result(
+        domain_response, "x:Domain/query", transport=transport
+    ).get("ids") or []
     if len(domain_ids) != 1:
         raise Refused(f"management key did not resolve exactly one {EXPECTED_DOMAIN} domain")
     management_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         management_auth,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -209,10 +422,15 @@ def lookup_account_id(
                 ],
             ],
         },
+        jmap_method="x:Account/query+x:MtaRoute/get+x:MtaOutboundStrategy/get",
     )
-    account_ids = method_result(management_response, "x:Account/query").get("ids") or []
-    method_result(management_response, "x:MtaRoute/get")
-    method_result(management_response, "x:MtaOutboundStrategy/get")
+    account_ids = method_result(
+        management_response, "x:Account/query", transport=transport
+    ).get("ids") or []
+    method_result(management_response, "x:MtaRoute/get", transport=transport)
+    method_result(
+        management_response, "x:MtaOutboundStrategy/get", transport=transport
+    )
     if len(account_ids) != 1:
         raise Refused(f"management key did not resolve exactly one {EXPECTED_ADDRESS} account")
     return str(account_ids[0])
@@ -230,19 +448,21 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     credentials = read_credentials(args.secret_file.resolve())
+    transport = HttpTransport(list(credentials.values()))
     try:
         if args.lookup_account_id:
             if args.account_id:
                 raise Refused("--lookup-account-id and --account-id are mutually exclusive")
-            account_id = lookup_account_id(credentials, HttpTransport(), base_url=args.url)
+            account_id = lookup_account_id(credentials, transport, base_url=args.url)
             print(f"ACCOUNT_ID={account_id}")
             print("SECRET_VALUES_PRINTED=NONE")
             return 0
         if not args.account_id:
             raise Refused("--account-id is required")
-        validate_live(credentials, args.account_id, HttpTransport(), base_url=args.url)
+        validate_live(credentials, args.account_id, transport, base_url=args.url)
     finally:
         credentials.clear()
+        transport.sensitive_values.clear()
     print("STALWART_CERTIFICATION_CREDENTIALS=PASS")
     print(f"ACCOUNT_ADDRESS={EXPECTED_ADDRESS}")
     print(f"ACCOUNT_ID={args.account_id}")
@@ -257,4 +477,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Refused as exc:
         print(f"Stalwart credential validation refused: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None
