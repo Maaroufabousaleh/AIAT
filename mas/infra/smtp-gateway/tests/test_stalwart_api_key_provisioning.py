@@ -52,6 +52,32 @@ def test_token_scope_is_reported_but_not_used_as_persisted_account_evidence() ->
     assert state.token_scope_contains_create == "FAIL"
 
 
+def test_jmap_session_authority_is_replaced_but_path_query_and_slash_are_preserved() -> None:
+    assert provisioning.resolve_jmap_api_url(
+        provisioning.LOCAL_URL,
+        "http://localhost:18080/jmap/?capabilities=1",
+    ) == "http://127.0.0.1:18080/jmap/?capabilities=1"
+
+
+def test_jmap_session_must_advertise_a_valid_absolute_api_url() -> None:
+    state = provisioning.DiagnosticState()
+
+    class MalformedSessionTransport:
+        def json(self, *_args, **_kwargs):
+            return {"primaryAccounts": {"urn:stalwart:jmap": "1"}}
+
+    with pytest.raises(provisioning.Refused):
+        provisioning.discover_jmap_api_url(
+            transport=MalformedSessionTransport(),
+            base_url=provisioning.LOCAL_URL,
+            authorization="Bearer redacted",
+            diagnostic=state,
+        )
+    assert state.endpoint_path == "/jmap/session"
+    assert state.error_type.startswith("server-side-validation-error/malformedJmapSession")
+    assert state.description != "request did not reach Stalwart"
+
+
 def test_server_side_creation_failure_is_sanitized() -> None:
     assert provisioning.response_error(
         {
@@ -178,7 +204,7 @@ def test_persisted_account_permission_absent_from_token_scope() -> None:
                 "disabledPermissions": {},
             }
         ),
-        base_url=provisioning.LOCAL_URL,
+        jmap_url=f"{provisioning.LOCAL_URL}/jmap/",
         authorization="Bearer redacted",
         administrator_address="admin@agents.aiat.local",
         diagnostic=state,
@@ -201,7 +227,7 @@ def test_real_missing_persisted_account_permission_is_refused() -> None:
                     "disabledPermissions": {},
                 }
             ),
-            base_url=provisioning.LOCAL_URL,
+            jmap_url=f"{provisioning.LOCAL_URL}/jmap/",
             authorization="Bearer redacted",
             administrator_address="admin@agents.aiat.local",
             diagnostic=state,
@@ -366,6 +392,117 @@ def test_exact_401_diagnostic_leaves_downstream_checks_not_attempted(
     assert "AUTHENTICATION_MECHANISM=oauth2-password-to-authorization-code-pkce" in output
 
 
+class _JsonHttpResponse:
+    status = 200
+
+    def __init__(self, value: dict):
+        self.value = value
+
+    def read(self, _limit=-1):
+        return json.dumps(self.value).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+def test_recovery_administrator_account_not_found_is_classified_not_transport(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        provisioning.request,
+        "urlopen",
+        lambda _message, timeout: _JsonHttpResponse(
+            {
+                "methodResponses": [
+                    [
+                        "error",
+                        {
+                            "type": "forbidden",
+                            "description": "Account not found",
+                        },
+                        "query",
+                    ]
+                ]
+            }
+        ),
+    )
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.RecoveryAdministratorRefused):
+        provisioning.HttpTransport(state).json(
+            f"{provisioning.LOCAL_URL}/jmap/",
+            "Bearer redacted",
+            payload={
+                "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+                "methodCalls": [["x:ApiKey/query", {"limit": 1}, "query"]],
+            },
+            endpoint_path="/jmap/",
+            jmap_method="x:ApiKey/query",
+            authentication_mechanism="oauth2-bearer-management-jmap",
+        )
+    assert state.error_type == "recovery-administrator/account-not-found"
+    assert "recovery administrator" in state.description
+    assert state.attempts[-1]["exception_class"] == "JmapMethodError"
+    assert state.description != "request did not reach Stalwart"
+
+
+def test_transport_failure_uses_not_reached_description(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        provisioning.request,
+        "urlopen",
+        lambda _message, timeout: (_ for _ in ()).throw(error.URLError("offline")),
+    )
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused):
+        provisioning.HttpTransport(state).json(
+            f"{provisioning.LOCAL_URL}/jmap/session",
+            "Bearer redacted",
+            endpoint_path="/jmap/session",
+            jmap_method="GET /jmap/session",
+            authentication_mechanism="oauth2-bearer-jmap-session",
+        )
+    assert state.description == "request did not reach Stalwart"
+    assert state.exception_class == "URLError"
+
+
+def test_jmap_method_failure_records_sanitized_method_exception(monkeypatch) -> None:
+    monkeypatch.setattr(
+        provisioning.request,
+        "urlopen",
+        lambda _message, timeout: _JsonHttpResponse(
+            {
+                "methodResponses": [
+                    [
+                        "error",
+                        {
+                            "type": "invalidProperties",
+                            "description": "bad payload",
+                        },
+                        "create",
+                    ]
+                ]
+            }
+        ),
+    )
+    state = provisioning.DiagnosticState()
+    with pytest.raises(provisioning.Refused):
+        provisioning.HttpTransport(state).json(
+            f"{provisioning.LOCAL_URL}/jmap/",
+            "Bearer redacted",
+            payload={"methodCalls": [["x:ApiKey/set", {}, "create"]]},
+            endpoint_path="/jmap/",
+            jmap_method="x:ApiKey/set",
+            authentication_mechanism="oauth2-bearer-management-jmap",
+        )
+    assert state.error_type.startswith("server-side-validation-error/")
+    assert state.exception_class == "JmapMethodError"
+    assert state.description == "bad payload"
+
+
 def test_legacy_basic_api_account_401_regression(monkeypatch, capsys) -> None:
     body = json.dumps(
         {
@@ -431,16 +568,28 @@ def test_wrong_authenticated_principal_is_refused() -> None:
 
 
 class ProvisionTransport:
-    def __init__(self, *, duplicate=False, forbid_create=False):
+    def __init__(
+        self,
+        *,
+        duplicate=False,
+        forbid_create=False,
+        scope_permissions=None,
+    ):
         self.duplicate = duplicate
         self.forbid_create = forbid_create
+        self.scope_permissions = scope_permissions or [
+            "sysApiKeyCreate",
+            "sysApiKeyQuery",
+        ]
         self.destroyed = []
         self.create_calls = 0
+        self.calls = []
 
     def form(self, _url, **_kwargs):
         return {"access_token": "access-token"}
 
     def json(self, url, authorization=None, **kwargs):
+        self.calls.append((url, authorization, kwargs))
         if url.endswith("/api/auth"):
             return {"type": "authenticated", "clientCode": "code"}
         if url.endswith("/auth/userinfo"):
@@ -448,8 +597,11 @@ class ProvisionTransport:
                 "preferred_username": "admin@agents.aiat.local",
                 "email": "admin@agents.aiat.local",
             }
+        if url.endswith("/jmap/session"):
+            return {"apiUrl": "http://localhost:18080/jmap/"}
         if url.endswith("/api/account"):
-            return {"permissions": ["sysApiKeyCreate"]}
+            return {"permissions": self.scope_permissions}
+        assert url == f"{provisioning.LOCAL_URL}/jmap/"
         method, arguments, _call_id = kwargs["payload"]["methodCalls"][0]
         if method == "x:Domain/query":
             return _method_response(method, {"ids": ["domain-id"]})
@@ -548,6 +700,21 @@ def test_safe_creation_capability_and_protected_output(tmp_path: Path, monkeypat
     assert state.token_scope_contains_create == "PASS"
     assert state.api_key_create_capability == "PASS"
     assert state.mailbox_authentication == "PASS"
+    assert state.api_key_query == "PASS"
+    assert state.permanent_directory_principal == "PASS"
+    management_calls = [
+        call
+        for call in transport.calls
+        if isinstance(call[2].get("payload"), dict)
+        and call[2]["payload"].get("methodCalls")
+    ]
+    assert management_calls
+    assert all(call[0] == f"{provisioning.LOCAL_URL}/jmap/" for call in management_calls)
+    assert not any(call[0].endswith("/api") for call in management_calls)
+    for _url, _authorization, call in management_calls:
+        method, arguments, _call_id = call["payload"]["methodCalls"][0]
+        if method.startswith("x:ApiKey/"):
+            assert "accountId" not in arguments
 
 
 def test_forbidden_creation_removes_partial_output(tmp_path: Path, monkeypatch) -> None:
@@ -557,6 +724,17 @@ def test_forbidden_creation_removes_partial_output(tmp_path: Path, monkeypatch) 
         _provision(tmp_path, monkeypatch, transport)
     assert not output.exists()
     assert transport.create_calls == 1
+
+
+def test_missing_api_key_query_permission_removes_partial_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    transport = ProvisionTransport(scope_permissions=["sysApiKeyCreate"])
+    output = tmp_path / "resend-certification.env"
+    with pytest.raises(provisioning.Refused, match="sysApiKeyQuery"):
+        _provision(tmp_path, monkeypatch, transport)
+    assert not output.exists()
+    assert transport.create_calls == 0
 
 
 def test_duplicate_retry_is_refused_before_creation(tmp_path: Path, monkeypatch) -> None:

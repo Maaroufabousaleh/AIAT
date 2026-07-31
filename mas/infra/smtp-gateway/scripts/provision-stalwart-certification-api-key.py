@@ -19,6 +19,7 @@ from urllib import error, parse, request
 
 LOCAL_URL = "http://127.0.0.1:18080"
 GATEWAY_ACCOUNT = "gateway-test@agents.aiat.ca"
+PERMANENT_ADMINISTRATOR_ADDRESS = "admin@agents.aiat.local"
 OAUTH_CLIENT_ID = "stalwart-webui"
 OAUTH_REDIRECT_PATH = "/admin/oauth/callback"
 STALWART_CONTAINER = "mas-stalwart-1"
@@ -46,6 +47,12 @@ class DiagnosedRefused(Refused):
     pass
 
 
+class RecoveryAdministratorRefused(Refused):
+    """The authenticated principal is the non-directory recovery administrator."""
+
+    pass
+
+
 class DiagnosticState:
     def __init__(
         self,
@@ -54,11 +61,15 @@ class DiagnosticState:
         http_status: str = "not-reached",
         jmap_method: str = "not-reached",
         authentication_mechanism: str = "not-reached",
+        exception_class: str = "NONE",
         error_type: str = "not-reached",
         description: str = "request did not reach Stalwart",
         administrator_authentication: str = "NOT_ATTEMPTED",
         account_permission_persisted: str = "NOT_ATTEMPTED",
         token_scope_contains_create: str = "NOT_ATTEMPTED",
+        token_scope_contains_query: str = "NOT_ATTEMPTED",
+        api_key_query: str = "NOT_ATTEMPTED",
+        permanent_directory_principal: str = "NOT_ATTEMPTED",
         api_key_create_capability: str = "NOT_ATTEMPTED",
         mailbox_authentication: str = "NOT_ATTEMPTED",
         sensitive_values: list[str] | None = None,
@@ -67,14 +78,48 @@ class DiagnosticState:
         self.http_status = http_status
         self.jmap_method = jmap_method
         self.authentication_mechanism = authentication_mechanism
+        self.exception_class = exception_class
         self.error_type = error_type
         self.description = description
         self.administrator_authentication = administrator_authentication
         self.account_permission_persisted = account_permission_persisted
         self.token_scope_contains_create = token_scope_contains_create
+        self.token_scope_contains_query = token_scope_contains_query
+        self.api_key_query = api_key_query
+        self.permanent_directory_principal = permanent_directory_principal
         self.api_key_create_capability = api_key_create_capability
         self.mailbox_authentication = mailbox_authentication
         self.sensitive_values = sensitive_values or []
+        self.attempts: list[dict[str, str]] = []
+
+    def record_attempt(
+        self,
+        *,
+        endpoint_path: str,
+        authentication_mechanism: str,
+        http_status: str,
+        jmap_method: str,
+        error_type: str,
+        description: str,
+        exception_class: str = "NONE",
+    ) -> None:
+        item = {
+            "endpoint_path": endpoint_path,
+            "authentication_mechanism": authentication_mechanism,
+            "http_status": http_status,
+            "jmap_method": jmap_method,
+            "error_type": error_type,
+            "description": description,
+            "exception_class": exception_class,
+        }
+        self.attempts.append(item)
+        self.endpoint_path = endpoint_path
+        self.authentication_mechanism = authentication_mechanism
+        self.http_status = http_status
+        self.jmap_method = jmap_method
+        self.exception_class = exception_class
+        self.error_type = error_type
+        self.description = description
 
 
 SECRET_PATTERNS = (
@@ -150,19 +195,52 @@ def fail_with_diagnostic(
     error_type: str,
     description: Any,
     authentication: bool = False,
+    exception_class: str = "Refused",
 ) -> None:
     category = classify_error(error_type, authentication=authentication)
-    state.endpoint_path = endpoint_path
-    state.http_status = http_status
-    state.jmap_method = jmap_method
-    state.authentication_mechanism = authentication_mechanism
-    state.error_type = (
+    safe_error_type = (
         f"{category}/{sanitize_description(error_type, 64, state.sensitive_values)}"
     )
-    state.description = sanitize_description(
+    safe_description = sanitize_description(
         description, sensitive_values=state.sensitive_values
     )
+    state.record_attempt(
+        endpoint_path=endpoint_path,
+        http_status=http_status,
+        jmap_method=jmap_method,
+        authentication_mechanism=authentication_mechanism,
+        error_type=safe_error_type,
+        description=safe_description,
+        exception_class=exception_class,
+    )
     raise Refused("Stalwart rejected the local provisioning request")
+
+
+def fail_recovery_administrator_query(
+    state: DiagnosticState,
+    *,
+    endpoint_path: str,
+    jmap_method: str,
+    authentication_mechanism: str,
+    description: Any,
+) -> None:
+    safe_description = sanitize_description(
+        description,
+        sensitive_values=state.sensitive_values,
+    )
+    state.record_attempt(
+        endpoint_path=endpoint_path,
+        http_status="200",
+        jmap_method=jmap_method,
+        authentication_mechanism=authentication_mechanism,
+        error_type="recovery-administrator/account-not-found",
+        description=safe_description,
+        exception_class="JmapMethodError",
+    )
+    raise RecoveryAdministratorRefused(
+        "authenticated principal appears to be the recovery administrator; "
+        "use the permanent directory administrator account"
+    )
 
 
 class HttpTransport:
@@ -268,8 +346,9 @@ class HttpTransport:
                 error_type=str(error_type),
                 description=description,
                 authentication=authentication and exc.code in {401, 403},
+                exception_class=type(exc).__name__,
             )
-        except (error.URLError, TimeoutError) as exc:
+        except (error.URLError, TimeoutError, OSError) as exc:
             fail_with_diagnostic(
                 self.diagnostic,
                 endpoint_path=endpoint_path,
@@ -277,10 +356,11 @@ class HttpTransport:
                 jmap_method=jmap_method,
                 authentication_mechanism=authentication_mechanism,
                 error_type="transportError",
-                description=getattr(exc, "reason", None) or "local endpoint unavailable",
-                authentication=authentication,
+                description="request did not reach Stalwart",
+                authentication=False,
+                exception_class=type(exc).__name__,
             )
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             fail_with_diagnostic(
                 self.diagnostic,
                 endpoint_path=endpoint_path,
@@ -289,6 +369,7 @@ class HttpTransport:
                 authentication_mechanism=authentication_mechanism,
                 error_type="notJson",
                 description="Stalwart returned malformed JSON",
+                exception_class=type(exc).__name__,
             )
         if not isinstance(value, dict):
             fail_with_diagnostic(
@@ -299,9 +380,25 @@ class HttpTransport:
                 authentication_mechanism=authentication_mechanism,
                 error_type="invalidResponse",
                 description="Stalwart returned a non-object response",
+                exception_class="ResponseValidationError",
             )
         failure = response_error(value)
         if failure:
+            if (
+                jmap_method == "x:ApiKey/query"
+                and failure[0].lower() == "forbidden"
+                and "account not found" in failure[1].lower()
+            ):
+                fail_recovery_administrator_query(
+                    self.diagnostic,
+                    endpoint_path=endpoint_path,
+                    jmap_method=jmap_method,
+                    authentication_mechanism=authentication_mechanism,
+                    description=(
+                        "Account not found; supplied credential appears to be the "
+                        "recovery administrator"
+                    ),
+                )
             fail_with_diagnostic(
                 self.diagnostic,
                 endpoint_path=endpoint_path,
@@ -310,7 +407,17 @@ class HttpTransport:
                 authentication_mechanism=authentication_mechanism,
                 error_type=failure[0],
                 description=failure[1],
+                exception_class="JmapMethodError",
             )
+        self.diagnostic.record_attempt(
+            endpoint_path=endpoint_path,
+            http_status="200",
+            jmap_method=jmap_method,
+            authentication_mechanism=authentication_mechanism,
+            error_type="none",
+            description="request succeeded",
+            exception_class="NONE",
+        )
         return value
 
 
@@ -349,6 +456,38 @@ def token_scope_contains_create(
     return present
 
 
+def token_scope_contains_query(
+    account: dict[str, Any], state: DiagnosticState | None = None
+) -> bool:
+    permissions = account.get("permissions")
+    present = isinstance(permissions, list) and "sysApiKeyQuery" in permissions
+    if state is not None:
+        state.token_scope_contains_query = "PASS" if present else "FAIL"
+    return present
+
+
+def require_permanent_directory_principal(
+    administrator_address: str,
+    diagnostic: DiagnosticState,
+) -> None:
+    if administrator_address == PERMANENT_ADMINISTRATOR_ADDRESS:
+        diagnostic.permanent_directory_principal = "PASS"
+        return
+    diagnostic.permanent_directory_principal = "FAIL"
+    fail_with_diagnostic(
+        diagnostic,
+        endpoint_path="/jmap/",
+        http_status="200",
+        jmap_method="x:ApiKey/query",
+        authentication_mechanism="oauth2-bearer-management-jmap",
+        error_type="recovery-administrator/permanentDirectoryPrincipalRequired",
+        description=(
+            "API-key ownership requires the permanent directory administrator "
+            "account; the recovery administrator must not be used"
+        ),
+    )
+
+
 def method_result(value: dict[str, Any], method_name: str) -> dict[str, Any]:
     for item in value.get("methodResponses") or []:
         if (
@@ -359,6 +498,77 @@ def method_result(value: dict[str, Any], method_name: str) -> dict[str, Any]:
         ):
             return item[1]
     raise Refused(f"Stalwart response did not include {method_name}")
+
+
+def endpoint_path(url: str) -> str:
+    parts = parse.urlsplit(url)
+    return parts.path or "/"
+
+
+def resolve_jmap_api_url(base_url: str, advertised_url: str) -> str:
+    """Keep the advertised JMAP path/query while binding it to base_url."""
+    base = parse.urlsplit(base_url)
+    advertised = parse.urlsplit(advertised_url)
+    if (
+        base.scheme not in {"http", "https"}
+        or not base.hostname
+        or base.username is not None
+        or base.password is not None
+        or advertised.scheme not in {"http", "https"}
+        or not advertised.hostname
+        or advertised.username is not None
+        or advertised.password is not None
+        or not advertised.path.startswith("/")
+        or advertised.fragment
+    ):
+        raise ValueError("JMAP session apiUrl is not a valid absolute URL")
+    # urlsplit preserves the advertised path exactly, including a trailing
+    # slash and query string, while the configured base supplies authority.
+    return parse.urlunsplit(
+        (base.scheme, base.netloc, advertised.path, advertised.query, "")
+    )
+
+
+def discover_jmap_api_url(
+    *,
+    transport: HttpTransport,
+    base_url: str,
+    authorization: str,
+    diagnostic: DiagnosticState,
+) -> str:
+    response = transport.json(
+        f"{base_url}/jmap/session",
+        authorization,
+        endpoint_path="/jmap/session",
+        jmap_method="GET /jmap/session",
+        authentication=True,
+        authentication_mechanism="oauth2-bearer-jmap-session",
+    )
+    advertised = response.get("apiUrl")
+    if not isinstance(advertised, str) or not advertised:
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/jmap/session",
+            http_status="200",
+            jmap_method="GET /jmap/session",
+            authentication_mechanism="oauth2-bearer-jmap-session",
+            error_type="malformedJmapSession",
+            description="Stalwart JMAP session did not contain a valid apiUrl",
+            exception_class="SessionValidationError",
+        )
+    try:
+        return resolve_jmap_api_url(base_url, advertised)
+    except ValueError as exc:
+        fail_with_diagnostic(
+            diagnostic,
+            endpoint_path="/jmap/session",
+            http_status="200",
+            jmap_method="GET /jmap/session",
+            authentication_mechanism="oauth2-bearer-jmap-session",
+            error_type="malformedJmapSession",
+            description="Stalwart JMAP session apiUrl was invalid",
+            exception_class=type(exc).__name__,
+        )
 
 
 def _enabled_permission(permissions: Any, permission: str) -> bool:
@@ -385,7 +595,7 @@ def _enabled_permission(permissions: Any, permission: str) -> bool:
 def prove_persisted_create_permission(
     *,
     transport: HttpTransport,
-    base_url: str,
+    jmap_url: str,
     authorization: str,
     administrator_address: str,
     diagnostic: DiagnosticState,
@@ -394,8 +604,9 @@ def prove_persisted_create_permission(
     if not separator or not local_part or not domain:
         raise Refused("administrator address must contain a local part and domain")
     diagnostic.account_permission_persisted = "FAIL"
+    jmap_endpoint_path = endpoint_path(jmap_url)
     domain_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -407,7 +618,7 @@ def prove_persisted_create_permission(
                 ]
             ],
         },
-        endpoint_path="/api",
+        endpoint_path=jmap_endpoint_path,
         jmap_method="x:Domain/query",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
@@ -415,7 +626,7 @@ def prove_persisted_create_permission(
     if len(domain_ids) != 1:
         raise Refused("administrator domain did not resolve to exactly one persisted object")
     query_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -430,7 +641,7 @@ def prove_persisted_create_permission(
                 ]
             ],
         },
-        endpoint_path="/api",
+        endpoint_path=jmap_endpoint_path,
         jmap_method="x:Account/query",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
@@ -438,7 +649,7 @@ def prove_persisted_create_permission(
     if len(account_ids) != 1:
         raise Refused("administrator address did not resolve to exactly one persisted account")
     get_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -450,7 +661,7 @@ def prove_persisted_create_permission(
                 ]
             ],
         },
-        endpoint_path="/api",
+        endpoint_path=jmap_endpoint_path,
         jmap_method="x:Account/get",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
@@ -463,6 +674,7 @@ def prove_persisted_create_permission(
         diagnostic.description = "persisted account object does not enable sysApiKeyCreate"
         raise Refused("persisted administrator account lacks sysApiKeyCreate")
     diagnostic.account_permission_persisted = "PASS"
+    diagnostic.permanent_directory_principal = "PASS"
 
 
 def inspect_running_image(container_name: str = STALWART_CONTAINER) -> str:
@@ -516,7 +728,7 @@ def authenticate_administrator(
     administrator_password: str,
     diagnostic: DiagnosticState,
 ) -> str:
-    """Authenticate through the v0.16.7 WebUI OAuth code/PKCE flow."""
+    """Authenticate through the pinned v0.16.15 WebUI OAuth code/PKCE flow."""
 
     verifier = _base64url(secrets.token_bytes(48))
     challenge = _base64url(hashlib.sha256(verifier.encode("ascii")).digest())
@@ -628,26 +840,29 @@ def extract_created_credential(response: dict[str, Any]) -> tuple[str, str]:
 def refuse_duplicate_key(
     *,
     transport: HttpTransport,
-    base_url: str,
+    jmap_url: str,
     authorization: str,
     diagnostic: DiagnosticState,
 ) -> None:
+    jmap_endpoint_path = endpoint_path(jmap_url)
+    diagnostic.api_key_query = "FAIL"
     query_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
             "methodCalls": [["x:ApiKey/query", {"limit": 100}, "existing-api-keys"]],
         },
-        endpoint_path="/api",
+        endpoint_path=jmap_endpoint_path,
         jmap_method="x:ApiKey/query",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
     ids = method_result(query_response, "x:ApiKey/query").get("ids") or []
+    diagnostic.api_key_query = "PASS"
     if not ids:
         return
     get_response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -659,7 +874,7 @@ def refuse_duplicate_key(
                 ]
             ],
         },
-        endpoint_path="/api",
+        endpoint_path=jmap_endpoint_path,
         jmap_method="x:ApiKey/get",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
@@ -668,14 +883,18 @@ def refuse_duplicate_key(
         isinstance(value, dict) and value.get("description") == KEY_DESCRIPTION
         for value in existing
     ):
-        diagnostic.endpoint_path = "/api"
-        diagnostic.http_status = "200"
-        diagnostic.jmap_method = "x:ApiKey/query+x:ApiKey/get"
-        diagnostic.authentication_mechanism = "oauth2-bearer-management-jmap"
-        diagnostic.error_type = "duplicate-api-key/existingCredential"
-        diagnostic.description = (
+        description = (
             "an AIAT Resend certification API key already exists; revoke it explicitly "
             "before retrying"
+        )
+        diagnostic.record_attempt(
+            endpoint_path=jmap_endpoint_path,
+            http_status="200",
+            jmap_method="x:ApiKey/query+x:ApiKey/get",
+            authentication_mechanism="oauth2-bearer-management-jmap",
+            error_type="duplicate-api-key/existingCredential",
+            description=description,
+            exception_class="DuplicateCredentialError",
         )
         raise Refused("duplicate AIAT Resend certification API key refused")
 
@@ -683,12 +902,12 @@ def refuse_duplicate_key(
 def destroy_created_key(
     *,
     transport: HttpTransport,
-    base_url: str,
+    jmap_url: str,
     authorization: str,
     credential_id: str,
 ) -> None:
     response = transport.json(
-        f"{base_url}/api",
+        jmap_url,
         authorization,
         payload={
             "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
@@ -700,7 +919,7 @@ def destroy_created_key(
                 ]
             ],
         },
-        endpoint_path="/api",
+        endpoint_path=endpoint_path(jmap_url),
         jmap_method="x:ApiKey/set cleanup",
         authentication_mechanism="oauth2-bearer-management-jmap",
     )
@@ -743,13 +962,6 @@ def provision(
             diagnostic=diagnostic,
         )
         admin_authorization = f"Bearer {access_token}"
-        prove_persisted_create_permission(
-            transport=transport,
-            base_url=base_url,
-            authorization=admin_authorization,
-            administrator_address=administrator_address,
-            diagnostic=diagnostic,
-        )
         account = transport.json(
             f"{base_url}/api/account",
             admin_authorization,
@@ -765,13 +977,37 @@ def provision(
             diagnostic.authentication_mechanism = "oauth2-bearer"
             diagnostic.error_type = "token-scope-missing-sysApiKeyCreate/missingPermission"
             diagnostic.description = (
-                "persisted permission is present but this Bearer token cannot authorize creation"
+                "authenticated account lacks sysApiKeyCreate"
             )
             raise Refused("OAuth Bearer token lacks sysApiKeyCreate")
-        refuse_duplicate_key(
+        if not token_scope_contains_query(account, diagnostic):
+            diagnostic.endpoint_path = "/api/account"
+            diagnostic.http_status = "200"
+            diagnostic.jmap_method = "GET /api/account"
+            diagnostic.authentication_mechanism = "oauth2-bearer"
+            diagnostic.error_type = "token-scope-missing-sysApiKeyQuery/missingPermission"
+            diagnostic.description = (
+                "authenticated account lacks sysApiKeyQuery"
+            )
+            raise Refused("OAuth Bearer token lacks sysApiKeyQuery")
+        jmap_url = discover_jmap_api_url(
             transport=transport,
             base_url=base_url,
             authorization=admin_authorization,
+            diagnostic=diagnostic,
+        )
+        refuse_duplicate_key(
+            transport=transport,
+            jmap_url=jmap_url,
+            authorization=admin_authorization,
+            diagnostic=diagnostic,
+        )
+        require_permanent_directory_principal(administrator_address, diagnostic)
+        prove_persisted_create_permission(
+            transport=transport,
+            jmap_url=jmap_url,
+            authorization=admin_authorization,
+            administrator_address=administrator_address,
             diagnostic=diagnostic,
         )
         mailbox_basic = base64.b64encode(
@@ -792,10 +1028,10 @@ def provision(
         diagnostic.mailbox_authentication = "PASS"
         diagnostic.api_key_create_capability = "FAIL"
         response = transport.json(
-            f"{base_url}/api",
+            jmap_url,
             admin_authorization,
             payload=api_key_payload(expires_at),
-            endpoint_path="/api",
+            endpoint_path=endpoint_path(jmap_url),
             jmap_method="x:ApiKey/set",
             authentication_mechanism="oauth2-bearer-management-jmap",
         )
@@ -813,7 +1049,7 @@ def provision(
             diagnostic.api_key_create_capability = "FAIL"
             destroy_created_key(
                 transport=transport,
-                base_url=base_url,
+                jmap_url=jmap_url,
                 authorization=admin_authorization,
                 credential_id=credential_id,
             )
@@ -848,6 +1084,7 @@ def print_diagnostic(state: DiagnosticState) -> None:
     print(f"AUTHENTICATION_MECHANISM={state.authentication_mechanism}", file=sys.stderr)
     print(f"HTTP_STATUS={state.http_status}", file=sys.stderr)
     print(f"JMAP_METHOD={state.jmap_method}", file=sys.stderr)
+    print(f"EXCEPTION_CLASS={state.exception_class}", file=sys.stderr)
     print(f"JMAP_ERROR_TYPE={state.error_type}", file=sys.stderr)
     print(f"DESCRIPTION={state.description}", file=sys.stderr)
     print(
@@ -866,6 +1103,17 @@ def print_diagnostic(state: DiagnosticState) -> None:
         file=sys.stderr,
     )
     print(
+        "TOKEN_SCOPE_CONTAINS_SYS_API_KEY_QUERY="
+        + state.token_scope_contains_query,
+        file=sys.stderr,
+    )
+    print("API_KEY_QUERY=" + state.api_key_query, file=sys.stderr)
+    print(
+        "PERMANENT_DIRECTORY_PRINCIPAL="
+        + state.permanent_directory_principal,
+        file=sys.stderr,
+    )
+    print(
         "API_KEY_CREATE_CAPABILITY="
         + state.api_key_create_capability,
         file=sys.stderr,
@@ -875,6 +1123,19 @@ def print_diagnostic(state: DiagnosticState) -> None:
         + state.mailbox_authentication,
         file=sys.stderr,
     )
+    for index, attempt in enumerate(state.attempts, start=1):
+        prefix = f"ATTEMPT_{index}_"
+        print(prefix + "ENDPOINT_PATH=" + attempt["endpoint_path"], file=sys.stderr)
+        print(
+            prefix + "AUTHENTICATION_MECHANISM="
+            + attempt["authentication_mechanism"],
+            file=sys.stderr,
+        )
+        print(prefix + "HTTP_STATUS=" + attempt["http_status"], file=sys.stderr)
+        print(prefix + "JMAP_METHOD=" + attempt["jmap_method"], file=sys.stderr)
+        print(prefix + "EXCEPTION_CLASS=" + attempt["exception_class"], file=sys.stderr)
+        print(prefix + "JMAP_ERROR_TYPE=" + attempt["error_type"], file=sys.stderr)
+        print(prefix + "DESCRIPTION=" + attempt["description"], file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -893,8 +1154,9 @@ def main(argv: list[str] | None = None) -> int:
             raise DiagnosedRefused("diagnostic emitted") from None
         raise
     admin_name = args.administrator_address or input(
-        "Existing Stalwart administrator address: "
-    ).strip()
+        "Permanent Stalwart administrator address "
+        f"[{PERMANENT_ADMINISTRATOR_ADDRESS}]: "
+    ).strip() or PERMANENT_ADMINISTRATOR_ADDRESS
     admin_password = getpass.getpass("Existing Stalwart administrator password: ")
     app_password = getpass.getpass(
         f"Existing application password for {GATEWAY_ACCOUNT}: "
