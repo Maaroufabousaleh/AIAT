@@ -349,7 +349,11 @@ def validate_live(
         jmap_url,
         mail_auth,
         payload={
-            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"],
+            "using": [
+                "urn:ietf:params:jmap:core",
+                "urn:ietf:params:jmap:mail",
+                "urn:ietf:params:jmap:submission",
+            ],
             "methodCalls": [
                 ["Mailbox/get", {"accountId": account_id}, "mailboxes"],
                 ["Identity/get", {"accountId": account_id}, "identities"],

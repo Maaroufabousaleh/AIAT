@@ -118,6 +118,58 @@ def test_valid_least_privilege_credentials_pass() -> None:
         f"{validation.EXPECTED_URL}/jmap/",
         f"{validation.EXPECTED_URL}/jmap/",
     ]
+    mailbox_call = next(
+        kwargs["payload"]
+        for (_url, _authorization), kwargs in transport.calls
+        if kwargs.get("jmap_method") == "Mailbox/get+Identity/get"
+    )
+    assert mailbox_call["using"] == [
+        "urn:ietf:params:jmap:core",
+        "urn:ietf:params:jmap:mail",
+        "urn:ietf:params:jmap:submission",
+    ]
+
+
+def test_missing_submission_capability_reproduces_live_unknown_method(
+    monkeypatch,
+) -> None:
+    class JsonResponse:
+        def read(self, _limit=-1):
+            return (
+                b'{"methodResponses":[["error",{"type":"unknownMethod",'
+                b'"description":"Method Identity/get requires capability '
+                b'urn:ietf:params:jmap:submission which is not present in the '
+                b'\\"using\\" property"},"identities"]]}'
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(validation.request, "urlopen", lambda _message, timeout: JsonResponse())
+    with pytest.raises(validation.Refused) as failure:
+        validation.HttpTransport().json(
+            f"{validation.EXPECTED_URL}/jmap/",
+            "Bearer redacted",
+            payload={
+                "using": [
+                    "urn:ietf:params:jmap:core",
+                    "urn:ietf:params:jmap:mail",
+                ],
+                "methodCalls": [
+                    ["Mailbox/get", {"accountId": "u123"}, "mailboxes"],
+                    ["Identity/get", {"accountId": "u123"}, "identities"],
+                ],
+            },
+            jmap_method="Mailbox/get+Identity/get",
+        )
+    message = str(failure.value)
+    assert "HTTP_STATUS=200" in message
+    assert "JMAP_METHOD=Mailbox/get+Identity/get" in message
+    assert "JMAP_ERROR_TYPE=unknownMethod" in message
+    assert "request failed" in message
 
 
 def test_session_authority_is_normalized_and_path_query_preserved() -> None:
