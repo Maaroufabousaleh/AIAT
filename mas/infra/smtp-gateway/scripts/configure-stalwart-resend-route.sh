@@ -11,7 +11,7 @@ relay_secret_file=""
 container=""
 backup=""
 admin_url="http://127.0.0.1:18080/api"
-policy="$base_dir/../../mail-edge/stalwart-relay-policy.json"
+policy="$base_dir/../mail-edge/stalwart-relay-policy.json"
 
 usage() {
   echo "usage: $0 backup|apply|verify|rollback PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --backup FILE [--admin-url http://127.0.0.1:18080/api --policy FILE]" >&2
@@ -97,7 +97,7 @@ destroy_remote_routes() {
 }
 verify_route() {
   STALWART_ADMIN_URL="$admin_url" STALWART_API_KEY="$stalwart_api_key" STALWART_ADMIN_INSECURE_TLS=false \
-    sh "$base_dir/../../mail-edge/scripts/verify-stalwart-relay.sh" >/dev/null 2>&1 || fail "exact environment-backed resend-relay verification failed"
+    sh "$base_dir/../mail-edge/scripts/verify-stalwart-relay.sh" >/dev/null 2>&1 || fail "exact environment-backed resend-relay verification failed"
 }
 
 case "$action" in

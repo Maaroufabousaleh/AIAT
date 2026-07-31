@@ -118,7 +118,7 @@ printf '%s' "$mail_response" | jq -e --arg sender "$sender" '
 ' >/dev/null || fail "production sender account does not exist in the local Stalwart instance"
 
 if ! STALWART_ADMIN_URL="$admin_url" STALWART_API_KEY="$stalwart_api_key" STALWART_ADMIN_INSECURE_TLS=false \
-  sh "$base_dir/../../mail-edge/scripts/verify-stalwart-relay.sh" >/dev/null 2>&1; then
+  sh "$base_dir/../mail-edge/scripts/verify-stalwart-relay.sh" >/dev/null 2>&1; then
   fail "management credential or exact environment-backed resend-relay configuration is not ready"
 fi
 
