@@ -31,14 +31,19 @@ def test_payload_creates_standalone_api_key_object() -> None:
     assert "allowedIps" not in created
     assert created["permissions"] == {
         "@type": "Replace",
-        "permissions": provisioning.REQUIRED_KEY_PERMISSIONS,
+        "permissions": {
+            permission: True for permission in provisioning.REQUIRED_KEY_PERMISSIONS
+        },
     }
     assert created["description"]
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created["expiresAt"]
     )
-    assert created["permissions"]["permissions"]
-    assert all(isinstance(value, str) and value for value in created["permissions"]["permissions"])
+    assert (
+        list(created["permissions"]["permissions"])
+        == provisioning.REQUIRED_KEY_PERMISSIONS
+    )
+    assert all(value is True for value in created["permissions"]["permissions"].values())
     for prohibited in (
         "accountId",
         "name",
@@ -67,13 +72,13 @@ def test_payload_is_exact_schema_safe_create_envelope() -> None:
                             "expiresAt": "2026-08-01T15:00:00Z",
                             "permissions": {
                                 "@type": "Replace",
-                                "permissions": [
-                                    "authenticate",
-                                    "sysAccountQuery",
-                                    "sysDomainQuery",
-                                    "sysMtaOutboundStrategyGet",
-                                    "sysMtaRouteGet",
-                                ],
+                                "permissions": {
+                                    "authenticate": True,
+                                    "sysAccountQuery": True,
+                                    "sysDomainQuery": True,
+                                    "sysMtaOutboundStrategyGet": True,
+                                    "sysMtaRouteGet": True,
+                                },
                             },
                         }
                     }
@@ -484,7 +489,7 @@ def test_live_invalid_patch_records_safe_create_fields_and_properties(
                         {
                             "type": "invalidPatch",
                             "description": "Invalid value for object property",
-                            "properties": ["allowedIps"],
+                            "properties": ["permissions_permissions"],
                         },
                         "create-certification-api-key",
                     ]
@@ -510,7 +515,7 @@ def test_live_invalid_patch_records_safe_create_fields_and_properties(
         "API_KEY_CREATE_FIELD_TYPES=description:string,expiresAt:string,permissions:object"
         in output
     )
-    assert "API_KEY_CREATE_INVALID_PROPERTIES=allowedIps" in output
+    assert "API_KEY_CREATE_INVALID_PROPERTIES=permissions_permissions" in output
     assert "Invalid value for object property" in output
     assert "API_aaaaaaaaaaaaaaaaaaaaaaaa" not in output
     assert "Bearer redacted" not in output

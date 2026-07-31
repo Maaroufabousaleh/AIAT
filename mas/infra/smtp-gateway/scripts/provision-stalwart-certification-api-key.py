@@ -509,7 +509,10 @@ def api_key_permissions(
     selected = list(REQUIRED_KEY_PERMISSIONS if permissions is None else permissions)
     if not selected or any(not isinstance(value, str) or not value for value in selected):
         raise ValueError("a Replace API key requires non-empty permission names")
-    return {"@type": "Replace", "permissions": selected}
+    return {
+        "@type": "Replace",
+        "permissions": {permission: True for permission in selected},
+    }
 
 
 def api_key_payload(
