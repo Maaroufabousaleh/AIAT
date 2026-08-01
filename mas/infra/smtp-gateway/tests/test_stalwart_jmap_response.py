@@ -173,6 +173,45 @@ def test_get_requires_a_list_and_no_unknown_response_shape() -> None:
         )
 
 
+def test_query_response_shape_is_strictly_validated() -> None:
+    request_body = {"methodCalls": [["x:ApiKey/query", {"limit": 100}, "query"]]}
+    validator.validate_jmap_response(
+        request_body,
+        {
+            "methodResponses": [
+                [
+                    "x:ApiKey/query",
+                    {
+                        "queryState": "state",
+                        "canCalculateChanges": False,
+                        "position": 0,
+                        "ids": [],
+                    },
+                    "query",
+                ]
+            ],
+            "sessionState": "session-state",
+        },
+    )
+    malformed = {
+        "methodResponses": [
+            [
+                "x:ApiKey/query",
+                {
+                    "queryState": "state",
+                    "canCalculateChanges": "false",
+                    "position": 0,
+                    "ids": [],
+                },
+                "query",
+            ]
+        ],
+        "sessionState": "session-state",
+    }
+    with pytest.raises(validator.JmapResponseError):
+        validator.validate_jmap_response(request_body, malformed)
+
+
 def test_validator_diagnostics_contain_only_safe_fields() -> None:
     request_body = _request(arguments={"create": {"relay": {}}})
     with pytest.raises(validator.JmapResponseError) as exc_info:

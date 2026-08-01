@@ -255,8 +255,33 @@ def _write_inputs(tmp_path: Path, server: RouteServer) -> tuple[Path, Path, Path
     relay.write_text("RESEND_API_KEY=" + ("R" * 32) + "\n", encoding="utf-8")
     relay.chmod(0o600)
     credentials = tmp_path / "credentials.env"
-    credentials.write_text("STALWART_API_KEY=" + ("M" * 24) + "\n", encoding="utf-8")
+    credentials.write_text("STALWART_API_KEY=API_" + ("M" * 24) + "\n", encoding="utf-8")
     credentials.chmod(0o600)
+    metadata = credentials.with_name("credentials.meta")
+    metadata.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "purpose": "stalwart-route-lifecycle",
+                "credentialId": "route-key-test",
+                "owner": "admin@agents.aiat.local",
+                "description": "AIAT Stalwart route lifecycle temporary",
+                "expiresAt": "2026-08-01T12:00:00Z",
+                "permissions": [
+                    "authenticate",
+                    "sysMtaRouteGet",
+                    "sysMtaRouteCreate",
+                    "sysMtaRouteUpdate",
+                    "sysMtaRouteDestroy",
+                    "sysMtaOutboundStrategyGet",
+                    "sysMtaOutboundStrategyUpdate",
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    metadata.chmod(0o600)
     backup = tmp_path / "route-backup.json"
     backup.write_text(json.dumps(server.backup()), encoding="utf-8")
     backup.chmod(0o600)
@@ -345,6 +370,19 @@ def test_apply_is_transactional_and_reaches_exact_v01615_policy(tmp_path: Path) 
         assert "Local Stalwart Resend-only route verifies" in verify_result.stdout
         assert all(path == "/jmap/session" or path == "/jmap/" for path in server.paths)
         _assert_safe(result, "R" * 32, "M" * 24)
+    finally:
+        server.stop()
+
+
+def test_read_only_credential_is_rejected_before_apply_jmap_calls(tmp_path: Path) -> None:
+    server = RouteServer()
+    try:
+        profile, credentials, relay, backup, env_values = _write_inputs(tmp_path, server)
+        credentials.with_name("credentials.meta").unlink()
+        result = _run("apply", profile, credentials, relay, backup, server, env_values)
+        assert result.returncode != 0
+        assert "temporary route-lifecycle credential metadata" in result.stderr
+        assert server.paths == []
     finally:
         server.stop()
 

@@ -216,15 +216,43 @@ def _write_docker_stub(directory: Path, relay_file: Path) -> None:
     (directory / "docker").chmod(0o755)
 
 
+def _write_route_metadata(secret_file: Path) -> None:
+    secret_file.with_name(secret_file.name.removesuffix(".env") + ".meta").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "purpose": "stalwart-route-lifecycle",
+                "credentialId": "route-key-test",
+                "owner": "admin@agents.aiat.local",
+                "description": "AIAT Stalwart route lifecycle temporary",
+                "expiresAt": "2026-08-01T12:00:00Z",
+                "permissions": [
+                    "authenticate",
+                    "sysMtaRouteGet",
+                    "sysMtaRouteCreate",
+                    "sysMtaRouteUpdate",
+                    "sysMtaRouteDestroy",
+                    "sysMtaOutboundStrategyGet",
+                    "sysMtaOutboundStrategyUpdate",
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    secret_file.with_name(secret_file.name.removesuffix(".env") + ".meta").chmod(0o600)
+
+
 def test_route_backup_uses_discovered_jmap_and_writes_no_api_target(tmp_path: Path) -> None:
     server, thread, paths = _start_server()
     relay_file = tmp_path / "relay.env"
     relay_file.write_text("RESEND_API_KEY=" + ("R" * 32) + "\n", encoding="utf-8")
     relay_file.chmod(0o600)
-    management_key = "M" * 24
+    management_key = "API_" + ("M" * 24)
     secret_file = tmp_path / "cert.env"
     secret_file.write_text(f"STALWART_API_KEY={management_key}\n", encoding="utf-8")
     secret_file.chmod(0o600)
+    _write_route_metadata(secret_file)
     profile = tmp_path / "profile.env"
     _write_profile(profile)
     bin_dir = tmp_path / "bin"
@@ -274,10 +302,11 @@ def test_route_backup_failure_leaves_no_partial_backup(tmp_path: Path) -> None:
     relay_file = tmp_path / "relay.env"
     relay_file.write_text("RESEND_API_KEY=" + ("R" * 32) + "\n", encoding="utf-8")
     relay_file.chmod(0o600)
-    management_key = "M" * 24
+    management_key = "API_" + ("M" * 24)
     secret_file = tmp_path / "cert.env"
     secret_file.write_text(f"STALWART_API_KEY={management_key}\n", encoding="utf-8")
     secret_file.chmod(0o600)
+    _write_route_metadata(secret_file)
     profile = tmp_path / "profile.env"
     _write_profile(profile)
     bin_dir = tmp_path / "bin"
@@ -325,10 +354,11 @@ def test_route_apply_requires_a_valid_backup_before_any_jmap_mutation(tmp_path: 
     relay_file = tmp_path / "relay.env"
     relay_file.write_text("RESEND_API_KEY=" + ("R" * 32) + "\n", encoding="utf-8")
     relay_file.chmod(0o600)
-    management_key = "M" * 24
+    management_key = "API_" + ("M" * 24)
     secret_file = tmp_path / "cert.env"
     secret_file.write_text(f"STALWART_API_KEY={management_key}\n", encoding="utf-8")
     secret_file.chmod(0o600)
+    _write_route_metadata(secret_file)
     profile = tmp_path / "profile.env"
     _write_profile(profile)
     bin_dir = tmp_path / "bin"
@@ -375,10 +405,11 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
     relay_file = tmp_path / "relay.env"
     relay_file.write_text("RESEND_API_KEY=" + ("R" * 32) + "\n", encoding="utf-8")
     relay_file.chmod(0o600)
-    management_key = "M" * 24
+    management_key = "API_" + ("M" * 24)
     secret_file = tmp_path / "cert.env"
     secret_file.write_text(f"STALWART_API_KEY={management_key}\n", encoding="utf-8")
     secret_file.chmod(0o600)
+    _write_route_metadata(secret_file)
     profile = tmp_path / "profile.env"
     _write_profile(profile)
     bin_dir = tmp_path / "bin"

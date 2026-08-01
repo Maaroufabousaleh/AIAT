@@ -14,9 +14,11 @@ admin_url="http://127.0.0.1:18080"
 policy="$base_dir/../mail-edge/stalwart-relay-policy.json"
 jmap_helper="$base_dir/scripts/stalwart_jmap_endpoint.py"
 response_validator="$base_dir/scripts/stalwart_jmap_response.py"
+route_credential_validator="$base_dir/scripts/validate-stalwart-route-lifecycle-credentials.py"
+route_metadata_file=""
 
 usage() {
-  echo "usage: $0 backup|apply|verify|rollback|inspect PROFILE --secret-file FILE [--relay-secret-file FILE] --stalwart-container NAME --backup FILE [--admin-url http://127.0.0.1:18080 --policy FILE]" >&2
+  echo "usage: $0 backup|apply|verify|rollback|inspect PROFILE --secret-file FILE [--route-metadata-file FILE --relay-secret-file FILE] --stalwart-container NAME --backup FILE [--admin-url http://127.0.0.1:18080 --policy FILE]" >&2
   exit 2
 }
 fail() { echo "Stalwart Resend route $action refused: $1" >&2; exit 1; }
@@ -27,6 +29,7 @@ shift 2
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --secret-file) [ "$#" -ge 2 ] || usage; secret_file="$2"; shift 2 ;;
+    --route-metadata-file) [ "$#" -ge 2 ] || usage; route_metadata_file="$2"; shift 2 ;;
     --relay-secret-file) [ "$#" -ge 2 ] || usage; relay_secret_file="$2"; shift 2 ;;
     --stalwart-container) [ "$#" -ge 2 ] || usage; container="$2"; shift 2 ;;
     --backup) [ "$#" -ge 2 ] || usage; backup="$2"; shift 2 ;;
@@ -51,6 +54,13 @@ require_value OUTBOUND_RELAY_HOST smtp.resend.com
 require_value OUTBOUND_RELAY_PORT 465
 require_value OUTBOUND_RELAY_TLS_MODE implicit
 [ -n "$secret_file" ] && [ -f "$secret_file" ] || fail "protected secret file is required"
+if [ "$action" = "apply" ] || [ "$action" = "rollback" ]; then
+  route_metadata_file="${route_metadata_file:-${secret_file%.env}.meta}"
+  [ -f "$route_metadata_file" ] || fail "temporary route-lifecycle credential metadata is required for $action"
+  python3 "$route_credential_validator" --secret-file "$secret_file" \
+    --metadata-file "$route_metadata_file" --local-only >/dev/null 2>&1 || \
+    fail "route-lifecycle credential is not the approved least-privilege profile"
+fi
 relay_secret_file="${relay_secret_file:-$secret_file}"
 [ -f "$relay_secret_file" ] || fail "protected relay secret file is required"
 [ -n "$container" ] || fail "--stalwart-container is required"

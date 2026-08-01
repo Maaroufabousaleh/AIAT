@@ -544,6 +544,72 @@ def validate_jmap_response(
                 http_status=http_status,
                 endpoint_path=endpoint_path,
             )
+        elif method.endswith("/query"):
+            allowed = {
+                "accountId",
+                "queryState",
+                "canCalculateChanges",
+                "position",
+                "ids",
+                "total",
+                "limit",
+                "collapseProperties",
+                "notFound",
+            }
+            unknown = set(arguments) - allowed
+            if unknown:
+                _raise(
+                    request_method=method,
+                    tag=expected_call["tag"],
+                    action=action,
+                    description="JMAP query response contains unknown fields",
+                    invalid_properties=",".join(
+                        sorted(_safe_identifier(item) for item in unknown)
+                    ),
+                    http_status=http_status,
+                    endpoint_path=endpoint_path,
+                )
+            if (
+                not isinstance(arguments.get("queryState"), str)
+                or not arguments["queryState"]
+                or not isinstance(arguments.get("canCalculateChanges"), bool)
+                or not isinstance(arguments.get("position"), int)
+                or isinstance(arguments.get("position"), bool)
+                or not isinstance(arguments.get("ids"), list)
+                or any(not isinstance(identifier, str) for identifier in arguments["ids"])
+                or (
+                    "total" in arguments
+                    and (
+                        not isinstance(arguments["total"], int)
+                        or isinstance(arguments["total"], bool)
+                    )
+                )
+                or (
+                    "limit" in arguments
+                    and (
+                        not isinstance(arguments["limit"], int)
+                        or isinstance(arguments["limit"], bool)
+                    )
+                )
+                or (
+                    "notFound" in arguments
+                    and (
+                        not isinstance(arguments["notFound"], list)
+                        or any(
+                            not isinstance(identifier, str)
+                            for identifier in arguments["notFound"]
+                        )
+                    )
+                )
+            ):
+                _raise(
+                    request_method=method,
+                    tag=expected_call["tag"],
+                    action=action,
+                    description="JMAP query response shape is invalid",
+                    http_status=http_status,
+                    endpoint_path=endpoint_path,
+                )
         else:
             _raise(
                 request_method=method,
