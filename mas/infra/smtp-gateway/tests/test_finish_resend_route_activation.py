@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,53 @@ def _write_control(tmp_path: Path, **overrides: bool) -> Path:
     )
     path.chmod(0o600)
     return path
+
+
+def _prepare_initial_finish(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    route_secret = tmp_path / "stalwart-route-lifecycle.env"
+    route_metadata = tmp_path / "stalwart-route-lifecycle.meta"
+    monkeypatch.setattr(finish, "LOCK_FILE", tmp_path / "finish.lock")
+    monkeypatch.setattr(finish, "ROUTE_SECRET_FILE", route_secret)
+    monkeypatch.setattr(finish, "ROUTE_METADATA_FILE", route_metadata)
+    monkeypatch.setattr(
+        finish,
+        "parse_control_file",
+        lambda _path: {
+            key: key in finish.REQUIRED_TRUE_CONTROLS for key in finish.CONTROL_KEYS
+        },
+    )
+    monkeypatch.setattr(finish, "_create_evidence_dir", lambda: evidence_dir)
+    monkeypatch.setattr(
+        finish,
+        "_parse_profile",
+        lambda _path: {
+            "OUTBOUND_RELAY_CERTIFIED": "false",
+            "DIRECT_MX_OUTBOUND_ENABLED": "false",
+            "DEFAULT_OUTBOUND_ENABLED": "false",
+        },
+    )
+    monkeypatch.setattr(
+        finish,
+        "read_permanent_admin_password",
+        lambda _path: "test-admin-password",
+    )
+    monkeypatch.setattr(
+        finish,
+        "_read_certification_values",
+        lambda _path: {
+            "STALWART_API_KEY": "test-certification-key",
+            "STALWART_JMAP_SERVICE_TOKEN": "test-service-token",
+        },
+    )
+    monkeypatch.setattr(finish, "_read_relay_secret", lambda _path: "test-relay-secret")
+    monkeypatch.setattr(
+        finish,
+        "_require_root_file",
+        lambda _path, **_kwargs: SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0),
+    )
+    return evidence_dir, route_secret, route_metadata
 
 
 def test_control_file_requires_safe_approvals(tmp_path: Path, monkeypatch) -> None:
@@ -281,6 +329,176 @@ def test_run_finish_reads_the_selected_dedicated_source(tmp_path: Path, monkeypa
     with pytest.raises(finish.FinishRefused, match="stop before route work"):
         finish._run_finish(tmp_path / "control.env", selected)
     assert observed == [selected]
+
+
+def test_assert_absent_accepts_both_missing_temporary_artifacts(tmp_path: Path) -> None:
+    finish._assert_absent(
+        tmp_path / "stalwart-route-lifecycle.env",
+        tmp_path / "stalwart-route-lifecycle.meta",
+    )
+
+
+def test_assert_absent_refuses_regular_secret_file(tmp_path: Path) -> None:
+    artifact = tmp_path / "stalwart-route-lifecycle.env"
+    artifact.write_text("must-remain-unchanged\n", encoding="utf-8")
+    with pytest.raises(finish.FinishRefused, match=artifact.name):
+        finish._assert_absent(artifact)
+    assert artifact.read_text(encoding="utf-8") == "must-remain-unchanged\n"
+
+
+def test_assert_absent_refuses_metadata_file(tmp_path: Path) -> None:
+    artifact = tmp_path / "stalwart-route-lifecycle.meta"
+    artifact.write_text("metadata-must-remain\n", encoding="utf-8")
+    with pytest.raises(finish.FinishRefused, match=artifact.name):
+        finish._assert_absent(artifact)
+    assert artifact.read_text(encoding="utf-8") == "metadata-must-remain\n"
+
+
+def test_assert_absent_refuses_valid_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_text("target-remains\n", encoding="utf-8")
+    artifact = tmp_path / "stalwart-route-lifecycle.env"
+    artifact.symlink_to(target)
+    with pytest.raises(finish.FinishRefused, match=artifact.name):
+        finish._assert_absent(artifact)
+    assert artifact.is_symlink()
+    assert target.read_text(encoding="utf-8") == "target-remains\n"
+
+
+def test_assert_absent_refuses_broken_symlink(tmp_path: Path) -> None:
+    artifact = tmp_path / "stalwart-route-lifecycle.env"
+    artifact.symlink_to(tmp_path / "missing-target")
+    with pytest.raises(finish.FinishRefused, match=artifact.name):
+        finish._assert_absent(artifact)
+    assert artifact.is_symlink()
+
+
+def test_assert_absent_refuses_directory(tmp_path: Path) -> None:
+    artifact = tmp_path / "stalwart-route-lifecycle.env"
+    artifact.mkdir()
+    with pytest.raises(finish.FinishRefused, match=artifact.name):
+        finish._assert_absent(artifact)
+    assert artifact.is_dir()
+
+
+def test_assert_absent_fails_closed_on_lstat_error(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "stalwart-route-lifecycle.env"
+
+    def refuse_lstat(_path: Path):
+        raise PermissionError("authorization=SUPER_SECRET")
+
+    monkeypatch.setattr(Path, "lstat", refuse_lstat)
+    with pytest.raises(finish.FinishRefused) as error:
+        finish._assert_absent(artifact)
+    message = str(error.value)
+    assert message == f"could not inspect temporary artifact {artifact.name}"
+    assert "SUPER_SECRET" not in message
+
+
+def test_assert_absent_checks_later_paths(tmp_path: Path) -> None:
+    first = tmp_path / "stalwart-route-lifecycle.env"
+    later = tmp_path / "stalwart-route-lifecycle.meta"
+    later.write_text("metadata-remains\n", encoding="utf-8")
+    with pytest.raises(finish.FinishRefused, match=later.name):
+        finish._assert_absent(first, later)
+    assert later.read_text(encoding="utf-8") == "metadata-remains\n"
+
+
+def test_assert_absent_sanitizes_untrusted_artifact_name(tmp_path: Path) -> None:
+    artifact = tmp_path / "password=SUPER_SECRET_VALUE"
+    artifact.write_text("contents-are-never-read\n", encoding="utf-8")
+    with pytest.raises(finish.FinishRefused) as error:
+        finish._assert_absent(artifact)
+    message = str(error.value)
+    assert "temporary-artifact" in message
+    assert "SUPER_SECRET_VALUE" not in message
+    assert str(tmp_path) not in message
+
+
+def test_failed_absence_gate_performs_no_route_or_credential_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _evidence_dir, route_secret, _route_metadata = _prepare_initial_finish(
+        tmp_path, monkeypatch
+    )
+    route_secret.write_text("existing-secret-remains\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def forbidden(name: str):
+        def invoke(*_args, **_kwargs):
+            calls.append(name)
+            raise AssertionError(f"unexpected mutation: {name}")
+
+        return invoke
+
+    for name in (
+        "_provision_route_key",
+        "_validate_route_key",
+        "_run_route_command",
+        "_run_certification_validator",
+        "_run_certification_preflight",
+        "_revoke_route_key",
+        "_remove_create_permission",
+    ):
+        monkeypatch.setattr(finish, name, forbidden(name))
+
+    with pytest.raises(finish.FinishRefused, match=route_secret.name):
+        finish._run_finish(tmp_path / "control.env", tmp_path / "admin-source.env")
+    assert calls == []
+    assert route_secret.read_text(encoding="utf-8") == "existing-secret-remains\n"
+
+
+def test_initial_governed_preflight_passes_the_absence_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _prepare_initial_finish(tmp_path, monkeypatch)
+    reached_after_absence_check: list[bool] = []
+
+    def stop_after_absence_check() -> dict[str, object]:
+        reached_after_absence_check.append(True)
+        raise finish.FinishRefused("reached post-absence read-only snapshot")
+
+    monkeypatch.setattr(finish, "_git_snapshot", stop_after_absence_check)
+    with pytest.raises(finish.FinishRefused, match="post-absence"):
+        finish._run_finish(tmp_path / "control.env", tmp_path / "admin-source.env")
+    assert reached_after_absence_check == [True]
+
+
+def test_unexpected_failure_evidence_contains_only_safe_traceback_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    evidence_dir, _route_secret, _route_metadata = _prepare_initial_finish(
+        tmp_path, monkeypatch
+    )
+
+    class SecretArtifactObject:
+        name = "stalwart-route-lifecycle.env"
+
+    monkeypatch.setattr(finish, "ROUTE_SECRET_FILE", SecretArtifactObject())
+    with pytest.raises(AttributeError):
+        finish._run_finish(tmp_path / "control.env", tmp_path / "admin-source.env")
+
+    failure = json.loads((evidence_dir / "failure.json").read_text(encoding="utf-8"))
+    assert failure == {
+        "version": 1,
+        "final_status": "BLOCKED",
+        "reason": "unexpected AttributeError",
+        "exception_type": "AttributeError",
+        "source_filename": "finish_resend_route_activation.py",
+        "line_number": failure["line_number"],
+        "function_name": "_assert_absent",
+    }
+    assert isinstance(failure["line_number"], int) and failure["line_number"] > 0
+    serialized = json.dumps(failure, sort_keys=True)
+    for sensitive in (
+        "SecretArtifactObject",
+        "test-admin-password",
+        "test-certification-key",
+        "test-service-token",
+        "test-relay-secret",
+        "authorization",
+    ):
+        assert sensitive not in serialized
 
 
 def test_route_commands_keep_apply_key_separate_from_read_only_certificate_key(

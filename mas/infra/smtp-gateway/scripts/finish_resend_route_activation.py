@@ -77,6 +77,8 @@ REQUIRED_FALSE_CONTROLS = {
 }
 ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 CONTROL_LINE = re.compile(r"^([A-Z][A-Z0-9_]*)=(true|false)$")
+SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 def _load_module(name: str, filename: str) -> Any:
@@ -254,10 +256,63 @@ def _artifact_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _safe_artifact_name(path: Path) -> str:
+    name = path.name
+    if name not in {".", ".."} and SAFE_ARTIFACT_NAME.fullmatch(name) is not None:
+        return name
+    return "temporary-artifact"
+
+
 def _assert_absent(*paths: Path) -> None:
     for path in paths:
-        if path.lexists():
-            raise FinishRefused(f"refusing to overwrite existing temporary artifact {path.name}")
+        name = _safe_artifact_name(path)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise FinishRefused(f"could not inspect temporary artifact {name}") from exc
+        raise FinishRefused(f"refusing to overwrite existing temporary artifact {name}")
+
+
+def _repository_source_filename(filename: str) -> str | None:
+    try:
+        candidate = Path(filename)
+        if not candidate.is_absolute():
+            candidate = WORKSPACE / candidate
+        relative = candidate.absolute().relative_to(WORKSPACE)
+    except (OSError, ValueError):
+        return None
+    name = relative.name
+    if name in {".", ".."} or SAFE_ARTIFACT_NAME.fullmatch(name) is None:
+        return None
+    return name
+
+
+def _unexpected_exception_evidence(exc: BaseException) -> dict[str, Any]:
+    exception_type = type(exc).__name__
+    if SAFE_IDENTIFIER.fullmatch(exception_type) is None:
+        exception_type = "Exception"
+    evidence: dict[str, Any] = {"exception_type": exception_type}
+    traceback = exc.__traceback__
+    while traceback is not None:
+        code = traceback.tb_frame.f_code
+        source_filename = _repository_source_filename(code.co_filename)
+        function_name = code.co_name
+        if (
+            source_filename is not None
+            and SAFE_IDENTIFIER.fullmatch(function_name) is not None
+            and traceback.tb_lineno > 0
+        ):
+            evidence.update(
+                {
+                    "source_filename": source_filename,
+                    "line_number": traceback.tb_lineno,
+                    "function_name": function_name,
+                }
+            )
+        traceback = traceback.tb_next
+    return evidence
 
 
 def _write_exclusive(path: Path, value: str) -> None:
@@ -738,13 +793,15 @@ def _run_finish(
     except Exception as exc:
         if evidence_dir is not None:
             with contextlib.suppress(FinishRefused):
+                unexpected = _unexpected_exception_evidence(exc)
                 _write_evidence(
                     evidence_dir,
                     "failure.json",
                     {
                         "version": 1,
                         "final_status": "BLOCKED",
-                        "reason": f"unexpected {type(exc).__name__}",
+                        "reason": f"unexpected {unexpected['exception_type']}",
+                        **unexpected,
                     },
                 )
         raise
@@ -792,8 +849,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
         return 1
     except Exception as exc:  # pragma: no cover - last-resort fail-closed guard
+        unexpected = _unexpected_exception_evidence(exc)
         print("FINAL_STATUS=BLOCKED")
-        print(f"BLOCK_REASON=unexpected {type(exc).__name__}")
+        print(f"BLOCK_REASON=unexpected {unexpected['exception_type']}")
         return 1
     print("ROUTE_ACTIVATION=PASS")
     print("READ_ONLY_ROUTE_VERIFICATION=PASS")
