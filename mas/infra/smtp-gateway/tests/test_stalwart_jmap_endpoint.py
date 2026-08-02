@@ -83,14 +83,16 @@ def _start_server(
                     arguments["destroyed"] = destroyed
                 body = {"methodResponses": [[method, arguments, payload["methodCalls"][0][2]]]}
             elif method == "x:MtaOutboundStrategy/set":
-                strategy["route"] = payload["methodCalls"][0][1]["update"]["singleton"].get("route", payload["methodCalls"][0][1]["update"]["singleton"])
-                body = {"methodResponses": [[method, {"updated": {"singleton": {}}}, payload["methodCalls"][0][2]]]}
-            else:
+                strategy["route"] = payload["methodCalls"][0][1]["update"]["singleton"].get(
+                    "route", payload["methodCalls"][0][1]["update"]["singleton"]
+                )
                 body = {
                     "methodResponses": [
-                        [method, {"list": [strategy]}, "strategy"]
+                        [method, {"updated": {"singleton": {}}}, payload["methodCalls"][0][2]]
                     ]
                 }
+            else:
+                body = {"methodResponses": [[method, {"list": [strategy]}, "strategy"]]}
             _response(self, body)
 
         def log_message(self, _format: str, *_args: object) -> None:
@@ -154,10 +156,13 @@ def test_resolution_accepts_a_session_url_as_the_base() -> None:
     assert jmap_endpoint.session_url("http://localhost:18080/jmap/session") == (
         "http://127.0.0.1:18080/jmap/session"
     )
-    assert jmap_endpoint.resolve_jmap_api_url(
-        "http://localhost:18080/jmap/session",
-        "http://localhost:18080/jmap",
-    ) == "http://127.0.0.1:18080/jmap/"
+    assert (
+        jmap_endpoint.resolve_jmap_api_url(
+            "http://localhost:18080/jmap/session",
+            "http://localhost:18080/jmap",
+        )
+        == "http://127.0.0.1:18080/jmap/"
+    )
 
 
 def test_external_redirect_and_malformed_session_are_rejected_without_secret_echo() -> None:
@@ -165,9 +170,7 @@ def test_external_redirect_and_malformed_session_are_rejected_without_secret_ech
     server, thread, _paths = _start_server(redirect="http://external.example.invalid/jmap/session")
     try:
         with pytest.raises(jmap_endpoint.JmapEndpointError) as exc_info:
-            jmap_endpoint.discover_jmap_api_url(
-                f"http://127.0.0.1:{server.server_port}", secret
-            )
+            jmap_endpoint.discover_jmap_api_url(f"http://127.0.0.1:{server.server_port}", secret)
         assert secret not in str(exc_info.value)
     finally:
         _stop_server(server, thread)
@@ -175,9 +178,7 @@ def test_external_redirect_and_malformed_session_are_rejected_without_secret_ech
     server, thread, _paths = _start_server(session={"apiUrl": {"bad": "shape"}})
     try:
         with pytest.raises(jmap_endpoint.JmapEndpointError) as exc_info:
-            jmap_endpoint.discover_jmap_api_url(
-                f"http://127.0.0.1:{server.server_port}", secret
-            )
+            jmap_endpoint.discover_jmap_api_url(f"http://127.0.0.1:{server.server_port}", secret)
         assert secret not in str(exc_info.value)
     finally:
         _stop_server(server, thread)
@@ -206,9 +207,9 @@ def _write_docker_stub(directory: Path, relay_file: Path) -> None:
     (directory / "docker").write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "case \"${1:-}\" in\n"
+        'case "${1:-}" in\n'
         "  inspect) printf '%s\\n' true ;;\n"
-        "  exec) awk -F= '$1 == \"RESEND_API_KEY\" {printf \"%s\", $2; exit}' \"$TEST_RELAY_FILE\" | sha256sum | awk '{print $1}' ;;\n"
+        '  exec) awk -F= \'$1 == "RESEND_API_KEY" {printf "%s", $2; exit}\' "$TEST_RELAY_FILE" | sha256sum | awk \'{print $1}\' ;;\n'
         "  *) exit 1 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -230,7 +231,6 @@ def _write_route_metadata(secret_file: Path) -> None:
                     "authenticate",
                     "sysMtaRouteGet",
                     "sysMtaRouteCreate",
-                    "sysMtaRouteUpdate",
                     "sysMtaRouteDestroy",
                     "sysMtaOutboundStrategyGet",
                     "sysMtaOutboundStrategyUpdate",
@@ -439,7 +439,7 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
                             "routes",
                         ]
                     ],
-                    "sessionState": "session-state"
+                    "sessionState": "session-state",
                 },
                 "strategy": {
                     "methodResponses": [
@@ -449,7 +449,7 @@ def test_route_rollback_uses_discovered_jmap_endpoint(tmp_path: Path) -> None:
                             "strategy",
                         ]
                     ],
-                    "sessionState": "session-state"
+                    "sessionState": "session-state",
                 },
             }
         ),

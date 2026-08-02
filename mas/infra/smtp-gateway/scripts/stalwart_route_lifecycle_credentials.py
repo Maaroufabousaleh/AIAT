@@ -12,14 +12,13 @@ import importlib.util
 import json
 import os
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
 
 def _load_module(name: str, filename: str) -> Any:
-    specification = importlib.util.spec_from_file_location(
-        name, Path(__file__).with_name(filename)
-    )
+    specification = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
     if specification is None or specification.loader is None:
         raise RuntimeError(f"{filename} is unavailable")
     module = importlib.util.module_from_spec(specification)
@@ -47,11 +46,21 @@ ROUTE_KEY_PERMISSIONS = (
     "authenticate",
     "sysMtaRouteGet",
     "sysMtaRouteCreate",
-    "sysMtaRouteUpdate",
     "sysMtaRouteDestroy",
     "sysMtaOutboundStrategyGet",
     "sysMtaOutboundStrategyUpdate",
 )
+ROUTE_KEY_FORBIDDEN_SET_NAMES = (
+    # v0.16.15 uses operation-specific permissions.  These names are kept as
+    # an explicit deny-list so a future caller cannot silently substitute the
+    # non-existent/set-style names from an older design.
+    "sysMtaRouteSet",
+    "sysMtaOutboundStrategySet",
+)
+SYS_API_KEY_CREATE_PERMISSION = "sysApiKeyCreate"
+ADMIN_ACCOUNT_QUERY_ID = "route-lifecycle-administrator"
+ADMIN_ACCOUNT_GET_ID = "route-lifecycle-administrator-details"
+ADMIN_ACCOUNT_SET_ID = "remove-sys-api-key-create"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
 
 
@@ -66,6 +75,8 @@ def default_metadata_path(secret_file: Path) -> Path:
 
 
 def _require_root_owned(path: Path, *, allow_current_user: bool = False) -> None:
+    if path.is_symlink():
+        raise Refused("protected route credential files may not be symbolic links")
     try:
         stat_result = path.stat()
     except OSError as exc:
@@ -73,7 +84,11 @@ def _require_root_owned(path: Path, *, allow_current_user: bool = False) -> None
     owner_is_allowed = stat_result.st_uid == 0 or (
         allow_current_user and stat_result.st_uid == os.geteuid()
     )
-    if not owner_is_allowed or stat_result.st_mode & 0o777 != 0o600:
+    if (
+        not stat.S_ISREG(stat_result.st_mode)
+        or not owner_is_allowed
+        or stat_result.st_mode & 0o777 != 0o600
+    ):
         raise Refused("route credential files must be root-owned mode 0600")
 
 
@@ -124,9 +139,7 @@ def read_metadata_file(path: Path, *, allow_current_user: bool = False) -> dict[
         raise Refused("route credential owner is not the permanent administrator")
     if value["description"] != ROUTE_KEY_DESCRIPTION:
         raise Refused("route credential description is invalid")
-    if not isinstance(value["credentialId"], str) or not _SAFE_ID.fullmatch(
-        value["credentialId"]
-    ):
+    if not isinstance(value["credentialId"], str) or not _SAFE_ID.fullmatch(value["credentialId"]):
         raise Refused("route credential identifier is malformed")
     if not isinstance(value["expiresAt"], str) or not value["expiresAt"]:
         raise Refused("route credential expiry is malformed")
@@ -135,6 +148,8 @@ def read_metadata_file(path: Path, *, allow_current_user: bool = False) -> dict[
         not isinstance(permission, str) for permission in permissions
     ):
         raise Refused("route credential permissions are malformed")
+    if any(permission in ROUTE_KEY_FORBIDDEN_SET_NAMES for permission in permissions):
+        raise Refused("route credential uses unsupported set-style permissions")
     if tuple(permissions) != ROUTE_KEY_PERMISSIONS:
         raise Refused("route credential permissions are not least privilege")
     return value
@@ -171,22 +186,31 @@ def _reserve_pair(secret_file: Path, metadata_file: Path) -> tuple[int, int]:
         raise Refused("run as root so route credential files are root-owned")
     secret_fd = -1
     metadata_fd = -1
+    secret_reserved = False
+    metadata_reserved = False
     try:
         secret_fd = PROVISIONING.reserve_output(secret_file)
+        secret_reserved = True
         metadata_fd = PROVISIONING.reserve_output(metadata_file)
+        metadata_reserved = True
         return secret_fd, metadata_fd
     except Exception:
         if secret_fd >= 0:
             os.close(secret_fd)
         if metadata_fd >= 0:
             os.close(metadata_fd)
-        secret_file.unlink(missing_ok=True)
-        metadata_file.unlink(missing_ok=True)
+        if secret_reserved:
+            secret_file.unlink(missing_ok=True)
+        if metadata_reserved:
+            metadata_file.unlink(missing_ok=True)
         raise
 
 
 def _payload(
-    *, expires_at: str, description: str = ROUTE_KEY_DESCRIPTION, create_id: str = ROUTE_KEY_CREATE_ID
+    *,
+    expires_at: str,
+    description: str = ROUTE_KEY_DESCRIPTION,
+    create_id: str = ROUTE_KEY_CREATE_ID,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", expires_at):
         raise ValueError("expires_at must be an RFC 3339 UTC timestamp without fractions")
@@ -328,9 +352,7 @@ def _record_for_admin(
     return record
 
 
-def _refuse_duplicate(
-    *, transport: Any, jmap_url: str, admin_authorization: str
-) -> None:
+def _refuse_duplicate(*, transport: Any, jmap_url: str, admin_authorization: str) -> None:
     response = _strict_jmap(
         transport=transport,
         url=jmap_url,
@@ -342,6 +364,15 @@ def _refuse_duplicate(
     ids = result.get("ids")
     if not isinstance(ids, list) or any(not isinstance(value, str) for value in ids):
         raise Refused("Stalwart returned malformed API-key query results")
+    # A bounded query is not an inventory proof when it is full.  Refuse to
+    # create another key rather than risk overlooking a duplicate beyond the
+    # first page.
+    if len(ids) >= 100 or (
+        isinstance(result.get("total"), int)
+        and not isinstance(result.get("total"), bool)
+        and result["total"] > len(ids)
+    ):
+        raise Refused("API-key inventory is incomplete; duplicate creation is refused")
     if not ids:
         return
     get_payload = {
@@ -387,9 +418,7 @@ def _route_gets(*, transport: Any, jmap_url: str, route_authorization: str, acti
         )
 
 
-def _discover(
-    *, transport: Any, base_url: str, authorization: str, diagnostic: Any
-) -> str:
+def _discover(*, transport: Any, base_url: str, authorization: str, diagnostic: Any) -> str:
     try:
         return PROVISIONING.discover_jmap_api_url(
             transport=transport,
@@ -399,6 +428,38 @@ def _discover(
         )
     except PROVISIONING.Refused as exc:
         raise Refused("local Stalwart JMAP endpoint discovery failed") from exc
+
+
+def _bearer_rejection_is_proven(*, base_url: str, api_key: str, diagnostic: Any) -> bool:
+    """Return true only when the old bearer receives an auth-layer rejection."""
+    rejection_diagnostic = PROVISIONING.DiagnosticState(
+        sensitive_values=[api_key, f"Bearer {api_key}"]
+    )
+    rejection_transport = PROVISIONING.HttpTransport(rejection_diagnostic)
+    try:
+        _discover(
+            transport=rejection_transport,
+            base_url=base_url,
+            authorization=f"Bearer {api_key}",
+            diagnostic=rejection_diagnostic,
+        )
+    except (Refused, PROVISIONING.Refused):
+        status = str(rejection_diagnostic.http_status)
+        error_type = str(rejection_diagnostic.error_type).lower()
+        return status in {"401", "403"} and error_type not in {
+            "transporterror",
+            "notjson",
+            "invalidresponse",
+        }
+    return False
+
+
+def _remove_local_credential_files(secret_file: Path, metadata_file: Path) -> None:
+    try:
+        secret_file.unlink()
+        metadata_file.unlink(missing_ok=True)
+    except OSError as exc:
+        raise Refused("server-side revocation was proven but local cleanup failed") from exc
 
 
 def _admin_login(
@@ -419,6 +480,212 @@ def _admin_login(
     return access_token, f"Bearer {access_token}"
 
 
+def _admin_account_context(
+    *,
+    transport: Any,
+    jmap_url: str,
+    admin_authorization: str,
+    administrator_address: str,
+    action: str,
+) -> tuple[str, dict[str, Any]]:
+    local_part, separator, domain = administrator_address.rpartition("@")
+    if not separator or not local_part or not domain:
+        raise Refused("administrator address must contain a local part and domain")
+
+    domain_response = _strict_jmap(
+        transport=transport,
+        url=jmap_url,
+        authorization=admin_authorization,
+        payload={
+            "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+            "methodCalls": [
+                [
+                    "x:Domain/query",
+                    {"filter": {"name": domain}, "limit": 2},
+                    f"{action}-domain",
+                ]
+            ],
+        },
+        action=action,
+    )
+    domain_ids = _method_result(domain_response, "x:Domain/query").get("ids")
+    if (
+        not isinstance(domain_ids, list)
+        or len(domain_ids) != 1
+        or not isinstance(domain_ids[0], str)
+    ):
+        raise Refused("administrator domain did not resolve to exactly one persisted object")
+    domain_id = domain_ids[0]
+
+    account_query = _strict_jmap(
+        transport=transport,
+        url=jmap_url,
+        authorization=admin_authorization,
+        payload={
+            "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+            "methodCalls": [
+                [
+                    "x:Account/query",
+                    {
+                        "filter": {"name": local_part, "domainId": domain_id},
+                        "limit": 2,
+                    },
+                    f"{action}-account-query",
+                ]
+            ],
+        },
+        action=action,
+    )
+    account_ids = _method_result(account_query, "x:Account/query").get("ids")
+    if (
+        not isinstance(account_ids, list)
+        or len(account_ids) != 1
+        or not isinstance(account_ids[0], str)
+    ):
+        raise Refused("administrator address did not resolve to exactly one persisted account")
+    account_id = account_ids[0]
+
+    account_response = _strict_jmap(
+        transport=transport,
+        url=jmap_url,
+        authorization=admin_authorization,
+        payload={
+            "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+            "methodCalls": [
+                [
+                    "x:Account/get",
+                    {
+                        "ids": [account_id],
+                        "properties": ["name", "domainId", "permissions"],
+                    },
+                    f"{action}-account-get",
+                ]
+            ],
+        },
+        action=action,
+    )
+    records = _method_result(account_response, "x:Account/get").get("list")
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        raise Refused("administrator account was not returned exactly once")
+    record = records[0]
+    if record.get("id") != account_id:
+        raise Refused("administrator account identity did not match")
+    if record.get("name") != local_part or record.get("domainId") != domain_id:
+        raise Refused("administrator account address did not match the requested identity")
+    if not isinstance(record.get("permissions"), dict):
+        raise Refused("administrator account permissions are malformed")
+    return account_id, record
+
+
+def _permission_map(value: Any, field: str) -> dict[str, bool]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or value_for_key is not True
+        for key, value_for_key in value.items()
+    ):
+        raise Refused(f"administrator account {field} are malformed")
+    return dict(value)
+
+
+def _permission_object_without_create(permissions: Any) -> tuple[dict[str, Any], bool]:
+    if not isinstance(permissions, dict):
+        raise Refused("administrator account permissions are malformed")
+    permission_type = permissions.get("@type")
+    if permission_type not in {"Merge", "Replace", "Inherit"}:
+        raise Refused("administrator account permission mode is unsupported")
+    if permission_type == "Inherit":
+        return {
+            "@type": "Merge",
+            "enabledPermissions": {},
+            "disabledPermissions": {SYS_API_KEY_CREATE_PERMISSION: True},
+        }, True
+
+    enabled = _permission_map(permissions.get("enabledPermissions"), "enabledPermissions")
+    disabled = _permission_map(permissions.get("disabledPermissions"), "disabledPermissions")
+    was_enabled = enabled.get(SYS_API_KEY_CREATE_PERMISSION) is True
+    was_disabled = disabled.get(SYS_API_KEY_CREATE_PERMISSION) is True
+    enabled.pop(SYS_API_KEY_CREATE_PERMISSION, None)
+    disabled[SYS_API_KEY_CREATE_PERMISSION] = True
+    return {
+        "@type": permission_type,
+        "enabledPermissions": enabled,
+        "disabledPermissions": disabled,
+    }, was_enabled or not was_disabled
+
+
+def _permission_is_effectively_disabled(permissions: Any) -> bool:
+    if not isinstance(permissions, dict):
+        return False
+    enabled = permissions.get("enabledPermissions")
+    disabled = permissions.get("disabledPermissions")
+    enabled_value = isinstance(enabled, dict) and enabled.get(SYS_API_KEY_CREATE_PERMISSION) is True
+    disabled_value = (
+        isinstance(disabled, dict) and disabled.get(SYS_API_KEY_CREATE_PERMISSION) is True
+    )
+    return not enabled_value or disabled_value
+
+
+def remove_sys_api_key_create(
+    *,
+    base_url: str,
+    administrator_address: str,
+    administrator_password: str,
+    diagnostic: Any,
+) -> None:
+    """Remove only sysApiKeyCreate while preserving all other admin permissions."""
+    transport = PROVISIONING.HttpTransport(diagnostic)
+    _access_token, admin_authorization = _admin_login(
+        transport=transport,
+        base_url=base_url,
+        administrator_address=administrator_address,
+        password=administrator_password,
+        diagnostic=diagnostic,
+    )
+    jmap_url = _discover(
+        transport=transport,
+        base_url=base_url,
+        authorization=admin_authorization,
+        diagnostic=diagnostic,
+    )
+    account_id, record = _admin_account_context(
+        transport=transport,
+        jmap_url=jmap_url,
+        admin_authorization=admin_authorization,
+        administrator_address=administrator_address,
+        action="remove-sys-api-key-create",
+    )
+    updated_permissions, changed = _permission_object_without_create(record["permissions"])
+    if changed:
+        _strict_jmap(
+            transport=transport,
+            url=jmap_url,
+            authorization=admin_authorization,
+            payload={
+                "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+                "methodCalls": [
+                    [
+                        "x:Account/set",
+                        {"update": {account_id: {"permissions": updated_permissions}}},
+                        ADMIN_ACCOUNT_SET_ID,
+                    ]
+                ],
+            },
+            action="remove-sys-api-key-create",
+        )
+    _account_id, after = _admin_account_context(
+        transport=transport,
+        jmap_url=jmap_url,
+        admin_authorization=admin_authorization,
+        administrator_address=administrator_address,
+        action="verify-sys-api-key-create-removal",
+    )
+    if _account_id != account_id or not _permission_is_effectively_disabled(
+        after.get("permissions")
+    ):
+        raise Refused("sysApiKeyCreate removal was not proven")
+
+
 def provision(
     *,
     base_url: str,
@@ -433,9 +700,11 @@ def provision(
     secret_fd = metadata_fd = -1
     created_id = ""
     completed = False
+    reserved_paths: set[Path] = set()
     transport = PROVISIONING.HttpTransport(diagnostic)
     try:
         secret_fd, metadata_fd = _reserve_pair(output, metadata_file)
+        reserved_paths.update((output, metadata_file))
         PROVISIONING.require_patched_server(server_image, diagnostic)
         _access_token, admin_authorization = _admin_login(
             transport=transport,
@@ -524,15 +793,17 @@ def provision(
                         action="provision-route-lifecycle-key-cleanup",
                     )
             except Exception as cleanup_error:
-                raise Refused("temporary route credential cleanup could not be proven") from cleanup_error
+                raise Refused(
+                    "temporary route credential cleanup could not be proven"
+                ) from cleanup_error
         raise
     finally:
         for descriptor in (secret_fd, metadata_fd):
             if descriptor >= 0:
                 os.close(descriptor)
         if not completed:
-            output.unlink(missing_ok=True)
-            metadata_file.unlink(missing_ok=True)
+            for path in reserved_paths:
+                path.unlink(missing_ok=True)
 
 
 def validate(
@@ -618,16 +889,8 @@ def revoke(
         if "was not found exactly once" not in str(exc):
             raise
         # A missing exact ID is safe only after the old bearer is rejected.
-        try:
-            _discover(
-                transport=transport,
-                base_url=base_url,
-                authorization=f"Bearer {api_key}",
-                diagnostic=diagnostic,
-            )
-        except PROVISIONING.Refused:
-            secret_file.unlink()
-            metadata_file.unlink(missing_ok=True)
+        if _bearer_rejection_is_proven(base_url=base_url, api_key=api_key, diagnostic=diagnostic):
+            _remove_local_credential_files(secret_file, metadata_file)
             return
         raise Refused("temporary route credential state was ambiguous") from exc
     _strict_jmap(
@@ -647,16 +910,8 @@ def revoke(
     after_result = _method_result(after, "x:ApiKey/get")
     if after_result.get("list") or after_result.get("notFound") != [metadata["credentialId"]]:
         raise Refused("server-side route credential revocation was not proven")
-    try:
-        _discover(
-            transport=transport,
-            base_url=base_url,
-            authorization=f"Bearer {api_key}",
-            diagnostic=diagnostic,
-        )
-    except PROVISIONING.Refused:
-        secret_file.unlink()
-        metadata_file.unlink(missing_ok=True)
+    if _bearer_rejection_is_proven(base_url=base_url, api_key=api_key, diagnostic=diagnostic):
+        _remove_local_credential_files(secret_file, metadata_file)
         return
     raise Refused("revoked route credential still authenticated")
 

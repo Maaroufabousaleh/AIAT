@@ -12,7 +12,9 @@ GATEWAY = Path(__file__).resolve().parents[1]
 
 
 def test_policy_matches_stalwart_v01615_route_and_list_shapes() -> None:
-    policy = json.loads((GATEWAY / "../mail-edge/stalwart-relay-policy.json").read_text(encoding="utf-8"))
+    policy = json.loads(
+        (GATEWAY / "../mail-edge/stalwart-relay-policy.json").read_text(encoding="utf-8")
+    )
     assert policy["mta_route"] == {
         "@type": "Relay",
         "name": "resend-relay",
@@ -43,7 +45,9 @@ def test_route_preflight_certification_and_verifier_use_strict_jmap_validation()
         assert 'url = "http://127.0.0.1:18080/api"' not in source
 
 
-def _json_response(handler: BaseHTTPRequestHandler, body: dict[str, Any], status: int = 200) -> None:
+def _json_response(
+    handler: BaseHTTPRequestHandler, body: dict[str, Any], status: int = 200
+) -> None:
     if "methodResponses" in body and "sessionState" not in body:
         body = {**body, "sessionState": "session-state"}
     payload = json.dumps(body).encode("utf-8")
@@ -85,7 +89,9 @@ class RouteServer:
                 if self.path != "/jmap/session":
                     self.send_error(404)
                     return
-                _json_response(self, {"apiUrl": f"http://localhost:{state.server.server_port}/jmap/"})
+                _json_response(
+                    self, {"apiUrl": f"http://localhost:{state.server.server_port}/jmap/"}
+                )
 
             def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
                 state.paths.append(self.path)
@@ -116,7 +122,11 @@ class RouteServer:
                                 "methodResponses": [
                                     [
                                         "x:MtaRoute/set",
-                                        {"notDestroyed": {str(arguments["destroy"][0]): {"type": "rejected"}}},
+                                        {
+                                            "notDestroyed": {
+                                                str(arguments["destroy"][0]): {"type": "rejected"}
+                                            }
+                                        },
                                         tag,
                                     ]
                                 ]
@@ -125,7 +135,9 @@ class RouteServer:
                         return
                     destroyed = arguments.get("destroy", [])
                     if destroyed:
-                        state.routes = [route for route in state.routes if route["id"] not in destroyed]
+                        state.routes = [
+                            route for route in state.routes if route["id"] not in destroyed
+                        ]
                     created: dict[str, dict[str, str]] = {}
                     for key, route in arguments.get("create", {}).items():
                         created[key] = {"id": f"created-{key}"}
@@ -233,7 +245,9 @@ class RouteServer:
         }
 
 
-def _write_inputs(tmp_path: Path, server: RouteServer) -> tuple[Path, Path, Path, Path, dict[str, str]]:
+def _write_inputs(
+    tmp_path: Path, server: RouteServer
+) -> tuple[Path, Path, Path, Path, dict[str, str]]:
     profile = tmp_path / "profile.env"
     profile.write_text(
         "\n".join(
@@ -271,7 +285,6 @@ def _write_inputs(tmp_path: Path, server: RouteServer) -> tuple[Path, Path, Path
                     "authenticate",
                     "sysMtaRouteGet",
                     "sysMtaRouteCreate",
-                    "sysMtaRouteUpdate",
                     "sysMtaRouteDestroy",
                     "sysMtaOutboundStrategyGet",
                     "sysMtaOutboundStrategyUpdate",
@@ -290,16 +303,22 @@ def _write_inputs(tmp_path: Path, server: RouteServer) -> tuple[Path, Path, Path
     (bin_dir / "docker").write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "case \"${1:-}\" in\n"
+        'case "${1:-}" in\n'
         " inspect) printf '%s\\n' true ;;\n"
-        " exec) awk -F= '$1 == \"RESEND_API_KEY\" {printf \"%s\", $2; exit}' \"$TEST_RELAY_FILE\" | sha256sum | awk '{print $1}' ;;\n"
+        ' exec) awk -F= \'$1 == "RESEND_API_KEY" {printf "%s", $2; exit}\' "$TEST_RELAY_FILE" | sha256sum | awk \'{print $1}\' ;;\n'
         " *) exit 1 ;;\n"
         "esac\n",
         encoding="utf-8",
     )
     (bin_dir / "docker").chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "TEST_RELAY_FILE": str(relay)}
-    return profile, credentials, relay, backup, {"PATH": env["PATH"], "TEST_RELAY_FILE": env["TEST_RELAY_FILE"]}
+    return (
+        profile,
+        credentials,
+        relay,
+        backup,
+        {"PATH": env["PATH"], "TEST_RELAY_FILE": env["TEST_RELAY_FILE"]},
+    )
 
 
 def _run(
@@ -360,7 +379,10 @@ def test_apply_is_transactional_and_reaches_exact_v01615_policy(tmp_path: Path) 
         assert relays[0]["address"] == "smtp.resend.com"
         assert relays[0]["port"] == 465
         assert relays[0]["protocol"] == "smtp"
-        assert relays[0]["authSecret"] == {"@type": "EnvironmentVariable", "variableName": "RESEND_API_KEY"}
+        assert relays[0]["authSecret"] == {
+            "@type": "EnvironmentVariable",
+            "variableName": "RESEND_API_KEY",
+        }
         assert server.strategy["route"] == {
             "match": {"0": {"if": "is_local_domain(rcpt_domain)", "then": "'local'"}},
             "else": "'resend-relay'",
@@ -397,7 +419,9 @@ def test_partial_apply_performs_validated_automatic_rollback(tmp_path: Path) -> 
         assert result.returncode != 0
         assert "APPLY=FAIL" in result.stderr
         assert "AUTOMATIC_ROLLBACK=PASS" in result.stderr
-        assert [{key: value for key, value in route.items() if key != "id"} for route in server.routes] == [
+        assert [
+            {key: value for key, value in route.items() if key != "id"} for route in server.routes
+        ] == [
             {key: value for key, value in route.items() if key != "id"} for route in original_routes
         ]
         assert server.strategy == original_strategy
@@ -414,7 +438,9 @@ def test_failed_destroy_without_a_successful_mutation_does_not_rollback(tmp_path
         assert result.returncode != 0
         assert "APPLY=FAIL" in result.stderr
         assert "AUTOMATIC_ROLLBACK=NOT_NEEDED" in result.stderr
-        assert sum(payload["methodCalls"][0][0].endswith("/set") for payload in server.requests) == 1
+        assert (
+            sum(payload["methodCalls"][0][0].endswith("/set") for payload in server.requests) == 1
+        )
     finally:
         server.stop()
 

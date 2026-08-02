@@ -82,6 +82,58 @@ class RouteCredentialTransport:
         raise AssertionError((method, arguments))
 
 
+class AdminPermissionTransport:
+    def __init__(self, permissions: dict[str, Any]) -> None:
+        self.permissions = permissions
+        self.calls: list[str] = []
+
+    @staticmethod
+    def _query(method: str, tag: str, ids: list[str]) -> dict[str, Any]:
+        return _envelope(
+            method,
+            {
+                "queryState": "query-state",
+                "canCalculateChanges": False,
+                "position": 0,
+                "ids": ids,
+            },
+            tag,
+        )
+
+    def json(self, _url: str, _authorization: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        payload = kwargs["payload"]
+        method, arguments, tag = payload["methodCalls"][0]
+        self.calls.append(method)
+        if method == "x:Domain/query":
+            return self._query(method, tag, ["domain-id"])
+        if method == "x:Account/query":
+            return self._query(method, tag, ["account-id"])
+        if method == "x:Account/get":
+            return _envelope(
+                method,
+                {
+                    "list": [
+                        {
+                            "id": "account-id",
+                            "name": "admin",
+                            "domainId": "domain-id",
+                            "permissions": self.permissions,
+                        }
+                    ],
+                    "notFound": [],
+                },
+                tag,
+            )
+        if method == "x:Account/set":
+            self.permissions = arguments["update"]["account-id"]["permissions"]
+            return _envelope(
+                method,
+                {"updated": {"account-id": {}}},
+                tag,
+            )
+        raise AssertionError((method, arguments))
+
+
 def _metadata(credential_id: str = "route-key-id") -> dict[str, Any]:
     return {
         "version": credentials.ROUTE_KEY_METADATA_VERSION,
@@ -94,15 +146,15 @@ def _metadata(credential_id: str = "route-key-id") -> dict[str, Any]:
     }
 
 
-def _write_files(tmp_path: Path, monkeypatch, metadata: dict[str, Any] | None = None) -> tuple[Path, Path, str]:
+def _write_files(
+    tmp_path: Path, monkeypatch, metadata: dict[str, Any] | None = None
+) -> tuple[Path, Path, str]:
     monkeypatch.setattr(credentials, "_require_root_owned", lambda _path, **_kwargs: None)
     secret_file = tmp_path / "stalwart-route-lifecycle.env"
     metadata_file = tmp_path / "stalwart-route-lifecycle.meta"
     secret = "API_REDACTED_FOR_TEST"
     secret_file.write_text(f"{credentials.ROUTE_KEY_VARIABLE}={secret}\n", encoding="utf-8")
-    metadata_file.write_text(
-        json.dumps(metadata or _metadata()) + "\n", encoding="utf-8"
-    )
+    metadata_file.write_text(json.dumps(metadata or _metadata()) + "\n", encoding="utf-8")
     return secret_file, metadata_file, secret
 
 
@@ -111,7 +163,6 @@ def test_exact_route_permissions_are_v01615_set_permissions() -> None:
         "authenticate",
         "sysMtaRouteGet",
         "sysMtaRouteCreate",
-        "sysMtaRouteUpdate",
         "sysMtaRouteDestroy",
         "sysMtaOutboundStrategyGet",
         "sysMtaOutboundStrategyUpdate",
@@ -177,7 +228,9 @@ def test_extra_effective_permission_is_rejected(tmp_path: Path, monkeypatch) -> 
     assert metadata_file.exists()
 
 
-@pytest.mark.parametrize("missing", ["sysMtaRouteCreate", "sysMtaRouteDestroy", "sysMtaOutboundStrategyUpdate"])
+@pytest.mark.parametrize(
+    "missing", ["sysMtaRouteCreate", "sysMtaRouteDestroy", "sysMtaOutboundStrategyUpdate"]
+)
 def test_missing_mutation_permission_is_rejected(tmp_path: Path, monkeypatch, missing: str) -> None:
     _secret_file, _metadata_file, _secret = _write_files(tmp_path, monkeypatch)
     permissions = {
@@ -231,7 +284,84 @@ def test_revoke_method_error_preserves_protected_files(tmp_path: Path, monkeypat
     assert metadata_file.exists()
 
 
-def test_diagnostics_and_source_do_not_contain_test_secret(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_revoke_ambiguous_bearer_state_preserves_protected_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    secret_file, metadata_file, _secret = _write_files(tmp_path, monkeypatch)
+    transport = RouteCredentialTransport()
+    monkeypatch.setattr(credentials.PROVISIONING, "HttpTransport", lambda _state: transport)
+    monkeypatch.setattr(credentials, "_admin_login", lambda **_kwargs: ("token", "Bearer admin"))
+    monkeypatch.setattr(credentials, "_discover", lambda **_kwargs: "http://127.0.0.1:18080/jmap/")
+
+    def missing_key(**_kwargs: Any) -> dict[str, Any]:
+        raise credentials.Refused("temporary route credential was not found exactly once")
+
+    monkeypatch.setattr(credentials, "_record_for_admin", missing_key)
+    with pytest.raises(credentials.Refused, match="ambiguous"):
+        credentials.revoke(
+            base_url=credentials.LOCAL_URL,
+            administrator_address=credentials.PERMANENT_ADMINISTRATOR_ADDRESS,
+            administrator_password="redacted-admin-password",
+            secret_file=secret_file,
+            metadata_file=metadata_file,
+            diagnostic=credentials.PROVISIONING.DiagnosticState(),
+        )
+    assert secret_file.exists()
+    assert metadata_file.exists()
+
+
+def test_remove_sys_api_key_create_preserves_other_permissions(monkeypatch) -> None:
+    transport = AdminPermissionTransport(
+        {
+            "@type": "Merge",
+            "enabledPermissions": {
+                "sysApiKeyCreate": True,
+                "sysAccountUpdate": True,
+                "sysMtaRouteGet": True,
+            },
+            "disabledPermissions": {},
+        }
+    )
+    monkeypatch.setattr(credentials.PROVISIONING, "HttpTransport", lambda _state: transport)
+    monkeypatch.setattr(credentials, "_admin_login", lambda **_kwargs: ("token", "Bearer admin"))
+    monkeypatch.setattr(credentials, "_discover", lambda **_kwargs: "http://127.0.0.1:18080/jmap/")
+    credentials.remove_sys_api_key_create(
+        base_url=credentials.LOCAL_URL,
+        administrator_address=credentials.PERMANENT_ADMINISTRATOR_ADDRESS,
+        administrator_password="redacted-admin-password",
+        diagnostic=credentials.PROVISIONING.DiagnosticState(),
+    )
+    assert transport.permissions == {
+        "@type": "Merge",
+        "enabledPermissions": {"sysAccountUpdate": True, "sysMtaRouteGet": True},
+        "disabledPermissions": {"sysApiKeyCreate": True},
+    }
+    assert "x:Account/set" in transport.calls
+
+
+def test_remove_sys_api_key_create_is_idempotent(monkeypatch) -> None:
+    transport = AdminPermissionTransport(
+        {
+            "@type": "Replace",
+            "enabledPermissions": {"sysAccountUpdate": True},
+            "disabledPermissions": {"sysApiKeyCreate": True},
+        }
+    )
+    monkeypatch.setattr(credentials.PROVISIONING, "HttpTransport", lambda _state: transport)
+    monkeypatch.setattr(credentials, "_admin_login", lambda **_kwargs: ("token", "Bearer admin"))
+    monkeypatch.setattr(credentials, "_discover", lambda **_kwargs: "http://127.0.0.1:18080/jmap/")
+    credentials.remove_sys_api_key_create(
+        base_url=credentials.LOCAL_URL,
+        administrator_address=credentials.PERMANENT_ADMINISTRATOR_ADDRESS,
+        administrator_password="redacted-admin-password",
+        diagnostic=credentials.PROVISIONING.DiagnosticState(),
+    )
+    assert "x:Account/set" not in transport.calls
+
+
+def test_diagnostics_and_source_do_not_contain_test_secret(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     secret_file, metadata_file, secret = _write_files(tmp_path, monkeypatch)
     assert secret not in credentials.read_metadata_file(metadata_file).__repr__()
     print("ROUTE_LIFECYCLE_SECRET_PRINTED=NONE")
