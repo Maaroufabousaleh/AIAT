@@ -38,7 +38,7 @@ ROUTE_METADATA_FILE = Path("/etc/aiat/stalwart-route-lifecycle.meta")
 CERTIFICATION_SECRET_FILE = Path("/etc/aiat/resend-certification.env")
 RELAY_SECRET_FILE = Path("/etc/aiat/stalwart-resend.env")
 BACKUP_FILE = Path("/secure/rollback/stalwart-resend-route-20260731T205925Z.json")
-ADMIN_SOURCE_FILE = WORKSPACE / ".env"
+ADMIN_SOURCE_FILE = Path("/etc/aiat/stalwart-admin-source.env")
 EVIDENCE_PARENT = Path("/secure/rollback")
 LOCK_FILE = Path("/run/lock/aiat-resend-route-finish.lock")
 STALWART_CONTAINER = "mas-stalwart-1"
@@ -91,6 +91,10 @@ def _load_module(name: str, filename: str) -> Any:
 CREDENTIALS = _load_module(
     "stalwart_route_lifecycle_credentials_for_finish",
     "stalwart_route_lifecycle_credentials.py",
+)
+ADMIN_SOURCE = _load_module(
+    "stalwart_admin_source_for_finish",
+    "stalwart_admin_source.py",
 )
 PROVISIONING = CREDENTIALS.PROVISIONING
 JMAP_RESPONSE = CREDENTIALS.JMAP_RESPONSE
@@ -161,45 +165,18 @@ def parse_control_file(path: Path) -> dict[str, bool]:
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse a data-only env file without shell evaluation."""
-    value = _read_protected_text(path)
-    if not value.endswith("\n"):
-        raise FinishRefused(f"source file {path.name} must end with a newline")
-    parsed: dict[str, str] = {}
-    for raw_line in value.splitlines():
-        if not raw_line or raw_line.startswith("#"):
-            continue
-        key, separator, item = raw_line.partition("=")
-        if separator != "=" or ENV_KEY.fullmatch(key) is None or key in parsed:
-            raise FinishRefused(f"source file {path.name} contains a malformed line")
-        if not item:
-            raise FinishRefused(f"source file {path.name} contains an empty value")
-        parsed[key] = item
-    return parsed
+    """Validate the dedicated source without shell evaluation."""
+    try:
+        return ADMIN_SOURCE.read_protected_admin_source(path)
+    except ADMIN_SOURCE.AdminSourceRefused as exc:
+        raise FinishRefused("protected admin source is invalid") from exc
 
 
 def read_permanent_admin_password(source: Path) -> str:
-    values = parse_env_file(source)
-    required = {"STALWART_RECOVERY_ADMIN", "admin-st", "guest"}
-    if not required.issubset(values):
-        raise FinishRefused("admin source is missing one of the required credential keys")
-    recovery_value = values["STALWART_RECOVERY_ADMIN"]
-    if recovery_value.count(":") != 1:
-        raise FinishRefused("STALWART_RECOVERY_ADMIN has an invalid source format")
-    source_principal, password = recovery_value.split(":", 1)
-    if (
-        source_principal != "admin"
-        or not password
-        or any(character.isspace() for character in password)
-    ):
-        raise FinishRefused(
-            "admin source must provide the password component for the local admin principal"
-        )
-    # The source principal is intentionally ignored for authentication. The
-    # password component is used only with the fixed permanent directory
-    # administrator identity above; recovery/admin-st/guest identities are
-    # never selected as an authentication principal.
-    return password
+    try:
+        return ADMIN_SOURCE.read_permanent_admin_password(source)
+    except ADMIN_SOURCE.AdminSourceRefused as exc:
+        raise FinishRefused("protected admin source is invalid") from exc
 
 
 def _parse_profile(path: Path) -> dict[str, str]:
@@ -606,7 +583,10 @@ def _remove_create_permission(password: str) -> None:
         diagnostic.sensitive_values.clear()
 
 
-def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
+def _run_finish(
+    control_file: Path,
+    admin_source_file: Path,
+) -> tuple[dict[str, Any], Path]:
     controls = parse_control_file(control_file)
     lock_parent = LOCK_FILE.parent
     try:
@@ -637,7 +617,7 @@ def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
 
         evidence_dir = _create_evidence_dir()
         profile = _parse_profile(PROFILE)
-        admin_password = read_permanent_admin_password(ADMIN_SOURCE_FILE)
+        admin_password = read_permanent_admin_password(admin_source_file)
         certification_values = _read_certification_values(CERTIFICATION_SECRET_FILE)
         _read_relay_secret(RELAY_SECRET_FILE)
         _require_root_file(BACKUP_FILE)
@@ -780,6 +760,11 @@ def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-file", type=Path, required=True)
+    parser.add_argument(
+        "--admin-source-file",
+        type=Path,
+        default=ADMIN_SOURCE_FILE,
+    )
     return parser
 
 
@@ -791,7 +776,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     evidence_dir: Path | None = None
     try:
-        result, evidence_dir = _run_finish(args.control_file.absolute())
+        result, evidence_dir = _run_finish(
+            args.control_file.absolute(),
+            args.admin_source_file.absolute(),
+        )
     except FinishRefused as exc:
         print("FINAL_STATUS=BLOCKED")
         print(f"BLOCK_REASON={_safe_message(exc)}")
