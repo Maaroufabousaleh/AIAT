@@ -13,6 +13,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import importlib
@@ -23,8 +24,10 @@ import logging
 import os
 import re
 import shutil
+import ssl
+import time
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import partial
 from typing import Any, Literal
@@ -38,15 +41,37 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mas_core.integrations import ProviderRegistry
+from mas_core.integrations.contracts import (
+    DEDICATED_PROJECT_MAPPING_PROFILE,
+    BootstrapApplyResult,
+    BootstrapPlan,
+    CanonicalIteration,
+    CanonicalProject,
+    CanonicalWorkItem,
+    ExternalEvent,
+    ObjectType,
+    ProjectProvisioningPlan,
+    ProviderConnection,
+    LifecyclePlanError,
+    LifecyclePlanStatus,
+    PMLifecycleTransitionPlan,
+    PMInboundCanaryPlan,
+    normalize_project_mapping_profile,
+    pm_binding_effective_policy,
+    validate_credential_references,
+)
+from mas_core.integrations.providers.base import provider_ssl_context
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import MAS_PROJECT_STATE
 from mas_core.observability.tracing import bind_trace_id, new_trace_id
-from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.policy.tool_access import can_use_tool_with_metadata
+from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 from mas_core.workflow import (
     InvalidTransitionError,
     WatchdogConfig,
@@ -57,7 +82,6 @@ from mas_core.workflow import (
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
-from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 
 VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
@@ -104,14 +128,21 @@ configure_logging("orchestrator-api", json=os.getenv("LOG_FORMAT") != "console")
 # ---------------------------------------------------------------------------
 
 
-def _check_auth(x_api_key: str | None = Header(None), authorization: str | None = Header(None)) -> None:
+def _check_auth(x_api_key: str | None = Header(None), authorization: str | None = Header(None)) -> str:
     """Validate API key for protected endpoints.
 
     Accepts either X-API-Key header (frontend proxy) or Authorization: Bearer.
     """
-    _MAS_API_KEY = os.getenv("MAS_API_KEY", "")
-    _GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
-    configured_keys = tuple(key for key in (_MAS_API_KEY, _GATEWAY_API_KEY) if key)
+    configured_keys = (
+        ("operator", os.getenv("AIAT_OPERATOR_API_KEY", "")),
+        ("pm_gateway", os.getenv("PM_GATEWAY_API_KEY", "")),
+        ("service", os.getenv("MAS_API_KEY", "")),
+        ("gateway", os.getenv("GATEWAY_API_KEY", "")),
+    )
+    configured_keys = tuple(item for item in configured_keys if item[1])
+    distinct_values = [value for _principal, value in configured_keys]
+    if len(distinct_values) != len(set(distinct_values)):
+        raise HTTPException(503, "API credentials must be distinct by principal")
     if not configured_keys:
         raise HTTPException(503, "API authentication is not configured")
     token = x_api_key or authorization
@@ -121,8 +152,10 @@ def _check_auth(x_api_key: str | None = Header(None), authorization: str | None 
     if token.lower().startswith("bearer "):
         token = token[7:]
     supplied = token.strip()
-    if not any(hmac.compare_digest(supplied, key) for key in configured_keys):
-        raise HTTPException(401, "Invalid API key")
+    for principal, key in configured_keys:
+        if hmac.compare_digest(supplied, key):
+            return principal
+    raise HTTPException(401, "Invalid API key")
 
 
 def _router_auth_headers() -> dict[str, str]:
@@ -1071,6 +1104,241 @@ class CreateProjectRequest(BaseModel):
         if not normalized:
             raise ValueError("name must not be blank")
         return normalized
+
+
+class PMConnectionCreateRequest(BaseModel):
+    provider_kind: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    display_name: str = Field(..., min_length=1, max_length=200)
+    base_url: str = Field(..., max_length=1000)
+    credential_ref: str = Field(..., min_length=1, max_length=200)
+    capability_profile: str = Field(default="pm", min_length=1, max_length=64)
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_by: str = Field(default="operator", min_length=1, max_length=200)
+
+    @field_validator("config")
+    @classmethod
+    def reject_inline_secrets(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+    @model_validator(mode="after")
+    def require_secure_provider_url(self) -> PMConnectionCreateRequest:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(self.base_url)
+        host = str(parsed.hostname or "").lower()
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        if self.provider_kind.lower() != "fake" and parsed.scheme != "https" and host not in local_hosts:
+            raise ValueError("non-fake provider connections must use HTTPS")
+        if self.provider_kind.lower() != "fake" and any(
+            key in self.config
+            for key in ("webhook_secret_test_only", "webhook_token_test_only")
+        ):
+            raise ValueError("test-only webhook credentials are permitted only for fake connections")
+        return self
+
+
+class PMConnectionStatusRequest(BaseModel):
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]
+
+
+class PMBindingCreateRequest(BaseModel):
+    connection_id: UUID
+    external_project_id: str | None = None
+    external_project_key: str | None = Field(default=None, max_length=240)
+    external_repository: str | None = None
+    mapping_profile: str = Field(default=DEDICATED_PROJECT_MAPPING_PROFILE, min_length=1, max_length=100)
+    direction: Literal["outbound", "inbound", "both"] = "outbound"
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] = "DISABLED"
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str) -> str:
+        return normalize_project_mapping_profile(value)
+
+
+class PMBindingUpdateRequest(BaseModel):
+    external_project_id: str | None = Field(default=None, max_length=240)
+    external_project_key: str | None = Field(default=None, max_length=240)
+    external_repository: str | None = Field(default=None, max_length=1000)
+    mapping_profile: str | None = Field(default=None, min_length=1, max_length=100)
+    direction: Literal["outbound", "inbound", "both"] | None = None
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str | None) -> str | None:
+        return normalize_project_mapping_profile(value) if value is not None else None
+
+
+class PMProjectProvisioningRequest(BaseModel):
+    connection_id: UUID
+    mapping_profile: str = Field(default=DEDICATED_PROJECT_MAPPING_PROFILE, min_length=1, max_length=100)
+    external_project_id: str | None = Field(default=None, max_length=240)
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str) -> str:
+        return normalize_project_mapping_profile(value)
+
+
+class PMProjectProvisioningApplyRequest(BaseModel):
+    plan: ProjectProvisioningPlan
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMPlanRequest(BaseModel):
+    desired: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("desired")
+    @classmethod
+    def reject_inline_secrets(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+
+class PMApplyRequest(BaseModel):
+    plan: BootstrapPlan
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMReconcileRequest(BaseModel):
+    binding_id: UUID | None = None
+    cursor: str | None = None
+    limit: int = Field(default=100, ge=1, le=1000)
+    mode: Literal["audit", "repair_proposal"] = "audit"
+
+
+class PMCutoverRequest(BaseModel):
+    project_id: UUID
+    binding_id: UUID
+    confirm: bool = False
+
+
+class PMRollbackRequest(BaseModel):
+    project_id: UUID
+    binding_id: UUID
+    confirm: bool = False
+
+
+class PMLifecyclePlanCreateRequest(BaseModel):
+    target_type: Literal["pm_connection", "pm_binding"] = "pm_binding"
+    connection_id: UUID
+    binding_id: UUID | None = None
+    desired_connection_status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+    desired_binding_status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+    ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+
+class PMLifecyclePlanApprovalRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class PMLifecyclePlanApplyRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMLifecyclePlanRejectRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class PMConflictResolutionRequest(BaseModel):
+    status: Literal["RESOLVED", "IGNORED", "REOPENED"] = "RESOLVED"
+    resolution: dict[str, Any] = Field(default_factory=dict)
+
+
+class PMExternalActorMappingCreateRequest(BaseModel):
+    inbox_event_ids: list[UUID] = Field(min_length=1, max_length=20)
+    authorized_scopes: list[Literal["issue.priority"]] = Field(default_factory=lambda: ["issue.priority"])
+    reason: str = Field(default="operator-authorized live YouTrack certification actor", min_length=1, max_length=500)
+
+
+class PMInboundCanaryPlanCreateRequest(BaseModel):
+    binding_id: UUID
+    canonical_issue_id: UUID
+    external_issue_id: str = Field(min_length=1, max_length=240)
+    mapping_id: UUID
+    actor_mapping_id: UUID
+    target_priority: Literal["low", "medium", "high", "urgent", "critical", "normal"] | None = None
+    ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+
+class PMInboundCanaryPlanActionRequest(BaseModel):
+    digest: str = Field(min_length=64, max_length=64)
+    confirm: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class SCMActionRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def reject_provider_credentials(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+
+class CanonicalIssueUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=100_000)
+    status: str | None = Field(default=None, min_length=1, max_length=64)
+    priority: str | None = Field(default=None, min_length=1, max_length=64)
+    assigned_team: str | None = Field(default=None, max_length=200)
+    assigned_agent: str | None = Field(default=None, max_length=200)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    actual_hours: float | None = Field(default=None, ge=0)
+    story_points: int | None = Field(default=None, ge=0)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CanonicalIssueCreateRequest(BaseModel):
+    title: str = Field(default="Untitled issue", min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=100_000)
+    issue_type: str = Field(default="TASK", min_length=1, max_length=64)
+    priority: str = Field(default="medium", min_length=1, max_length=64)
+    sprint_id: UUID | None = None
+    assigned_team: str | None = Field(default=None, max_length=200)
+    assigned_agent: str | None = Field(default=None, max_length=200)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    story_points: int | None = Field(default=None, ge=0)
+
+
+class CanonicalSprintCreateRequest(BaseModel):
+    sprint_number: int = Field(default=1, ge=1)
+    milestone: str | None = Field(default=None, max_length=200)
+    goal: str | None = Field(default=None, max_length=20_000)
+    planned_story_points: int | None = Field(default=None, ge=0)
+    estimated_hours: float | None = Field(default=None, ge=0)
+
+
+class CanonicalSprintUpdateRequest(BaseModel):
+    milestone: str | None = Field(default=None, max_length=200)
+    goal: str | None = Field(default=None, max_length=20_000)
+    status: str | None = Field(default=None, min_length=1, max_length=64)
+    planned_story_points: int | None = Field(default=None, ge=0)
+    completed_story_points: int | None = Field(default=None, ge=0)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    actual_hours: float | None = Field(default=None, ge=0)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CanonicalIssueCommentRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=100_000)
+    actor_id: str = Field(default="operator", min_length=1, max_length=200)
+    run_id: UUID | None = None
+    approval_id: UUID | None = None
+    evidence_id: str | None = None
+    body_blob_ref: str | None = Field(default=None, max_length=500)
+
+
+class CanonicalIssueLinkRequest(BaseModel):
+    link_type: str = Field(..., min_length=1, max_length=80)
+    target_type: str = Field(..., min_length=1, max_length=80)
+    target_id: str = Field(..., min_length=1, max_length=400)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Credentials Manager request models ──────────────────────────────────────
@@ -2132,13 +2400,36 @@ async def require_control_plane_auth(request: Request, call_next):  # type: igno
         # v1 is the canonical public prefix.  Existing unprefixed routes stay
         # available as migration aliases while they share the same handlers.
         request.scope["path"] = request.scope["path"][7:]
+    # Provider webhooks are authenticated by the connection-specific provider
+    # secret inside ``receive_integration_webhook``.  They arrive through the
+    # separately isolated PM gateway, so requiring an AIAT control-plane key
+    # here would turn a valid provider delivery into an origin 401/403 and
+    # would couple external providers to an internal operator credential.
+    # Keep this exception narrow: only POSTs to the UUID webhook route bypass
+    # the global API-key middleware. Every management, operator, health-sensitive
+    # and internal route continues through the normal principal check.
+    is_provider_webhook = bool(
+        request.method == "POST"
+        and re.fullmatch(
+            r"/integrations/webhooks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+            str(request.scope.get("path") or ""),
+        )
+    )
+    if is_provider_webhook:
+        request.state.aiat_auth_principal = "provider_webhook"
+        response = await call_next(request)
+        if requested_v1:
+            response.headers["X-AIAT-API-Version"] = "v1"
+        return response
     if request.method == "OPTIONS" or request.url.path in {"/health", "/docs", "/openapi.json"}:
         response = await call_next(request)
         if requested_v1:
             response.headers["X-AIAT-API-Version"] = "v1"
         return response
     try:
-        _check_auth(request.headers.get("x-api-key"), request.headers.get("authorization"))
+        request.state.aiat_auth_principal = _check_auth(
+            request.headers.get("x-api-key"), request.headers.get("authorization")
+        )
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     response = await call_next(request)
@@ -2326,6 +2617,13 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
 
     project_config = dict(req.config or {})
+    # Every canonical project starts with an explicit, provider-neutral PM
+    # provisioning intent.  The dedicated-project profile is the safe default;
+    # an operator must opt into issue-only umbrella mapping later.
+    pm_provisioning = dict(project_config.get("pm_provisioning") or {})
+    pm_provisioning.setdefault("mapping_profile", DEDICATED_PROJECT_MAPPING_PROFILE)
+    pm_provisioning.setdefault("state", "UNPROVISIONED")
+    project_config["pm_provisioning"] = pm_provisioning
     requested_workspace: dict[str, Any] | None = None
     if req.workspace is not None:
         requested_workspace = {
@@ -3513,6 +3811,83 @@ async def get_sprints(project_id: UUID) -> list[dict[str, Any]]:
     return [_serialize(s) for s in sprints]
 
 
+@app.post("/projects/{project_id}/sprints", status_code=201)
+async def create_canonical_sprint(
+    project_id: UUID,
+    req: CanonicalSprintCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Typed sprint creation; `/tasks` remains a compatibility wrapper."""
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "project not found")
+    kwargs = req.model_dump()
+    if isinstance(storage, AgentStorage):
+        sprint, queued = await storage.create_sprint_with_pm_projections(
+            project_id=project_id,
+            **kwargs,
+        )
+    else:
+        sprint = await storage.create_sprint(project_id=project_id, **kwargs)
+        queued = []
+    return {
+        "sprint": _serialize(sprint),
+        "projections": [_serialize_projection(row) for row in queued],
+    }
+
+
+@app.get("/projects/{project_id}/sprints/{sprint_id}")
+async def get_canonical_sprint(project_id: UUID, sprint_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    sprint = await storage.get_sprint(sprint_id)
+    if sprint is None or sprint.get("project_id") != project_id:
+        raise HTTPException(404, "sprint not found for project")
+    return {"sprint": _serialize(sprint)}
+
+
+@app.patch("/projects/{project_id}/sprints/{sprint_id}")
+async def update_canonical_sprint(
+    project_id: UUID,
+    sprint_id: UUID,
+    req: CanonicalSprintUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    sprint = await storage.get_sprint(sprint_id)
+    if sprint is None or sprint.get("project_id") != project_id:
+        raise HTTPException(404, "sprint not found for project")
+    values = {
+        key: value
+        for key, value in req.model_dump(exclude_none=True).items()
+        if key != "expected_revision"
+    }
+    try:
+        if isinstance(storage, AgentStorage):
+            refreshed, queued = await storage.update_sprint_with_pm_projections(
+                sprint_id,
+                expected_revision=req.expected_revision or int(sprint.get("revision") or 1),
+                **values,
+            )
+        else:
+            await storage.update_sprint(
+                sprint_id,
+                expected_revision=req.expected_revision or int(sprint.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_sprint(sprint_id)
+            queued = []
+            if refreshed is None:
+                raise HTTPException(404, "sprint not found after update")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "sprint": _serialize(refreshed),
+        "projections": [_serialize_projection(row) for row in queued],
+    }
+
+
 @app.get("/projects/{project_id}/kpi")
 async def list_project_kpi(
     project_id: UUID,
@@ -4181,7 +4556,7 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
 
 
 @app.post("/tasks")
-async def create_task(body: dict[str, Any]) -> dict[str, Any]:
+async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
     """Publish an ADMIN_TASK to the correct team admin via the router."""
     tid = new_trace_id()
     bind_trace_id(tid)
@@ -4205,7 +4580,13 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
         "UPDATE_ISSUE_STATUS",
         "UPDATE_AGENT_PROFILE",
     }:
+        # The compatibility wrapper must not become a second path around the
+        # typed canonical-mutation authorization boundary.  Unknown actions
+        # remain routable ADMIN_TASKs; deterministic persistence actions are
+        # operator-only just like their typed replacements.
+        _require_operator_identity(request)
         storage = _storage()
+        projection_rows: list[dict[str, Any]] = []
         pid: UUID | None = None
         if project_id:
             try:
@@ -4246,17 +4627,21 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
                             404,
                             f"Sprint {parsed_sprint_id} not found for project {pid}",
                         )
-                result = await storage.create_issue(
-                    project_id=pid,
-                    sprint_id=parsed_sprint_id,
-                    title=str(task_payload.get("title") or "Untitled issue"),
-                    description=task_payload.get("description"),
-                    issue_type=str(task_payload.get("issue_type") or "TASK"),
-                    priority=str(task_payload.get("priority") or "medium"),
-                    assigned_team=task_payload.get("assigned_team"),
-                    estimated_hours=task_payload.get("estimated_hours"),
-                    story_points=task_payload.get("story_points"),
-                )
+                issue_kwargs = {
+                    "project_id": pid,
+                    "sprint_id": parsed_sprint_id,
+                    "title": str(task_payload.get("title") or "Untitled issue"),
+                    "description": task_payload.get("description"),
+                    "issue_type": str(task_payload.get("issue_type") or "TASK"),
+                    "priority": str(task_payload.get("priority") or "medium"),
+                    "assigned_team": task_payload.get("assigned_team"),
+                    "estimated_hours": task_payload.get("estimated_hours"),
+                    "story_points": task_payload.get("story_points"),
+                }
+                if isinstance(storage, AgentStorage):
+                    result, projection_rows = await storage.create_issue_with_pm_projections(**issue_kwargs)
+                else:
+                    result = await storage.create_issue(**issue_kwargs)
             elif action == "DECOMPOSE_ISSUE":
                 issue_id = UUID(str(task_payload.get("issue_id")))
                 parent = await storage.get_issue(issue_id)
@@ -4301,8 +4686,15 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
                 values: dict[str, Any] = {"status": str(task_payload.get("status") or "IN_PROGRESS")}
                 if task_payload.get("actual_hours") is not None:
                     values["actual_hours"] = task_payload["actual_hours"]
-                await storage.update_issue(issue_id, **values)
-                result = await storage.get_issue(issue_id)
+                if isinstance(storage, AgentStorage):
+                    result, projection_rows = await storage.update_issue_with_pm_projections(
+                        issue_id,
+                        expected_revision=int(issue.get("revision") or 1),
+                        **values,
+                    )
+                else:
+                    await storage.update_issue(issue_id, **values)
+                    result = await storage.get_issue(issue_id)
                 if result and str(values["status"]).upper() in {"DONE", "COMPLETED", "CLOSED"}:
                     sprint_id = result.get("sprint_id")
                     if sprint_id:
@@ -4321,7 +4713,10 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
             raise
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, f"Invalid {action} payload: {exc}") from exc
-        return {"status": "completed", "action": action, "result": _serialize(result)}
+        response = {"status": "completed", "action": action, "result": _serialize(result)}
+        if projection_rows:
+            response["projections"] = [_serialize_projection(row) for row in projection_rows]
+        return response
 
     envelope = {
         "message_id": str(uuid4()),
@@ -9017,6 +9412,22 @@ def _serialize_scalar(v: Any) -> Any:
     return v
 
 
+def _serialize_projection(row: dict[str, Any]) -> dict[str, Any]:
+    """Expose a stable projection state while retaining the outbox status."""
+    result = _serialize(row)
+    status = str(row.get("status") or "PENDING").upper()
+    result["projection_status"] = {
+        "PENDING": "pending",
+        "PROCESSING": "pending",
+        "SYNCED": "synced",
+        "CONFLICT": "conflicted",
+        "CONFLICTED": "conflicted",
+        "FAILED": "failed",
+        "DEAD_LETTER": "failed",
+    }.get(status, "pending")
+    return result
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Credentials Manager endpoints
 # ═════════════════════════════════════════════════════════════════════════════
@@ -11744,3 +12155,3988 @@ async def stream_container_logs(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Provider-neutral PM/SCM integration API ──────────────────────────────────
+
+
+def _authenticated_principal(request: Request) -> str:
+    """Return the principal established by the API-key middleware.
+
+    Actor headers are attribution metadata only.  They are deliberately not
+    used as authorization input because every caller that knows the shared
+    service key could otherwise claim to be an operator.
+    """
+    principal = str(getattr(request.state, "aiat_auth_principal", "") or "").lower()
+    if not principal:
+        raise HTTPException(401, "authenticated principal is unavailable")
+    return principal
+
+
+def _require_operator_identity(request: Request) -> None:
+    """Require the separately configured operator API credential."""
+    if _authenticated_principal(request) != "operator":
+        raise HTTPException(403, "canonical mutation requires an operator credential")
+
+
+def _integration_operator(
+    request: Request,
+    *,
+    allow_worker_read: bool = False,
+    allow_gateway: bool = False,
+) -> None:
+    """Authorize integration operations using an authenticated principal.
+
+    ``X-AIAT-Actor-Role`` remains useful for audit attribution, but cannot
+    elevate a service or worker authenticated with ``MAS_API_KEY``.  Gateway
+    ingress/drain uses its own ``PM_GATEWAY_API_KEY`` and read-only worker
+    surfaces may use the ordinary service credential.
+    """
+    principal = _authenticated_principal(request)
+    if principal == "operator":
+        return
+    if allow_gateway and principal in {"pm_gateway", "gateway"}:
+        return
+    if allow_worker_read and principal == "service":
+        return
+    raise HTTPException(403, "integration operation requires an authorized principal")
+
+
+def _redact_integration_config(value: Any) -> Any:
+    """Return provider configuration without bearer material.
+
+    Credential references are safe to display because they are opaque names;
+    values under secret/token/password/private-key fields are omitted.  This
+    is applied to every connection response, including dashboard reads.
+    """
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        secret_markers = ("secret", "token", "password", "private_key", "api_key")
+        safe_suffixes = ("_ref", "_refs")
+        for key, child in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in secret_markers) and not lowered.endswith(safe_suffixes):
+                continue
+            redacted[str(key)] = _redact_integration_config(child)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_integration_config(item) for item in value]
+    return value
+
+
+def _youtrack_actor_observation(payload: dict[str, Any]) -> dict[str, str] | None:
+    """Extract provider-signed actor hints; never treat them as an auth key."""
+    candidates: list[Any] = [payload.get("updatedBy"), payload.get("reporter")]
+    comments = payload.get("comments")
+    if isinstance(comments, list) and comments and isinstance(comments[-1], dict):
+        candidates.append(comments[-1].get("author"))
+    comment = payload.get("comment")
+    if isinstance(comment, dict):
+        candidates.append(comment.get("author"))
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        login = str(candidate.get("login") or "").strip()
+        email = str(candidate.get("email") or "").strip()
+        immutable_id = str(candidate.get("id") or "").strip()
+        if immutable_id or login or email:
+            return {"id": immutable_id, "login": login, "email": email}
+    return None
+
+
+def _pm_tenant_key(row: dict[str, Any]) -> str:
+    return str(row.get("base_url") or "").rstrip("/").lower()
+
+
+def _serialize_pm_connection(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    safe = dict(row)
+    safe["config"] = _redact_integration_config(row.get("config") or {})
+    return _serialize(safe)
+
+
+async def _integration_secret(name: str) -> str:
+    value = await _credentials_manager().resolve(
+        name,
+        requester="pm-integration-gateway",
+        context="pm-provider",
+    )
+    if not value:
+        raise RuntimeError(f"credential {name!r} is unavailable or denied")
+    return value
+
+
+def _jwt_segment(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+async def _integration_run_token_broker(
+    connection: ProviderConnection,
+    repository: str,
+    permissions: dict[str, str],
+) -> dict[str, object]:
+    """Mint a repository/permission-scoped GitHub App installation token.
+
+    The App private key is resolved only inside the credentials boundary.  The
+    resulting one-hour token is returned to the governed run and is never
+    persisted in AIAT evidence (the evidence scrubber stores issuance metadata
+    only).
+    """
+    config = connection.config or {}
+    app_id = str(config.get("github_app_id") or "")
+    installation_id = str(config.get("github_installation_id") or "")
+    private_key_ref = str(config.get("github_app_private_key_ref") or "")
+    if not app_id.isdigit() or not installation_id.isdigit() or not private_key_ref:
+        raise RuntimeError(
+            "GitHub App broker requires numeric github_app_id, "
+            "github_installation_id, and github_app_private_key_ref"
+        )
+    owner, separator, name = str(repository).partition("/")
+    allowed_repository_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    if (
+        not separator
+        or not owner
+        or not name
+        or "/" in name
+        or any(char not in allowed_repository_chars for char in owner + name)
+        or owner.startswith((".", "-"))
+        or name.startswith((".", "-"))
+    ):
+        raise ValueError("GitHub repository must be a safe owner/name value")
+    profile_permissions: dict[str, str] = {
+        "metadata": "read",
+        "issues": "write",
+    }
+    profile = connection.capability_profile.lower()
+    if profile in {"delivery", "checks"}:
+        profile_permissions.update({"contents": "write", "pull_requests": "write"})
+    if profile == "checks":
+        profile_permissions["checks"] = "write"
+    if profile not in {"pm", "delivery", "checks"}:
+        raise ValueError("GitHub capability_profile does not define a token permission profile")
+    if not permissions:
+        permissions = dict(profile_permissions)
+    for permission, requested in permissions.items():
+        if permission not in profile_permissions or requested not in {"read", "write"}:
+            raise ValueError(f"GitHub token permission {permission!r} is outside the connection profile")
+        maximum = profile_permissions[permission]
+        if maximum == "read" and requested == "write":
+            raise ValueError(f"GitHub token permission {permission!r} exceeds the connection profile")
+    private_key = await _integration_secret(private_key_ref)
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        key = serialization.load_pem_private_key(private_key.encode("utf-8"), password=None)
+        header = _jwt_segment(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+        now = int(time.time())
+        claims = _jwt_segment(
+            json.dumps({"iat": now - 60, "exp": now + 540, "iss": int(app_id)}, separators=(",", ":")).encode()
+        )
+        signing_input = f"{header}.{claims}".encode("ascii")
+        signature = key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        app_jwt = f"{header}.{claims}.{_jwt_segment(signature)}"
+    except (ImportError, ValueError, TypeError, AttributeError) as exc:
+        raise RuntimeError("GitHub App private key could not be loaded") from exc
+    api_base = str(config.get("github_api_base_url") or "https://api.github.com").rstrip("/")
+    parsed = httpx.URL(api_base)
+    allowed_hosts = {
+        str(value).strip().lower()
+        for value in config.get("allowed_hosts", [])
+        if str(value).strip()
+    }
+    if (
+        parsed.scheme != "https"
+        or not parsed.host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or (allowed_hosts and str(parsed.host).lower() not in allowed_hosts)
+    ):
+        raise RuntimeError("github_api_base_url must be HTTPS")
+    url = f"{api_base}/app/installations/{installation_id}/access_tokens"
+    body = {"repositories": [name], "permissions": permissions}
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+        response = await client.post(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {app_jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json=body,
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"GitHub installation token exchange failed ({response.status_code})")
+    value = response.json()
+    if not isinstance(value, dict) or not value.get("token"):
+        raise RuntimeError("GitHub installation token exchange returned no token")
+    return {
+        "token": str(value["token"]),
+        "expires_at": value.get("expires_at"),
+        "repository": repository,
+        "permissions": permissions,
+    }
+
+
+def _integration_registry() -> ProviderRegistry:
+    registry = getattr(app.state, "pm_registry", None)
+    if registry is None:
+        registry = ProviderRegistry(
+            credential_resolver=_integration_secret,
+            run_credential_broker=_integration_run_token_broker,
+        )
+        app.state.pm_registry = registry
+    return registry
+
+
+def _provider_connection(row: dict[str, Any]) -> ProviderConnection:
+    return ProviderConnection(
+        id=row["id"],
+        provider_kind=str(row["provider_kind"]),
+        display_name=str(row["display_name"]),
+        base_url=str(row["base_url"]),
+        credential_ref=str(row["credential_ref"]),
+        capability_profile=str(row.get("capability_profile") or "pm"),
+        config=dict(row.get("config") or {}),
+        status=str(row.get("status") or "DISABLED"),
+        schema_version=int(row.get("schema_version") or 1),
+    )
+
+
+def _provider_for(row: dict[str, Any]) -> Any:
+    return _integration_registry().get(str(row["provider_kind"]), str(row["id"]))
+
+
+def _canonical_work_item(issue: dict[str, Any]) -> CanonicalWorkItem:
+    return CanonicalWorkItem(
+        id=issue["id"],
+        project_id=issue["project_id"],
+        title=str(issue.get("title") or "Untitled issue"),
+        description=issue.get("description"),
+        item_type=str(issue.get("issue_type") or "TASK"),
+        status=str(issue.get("status") or "backlog"),
+        priority=str(issue.get("priority") or "medium"),
+        sprint_id=issue.get("sprint_id"),
+        parent_id=issue.get("parent_issue_id"),
+        assigned_team=issue.get("assigned_team"),
+        assigned_agent=issue.get("assigned_agent"),
+        estimated_hours=float(issue["estimated_hours"]) if issue.get("estimated_hours") is not None else None,
+        actual_hours=float(issue["actual_hours"]) if issue.get("actual_hours") is not None else None,
+        story_points=issue.get("story_points"),
+        revision=int(issue.get("revision") or 1),
+        updated_at=issue.get("updated_at"),
+    )
+
+
+async def _enqueue_issue_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    *,
+    exclude_connection_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Create idempotent outbox records for every eligible project binding."""
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    item = _canonical_work_item(issue).model_dump(mode="json")
+    for binding in bindings:
+        if exclude_connection_id is not None and binding.get("connection_id") == exclude_connection_id:
+            continue
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{issue['id']}:{issue.get('revision', 1)}:upsert"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="work_item",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="upsert_work_item",
+                idempotency_key=key,
+                payload={"binding_id": str(binding["id"]), "item": item},
+            )
+        )
+    return queued
+
+
+async def _enqueue_comment_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    comment: dict[str, Any],
+    *,
+    exclude_connection_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Queue comments after the work-item mapping exists; delivery resolves it."""
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    provider_body = str(comment.get("body") or "")
+    if str(comment.get("origin") or "aiat") == "aiat":
+        attribution = [f"AIAT actor: {comment.get('actor_id') or 'operator'}"]
+        if comment.get("run_id"):
+            attribution.append(f"Run: {comment['run_id']}")
+        if comment.get("evidence_id"):
+            attribution.append(f"Evidence: {comment['evidence_id']}")
+        provider_body = (
+            f"<!-- aiat:comment={comment['id']} -->\n"
+            + "\n".join(attribution)
+            + "\n\n"
+            + provider_body
+        )
+    for binding in bindings:
+        if exclude_connection_id is not None and binding.get("connection_id") == exclude_connection_id:
+            continue
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{comment['id']}:comment"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="comment",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="project_comment",
+                idempotency_key=key,
+                payload={
+                    "binding_id": str(binding["id"]),
+                    "comment": {
+                        "id": str(comment["id"]),
+                        "body": provider_body,
+                        "actor_id": comment["actor_id"],
+                        "run_id": str(comment["run_id"]) if comment.get("run_id") else None,
+                        "approval_id": str(comment["approval_id"]) if comment.get("approval_id") else None,
+                        "evidence_id": comment.get("evidence_id"),
+                        "body_blob_ref": comment.get("body_blob_ref"),
+                    },
+                },
+            )
+        )
+    return queued
+
+
+async def _enqueue_link_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    link: dict[str, Any],
+) -> list[dict[str, Any]]:
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    for binding in bindings:
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{link['id']}:link"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="link",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="project_link",
+                idempotency_key=key,
+                payload={
+                    "binding_id": str(binding["id"]),
+                    "link": {
+                        "id": str(link["id"]),
+                        "link_type": link["link_type"],
+                        "target_type": link["target_type"],
+                        "target_id": link["target_id"],
+                        "metadata": link.get("metadata") or {},
+                    },
+                },
+            )
+        )
+    return queued
+
+
+def _canonical_status_from_external(value: Any, current: str) -> str:
+    """Normalize common provider status vocabularies into AIAT's vocabulary."""
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    aliases = {
+        "open": "in_progress",
+        "reopened": "in_progress",
+        "todo": "backlog",
+        "new": "backlog",
+        "closed": "done",
+        "completed": "done",
+        "complete": "done",
+        "resolved": "done",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+    }
+    return aliases.get(normalized, normalized or current)
+
+
+_AIAT_COMMENT_MARKER_RE = re.compile(
+    r"^\s*<!--\s*aiat:comment=(?P<comment_id>[0-9a-fA-F-]{36})\s*-->\s*"
+)
+
+
+def _aiat_comment_marker(value: str) -> str | None:
+    match = _AIAT_COMMENT_MARKER_RE.match(value)
+    return match.group("comment_id") if match else None
+
+
+def _provider_version_is_older(current: Any, incoming: Any) -> bool:
+    """Compare common provider version tokens without guessing across types."""
+    if current in (None, "") or incoming in (None, ""):
+        return False
+    left = str(current)
+    right = str(incoming)
+    if left == right:
+        return False
+    try:
+        return float(right) < float(left)
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime as _datetime
+
+        left_dt = _datetime.fromisoformat(left.replace("Z", "+00:00"))
+        right_dt = _datetime.fromisoformat(right.replace("Z", "+00:00"))
+        return right_dt < left_dt
+    except ValueError:
+        # Opaque provider tokens have no safe ordering; only exact echoes can
+        # be treated as a no-op.
+        return False
+
+
+# ACTIVE inbound commands are intentionally narrower than the provider object
+# vocabulary.  A provider webhook is evidence by default; it becomes a
+# canonical command only when its field, actor, revision, and binding gates all
+# pass.  Keep this table provider-neutral so adapters cannot widen policy by
+# adding a new field to a payload.
+ACTIVE_INBOUND_COMMAND_POLICY: dict[str, dict[str, Any]] = {
+    "title": {
+        "mode": "approval_required",
+        "reason": "title changes require an AIAT approval proposal",
+    },
+    "description": {
+        "mode": "approval_required",
+        "reason": "description changes require an AIAT approval proposal",
+    },
+    "priority": {
+        "mode": "allowed",
+        "values": {"low", "medium", "high", "urgent", "critical", "normal"},
+        "rollback": "restore the prior priority through the governed canonical update path",
+    },
+    "status": {
+        "mode": "allowlist_except_destructive",
+        "values": {"backlog", "in_progress", "review", "blocked"},
+        "approval_values": {"done", "cancelled"},
+        "rollback": "restore the prior status through the governed canonical update path",
+    },
+    "assigned_team": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "assigned_agent": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "assignee": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "comment": {
+        "mode": "evidence_only",
+        "command_mode": "structured_command_requires_approval",
+        "reason": "ordinary provider comments are evidence; structured commands require approval",
+    },
+}
+
+ACTIVE_INBOUND_RESERVED_FIELDS = {
+    "AIAT Object ID",
+    "AIAT Object Type",
+    "AIAT Revision",
+    "AIAT Managed",
+    "canonical_ownership",
+    "project_id",
+    "connection_id",
+    "binding_id",
+    "lifecycle_state",
+    "credential_ref",
+}
+_ACTIVE_SYNTHETIC_ACTOR_IDS = {
+    "aiat_agents",
+    "aiat-integration",
+    "aiat_integration",
+    "certification-actor",
+    "certification_actor",
+    "external-provider",
+}
+_AIAT_STRUCTURED_COMMAND_RE = re.compile(r"^\s*AIAT-COMMAND\s*:\s*(?P<body>\{.*\})\s*$", re.IGNORECASE | re.DOTALL)
+
+
+async def _active_actor_resolution(storage: Any, connection_row: dict[str, Any], command: Any) -> dict[str, Any] | None:
+    """Resolve only a durable immutable provider actor mapping for ACTIVE."""
+    actor_id = str(getattr(command.actor, "actor_id", "") or "").strip()
+    if not actor_id or actor_id.lower() in _ACTIVE_SYNTHETIC_ACTOR_IDS:
+        return None
+    actor = command.actor
+    if not bool(getattr(actor, "immutable_actor_id", False)):
+        resolver = getattr(_provider_for(connection_row), "resolve_external_actor", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = await resolver(
+                _provider_connection(connection_row),
+                login=getattr(actor, "provider_login", None) or actor_id,
+                email=getattr(actor, "provider_email", None),
+            )
+        except Exception:
+            return None
+        actor_id = str(resolved.get("id") or "")
+        if not actor_id:
+            return None
+    tenant_key = str(connection_row.get("base_url") or "").rstrip("/").lower()
+    getter = getattr(storage, "get_pm_external_actor_mapping", None)
+    if not callable(getter):
+        return None
+    mapping = getter(
+        connection_id=command.connection_id,
+        external_actor_id=actor_id,
+        tenant_key=tenant_key,
+    )
+    if hasattr(mapping, "__await__"):
+        mapping = await mapping
+    if not isinstance(mapping, dict) or str(mapping.get("status") or "") != "TRUSTED":
+        return None
+    scopes = {str(item) for item in (mapping.get("authorized_scopes") or [])}
+    if "issue.priority" not in scopes:
+        return None
+    return {
+        "provider_actor_id": actor_id,
+        "provider_actor_role": getattr(command.actor, "role", None),
+        "aiat_identity": str(mapping.get("aiat_identity_id")),
+        "identity_type": "operator",
+        "role": "operator",
+        "actor_mapping_id": str(mapping.get("id")),
+        "authorized_scopes": sorted(scopes),
+    }
+
+
+def _structured_comment_command(body: str) -> dict[str, Any] | None:
+    match = _AIAT_STRUCTURED_COMMAND_RE.match(body)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group("body"))
+    except json.JSONDecodeError:
+        return {"invalid": True}
+    return parsed if isinstance(parsed, dict) else {"invalid": True}
+
+
+async def _record_active_actor_evidence(
+    storage: Any,
+    *,
+    command: Any,
+    issue: dict[str, Any],
+    inbox: dict[str, Any],
+    resolution: dict[str, Any],
+) -> None:
+    recorder = getattr(storage, "record_integration_evidence", None)
+    if not callable(recorder):
+        return
+    payload = {
+        "provider_actor": {
+            "id": resolution.get("provider_actor_id"),
+            "role": resolution.get("provider_actor_role"),
+        },
+        "resolved_aiat_identity": resolution.get("aiat_identity"),
+        "actor_mapping_id": resolution.get("actor_mapping_id"),
+        "identity_type": resolution.get("identity_type"),
+        "role": resolution.get("role"),
+        "inbox_id": str(inbox.get("id")),
+        "event_type": inbox.get("event_type"),
+        "operation": command.operation,
+        "expected_canonical_revision": getattr(command, "expected_canonical_revision", None),
+        "mapping_revision": issue.get("revision"),
+        "payload_hash": inbox.get("payload_hash"),
+    }
+    saved = recorder(
+        connection_id=command.connection_id,
+        evidence_type="active_inbound_actor",
+        external_id=command.external_id,
+        project_id=issue.get("project_id"),
+        binding_id=command.binding_id,
+        payload=payload,
+        idempotency_key=f"active-actor:{command.idempotency_key}",
+    )
+    if hasattr(saved, "__await__"):
+        await saved
+async def _apply_normalized_command(
+    storage: AgentStorage,
+    command: Any,
+    inbox: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a verified provider command to canonical state with CAS protection.
+
+    Unknown external objects and stale revisions are recorded as conflicts and
+    never guessed into a project.  This is the critical boundary that keeps a
+    provider webhook from becoming an unscoped write API.
+    """
+    object_type = getattr(command.object_type, "value", str(command.object_type))
+    if object_type in {
+        ObjectType.PULL_REQUEST.value,
+        ObjectType.CHECK.value,
+        ObjectType.REPOSITORY.value,
+    }:
+        # Source-control objects are evidence, not PM work items.  Retaining
+        # them in the evidence ledger prevents a PR/check webhook from being
+        # misinterpreted as a canonical issue update while still making CI and
+        # review facts available to governance and release gates.
+        evidence_type = {
+            ObjectType.PULL_REQUEST.value: "pull_request_event",
+            ObjectType.CHECK.value: "check_event",
+            ObjectType.REPOSITORY.value: "repository_event",
+        }[object_type]
+        connection_row = await storage.get_pm_connection(command.connection_id)
+        configured_repository = str(
+            (connection_row or {}).get("config", {}).get("repository") or ""
+        )
+        incoming_repository = str(getattr(command, "external_repository", None) or "")
+        if connection_row is None or connection_row.get("status") == "DISABLED":
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=command.binding_id,
+                reason="connection_not_active",
+                object_type=object_type,
+                external_id=command.external_id,
+                external_snapshot={"repository": incoming_repository},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="connection is disabled")
+            return {"status": "conflict", "reason": "connection_not_active"}
+        if configured_repository and incoming_repository != configured_repository:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=command.binding_id,
+                reason="out_of_scope_repository",
+                object_type=object_type,
+                external_id=command.external_id,
+                external_snapshot={"expected_repository": configured_repository, "incoming_repository": incoming_repository},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external repository is outside the connection scope")
+            return {"status": "conflict", "reason": "out_of_scope_repository"}
+        recorder = getattr(storage, "record_integration_evidence", None)
+        if callable(recorder):
+            evidence_payload = _scrub_integration_evidence(dict(command.fields or {}))
+            evidence_payload["provider_version"] = command.expected_provider_version
+            evidence_payload["external_repository"] = getattr(command, "external_repository", None)
+            saved = recorder(
+                connection_id=command.connection_id,
+                evidence_type=evidence_type,
+                external_id=command.external_id,
+                repository=getattr(command, "external_repository", None),
+                binding_id=command.binding_id,
+                payload=evidence_payload,
+                idempotency_key=command.idempotency_key,
+            )
+            if hasattr(saved, "__await__"):
+                await saved
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+        return {"status": "evidence_recorded", "evidence_type": evidence_type, "external_id": command.external_id}
+    if object_type != ObjectType.WORK_ITEM.value:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="unsupported_object_type",
+            object_type=object_type,
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported object type")
+        return {"status": "conflict", "reason": "unsupported_object_type"}
+
+    mapping = await storage.get_pm_mapping(
+        connection_id=command.connection_id,
+        object_type=object_type,
+        external_id=command.external_id,
+    )
+    if mapping is None:
+        # YouTrack webhook payloads commonly carry the readable key (AIAT-3),
+        # while outbound REST projections persist the stable numeric ID (3-23).
+        # Resolve by the recorded provider key without changing the canonical
+        # mapping's stable external_id.
+        mapping = await storage.get_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            external_key=command.external_id,
+        )
+    if mapping is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="unknown_mapping",
+            object_type=object_type,
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external object is not mapped")
+        return {"status": "conflict", "reason": "unknown_mapping", "external_id": command.external_id}
+    mapped_external_id = str(mapping.get("external_id") or command.external_id)
+
+    if _provider_version_is_older(mapping.get("provider_version"), command.expected_provider_version):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="stale_provider_version",
+            object_type=object_type,
+            aiat_object_id=mapping.get("aiat_object_id"),
+            external_id=command.external_id,
+            external_snapshot={"provider_version": command.expected_provider_version, "mapping_version": mapping.get("provider_version")},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider version is older than the mapped version")
+        return {"status": "conflict", "reason": "stale_provider_version"}
+
+    issue = await storage.get_issue(mapping["aiat_object_id"])
+    if issue is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="missing_canonical_object",
+            object_type=object_type,
+            aiat_object_id=mapping["aiat_object_id"],
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="canonical object is missing")
+        return {"status": "conflict", "reason": "missing_canonical_object"}
+
+    bindings = await storage.list_pm_bindings(connection_id=command.connection_id)
+    binding = next(
+        (
+            item
+            for item in bindings
+            if item.get("project_id") == issue.get("project_id")
+            and item.get("direction") in {"inbound", "both"}
+            and item.get("status") in {"SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}
+        ),
+        None,
+    )
+    if binding is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            reason="out_of_scope",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="mapping is not in an active inbound binding")
+        return {"status": "conflict", "reason": "out_of_scope"}
+    connection_row = await storage.get_pm_connection(command.connection_id)
+    if connection_row is None or connection_row.get("status") == "DISABLED":
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="connection_not_active",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="connection is not active for inbound changes")
+        return {"status": "conflict", "reason": "connection_not_active"}
+    # A provider event is trusted only inside the binding's explicit project
+    # or repository scope.  Missing scope metadata is also rejected for the
+    # GitHub adapter because every GitHub issue event carries repository data.
+    provider_kind = str(connection_row.get("provider_kind") or "").lower()
+    expected_project = str(binding.get("external_project_id") or "")
+    incoming_project = str(getattr(command, "external_project_id", None) or "")
+    if expected_project and incoming_project and expected_project != incoming_project:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope_project",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"expected_project": expected_project, "incoming_project": incoming_project},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external project is outside the binding scope")
+        return {"status": "conflict", "reason": "out_of_scope_project"}
+    configured_repository = str(
+        binding.get("external_repository")
+        or (connection_row.get("config") or {}).get("repository")
+        or ""
+    )
+    incoming_repository = str(getattr(command, "external_repository", None) or "")
+    if configured_repository and (
+        (incoming_repository and incoming_repository != configured_repository)
+        or (provider_kind == "github" and not incoming_repository)
+    ):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope_repository",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"expected_repository": configured_repository, "incoming_repository": incoming_repository},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external repository is outside the binding scope")
+        return {"status": "conflict", "reason": "out_of_scope_repository"}
+    # The webhook edge has already authenticated the delivery.  Once the
+    # event is also inside this binding's project scope, retain monotonic
+    # issue/comment coverage evidence for the later ACTIVE gate.
+    evidence_recorder = getattr(storage, "record_pm_binding_evidence", None)
+    event_name = str(inbox.get("event_type") or "").lower()
+    operation_name = str(command.operation or "").lower()
+    webhook_event = (
+        "comment"
+        if "comment" in event_name or operation_name == "comment"
+        else "issue"
+        if "issue" in event_name or operation_name in {"update", "created", "create"}
+        else None
+    )
+    if callable(evidence_recorder) and webhook_event:
+        recorded = evidence_recorder(
+            binding["id"],
+            webhook_event=webhook_event,
+            webhook_verified=True,
+        )
+        if hasattr(recorded, "__await__"):
+            await recorded
+
+    operation = operation_name or "update"
+    fields = dict(command.fields or {})
+    content_hash = str(getattr(command, "content_hash", None) or "") or hashlib.sha256(
+        json.dumps(fields, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    marker_object_id = str(fields.get("_aiat_marker_object_id") or "")
+    marker_revision = fields.get("_aiat_marker_revision")
+    try:
+        marker_revision_matches = marker_revision is not None and int(marker_revision) == int(issue.get("revision") or 1)
+    except (TypeError, ValueError):
+        marker_revision_matches = False
+    controlled_fields_match = all(
+        fields.get(name) == issue.get(name)
+        for name in ("title", "description", "status", "priority")
+        if name in fields
+    )
+    is_projection_echo = (
+        marker_object_id == str(issue["id"])
+        or (marker_revision_matches and controlled_fields_match)
+    )
+    if is_projection_echo and operation not in {"comment", "created"}:
+        # This is the marker written by AIAT's own projection.  Treat it as an
+        # acknowledged echo before the READ_ONLY inbound-mutation gate.  The
+        # provider event remains authenticated evidence, but it must not become
+        # a policy conflict or copy provider formatting into canonical state.
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+            content_hash=content_hash,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+        return {"status": "echo", "issue_id": str(issue["id"])}
+
+    # Comment projections carry an immutable AIAT comment marker.  Resolve
+    # these echoes before ACTIVE actor/revision gates so an integration bot can
+    # acknowledge its own delivery without ever becoming a human command.
+    if operation == "comment" or "comment" in operation:
+        marker_body = str(fields.get("comment") or fields.get("body") or fields.get("description") or "").strip()
+        marker_comment_id = _aiat_comment_marker(marker_body)
+        if marker_comment_id:
+            existing_comments = await storage.list_work_item_comments(issue["id"])
+            if any(str(item.get("id")) == marker_comment_id for item in existing_comments):
+                await storage.upsert_pm_mapping(
+                    connection_id=command.connection_id,
+                    object_type=object_type,
+                    aiat_object_id=issue["id"],
+                    external_id=mapped_external_id,
+                    provider_version=command.expected_provider_version or mapping.get("provider_version"),
+                    imported_revision=int(issue.get("revision") or 1),
+                    content_hash=content_hash,
+                )
+                await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+                return {
+                    "status": "echo",
+                    "operation": "comment",
+                    "issue_id": str(issue["id"]),
+                    "comment_id": marker_comment_id,
+                }
+
+    effective_policy = pm_binding_effective_policy(
+        str(binding.get("status") or "DISABLED"),
+        str(connection_row.get("status") or "DISABLED"),
+        str(binding.get("direction") or "outbound"),
+    )
+    # A canary is a narrow, durable exception to READ_ONLY.  It does not
+    # alter either lifecycle state and cannot widen a binding's normal policy.
+    canary_getter = getattr(storage, "get_armed_pm_inbound_canary_plan", None)
+    canary_plan = canary_getter(binding["id"]) if callable(canary_getter) else None
+    if hasattr(canary_plan, "__await__"):
+        canary_plan = await canary_plan
+    if not isinstance(canary_plan, dict):
+        canary_plan = None
+    inbound_mutation_allowed = bool(effective_policy["inbound_canonical_mutation"] or canary_plan)
+    actor_id = getattr(command.actor, "actor_id", None)
+    allowed_actors = set((connection_row.get("config") or {}).get("allowed_external_actors") or [])
+    actor_resolution: dict[str, Any] | None = None
+    if inbound_mutation_allowed:
+        actor_resolution = await _active_actor_resolution(storage, connection_row, command)
+        if actor_resolution is None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="unauthorized_external_actor",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "provider_actor": {"actor_id": actor_id, "role": getattr(command.actor, "role", None)},
+                    "resolved_aiat_identity": None,
+                    "fields": command.fields,
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="ACTIVE requires an authorized mapped human actor")
+            return {"status": "conflict", "reason": "unauthorized_external_actor"}
+        await _record_active_actor_evidence(
+            storage, command=command, issue=issue, inbox=inbox, resolution=actor_resolution
+        )
+    elif allowed_actors and (
+        not actor_id or str(actor_id) not in {str(item) for item in allowed_actors}
+    ):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="unauthorized_external_actor",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"actor_id": actor_id, "fields": command.fields},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external actor is not allowlisted")
+        return {"status": "conflict", "reason": "unauthorized_external_actor"}
+
+    # SHADOW and READ_ONLY deliveries are authenticated, scoped evidence but
+    # are not permitted to mutate canonical state.  Record the event coverage
+    # above, then retain an explicit policy conflict instead of pretending the
+    # inbound write was applied.
+    if not inbound_mutation_allowed:
+        # READ_ONLY/SHADOW still advance the provider-side observation on the
+        # existing mapping.  This acknowledges the authenticated external
+        # version for reconciliation without importing fields or changing the
+        # canonical revision.  Keep the outbound content hash untouched so a
+        # later promotion can still detect provider divergence explicitly.
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+        )
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"fields": command.fields, "binding_status": binding.get("status"), "connection_status": connection_row.get("status")},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="mapping is not in an active inbound binding")
+        return {"status": "conflict", "reason": "out_of_scope"}
+
+    # ACTIVE is a command boundary, not a provider-to-database mirror.  The
+    # expected revision is explicit when a structured provider command carries
+    # it; otherwise use the latest durable canonical observation on the
+    # mapping.  A missing or stale observation fails closed before any write.
+    mapped_revisions = [
+        value
+        for value in (mapping.get("imported_revision"), mapping.get("exported_revision"))
+        if value is not None
+    ]
+    resolved_expected_revision = getattr(command, "expected_canonical_revision", None)
+    if resolved_expected_revision is None and mapped_revisions:
+        try:
+            resolved_expected_revision = max(int(value) for value in mapped_revisions)
+        except (TypeError, ValueError):
+            resolved_expected_revision = None
+    current_revision = int(issue.get("revision") or 1)
+    if canary_plan is not None:
+        # The persisted plan, not a provider payload, supplies the one exact
+        # optimistic-concurrency precondition for this bounded exception.
+        resolved_expected_revision = int(canary_plan.get("expected_canonical_revision") or -1)
+    if resolved_expected_revision is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="missing_expected_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"provider_fields": fields, "mapping": mapping},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="ACTIVE command requires an expected canonical revision")
+        return {"status": "conflict", "reason": "missing_expected_revision"}
+    if int(resolved_expected_revision) != current_revision:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="stale_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={
+                "expected_canonical_revision": int(resolved_expected_revision),
+                "current_canonical_revision": current_revision,
+                "provider_fields": fields,
+            },
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider command revision is stale")
+        return {"status": "conflict", "reason": "stale_revision"}
+
+    # Reject fields outside the stable command vocabulary, including attempts
+    # to alter AIAT identity, ownership, governance, or lifecycle metadata.
+    incoming_field_names = {
+        str(key)
+        for key in fields
+        if not str(key).startswith("_") and str(key) != "comment"
+    }
+    if canary_plan is not None:
+        canary_target = str(canary_plan.get("target_priority") or "").strip().lower().replace(" ", "_")
+        canary_scope_ok = (
+            str(canary_plan.get("connection_id")) == str(command.connection_id)
+            and str(canary_plan.get("binding_id")) == str(binding["id"])
+            and str(canary_plan.get("canonical_issue_id")) == str(issue["id"])
+            and str(canary_plan.get("external_issue_id")) == str(command.external_id)
+            and str(canary_plan.get("mapping_id")) == str(mapping.get("id"))
+            and actor_resolution is not None
+            and str(canary_plan.get("actor_mapping_id")) == str(actor_resolution.get("actor_mapping_id"))
+            and int(canary_plan.get("expected_canonical_revision") or -1) == int(issue.get("revision") or 1)
+            and operation not in {"comment", "deleted", "delete", "removed", "archived"}
+            and incoming_field_names == {"priority"}
+            and str(fields.get("priority") or "").strip().lower().replace(" ", "_") == canary_target
+        )
+        if not canary_scope_ok:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id, binding_id=binding["id"], reason="canary_scope_denied",
+                object_type=object_type, aiat_object_id=issue["id"], external_id=command.external_id,
+                canonical_snapshot=issue, external_snapshot={"fields": fields, "canary_plan_id": str(canary_plan.get("id"))},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="inbound command is outside the armed canary scope")
+            return {"status": "conflict", "reason": "canary_scope_denied"}
+    unsupported_fields = sorted(
+        name for name in incoming_field_names
+        if name not in ACTIVE_INBOUND_COMMAND_POLICY
+    )
+    if unsupported_fields:
+        reason = "reserved_field_mutation" if any(name in ACTIVE_INBOUND_RESERVED_FIELDS for name in unsupported_fields) else "unsupported_inbound_field"
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason=reason,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"fields": fields, "unsupported_fields": unsupported_fields},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider field is not in the ACTIVE inbound allowlist")
+        return {"status": "conflict", "reason": reason, "fields": unsupported_fields}
+
+    # Provider payloads often include the full issue on every webhook.  Only
+    # changed values need policy evaluation; unchanged approval-gated fields
+    # cannot turn an otherwise allowed priority/status event into a proposal.
+    changed_input_fields: dict[str, Any] = {}
+    for key in incoming_field_names:
+        value = fields.get(key)
+        if key == "status":
+            value = _canonical_status_from_external(value, str(issue.get("status") or "backlog"))
+        elif key == "priority":
+            value = str(value).strip().lower().replace(" ", "_")
+        current_value = issue.get(key)
+        if str(current_value if current_value is not None else "") != str(value if value is not None else ""):
+            changed_input_fields[key] = fields.get(key)
+
+    for key in changed_input_fields:
+        policy = ACTIVE_INBOUND_COMMAND_POLICY[key]
+        mode = str(policy.get("mode") or "")
+        normalized_value = changed_input_fields[key]
+        if key == "status":
+            normalized_value = _canonical_status_from_external(normalized_value, str(issue.get("status") or "backlog"))
+        elif key == "priority":
+            normalized_value = str(normalized_value).strip().lower().replace(" ", "_")
+        if mode == "approval_required" or (
+            mode == "allowlist_except_destructive" and normalized_value in set(policy.get("approval_values") or set())
+        ):
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="approval_required",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "fields": fields,
+                    "changed_fields": changed_input_fields,
+                    "provider_actor": actor_resolution,
+                    "expected_canonical_revision": int(resolved_expected_revision),
+                    "approval_scope": key,
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=f"ACTIVE field {key} requires an AIAT approval")
+            return {"status": "conflict", "reason": "approval_required", "field": key}
+        if mode == "allowed" and normalized_value not in set(policy.get("values") or set()):
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="incompatible_field_value",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"field": key, "value": normalized_value},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="field value is outside the ACTIVE allowlist")
+            return {"status": "conflict", "reason": "incompatible_field_value", "field": key}
+
+    if operation == "comment" or "comment" in operation:
+        comment_body = str(fields.get("comment") or fields.get("body") or fields.get("description") or "").strip()
+        marker_comment_id = _aiat_comment_marker(comment_body)
+        if marker_comment_id:
+            existing_comments = await storage.list_work_item_comments(issue["id"])
+            if any(str(item.get("id")) == marker_comment_id for item in existing_comments):
+                await storage.upsert_pm_mapping(
+                    connection_id=command.connection_id,
+                    object_type=object_type,
+                    aiat_object_id=issue["id"],
+                    external_id=mapped_external_id,
+                    provider_version=command.expected_provider_version or mapping.get("provider_version"),
+                    imported_revision=current_revision,
+                    content_hash=content_hash,
+                )
+                await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+                return {
+                    "status": "echo",
+                    "operation": "comment",
+                    "issue_id": str(issue["id"]),
+                    "comment_id": marker_comment_id,
+                }
+        structured = _structured_comment_command(comment_body)
+        if structured is not None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="approval_required" if not structured.get("invalid") else "invalid_inbound_command",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "comment": comment_body,
+                    "structured_command": structured,
+                    "provider_actor": actor_resolution,
+                    "expected_canonical_revision": int(resolved_expected_revision),
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="structured provider comment requires an AIAT approval")
+            return {"status": "conflict", "reason": "approval_required" if not structured.get("invalid") else "invalid_inbound_command", "operation": "comment"}
+        await _record_active_actor_evidence(
+            storage, command=command, issue=issue, inbox=inbox,
+            resolution=actor_resolution or {},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+        return {"status": "evidence_only", "operation": "comment", "issue_id": str(issue["id"])}
+
+    if operation in {"deleted", "delete", "removed", "archived"}:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="external_delete",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external deletion requires operator decision")
+        return {"status": "conflict", "reason": "external_delete"}
+    values: dict[str, Any] = {}
+    for key in ("title", "description", "priority", "assigned_team", "assigned_agent"):
+        if key in fields and fields[key] is not None:
+            values[key] = fields[key]
+    if "priority" in values:
+        priority = str(values["priority"]).strip().lower().replace(" ", "_")
+        if priority not in {"low", "medium", "high", "urgent", "critical", "normal"}:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="incompatible_field_value",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"priority": fields.get("priority")},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported external priority")
+            return {"status": "conflict", "reason": "incompatible_field_value"}
+        values["priority"] = priority
+    if fields.get("status") is not None:
+        status = _canonical_status_from_external(fields["status"], str(issue.get("status") or "backlog"))
+        if status not in {"backlog", "in_progress", "review", "blocked", "done", "cancelled"}:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="unsupported_transition",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"status": fields.get("status")},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported external status")
+            return {"status": "conflict", "reason": "unsupported_transition"}
+        values["status"] = status
+    changed_values = {
+        key: value
+        for key, value in values.items()
+        if str(issue.get(key) if issue.get(key) is not None else "") != str(value if value is not None else "")
+    }
+    if not changed_values:
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+            content_hash=content_hash,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+        return {"status": "noop", "issue_id": str(issue["id"])}
+    values = changed_values
+
+    if canary_plan is not None:
+        if set(values) != {"priority"}:
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="canary accepts priority only")
+            return {"status": "conflict", "reason": "canary_scope_denied"}
+        atomic_apply = getattr(storage, "apply_pm_inbound_canary_priority", None)
+        if callable(atomic_apply) and isinstance(storage, AgentStorage):
+            try:
+                refreshed, queued = await atomic_apply(
+                    plan_id=canary_plan["id"], issue_id=issue["id"], expected_revision=current_revision,
+                    target_priority=str(values["priority"]), connection_id=command.connection_id,
+                    inbox_id=inbox["id"], command_key=command.idempotency_key,
+                )
+            except ValueError as exc:
+                await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=str(exc)[:500])
+                return {"status": "conflict", "reason": "canary_atomic_apply_failed"}
+            await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+            return {"status": "applied", "issue_id": str(issue["id"]), "revision": refreshed.get("revision"), "projections": len(queued), "canary": "SUCCEEDED"}
+        claimer = getattr(storage, "claim_pm_inbound_canary_command", None)
+        claimed = await claimer(canary_plan["id"], inbox_id=inbox["id"]) if callable(claimer) else None
+        if claimed is None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id, binding_id=binding["id"], reason="canary_command_limit",
+                object_type=object_type, aiat_object_id=issue["id"], external_id=command.external_id,
+                canonical_snapshot=issue, external_snapshot={"canary_plan_id": str(canary_plan.get("id")), "fields": fields},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="armed canary has already accepted its single command")
+            return {"status": "conflict", "reason": "canary_command_limit"}
+
+    try:
+        if isinstance(storage, AgentStorage):
+            refreshed, queued = await storage.update_issue_with_pm_projections(
+                issue["id"],
+                expected_revision=int(issue.get("revision") or 1),
+                exclude_connection_id=command.connection_id,
+                **values,
+            )
+        else:
+            await storage.update_issue(
+                issue["id"],
+                expected_revision=int(issue.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_issue(issue["id"])
+            assert refreshed is not None
+            queued = []
+    except ValueError as exc:
+        if canary_plan is not None:
+            completer = getattr(storage, "complete_pm_inbound_canary_plan", None)
+            if callable(completer):
+                await completer(canary_plan["id"], success=False, result={"error": str(exc), "inbox_id": str(inbox["id"])})
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="stale_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=str(exc)[:500])
+        return {"status": "conflict", "reason": "stale_revision"}
+
+    await storage.upsert_pm_mapping(
+        connection_id=command.connection_id,
+        object_type=object_type,
+        aiat_object_id=issue["id"],
+        external_id=mapped_external_id,
+        provider_version=command.expected_provider_version or mapping.get("provider_version"),
+        imported_revision=int(refreshed.get("revision") or 1),
+        content_hash=content_hash,
+    )
+    if not isinstance(storage, AgentStorage):
+        queued = await _enqueue_issue_projection(
+            storage,
+            refreshed,
+            exclude_connection_id=command.connection_id,
+        )
+    await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+    if canary_plan is not None:
+        completer = getattr(storage, "complete_pm_inbound_canary_plan", None)
+        if callable(completer):
+            await completer(canary_plan["id"], success=True, result={
+                "inbox_id": str(inbox["id"]), "canonical_issue_id": str(issue["id"]),
+                "canonical_revision": refreshed.get("revision"), "outbox_count": len(queued),
+            })
+    return {
+        "status": "applied",
+        "issue_id": str(issue["id"]),
+        "revision": refreshed.get("revision"),
+        "projections": len(queued),
+    }
+
+
+@app.post("/integrations/connections", status_code=201)
+async def create_integration_connection(req: PMConnectionCreateRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    try:
+        _integration_registry().get(req.provider_kind, "validation")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        result = await storage.create_pm_connection(**req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _serialize_pm_connection(result) or {}
+
+
+@app.get("/integrations/connections")
+async def list_integration_connections(request: Request, status: str | None = None) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [
+        _serialize_pm_connection(item) or {}
+        for item in await _storage().list_pm_connections(status=status)
+    ]
+
+
+@app.post("/integrations/connections/{connection_id}/external-actor-mappings", status_code=201)
+async def create_external_actor_mapping(
+    connection_id: UUID,
+    req: PMExternalActorMappingCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve one immutable provider actor from authenticated inbox evidence."""
+    _integration_operator(request)
+    approver = _authenticated_principal(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("provider_kind") or "").lower() != "youtrack":
+        raise HTTPException(422, "immutable actor resolution is currently implemented for YouTrack only")
+    observations: list[tuple[dict[str, Any], dict[str, str]]] = []
+    for event_id in req.inbox_event_ids:
+        inbox = await storage.get_pm_inbox_event(event_id)
+        if inbox is None or inbox.get("connection_id") != connection_id or not bool(inbox.get("verified")):
+            raise HTTPException(422, "every mapping evidence inbox row must be authenticated and belong to this connection")
+        observation = _youtrack_actor_observation(dict(inbox.get("payload") or {}))
+        if observation is None:
+            raise HTTPException(422, "authenticated webhook evidence contains no provider actor observation")
+        observations.append((inbox, observation))
+    first = observations[0][1]
+    if any(
+        item[1].get("login") != first.get("login") or item[1].get("email", "").lower() != first.get("email", "").lower()
+        for item in observations[1:]
+    ):
+        raise HTTPException(422, "mapping evidence refers to more than one provider actor")
+    resolver = getattr(_provider_for(row), "resolve_external_actor", None)
+    if not callable(resolver):
+        raise HTTPException(409, "provider does not support immutable actor resolution")
+    try:
+        resolved = await resolver(
+            _provider_connection(row), login=first.get("login") or None, email=first.get("email") or None
+        )
+    except Exception as exc:
+        raise HTTPException(409, f"immutable provider actor resolution failed: {exc}") from exc
+    external_actor_id = str(resolved.get("id") or "")
+    if not external_actor_id:
+        raise HTTPException(409, "provider resolution did not return an immutable actor ID")
+    # API-key authentication currently authenticates the operator principal;
+    # no caller-supplied human identity header is accepted.
+    aiat_identity_id = f"aiat:{approver}"
+    snapshot = {
+        "immutable_provider_actor_id": external_actor_id,
+        "provider_login": resolved.get("login"),
+        "provider_email": resolved.get("email"),
+        "resolution_method": "authenticated_youtrack_user_lookup_correlated_to_verified_inbox",
+    }
+    evidence_refs = {
+        "inbox_ids": [str(item[0]["id"]) for item in observations],
+        "payload_hashes": [str(item[0].get("payload_hash") or "") for item in observations],
+        "reason": req.reason,
+    }
+    try:
+        mapping, audit = await storage.create_pm_external_actor_mapping(
+            connection_id=connection_id,
+            provider_kind=str(row.get("provider_kind")),
+            tenant_key=_pm_tenant_key(row),
+            external_actor_id=external_actor_id,
+            actor_snapshot=snapshot,
+            aiat_identity_id=aiat_identity_id,
+            authorized_scopes=list(req.authorized_scopes),
+            created_by=approver,
+            approved_by=approver,
+            evidence_refs=evidence_refs,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "mapping_id": str(mapping["id"]), "connection_id": str(connection_id),
+        "immutable_provider_actor_id": external_actor_id, "provider_tenant": _pm_tenant_key(row),
+        "aiat_identity_id": aiat_identity_id, "status": mapping["status"],
+        "authorized_scopes": mapping["authorized_scopes"], "created_by": mapping["created_by"],
+        "approved_by": mapping["approved_by"], "created_at": mapping["created_at"],
+        "approved_at": mapping["approved_at"], "audit_id": str(audit["id"]),
+    }
+
+
+@app.post("/integrations/connections/{connection_id}/external-actor-mappings/{mapping_id}/revoke")
+async def revoke_external_actor_mapping(connection_id: UUID, mapping_id: UUID, request: Request, reason: str = Query(min_length=1, max_length=500)) -> dict[str, Any]:
+    _integration_operator(request)
+    mapping, audit = await _storage().revoke_pm_external_actor_mapping(
+        mapping_id, connection_id=connection_id, actor=_authenticated_principal(request), reason=reason
+    )
+    if mapping is None:
+        raise HTTPException(404, "external actor mapping not found for this connection")
+    return {"mapping_id": str(mapping_id), "status": mapping["status"], "audit_id": str(audit["id"])}
+
+
+@app.post("/integrations/connections/{connection_id}/inbound-canaries", status_code=201)
+async def create_inbound_priority_canary_plan(
+    connection_id: UUID,
+    req: PMInboundCanaryPlanCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Persist a short-lived, priority-only canary without widening the binding."""
+    _integration_operator(request)
+    actor = _authenticated_principal(request)
+    storage = _storage()
+    connection_row = await storage.get_pm_connection(connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    binding = next((item for item in bindings if item.get("id") == req.binding_id), None)
+    if binding is None:
+        raise HTTPException(404, "binding not found for connection")
+    if str(connection_row.get("status")) != "SHADOW" or str(binding.get("status")) != "READ_ONLY":
+        raise HTTPException(409, "bounded canary requires connection SHADOW and binding READ_ONLY")
+    if str(binding.get("direction") or "").lower() not in {"inbound", "both"}:
+        raise HTTPException(409, "bounded canary requires inbound binding direction")
+    issue = await storage.get_issue(req.canonical_issue_id)
+    if issue is None or issue.get("project_id") != binding.get("project_id"):
+        raise HTTPException(422, "canonical issue is not inside the requested binding project")
+    mapping = await storage.get_pm_mapping(
+        connection_id=connection_id, object_type="work_item", aiat_object_id=req.canonical_issue_id
+    )
+    if mapping is None or mapping.get("id") != req.mapping_id or str(mapping.get("external_id")) != req.external_issue_id:
+        raise HTTPException(422, "canonical issue, external issue, and mapping must match exactly")
+    actor_mapping = await storage.get_pm_external_actor_mapping_by_id(req.actor_mapping_id)
+    if (
+        actor_mapping is None or actor_mapping.get("connection_id") != connection_id
+        or str(actor_mapping.get("status")) != "TRUSTED"
+        or "issue.priority" not in {str(item) for item in (actor_mapping.get("authorized_scopes") or [])}
+    ):
+        raise HTTPException(422, "canary requires a trusted priority-authorized actor mapping for this connection")
+    try:
+        provider_item = await _provider_for(connection_row).read_work_item(
+            _provider_connection(connection_row), req.external_issue_id
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"provider canary inspection failed: {exc}") from exc
+    canonical_priority = str(issue.get("priority") or "medium").strip().lower().replace(" ", "_")
+    provider_priority = str(getattr(provider_item, "priority", "") or "").strip().lower().replace(" ", "_")
+    if not provider_priority:
+        raise HTTPException(409, "provider inspection did not return a priority value")
+    # READ_ONLY deliberately retains provider edits as evidence, so the two
+    # values can differ before a canary.  Model both observations explicitly;
+    # require the selected value to change *both* sides rather than silently
+    # re-baselining or performing a canonical write during planning.
+    choices = ["high", "medium", "urgent", "critical", "normal", "low"]
+    target_priority = str(req.target_priority or next(
+        value for value in choices if value not in {canonical_priority, provider_priority}
+    ))
+    if target_priority in {canonical_priority, provider_priority}:
+        raise HTTPException(422, "canary target priority must change both the provider and canonical values")
+    doctor = await doctor_integration_connection(connection_id, request)
+    recent_runs = await storage.list_pm_reconciliation_runs(connection_id=connection_id, limit=1)
+    latest_reconciliation = recent_runs[0] if recent_runs else None
+    gates = {
+        "doctor_ready": bool(doctor.get("ready")),
+        "connection_status": connection_row.get("status"),
+        "binding_status": binding.get("status"),
+        "connection_revision": connection_row.get("revision"),
+        "binding_revision": binding.get("revision"),
+        "canonical_revision": issue.get("revision"),
+        "mapping_id": str(mapping.get("id")),
+        "reconciliation_run_id": str(latest_reconciliation.get("id")) if latest_reconciliation else None,
+        "reconciliation_status": latest_reconciliation.get("status") if latest_reconciliation else None,
+    }
+    blockers = [] if gates["doctor_ready"] else ["integration doctor is not ready"]
+    if latest_reconciliation is None:
+        blockers.append("a fresh reconciliation run is required")
+    elif any(int((latest_reconciliation.get("counts") or {}).get(name) or 0) != 0 for name in ("drift", "conflicts")):
+        blockers.append("latest reconciliation has drift or conflicts")
+    if blockers:
+        raise HTTPException(409, {"code": "canary_preconditions_blocked", "blockers": blockers})
+    now = datetime.now(tz=UTC)
+    plan_id = uuid4()
+    plan = PMInboundCanaryPlan(
+        plan_id=plan_id,
+        connection_id=connection_id, binding_id=req.binding_id, project_id=issue["project_id"],
+        canonical_issue_id=req.canonical_issue_id, external_issue_id=req.external_issue_id,
+        mapping_id=req.mapping_id, actor_mapping_id=req.actor_mapping_id,
+        expected_connection_revision=int(connection_row.get("revision") or 1),
+        expected_binding_revision=int(binding.get("revision") or 1),
+        expected_canonical_revision=int(issue.get("revision") or 1),
+        current_priority=canonical_priority, target_priority=target_priority,
+        operations=[{
+            "operation": "accept_one_inbound_priority_command", "binding_id": str(req.binding_id),
+            "canonical_issue_id": str(req.canonical_issue_id), "external_issue_id": req.external_issue_id,
+            "actor_mapping_id": str(req.actor_mapping_id), "field": "priority",
+            "canonical_from": canonical_priority, "provider_from": provider_priority,
+            "to": target_priority, "max_command_count": 1,
+            "expected_canonical_revision": int(issue.get("revision") or 1),
+        }],
+        gate_results={**gates, "provider_priority": provider_priority, "canonical_priority": canonical_priority,
+                      "pre_canary_priority_divergence": provider_priority != canonical_priority},
+        evidence_refs={"mapping_id": str(req.mapping_id), "actor_mapping_id": str(req.actor_mapping_id),
+                       "provider_version": getattr(provider_item, "provider_version", None),
+                       "doctor_connection_id": str(connection_id),
+                       "reconciliation_run_id": str(latest_reconciliation.get("id")) if latest_reconciliation else None},
+        rollback_operations=[
+            {"operation": "disarm_inbound_canary", "plan_id": str(plan_id)},
+            {"operation": "governed_binding_transition", "binding_id": str(req.binding_id), "desired_status": "READ_ONLY"},
+        ],
+        created_by=actor, created_at=now, expires_at=now + timedelta(seconds=req.ttl_seconds),
+    )
+    digest = plan.digest()
+    stored = await storage.create_pm_inbound_canary_plan(plan, digest=digest)
+    return {
+        "plan": plan.model_dump(mode="json"), "plan_id": str(plan.plan_id), "digest": digest,
+        "status": stored["status"], "created_at": stored["created_at"], "expires_at": stored["expires_at"],
+        "permitted_action": f"On {req.external_issue_id}, the mapped human may change provider priority from {provider_priority} to {target_priority} once after explicit approval and arming; canonical priority is expected to move from {canonical_priority} to {target_priority}.",
+        "rollback_operations": plan.rollback_operations,
+    }
+
+
+@app.get("/integrations/inbound-canaries/{plan_id}")
+async def get_inbound_canary_plan(plan_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_inbound_canary_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "inbound canary plan not found")
+    immutable = PMInboundCanaryPlan(
+        plan_id=row["id"], connection_id=row["connection_id"], binding_id=row["binding_id"],
+        project_id=row["project_id"], canonical_issue_id=row["canonical_issue_id"],
+        external_issue_id=row["external_issue_id"], mapping_id=row["mapping_id"],
+        actor_mapping_id=row["actor_mapping_id"], expected_connection_status=row["expected_connection_status"],
+        expected_binding_status=row["expected_binding_status"],
+        expected_connection_revision=row["expected_connection_revision"], expected_binding_revision=row["expected_binding_revision"],
+        expected_canonical_revision=row["expected_canonical_revision"], current_priority=row["current_priority"],
+        target_priority=row["target_priority"], max_command_count=row["max_command_count"],
+        operations=row["operations"], gate_results=row["gate_results"], evidence_refs=row["evidence_refs"],
+        rollback_operations=row["rollback_operations"], created_by=row["created_by"], created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )
+    digest = immutable.digest()
+    return _serialize({
+        "plan": immutable.model_dump(mode="json"), "digest": row["digest"], "digest_valid": digest == row["digest"],
+        "status": row["status"], "accepted_command_count": row["accepted_command_count"],
+        "approved_by": row.get("approved_by"), "approved_at": row.get("approved_at"),
+        "armed_by": row.get("armed_by"), "armed_at": row.get("armed_at"),
+        "completed_at": row.get("completed_at"), "result": row.get("result"), "error": row.get("error"),
+        "updated_at": row.get("updated_at"),
+    })
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/approve")
+async def approve_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Operator-only, exact-digest approval; approval alone does not arm it."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().approve_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request)
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/expire")
+async def expire_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Operator-only expiry recording; immutable plan content is retained."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().expire_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request)
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/arm")
+async def arm_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Arm a pre-approved exact plan only after current readiness rechecks."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None:
+        raise HTTPException(404, "inbound canary plan not found")
+    if str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan digest mismatch")
+    connection = await storage.get_pm_connection(plan["connection_id"])
+    bindings = await storage.list_pm_bindings(connection_id=plan["connection_id"])
+    binding = next((item for item in bindings if item.get("id") == plan["binding_id"]), None)
+    issue = await storage.get_issue(plan["canonical_issue_id"])
+    actor_mapping = await storage.get_pm_external_actor_mapping_by_id(plan["actor_mapping_id"])
+    if connection is None or binding is None or issue is None or actor_mapping is None or (
+        str(connection.get("status")) != str(plan.get("expected_connection_status"))
+        or str(binding.get("status")) != str(plan.get("expected_binding_status"))
+        or int(connection.get("revision") or 1) != int(plan.get("expected_connection_revision") or -1)
+        or int(binding.get("revision") or 1) != int(plan.get("expected_binding_revision") or -1)
+        or int(issue.get("revision") or 1) != int(plan.get("expected_canonical_revision") or -1)
+    ):
+        raise HTTPException(409, "canary plan is stale")
+    if (
+        actor_mapping.get("connection_id") != plan["connection_id"]
+        or str(actor_mapping.get("status")) != "TRUSTED"
+        or "issue.priority" not in {str(item) for item in (actor_mapping.get("authorized_scopes") or [])}
+        or str(issue.get("priority") or "").strip().lower().replace(" ", "_") != str(plan.get("current_priority") or "")
+    ):
+        raise HTTPException(409, "canary plan actor mapping or canonical priority is stale")
+    try:
+        provider_item = await _provider_for(connection).read_work_item(
+            _provider_connection(connection), str(plan["external_issue_id"])
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"provider canary verification failed: {exc}") from exc
+    provider_priority = str(getattr(provider_item, "priority", "") or "").strip().lower().replace(" ", "_")
+    planned_provider_priority = str((plan.get("gate_results") or {}).get("provider_priority") or "")
+    if provider_priority != planned_provider_priority:
+        raise HTTPException(409, "canary plan provider priority is stale")
+    doctor = await doctor_integration_connection(plan["connection_id"], request)
+    if not doctor.get("ready"):
+        raise HTTPException(409, "integration doctor blocks canary arming")
+    try:
+        row = await storage.arm_pm_inbound_canary_plan(plan_id, digest=req.digest, actor=_authenticated_principal(request))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/audit-evidence")
+async def record_inbound_canary_audit_evidence(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Persist idempotent operator evidence for an already governed action."""
+    _integration_operator(request)
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None or str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan is missing or digest-mismatched")
+    evidence: dict[str, Any] = {}
+    for action, actor_key, timestamp_key in (("approval", "approved_by", "approved_at"), ("arming", "armed_by", "armed_at")):
+        if plan.get(actor_key) and plan.get(timestamp_key):
+            row = await storage.record_integration_evidence(
+                connection_id=plan["connection_id"], binding_id=plan["binding_id"], project_id=plan["project_id"],
+                evidence_type=f"pm_inbound_canary_{action}", external_id=str(plan_id),
+                payload={"plan_id": str(plan_id), "digest": req.digest, "actor": plan[actor_key], "occurred_at": plan[timestamp_key].isoformat()},
+                idempotency_key=f"pm-inbound-canary:{plan_id}:{action}:{req.digest}",
+            )
+            evidence[action] = str(row["id"])
+    return {"plan_id": str(plan_id), "evidence": evidence}
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/disarm")
+async def disarm_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().disarm_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request),
+            reason=req.reason or "operator_disarm",
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.get("/integrations/connections/{connection_id}/health")
+async def integration_connection_health(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("status") or "DISABLED") == "DISABLED":
+        raise HTTPException(409, "integration connection is disabled")
+    try:
+        value = await _provider_for(row).health(_provider_connection(row))
+    except Exception as exc:
+        if isinstance(storage, AgentStorage):
+            await storage.update_pm_connection(
+                connection_id,
+                last_health_at=datetime.now(tz=UTC),
+                last_health_status="FAILED",
+                last_health_error=str(exc)[:500],
+            )
+        return {"ok": False, "connection_id": str(connection_id), "error": str(exc)[:500]}
+    if isinstance(storage, AgentStorage):
+        await storage.update_pm_connection(
+            connection_id,
+            last_health_at=datetime.now(tz=UTC),
+            last_health_status="OK",
+            last_health_error=None,
+        )
+    return {"ok": True, "connection_id": str(connection_id), **value}
+
+
+@app.get("/integrations/connections/{connection_id}/capabilities")
+async def integration_connection_capabilities(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    try:
+        capabilities = await _provider_for(row).capabilities(_provider_connection(row))
+    except Exception as exc:
+        raise HTTPException(502, f"provider capabilities unavailable: {exc}") from exc
+    return _serialize(capabilities.model_dump(mode="json"))
+
+
+@app.get("/integrations/connections/{connection_id}/doctor")
+async def doctor_integration_connection(connection_id: UUID, request: Request) -> dict[str, Any]:
+    """Run non-mutating credential, scope, capability, and mapping checks."""
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = _provider_for(row)
+    connection = _provider_connection(row)
+    checks: list[dict[str, Any]] = []
+
+    async def check(name: str, operation: Any) -> None:
+        try:
+            value = await operation()
+            checks.append({"name": name, "ok": True, "detail": value})
+        except Exception as exc:
+            checks.append({"name": name, "ok": False, "error": str(exc)[:500]})
+
+    await check("health_and_credentials", lambda: provider.health(connection))
+    await check("capabilities", lambda: provider.capabilities(connection))
+    await check("configuration", lambda: provider.verify_configuration(connection))
+    if connection.provider_kind.lower() == "youtrack":
+        least_privilege_check = getattr(provider, "verify_least_privilege", None)
+        if not callable(least_privilege_check):
+            checks.append(
+                {
+                    "name": "least_privilege",
+                    "ok": False,
+                    "error": "YouTrack adapter does not implement least-privilege certification",
+                }
+            )
+        else:
+            try:
+                permission_report = await least_privilege_check(connection)
+                permission_errors = [
+                    *(str(item) for item in permission_report.get("missing", [])),
+                    *(f"forbidden permission: {item}" for item in permission_report.get("forbidden", [])),
+                ]
+                checks.append(
+                    {
+                        "name": "least_privilege",
+                        "ok": bool(permission_report.get("ok")),
+                        "detail": permission_report,
+                        "error": "; ".join(permission_errors) if permission_errors else None,
+                    }
+                )
+            except Exception as exc:
+                checks.append({"name": "least_privilege", "ok": False, "error": str(exc)[:500]})
+    await check("provider_scope_discovery", lambda: provider.discover(connection))
+    config = dict(row.get("config") or {})
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    if not bindings:
+        checks.append({"name": "project_or_repository_binding", "ok": False, "error": "no project binding configured"})
+    else:
+        checks.append({"name": "project_or_repository_binding", "ok": True, "detail": len(bindings)})
+        lifecycle_blockers: list[str] = []
+        for binding in bindings:
+            # Older lightweight fixtures may omit lifecycle columns; live
+            # rows created after migration 0025 always contain them.
+            if "mapping_profile" not in binding and "provisioning_state" not in binding:
+                continue
+            profile = str(binding.get("mapping_profile") or DEDICATED_PROJECT_MAPPING_PROFILE)
+            if profile in {"default", DEDICATED_PROJECT_MAPPING_PROFILE} and not binding.get("external_project_id"):
+                lifecycle_blockers.append(f"binding {binding.get('id')} has no dedicated provider project selector")
+            lifecycle_blockers.extend(str(item) for item in (binding.get("activation_blockers") or []) if item)
+            if str(binding.get("status") or "DISABLED") == "ACTIVE":
+                for field, label in (
+                    ("webhook_verified_at", "authenticated webhook"),
+                    ("projection_verified_at", "projection"),
+                    ("reconciliation_verified_at", "reconciliation"),
+                ):
+                    if not binding.get(field):
+                        lifecycle_blockers.append(f"binding {binding.get('id')} lacks {label} evidence")
+        checks.append(
+            {
+                "name": "project_binding_lifecycle",
+                "ok": not lifecycle_blockers,
+                "detail": "dedicated provider project and activation evidence are enforced",
+                "error": "; ".join(lifecycle_blockers) if lifecycle_blockers else None,
+            }
+        )
+    active_bindings = [
+        binding for binding in bindings
+        if str(binding.get("status") or "DISABLED").upper() == "ACTIVE"
+        and str(binding.get("direction") or "outbound").lower() in {"inbound", "both"}
+    ]
+    actor_mappings = config.get("external_actor_mappings") or {}
+    durable_actor_mapping_count = 0
+    counter = getattr(storage, "count_trusted_pm_external_actor_mappings", None)
+    if callable(counter):
+        counted = counter(connection_id)
+        if hasattr(counted, "__await__"):
+            counted = await counted
+        if isinstance(counted, int):
+            durable_actor_mapping_count = counted
+    active_policy_blockers: list[str] = []
+    if active_bindings:
+        if durable_actor_mapping_count <= 0:
+            active_policy_blockers.append("ACTIVE inbound bindings require a trusted durable external actor mapping")
+    checks.append(
+        {
+            "name": "active_inbound_command_policy",
+            "ok": not active_policy_blockers,
+            "detail": {
+                "allowlist": ACTIVE_INBOUND_COMMAND_POLICY,
+                "reserved_fields": sorted(ACTIVE_INBOUND_RESERVED_FIELDS),
+                "actor_mapping_count": durable_actor_mapping_count,
+                "activation_checked": bool(active_bindings),
+            },
+            "error": "; ".join(active_policy_blockers) if active_policy_blockers else None,
+        }
+    )
+    if str(row.get("provider_kind")).lower() != "fake" and not (
+        config.get("webhook_secret_ref") or config.get("webhook_secret_refs")
+    ):
+        checks.append({"name": "webhook_secret_reference", "ok": False, "error": "webhook_secret_ref is required"})
+    else:
+        checks.append({"name": "webhook_secret_reference", "ok": True, "detail": "configured"})
+    if str(row.get("provider_kind")).lower() == "github" and connection.capability_profile.lower() in {"delivery", "checks"}:
+        broker_fields = {
+            "github_app_id": config.get("github_app_id"),
+            "github_installation_id": config.get("github_installation_id"),
+            "github_app_private_key_ref": config.get("github_app_private_key_ref"),
+        }
+        missing_broker_fields = [name for name, value in broker_fields.items() if not value]
+        checks.append(
+            {
+                "name": "github_installation_token_broker",
+                "ok": not missing_broker_fields,
+                "error": f"missing broker configuration: {', '.join(missing_broker_fields)}" if missing_broker_fields else None,
+                "detail": "server-side App JWT broker configured" if not missing_broker_fields else None,
+            }
+        )
+    blockers = [item.get("error") or item["name"] for item in checks if not item.get("ok")]
+    return {
+        "connection_id": str(connection_id),
+        "provider_kind": connection.provider_kind,
+        "ready": not blockers,
+        "blockers": blockers,
+        "checks": checks,
+    }
+
+
+def _lifecycle_plan_from_row(row: dict[str, Any]) -> PMLifecycleTransitionPlan:
+    """Rehydrate the immutable plan payload stored in Postgres."""
+    payload = {
+        "plan_id": row["id"],
+        "plan_kind": row["plan_kind"],
+        "schema_version": row["schema_version"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "connection_id": row["connection_id"],
+        "binding_id": row.get("binding_id"),
+        "expected_connection_status": row.get("expected_connection_status"),
+        "expected_binding_status": row.get("expected_binding_status"),
+        "expected_connection_revision": row.get("expected_connection_revision"),
+        "expected_binding_revision": row.get("expected_binding_revision"),
+        "desired_connection_status": row.get("desired_connection_status"),
+        "desired_binding_status": row.get("desired_binding_status"),
+        "observed_versions": row.get("observed_versions") or {},
+        "operations": row.get("operations") or [],
+        "gate_results": row.get("gate_results") or {},
+        "evidence_refs": row.get("evidence_refs") or {},
+        "blockers": row.get("blockers") or [],
+        "rollback_operations": row.get("rollback_operations") or [],
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "status": row.get("status") or LifecyclePlanStatus.PLANNED.value,
+    }
+    return PMLifecycleTransitionPlan.model_validate(payload)
+
+
+def _serialize_lifecycle_plan(row: dict[str, Any]) -> dict[str, Any]:
+    plan = _lifecycle_plan_from_row(row)
+    computed_digest = plan.digest()
+    return {
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": computed_digest,
+        "persisted_digest": row.get("digest"),
+        "digest_valid": computed_digest == str(row.get("digest") or ""),
+        "status": row.get("status"),
+        "approval_actor": row.get("approval_actor"),
+        "approved_at": row.get("approved_at"),
+        "approval_reason": row.get("approval_reason"),
+        "applied_actor": row.get("applied_actor"),
+        "applied_at": row.get("applied_at"),
+        "application_result": row.get("application_result"),
+        "error": row.get("error"),
+        "created_at": row.get("created_at"),
+        "expires_at": row.get("expires_at"),
+    }
+
+
+def _lifecycle_safety_transition(
+    target_type: str,
+    *,
+    desired_connection_status: str | None = None,
+    desired_binding_status: str | None = None,
+) -> bool:
+    """Return whether readiness evidence may be bypassed for a safe shutdown."""
+    if target_type != "pm_connection":
+        return False
+    return str(desired_connection_status or "").upper() in {"DISABLED", "DRAINING"}
+
+
+async def _lifecycle_gate_snapshot(
+    storage: AgentStorage,
+    *,
+    connection_id: UUID,
+    binding: dict[str, Any] | None,
+    doctor: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Collect apply-time gates without changing lifecycle state."""
+    latest_runs = await storage.list_pm_reconciliation_runs(connection_id=connection_id, limit=1)
+    latest_run = latest_runs[0] if latest_runs else None
+    counts = dict((latest_run or {}).get("counts") or {})
+    open_conflicts = await storage.list_pm_conflicts(connection_id=connection_id, status="OPEN", limit=1000)
+    pending = await storage.list_pm_outbox(connection_id=connection_id, status="PENDING", limit=1000)
+    processing = await storage.list_pm_outbox(connection_id=connection_id, status="PROCESSING", limit=1000)
+    failed = await storage.list_pm_outbox(connection_id=connection_id, status="FAILED", limit=1000)
+    dead_letters = await storage.list_pm_outbox(connection_id=connection_id, status="DEAD_LETTER", limit=1000)
+    active_dead_letters = [
+        row for row in dead_letters
+        if "SUPERSEDED" not in str(row.get("last_error") or "").upper()
+        and "RESOLVED" not in str(row.get("last_error") or "").upper()
+    ]
+    try:
+        tls_context = provider_ssl_context()
+        tls_verified = tls_context.verify_mode == ssl.CERT_REQUIRED and tls_context.check_hostname
+    except Exception:
+        tls_verified = False
+    mapping_complete = latest_run is not None and int(counts.get("mapped") or 0) == int(counts.get("seen") or 0)
+    blockers: list[str] = []
+    if not doctor.get("ready"):
+        blockers.extend(str(item) for item in doctor.get("blockers") or ["doctor not ready"])
+    if latest_run is None or latest_run.get("status") != "COMPLETED":
+        blockers.append("no completed reconciliation evidence")
+    if any(int(counts.get(key) or 0) != 0 for key in ("drift", "conflicts", "scope_conflicts", "version_mismatches", "hash_mismatches")):
+        blockers.append("latest reconciliation has drift or conflicts")
+    if not mapping_complete:
+        blockers.append("latest reconciliation mappings are incomplete")
+    if open_conflicts:
+        blockers.append("blocking PM conflicts are open")
+    if pending or processing or failed:
+        blockers.append("PM projections are pending, processing, or failed")
+    if active_dead_letters:
+        blockers.append("active PM dead letters exist")
+    if not tls_verified:
+        blockers.append("provider TLS certificate verification is not enabled")
+    snapshot = {
+        "doctor_ready": bool(doctor.get("ready")),
+        "doctor_blockers": list(doctor.get("blockers") or []),
+        "reconciliation_run_id": str(latest_run["id"]) if latest_run else None,
+        "reconciliation_status": latest_run.get("status") if latest_run else None,
+        "reconciliation_counts": counts,
+        "mapping_complete": mapping_complete,
+        "open_conflicts": len(open_conflicts),
+        "pending_projections": len(pending),
+        "processing_projections": len(processing),
+        "failed_projections": len(failed),
+        "active_dead_letters": len(active_dead_letters),
+        "historical_dead_letters": len(dead_letters) - len(active_dead_letters),
+        "tls_verification_enabled": bool(tls_verified),
+        "binding_policy": pm_binding_effective_policy(
+            str((binding or {}).get("status") or "DISABLED"),
+            str((binding or {}).get("connection_status") or "DISABLED"),
+            str((binding or {}).get("direction") or "outbound"),
+        ) if binding else None,
+    }
+    return snapshot, blockers
+
+
+def _source_control_provider_for(row: dict[str, Any]) -> Any:
+    try:
+        return _integration_registry().source_control(str(row["provider_kind"]), str(row["id"]))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _provider_failure_is_permanent(exc: BaseException) -> bool:
+    """Classify provider responses that cannot succeed through retries."""
+    status_code = getattr(exc, "status_code", None)
+    return isinstance(status_code, int) and 400 <= status_code < 500 and status_code not in {
+        408,
+        409,
+        425,
+        429,
+    }
+
+
+async def _require_source_control_capability(
+    row: dict[str, Any],
+    capability: str,
+    *,
+    write: bool = False,
+) -> Any:
+    status = str(row.get("status") or "DISABLED").upper()
+    allowed_statuses = {"ACTIVE"} if write else {"SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}
+    if status not in allowed_statuses:
+        action = "write" if write else "read"
+        raise HTTPException(409, f"source-control {action} is not allowed while connection is {status}")
+    provider = _source_control_provider_for(row)
+    try:
+        capabilities = await provider.capabilities(_provider_connection(row))
+    except Exception as exc:
+        raise HTTPException(502, f"source-control capability discovery failed: {exc}") from exc
+    if not bool(getattr(capabilities, capability, False)):
+        raise HTTPException(409, f"provider profile does not enable source-control capability {capability}")
+    return provider
+
+
+def _validate_repository_scope(row: dict[str, Any], payload: dict[str, Any]) -> None:
+    configured = str((row.get("config") or {}).get("repository") or "")
+    requested = payload.get("repository")
+    if requested is not None and configured and str(requested) != configured:
+        raise HTTPException(403, "requested repository is outside the connection scope")
+    if configured:
+        payload["repository"] = configured
+
+
+def _scrub_integration_evidence(value: Any) -> Any:
+    """Remove credential-shaped fields before source-control evidence storage."""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in ("token", "secret", "password", "private_key", "app_key")):
+                result[str(key)] = "<redacted>"
+            else:
+                result[str(key)] = _scrub_integration_evidence(item)
+        return result
+    if isinstance(value, list):
+        return [_scrub_integration_evidence(item) for item in value]
+    return value
+
+
+async def _record_source_control_evidence(
+    storage: Any,
+    *,
+    connection_id: UUID,
+    evidence_type: str,
+    request_payload: dict[str, Any],
+    result: Any,
+) -> dict[str, Any] | None:
+    recorder = getattr(storage, "record_integration_evidence", None)
+    if not callable(recorder):
+        return None
+    result_payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    safe_payload = _scrub_integration_evidence({"request": request_payload, "result": result_payload})
+    external_id = None
+    if isinstance(result_payload, dict) and result_payload.get("external_id") is not None:
+        external_id = str(result_payload["external_id"])
+    repository = str(request_payload.get("repository") or "") or None
+    project_id = None
+    binding_id = None
+    try:
+        project_id = UUID(str(request_payload["project_id"])) if request_payload.get("project_id") else None
+    except (TypeError, ValueError):
+        project_id = None
+    try:
+        binding_id = UUID(str(request_payload["binding_id"])) if request_payload.get("binding_id") else None
+    except (TypeError, ValueError):
+        binding_id = None
+    explicit_key = str(request_payload.get("idempotency_key") or "")
+    digest = hashlib.sha256(
+        json.dumps(safe_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    key = explicit_key or f"{connection_id}:{evidence_type}:{external_id or 'none'}:{digest}"
+    saved = recorder(
+        connection_id=connection_id,
+        evidence_type=evidence_type,
+        external_id=external_id,
+        repository=repository,
+        project_id=project_id,
+        binding_id=binding_id,
+        payload=safe_payload,
+        idempotency_key=key,
+    )
+    if hasattr(saved, "__await__"):
+        return await saved
+    return saved
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/installation")
+async def discover_source_control_installation(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request, allow_worker_read=True)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = await _require_source_control_capability(row, "repositories")
+    value = await provider.discover_installation(_provider_connection(row))
+    return _serialize(value)
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/branches", status_code=201)
+async def create_source_control_branch(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "repositories", write=True)
+    if not bool((await provider.capabilities(_provider_connection(row))).pull_requests):
+        raise HTTPException(409, "provider profile does not enable branch delivery")
+    result = await provider.create_branch(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="branch",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/pull-requests", status_code=201)
+async def project_source_control_pull_request(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "pull_requests", write=True)
+    result = await provider.project_pull_request(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="pull_request",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/review-comments", status_code=201)
+async def publish_source_control_review_comment(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "pull_requests", write=True)
+    result = await provider.publish_review_comment(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="review_comment",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/checks", status_code=201)
+async def publish_source_control_check(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "checks", write=True)
+    result = await provider.publish_check(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="check",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/commits", status_code=201)
+async def capture_source_control_commit(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request, allow_worker_read=True)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "repositories")
+    result = await provider.capture_commit_evidence(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="commit",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/run-credentials")
+async def mint_source_control_run_credential(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    configured_repository = str((row.get("config") or {}).get("repository") or "")
+    if not configured_repository:
+        raise HTTPException(
+            409,
+            "GitHub run credentials require a repository configured on the connection",
+        )
+    requested_repository = str(req.payload.get("repository") or "")
+    if requested_repository and requested_repository != configured_repository:
+        raise HTTPException(403, "requested repository is outside the connection scope")
+    repository = configured_repository
+    req.payload["repository"] = repository
+    permissions = dict(req.payload.get("permissions") or {})
+    provider = await _require_source_control_capability(row, "repositories", write=True)
+    if not bool((await provider.capabilities(_provider_connection(row))).pull_requests):
+        raise HTTPException(409, "provider profile does not enable delivery credentials")
+    result = await provider.mint_run_credential(
+        _provider_connection(row),
+        repository,
+        permissions,
+    )
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="run_credential_issued",
+        request_payload=req.payload, result=result,
+    )
+    # The broker returns an expiry and token for an already-authorized governed
+    # run.  The private app key itself never crosses this endpoint.
+    return _serialize(result)
+
+
+@app.get("/integrations/connections/{connection_id}/source-control/evidence")
+async def list_source_control_evidence(
+    connection_id: UUID,
+    request: Request,
+    evidence_type: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request, allow_worker_read=True)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    lister = getattr(storage, "list_integration_evidence", None)
+    if not callable(lister):
+        return []
+    return [
+        _serialize(item)
+        for item in await lister(connection_id=connection_id, evidence_type=evidence_type, limit=limit)
+    ]
+
+
+@app.patch("/integrations/connections/{connection_id}/status")
+async def update_integration_connection_status(connection_id: UUID, req: PMConnectionStatusRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    current = await storage.get_pm_connection(connection_id)
+    if current is None:
+        raise HTTPException(404, "integration connection not found")
+    if req.status == "ACTIVE":
+        provider = _provider_for(current)
+        if str(current.get("provider_kind") or "").lower() == "youtrack":
+            least_privilege_check = getattr(provider, "verify_least_privilege", None)
+            if not callable(least_privilege_check):
+                raise HTTPException(409, "YouTrack adapter does not implement least-privilege certification")
+            report = await least_privilege_check(_provider_connection(current))
+            if not report.get("ok"):
+                reasons = [
+                    *(str(item) for item in report.get("missing", [])),
+                    *(f"forbidden permission: {item}" for item in report.get("forbidden", [])),
+                ]
+                raise HTTPException(
+                    409,
+                    "YouTrack least-privilege certification is not satisfied"
+                    + (f": {'; '.join(reasons)}" if reasons else ""),
+                )
+    if str(current.get("status") or "DISABLED") != req.status:
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_plan_required",
+                "message": "connection state changes require a persisted approved lifecycle plan",
+            },
+        )
+    row = await storage.update_pm_connection(connection_id, status=req.status)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    return _serialize_pm_connection(row) or {}
+
+
+@app.post("/integrations/connections/{connection_id}/plan")
+async def plan_integration_bootstrap(connection_id: UUID, req: PMPlanRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    try:
+        plan = await _provider_for(row).plan_bootstrap(_provider_connection(row), req.desired)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"provider bootstrap planning failed: {exc}") from exc
+    plan_digest = plan.digest()
+    stored_config = dict(row.get("config") or {})
+    stored_config["_bootstrap_plan"] = {
+        "plan_id": str(plan.plan_id),
+        "digest": plan_digest,
+        "connection_id": str(connection_id),
+    }
+    try:
+        await storage.update_pm_connection(connection_id, config=stored_config)
+    except ValueError as exc:
+        raise HTTPException(503, f"could not persist bootstrap plan identity: {exc}") from exc
+    return {
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": plan_digest,
+        "ready_to_apply": plan.ready_to_apply,
+    }
+
+
+@app.post("/integrations/connections/{connection_id}/apply")
+async def apply_integration_bootstrap(connection_id: UUID, req: PMApplyRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "bootstrap apply requires confirm=true")
+    try:
+        validate_credential_references(req.plan.model_dump(mode="python"))
+    except ValueError as exc:
+        raise HTTPException(422, "bootstrap plan contains inline provider secret material") from exc
+    if req.plan.connection_id != connection_id or req.plan.digest() != req.plan_digest:
+        raise HTTPException(409, "bootstrap plan digest or connection does not match")
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    stored_plan = (row.get("config") or {}).get("_bootstrap_plan")
+    if not isinstance(stored_plan, dict) or (
+        str(stored_plan.get("plan_id") or "") != str(req.plan.plan_id)
+        or str(stored_plan.get("digest") or "") != req.plan_digest
+        or str(stored_plan.get("connection_id") or "") != str(connection_id)
+    ):
+        raise HTTPException(
+            409,
+            "bootstrap plan was not generated by the server for this connection",
+        )
+    if str(row.get("status") or "DISABLED") != "DISABLED":
+        raise HTTPException(409, "bootstrap apply requires the connection to remain DISABLED")
+    try:
+        applied = await _provider_for(row).apply_bootstrap(_provider_connection(row), req.plan)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"provider bootstrap apply failed: {exc}") from exc
+    if isinstance(applied, BootstrapPlan):
+        # Compatibility for third-party adapters that still implement the
+        # pre-result contract.  Built-in adapters return BootstrapApplyResult.
+        applied = BootstrapApplyResult(plan=applied)
+    if not isinstance(applied, BootstrapApplyResult) or applied.plan.digest() != req.plan_digest:
+        raise HTTPException(502, "provider bootstrap apply returned a mismatched plan")
+
+    # Persist only non-secret resource identifiers needed for idempotent
+    # retries and later binding creation.  This is metadata, not a binding,
+    # and deliberately leaves the connection DISABLED.
+    updated_config = dict(row.get("config") or {})
+    resources = [*applied.created, *applied.adopted]
+    if str(row.get("provider_kind") or "").lower() == "youtrack":
+        project_resource = next(
+            (item for item in resources if str(item.get("resource") or "").startswith("youtrack:project:")),
+            None,
+        )
+        if project_resource and project_resource.get("external_id"):
+            project_id = str(project_resource["external_id"])
+            updated_config["project_id"] = project_id
+            updated_config["project_short_name"] = str(
+                project_resource.get("short_name") or "AIAT"
+            )
+            managed = [
+                str(value)
+                for value in (updated_config.get("managed_project_ids") or [])
+                if value
+            ]
+            if project_id not in managed:
+                managed.append(project_id)
+            updated_config["managed_project_ids"] = managed
+            if project_resource.get("project_admin") is True:
+                # Successful creation/adoption under the approved plan is the
+                # live certification evidence for the integration user's
+                # project-scoped Project Admin authority.  Keep it redacted
+                # and scoped to this exact provider project.
+                evidence = dict(updated_config.get("permission_evidence") or {})
+                project_roles = dict(evidence.get("project_roles") or {})
+                current_roles = project_roles.get(project_id)
+                roles = list(current_roles) if isinstance(current_roles, list) else []
+                if "Project Admin" not in roles:
+                    roles.append("Project Admin")
+                project_roles[project_id] = roles
+                evidence["project_roles"] = project_roles
+                updated_config["permission_evidence"] = evidence
+        field_ids = dict(updated_config.get("youtrack_field_ids") or {})
+        for item in resources:
+            resource = str(item.get("resource") or "")
+            if resource.startswith("youtrack:field:") and item.get("external_id"):
+                field_ids[str(item.get("name") or resource.rsplit(":", 1)[-1])] = {
+                    "project_field_id": str(item["external_id"]),
+                    "global_field_id": str(item.get("global_field_id") or "") or None,
+                    "type": str(item.get("type") or ""),
+                }
+        if field_ids:
+            updated_config["youtrack_field_ids"] = field_ids
+        previous_apply = updated_config.get("_bootstrap_apply")
+        previous_created = (
+            previous_apply.get("created", [])
+            if isinstance(previous_apply, dict) and isinstance(previous_apply.get("created"), list)
+            else []
+        )
+        previous_adopted = (
+            previous_apply.get("adopted", [])
+            if isinstance(previous_apply, dict) and isinstance(previous_apply.get("adopted"), list)
+            else []
+        )
+
+        def _unique_resources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            unique: list[dict[str, Any]] = []
+            seen: set[tuple[str, str]] = set()
+            for item in items:
+                key = (str(item.get("resource") or ""), str(item.get("external_id") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique.append(item)
+            return unique
+
+        updated_config["_bootstrap_apply"] = {
+            "plan_id": str(req.plan.plan_id),
+            "digest": req.plan_digest,
+            "created": _unique_resources([*previous_created, *applied.created]),
+            "adopted": _unique_resources([*previous_adopted, *applied.adopted]),
+        }
+    updated = await storage.update_pm_connection(connection_id, config=updated_config)
+    return {
+        "connection": _serialize_pm_connection(updated),
+        "plan": applied.plan.model_dump(mode="json"),
+        "plan_digest": applied.plan.digest(),
+        "applied_resources": {"created": applied.created, "adopted": applied.adopted},
+    }
+
+
+def _lifecycle_http_error(exc: LifecyclePlanError) -> HTTPException:
+    status = 404 if exc.code == "missing_plan" else 409
+    return HTTPException(status, {"code": exc.code, "message": exc.message})
+
+
+@app.post("/integrations/lifecycle-plans", status_code=201)
+async def create_pm_lifecycle_plan(
+    req: PMLifecyclePlanCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Generate and durably persist one PM lifecycle transition plan."""
+    _integration_operator(request)
+    actor = _authenticated_principal(request)
+    storage = _storage()
+    connection = await storage.get_pm_connection(req.connection_id)
+    if connection is None:
+        raise HTTPException(404, "integration connection not found")
+    binding: dict[str, Any] | None = None
+    if req.target_type == "pm_binding":
+        if req.binding_id is None or req.desired_binding_status is None:
+            raise HTTPException(422, "binding lifecycle plans require binding_id and desired_binding_status")
+        bindings = await storage.list_pm_bindings(connection_id=req.connection_id)
+        binding = next((row for row in bindings if row.get("id") == req.binding_id), None)
+        if binding is None:
+            raise HTTPException(404, "integration binding not found")
+        if req.desired_connection_status is not None:
+            raise HTTPException(422, "binding transition plans cannot change the connection state")
+        target_id = req.binding_id
+    else:
+        if req.binding_id is not None or req.desired_connection_status is None:
+            raise HTTPException(422, "connection lifecycle plans require desired_connection_status and no binding_id")
+        target_id = req.connection_id
+
+    safety_transition = _lifecycle_safety_transition(
+        req.target_type,
+        desired_connection_status=req.desired_connection_status,
+        desired_binding_status=req.desired_binding_status,
+    )
+    try:
+        doctor = await doctor_integration_connection(req.connection_id, request)
+    except Exception:
+        if not safety_transition:
+            raise
+        # Provider discovery is itself a readiness check.  Keep the shutdown
+        # plan available when the adapter is unavailable, while recording the
+        # failed check in the plan evidence.
+        doctor = {
+            "connection_id": str(req.connection_id),
+            "ready": False,
+            "blockers": ["integration doctor unavailable"],
+            "checks": [],
+        }
+    connection = await storage.get_pm_connection(req.connection_id) or connection
+    if binding is not None:
+        binding = next(
+            (row for row in await storage.list_pm_bindings(connection_id=req.connection_id) if row.get("id") == req.binding_id),
+            binding,
+        )
+        binding_for_gate = {**binding, "connection_status": connection.get("status")}
+    else:
+        binding_for_gate = None
+    gate_results, gate_blockers = await _lifecycle_gate_snapshot(
+        storage,
+        connection_id=req.connection_id,
+        binding=binding_for_gate,
+        doctor=doctor,
+    )
+    # Preserve the failed readiness evidence in the immutable plan for audit,
+    # but do not make an emergency shutdown depend on a healthy provider,
+    # reconciliation, projection queue, or TLS probe.
+    gate_results = {
+        **gate_results,
+        "readiness_gate_blockers": list(gate_blockers),
+        "readiness_gates_bypassed": safety_transition,
+    }
+    effective_gate_blockers = [] if safety_transition else gate_blockers
+    transition_blockers: list[str] = []
+    if req.target_type == "pm_binding":
+        current_status = str(binding.get("status") or "DISABLED")
+        if current_status == req.desired_binding_status:
+            transition_blockers.append("desired binding state is already current")
+        if connection.get("status") == "DISABLED":
+            transition_blockers.append("binding transition requires a non-disabled connection")
+        operations = [{
+            "operation": "set_binding_status",
+            "binding_id": str(req.binding_id),
+            "from": current_status,
+            "to": req.desired_binding_status,
+        }]
+        rollback_operations = [{
+            "operation": "set_binding_status",
+            "binding_id": str(req.binding_id),
+            "from": req.desired_binding_status,
+            "to": current_status,
+        }]
+    else:
+        current_status = str(connection.get("status") or "DISABLED")
+        if current_status == req.desired_connection_status:
+            transition_blockers.append("desired connection state is already current")
+        operations = [{
+            "operation": "set_connection_status",
+            "connection_id": str(req.connection_id),
+            "from": current_status,
+            "to": req.desired_connection_status,
+        }]
+        rollback_operations = [{
+            "operation": "set_connection_status",
+            "connection_id": str(req.connection_id),
+            "from": req.desired_connection_status,
+            "to": current_status,
+        }]
+    blockers = [*transition_blockers, *effective_gate_blockers]
+    created_at = datetime.now(tz=UTC)
+    plan = PMLifecycleTransitionPlan(
+        plan_kind="pm_binding_transition" if req.target_type == "pm_binding" else "pm_connection_transition",
+        target_type=req.target_type,
+        target_id=target_id,
+        connection_id=req.connection_id,
+        binding_id=req.binding_id,
+        expected_connection_status=str(connection.get("status") or "DISABLED"),
+        expected_binding_status=str(binding.get("status") or "DISABLED") if binding is not None else None,
+        expected_connection_revision=int(connection.get("revision") or 1),
+        expected_binding_revision=int(binding.get("revision") or 1) if binding is not None else None,
+        desired_connection_status=req.desired_connection_status,
+        desired_binding_status=req.desired_binding_status,
+        observed_versions={
+            "connection_revision": int(connection.get("revision") or 1),
+            "binding_revision": int(binding.get("revision") or 1) if binding is not None else None,
+        },
+        operations=operations,
+        gate_results=gate_results,
+        evidence_refs={
+            "doctor": {"connection_id": str(req.connection_id), "checked_at": created_at.isoformat()},
+            "reconciliation_run_id": gate_results.get("reconciliation_run_id"),
+        },
+        blockers=blockers,
+        rollback_operations=rollback_operations,
+        created_by=actor,
+        created_at=created_at,
+        expires_at=created_at + timedelta(seconds=req.ttl_seconds),
+    )
+    digest = plan.digest()
+    try:
+        persisted = await storage.create_pm_lifecycle_plan(plan, digest=digest)
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(persisted)
+
+
+@app.get("/integrations/lifecycle-plans")
+async def list_pm_lifecycle_plans(
+    request: Request,
+    connection_id: UUID | None = None,
+    target_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    rows = await _storage().list_pm_lifecycle_plans(
+        connection_id=connection_id,
+        target_id=target_id,
+        status=status,
+        limit=limit,
+    )
+    return [_serialize_lifecycle_plan(row) for row in rows]
+
+
+@app.get("/integrations/lifecycle-plans/{plan_id}")
+async def get_pm_lifecycle_plan(plan_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    return _serialize_lifecycle_plan(row)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/approve")
+async def approve_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanApprovalRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    serialized = _serialize_lifecycle_plan(row)
+    if not serialized["digest_valid"] or serialized["plan_digest"] != req.plan_digest:
+        raise HTTPException(409, {"code": "digest_mismatch", "message": "lifecycle plan digest is not current"})
+    plan = serialized["plan"]
+    if plan.get("blockers"):
+        raise HTTPException(409, {"code": "blocked_plan", "message": "lifecycle plan contains blockers", "blockers": plan["blockers"]})
+    try:
+        approved = await _storage().approve_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(approved)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/reject")
+async def reject_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanRejectRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    try:
+        rejected = await _storage().reject_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(rejected)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/apply")
+async def apply_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanApplyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "lifecycle plan apply requires confirm=true")
+    storage = _storage()
+    row = await storage.get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    serialized = _serialize_lifecycle_plan(row)
+    if not serialized["digest_valid"] or serialized["plan_digest"] != req.plan_digest:
+        raise HTTPException(409, {"code": "digest_mismatch", "message": "lifecycle plan digest is not current"})
+    if row.get("status") == "APPLIED":
+        result = await storage.apply_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+        )
+        return {**_serialize_lifecycle_plan(result["plan"]), "application": result["result"], "idempotent": True}
+    plan = _lifecycle_plan_from_row(row)
+    safety_transition = _lifecycle_safety_transition(
+        plan.target_type,
+        desired_connection_status=plan.desired_connection_status,
+        desired_binding_status=plan.desired_binding_status,
+    )
+    plan_blockers = list(plan.blockers)
+    if safety_transition:
+        # Plans created before the bypass metadata existed may still contain
+        # the exact readiness blockers in their immutable payload.  Remove
+        # only blockers explicitly classified as readiness evidence; retain
+        # transition blockers and all other safety checks.
+        readiness_blockers = {
+            str(item)
+            for item in (plan.gate_results.get("readiness_gate_blockers") or [])
+            if item
+        }
+        plan_blockers = [item for item in plan_blockers if item not in readiness_blockers]
+    if plan_blockers:
+        raise HTTPException(409, {"code": "blocked_plan", "message": "lifecycle plan contains blockers", "blockers": plan_blockers})
+    connection = await storage.get_pm_connection(plan.connection_id)
+    if connection is None:
+        raise HTTPException(409, {"code": "stale_state", "message": "target connection no longer exists"})
+    binding = None
+    if plan.binding_id is not None:
+        binding = next(
+            (item for item in await storage.list_pm_bindings(connection_id=plan.connection_id) if item.get("id") == plan.binding_id),
+            None,
+        )
+    try:
+        doctor = await doctor_integration_connection(plan.connection_id, request)
+    except Exception:
+        if not safety_transition:
+            raise
+        doctor = {
+            "connection_id": str(plan.connection_id),
+            "ready": False,
+            "blockers": ["integration doctor unavailable"],
+            "checks": [],
+        }
+    connection = await storage.get_pm_connection(plan.connection_id) or connection
+    if binding is not None:
+        binding = next(
+            (item for item in await storage.list_pm_bindings(connection_id=plan.connection_id) if item.get("id") == plan.binding_id),
+            binding,
+        )
+        binding = {**binding, "connection_status": connection.get("status")}
+    fresh_gates, fresh_blockers = await _lifecycle_gate_snapshot(
+        storage,
+        connection_id=plan.connection_id,
+        binding=binding,
+        doctor=doctor,
+    )
+    fresh_gates = {
+        **fresh_gates,
+        "readiness_gate_blockers": list(fresh_blockers),
+        "readiness_gates_bypassed": safety_transition,
+    }
+    effective_fresh_blockers = [] if safety_transition else fresh_blockers
+    if effective_fresh_blockers:
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_gate_blocked",
+                "message": "lifecycle apply gates changed after approval",
+                "blockers": effective_fresh_blockers,
+                "gate_results": fresh_gates,
+            },
+        )
+    try:
+        result = await storage.apply_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    if result.get("status") == "STALE":
+        raise HTTPException(409, {"code": "stale_state", "message": "lifecycle plan expected state or revision changed", "result": result["result"]})
+    return {**_serialize_lifecycle_plan(result["plan"]), "application": result["result"], "idempotent": result["idempotent"]}
+
+
+@app.get("/integrations/lifecycle-plans/{plan_id}/audit")
+async def get_pm_lifecycle_audit(plan_id: UUID, request: Request) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    rows = await _storage().list_pm_lifecycle_audits(limit=100)
+    return [_serialize(row) for row in rows if row.get("plan_id") == plan_id]
+
+
+@app.post("/integrations/connections/{connection_id}/reconcile")
+async def reconcile_integration_connection(
+    connection_id: UUID,
+    req: PMReconcileRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Compare provider objects with durable mappings without guessing imports."""
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    connection = _provider_connection(row)
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    eligible_bindings = [item for item in bindings if item.get("status") in {"ACTIVE", "SHADOW", "READ_ONLY", "DRAINING"}]
+    if req.binding_id is not None:
+        binding = next((item for item in eligible_bindings if item.get("id") == req.binding_id), None)
+        if binding is None:
+            raise HTTPException(404, "PM binding not found for reconciliation")
+    else:
+        if len(eligible_bindings) > 1:
+            raise HTTPException(409, "binding_id is required when a connection serves multiple project bindings")
+        binding = eligible_bindings[0] if eligible_bindings else None
+    if binding is not None and binding.get("external_project_id"):
+        connection = connection.model_copy(
+            update={"config": {**connection.config, "project_id": str(binding["external_project_id"])}},
+        )
+    effective_cursor = req.cursor if req.cursor is not None else (binding or {}).get("sync_cursor")
+    reconciliation_run = None
+    if isinstance(storage, AgentStorage):
+        reconciliation_run = await storage.create_pm_reconciliation_run(
+            connection_id=connection_id,
+            binding_id=binding["id"] if binding else None,
+            cursor=effective_cursor,
+        )
+    try:
+        objects, next_cursor = await _provider_for(row).list_changes(connection, cursor=effective_cursor)
+    except Exception as exc:
+        if reconciliation_run is not None:
+            await storage.finish_pm_reconciliation_run(
+                reconciliation_run["id"],
+                status="FAILED",
+                counts={},
+                error=str(exc)[:1000],
+            )
+        raise HTTPException(502, f"provider reconciliation failed: {exc}") from exc
+    # Include resolved/ignored forensic conflicts when reconciling.  Otherwise
+    # a deliberately ignored certification fixture is re-created as OPEN on
+    # every full scan and falsely blocks a clean READ_ONLY gate.  Existing
+    # OPEN/REOPENED rows remain blocking; resolved/ignored rows suppress
+    # duplicate creation and are excluded from the run's conflict count.
+    existing_conflicts = {
+        (
+            str(item.get("object_type")),
+            str(item.get("external_id")),
+            str(item.get("reason") or ""),
+        ): str(item.get("status") or "OPEN").upper()
+        for item in await storage.list_pm_conflicts(connection_id=connection_id, status=None, limit=1000)
+    }
+    mapped = conflicts = drift = scope_conflicts = 0
+    hash_mismatches = version_mismatches = 0
+    # A provider page is the cursor's atomic unit.  Processing only a prefix
+    # and then persisting the provider's page cursor would permanently skip
+    # the unprocessed suffix, so reconcile the complete returned page.
+    for external in list(objects):
+        object_type = getattr(external.object_type, "value", str(external.object_type))
+        mapping = await storage.get_pm_mapping(
+            connection_id=connection_id,
+            object_type=object_type,
+            external_id=external.external_id,
+        )
+        if mapping is not None:
+            # Only compare an explicit provider-normalized hash.  Falling
+            # back to the DTO's generic stable hash would compare different
+            # adapter field vocabularies and manufacture drift on every run.
+            external_hash = str(external.content_hash or "")
+            expected_project = str(binding.get("external_project_id") or "") if binding else ""
+            expected_repository = str(binding.get("external_repository") or "") if binding else ""
+            incoming_project = str(external.project_external_id or "")
+            incoming_repository = str((external.metadata or {}).get("repository") or "")
+            scope_error = (
+                (expected_project and incoming_project and expected_project != incoming_project)
+                or (expected_repository and incoming_repository and expected_repository != incoming_repository)
+            )
+            hash_mismatch = bool(
+                mapping.get("content_hash")
+                and external_hash
+                and mapping.get("content_hash") != external_hash
+            )
+            version_mismatch = bool(
+                mapping.get("provider_version")
+                and external.provider_version
+                and str(mapping.get("provider_version")) != str(external.provider_version)
+            )
+            if scope_error or hash_mismatch or version_mismatch:
+                if (
+                    version_mismatch
+                    and not scope_error
+                    and not hash_mismatch
+                    and str((binding or {}).get("status") or "").upper() in {"SHADOW", "READ_ONLY"}
+                ):
+                    # Provider-originated changes are evidence-only before
+                    # ACTIVE.  Advance the observed provider version on the
+                    # existing mapping without importing fields or treating
+                    # the observation as canonical drift.
+                    await storage.upsert_pm_mapping(
+                        connection_id=connection_id,
+                        object_type=object_type,
+                        aiat_object_id=mapping["aiat_object_id"],
+                        external_id=external.external_id,
+                        external_key=external.external_key,
+                        provider_version=external.provider_version,
+                        imported_revision=int(mapping.get("last_import_revision") or 1),
+                    )
+                    mapped += 1
+                    continue
+                drift += 1
+                hash_mismatches += int(hash_mismatch)
+                version_mismatches += int(version_mismatch)
+                scope_conflicts += int(bool(scope_error))
+                reason = "out_of_scope" if scope_error else "state_drift"
+                key = (object_type, str(external.external_id), reason)
+                existing_status = existing_conflicts.get(key)
+                if existing_status is None:
+                    await storage.create_pm_conflict(
+                        connection_id=connection_id,
+                        binding_id=binding["id"] if binding else None,
+                        reason=reason,
+                        object_type=object_type,
+                        aiat_object_id=mapping.get("aiat_object_id"),
+                        external_id=external.external_id,
+                        canonical_snapshot={"mapping": mapping},
+                        external_snapshot={
+                            "object": external.model_dump(mode="json"),
+                            "hash_mismatch": hash_mismatch,
+                            "version_mismatch": version_mismatch,
+                            "repair_mode": req.mode,
+                        },
+                    )
+                    existing_conflicts[key] = "OPEN"
+                elif existing_status in {"RESOLVED", "IGNORED"}:
+                    continue
+                continue
+            mapped += 1
+            continue
+        key = (object_type, str(external.external_id), "unknown_mapping")
+        existing_status = existing_conflicts.get(key)
+        if existing_status is None:
+            await storage.create_pm_conflict(
+                connection_id=connection_id,
+                binding_id=binding["id"] if binding else None,
+                reason="unknown_mapping",
+                object_type=object_type,
+                external_id=external.external_id,
+                external_snapshot=external.model_dump(mode="json"),
+            )
+            existing_conflicts[key] = "OPEN"
+            conflicts += 1
+        elif existing_status not in {"RESOLVED", "IGNORED"}:
+            conflicts += 1
+    if binding is not None:
+        await storage.update_pm_binding(
+            binding["id"],
+            sync_cursor=next_cursor,
+            last_reconciled_at=datetime.now(tz=UTC),
+        )
+        reconciliation_evidence = getattr(storage, "record_pm_binding_evidence", None)
+        if callable(reconciliation_evidence) and conflicts == 0 and drift == 0 and scope_conflicts == 0:
+            recorded = reconciliation_evidence(binding["id"], reconciliation_verified=True)
+            if hasattr(recorded, "__await__"):
+                await recorded
+    counts = {
+        "seen": len(objects),
+        "mapped": mapped,
+        "conflicts": conflicts,
+        "drift": drift,
+        "hash_mismatches": hash_mismatches,
+        "version_mismatches": version_mismatches,
+        "scope_conflicts": scope_conflicts,
+        "mode": req.mode,
+    }
+    if reconciliation_run is not None:
+        await storage.finish_pm_reconciliation_run(
+            reconciliation_run["id"],
+            status="COMPLETED",
+            counts=counts,
+            next_cursor=next_cursor,
+        )
+    return {
+        "connection_id": str(connection_id),
+        **counts,
+        "next_cursor": next_cursor,
+        "run_id": str(reconciliation_run["id"]) if reconciliation_run else None,
+    }
+
+
+@app.post("/integrations/cutovers")
+async def cutover_integration_binding(req: PMCutoverRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    # The historical cutover endpoint used to mutate connection and binding
+    # state directly.  Keep the route as a compatibility surface, but fail
+    # closed until an operator has generated, approved, and applied a durable
+    # lifecycle plan.  This prevents an unaudited status write from bypassing
+    # the digest, gate, CAS, and immutable-audit path.
+    raise HTTPException(
+        409,
+        {
+            "code": "lifecycle_plan_required",
+            "message": "cutover requires a persisted approved lifecycle plan; use /api/v1/integrations/lifecycle-plans",
+        },
+    )
+@app.post("/integrations/rollbacks")
+async def rollback_integration_binding(req: PMRollbackRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    # Rollback is a state transition too.  It must be represented by a
+    # persisted lifecycle plan so the expected revision, rollback operation,
+    # approval, and resulting audit are durable and idempotent.
+    raise HTTPException(
+        409,
+        {
+            "code": "lifecycle_plan_required",
+            "message": "rollback requires a persisted approved lifecycle plan; use /api/v1/integrations/lifecycle-plans",
+        },
+    )
+async def _canonical_project_for_pm(project_row: dict[str, Any]) -> CanonicalProject:
+    return CanonicalProject(
+        id=project_row["id"],
+        name=str(project_row.get("name") or "Project"),
+        description=project_row.get("description"),
+        state=str(project_row.get("state") or "INIT"),
+        revision=int(project_row.get("revision") or 1),
+        updated_at=project_row.get("updated_at"),
+    )
+
+
+async def _remember_project_provisioning(
+    storage: Any,
+    project: dict[str, Any],
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    config = dict(project.get("config") or {})
+    current = dict(config.get("pm_provisioning") or {})
+    current.update(values)
+    config["pm_provisioning"] = current
+    writer = getattr(storage, "update_project_config", None)
+    if callable(writer):
+        refreshed = writer(project["id"], config=config)
+        if hasattr(refreshed, "__await__"):
+            refreshed = await refreshed
+        if refreshed is not None:
+            return refreshed
+    project["config"] = config
+    return project
+
+
+@app.post("/projects/{project_id}/pm-provisioning/plan")
+async def plan_project_pm_provisioning(
+    project_id: UUID,
+    req: PMProjectProvisioningRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Generate a read-only, per-project provider provisioning plan."""
+    _integration_operator(request)
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection_row = await storage.get_pm_connection(req.connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = _provider_for(connection_row)
+    planner = getattr(provider, "plan_project_provisioning", None)
+    if not callable(planner):
+        raise HTTPException(409, f"provider {connection_row.get('provider_kind')} does not support project provisioning")
+    try:
+        plan = await planner(
+            _provider_connection(connection_row),
+            await _canonical_project_for_pm(project_row),
+            mapping_profile=req.mapping_profile,
+            external_project_id=req.external_project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    digest = plan.digest()
+    await _remember_project_provisioning(
+        storage,
+        project_row,
+        {
+            "mapping_profile": plan.mapping_profile,
+            "state": "PLANNED",
+            "plan_id": str(plan.plan_id),
+            "plan_digest": digest,
+            "external_project_id": plan.external_project_id,
+            "external_project_key": plan.external_project_key,
+            "blockers": list(plan.blockers),
+            "manual_actions": list(plan.manual_actions),
+        },
+    )
+    return {
+        "project_id": str(project_id),
+        "connection_id": str(req.connection_id),
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": digest,
+        "blockers": list(plan.blockers),
+        "manual_actions": list(plan.manual_actions),
+    }
+
+
+@app.post("/projects/{project_id}/pm-provisioning/apply")
+async def apply_project_pm_provisioning(
+    project_id: UUID,
+    req: PMProjectProvisioningApplyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Apply one exact project plan and create its disabled/shadow binding."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "project provisioning requires confirm=true")
+    if req.plan.project_id != project_id or req.plan.digest() != req.plan_digest:
+        raise HTTPException(409, "project provisioning plan digest or project scope is invalid")
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection_row = await storage.get_pm_connection(req.plan.connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    stored_provisioning = dict((project_row.get("config") or {}).get("pm_provisioning") or {})
+    if (
+        str(stored_provisioning.get("plan_id") or "") != str(req.plan.plan_id)
+        or str(stored_provisioning.get("plan_digest") or "") != req.plan_digest
+    ):
+        raise HTTPException(409, "project provisioning plan is not the server-generated plan for this project")
+    applier = getattr(_provider_for(connection_row), "apply_project_provisioning", None)
+    if not callable(applier):
+        raise HTTPException(409, f"provider {connection_row.get('provider_kind')} does not support project provisioning")
+    try:
+        applied = await applier(_provider_connection(connection_row), req.plan)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    resources = [*applied.created, *applied.adopted]
+    project_resource = next(
+        (item for item in resources if ":project:" in str(item.get("resource") or "") or str(item.get("object_type") or "") == "project"),
+        None,
+    )
+    external_project_id = str((project_resource or {}).get("external_id") or req.plan.external_project_id or "")
+    if not external_project_id:
+        raise HTTPException(409, "provider provisioning returned no external project selector")
+    external_project_key = str((project_resource or {}).get("short_name") or req.plan.external_project_key or "") or None
+    # Keep the connection's redacted scope/certification metadata aligned with
+    # every provider project it now manages.  This records evidence only; it
+    # never grants a new provider permission.
+    connection_config = dict(connection_row.get("config") or {})
+    managed_project_ids = [
+        str(value) for value in (connection_config.get("managed_project_ids") or []) if value
+    ]
+    if external_project_id not in managed_project_ids:
+        managed_project_ids.append(external_project_id)
+    connection_config["managed_project_ids"] = managed_project_ids
+    permission_evidence = dict(connection_config.get("permission_evidence") or {})
+    project_roles = dict(permission_evidence.get("project_roles") or {})
+    existing_roles = project_roles.get(external_project_id)
+    roles = list(existing_roles) if isinstance(existing_roles, list) else []
+    if "Project Admin" not in roles:
+        roles.append("Project Admin")
+    project_roles[external_project_id] = roles
+    permission_evidence["project_roles"] = project_roles
+    connection_config["permission_evidence"] = permission_evidence
+    updater = getattr(storage, "update_pm_connection", None)
+    if callable(updater):
+        updated_connection = updater(req.plan.connection_id, config=connection_config)
+        if hasattr(updated_connection, "__await__"):
+            await updated_connection
+    binding_blockers = list(req.plan.manual_actions)
+    binding_state = "WAITING_MANUAL_WEBHOOK" if binding_blockers else "PROVISIONED"
+    binding_status = "SHADOW" if binding_blockers else "DISABLED"
+    existing = await storage.list_pm_bindings(project_id=project_id)
+    binding = next(
+        (
+            row for row in existing
+            if row.get("connection_id") == req.plan.connection_id
+            and row.get("mapping_profile") in {req.plan.mapping_profile, "default"}
+            and str(row.get("external_project_id") or "") == external_project_id
+        ),
+        None,
+    )
+    binding_values = {
+        "external_project_id": external_project_id,
+        "external_project_key": external_project_key,
+        "mapping_profile": req.plan.mapping_profile,
+        "direction": "both",
+        "status": binding_status,
+        "provisioning_state": binding_state,
+        "provisioning_plan_id": req.plan.plan_id,
+        "provisioning_plan_digest": req.plan_digest,
+        "activation_blockers": binding_blockers,
+    }
+    try:
+        if binding is None:
+            binding = await storage.create_pm_binding(
+                project_id=project_id,
+                connection_id=req.plan.connection_id,
+                **binding_values,
+            )
+        else:
+            binding = await storage.update_pm_binding(binding["id"], **binding_values)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await _remember_project_provisioning(
+        storage,
+        project_row,
+        {
+            "state": binding_state,
+            "binding_id": str(binding["id"]) if binding else None,
+            "external_project_id": external_project_id,
+            "external_project_key": external_project_key,
+            "blockers": binding_blockers,
+            "applied_plan_digest": req.plan_digest,
+        },
+    )
+    return {
+        "project_id": str(project_id),
+        "connection_id": str(req.plan.connection_id),
+        "plan_digest": req.plan_digest,
+        "applied_resources": {"created": applied.created, "adopted": applied.adopted},
+        "binding": _serialize(binding) if binding else None,
+        "status": binding_status,
+        "blockers": binding_blockers,
+    }
+
+
+@app.post("/projects/{project_id}/pm-bindings", status_code=201)
+async def create_project_pm_binding(project_id: UUID, req: PMBindingCreateRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection = await storage.get_pm_connection(req.connection_id)
+    if connection is None:
+        raise HTTPException(404, "integration connection not found")
+    mapping_profile = normalize_project_mapping_profile(req.mapping_profile)
+    if mapping_profile == DEDICATED_PROJECT_MAPPING_PROFILE and not req.external_project_id:
+        raise HTTPException(
+            422,
+            "dedicated_project bindings require the provider project to be provisioned/adopted first; use the project provisioning plan",
+        )
+    if mapping_profile == DEDICATED_PROJECT_MAPPING_PROFILE:
+        provisioning = dict((project_row.get("config") or {}).get("pm_provisioning") or {})
+        if (
+            str(provisioning.get("external_project_id") or "") != str(req.external_project_id or "")
+            or not provisioning.get("applied_plan_digest")
+            or str(provisioning.get("state") or "") not in {"PROVISIONED", "WAITING_MANUAL_WEBHOOK"}
+        ):
+            raise HTTPException(
+                409,
+                "dedicated_project bindings require an applied project provisioning plan for this canonical project",
+            )
+    if mapping_profile == "umbrella_issues" and not (req.external_project_id or req.external_repository):
+        raise HTTPException(422, "umbrella_issues requires an explicit provider project or repository selector")
+    if req.status == "ACTIVE" and connection.get("status") != "ACTIVE":
+        raise HTTPException(409, "an active binding requires an active integration connection")
+    if req.direction in {"inbound", "both"} and not (req.external_project_id or req.external_repository):
+        raise HTTPException(422, "inbound bindings require an explicit external project or repository selector")
+    if req.external_repository:
+        configured_repository = str((connection.get("config") or {}).get("repository") or "")
+        if configured_repository and req.external_repository != configured_repository:
+            raise HTTPException(403, "binding repository is outside the connection scope")
+    try:
+        binding = await storage.create_pm_binding(
+            project_id=project_id,
+            **{**req.model_dump(), "mapping_profile": mapping_profile},
+        )
+    except ValueError as exc:
+        status = 409 if "conflict" in str(exc).lower() or "active" in str(exc).lower() else 422
+        raise HTTPException(status, str(exc)) from exc
+    return _serialize(binding)
+
+
+@app.patch("/projects/{project_id}/pm-bindings/{binding_id}")
+async def update_project_pm_binding(
+    project_id: UUID,
+    binding_id: UUID,
+    req: PMBindingUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Change a binding phase without bypassing storage activation gates."""
+    _integration_operator(request)
+    storage = _storage()
+    bindings = await storage.list_pm_bindings(project_id=project_id)
+    current = next((row for row in bindings if row.get("id") == binding_id), None)
+    if current is None:
+        raise HTTPException(404, "PM binding not found for project")
+    values = req.model_dump(exclude_none=True)
+    if "status" in values and str(values["status"]) != str(current.get("status") or "DISABLED"):
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_plan_required",
+                "message": "binding state changes require a persisted approved lifecycle plan",
+            },
+        )
+    next_profile = normalize_project_mapping_profile(values.get("mapping_profile", current.get("mapping_profile")))
+    next_external_project = values.get("external_project_id", current.get("external_project_id"))
+    if next_profile == DEDICATED_PROJECT_MAPPING_PROFILE:
+        project = await storage.get_project(project_id)
+        provisioning = dict((project or {}).get("config", {}).get("pm_provisioning") or {})
+        if str(provisioning.get("external_project_id") or "") != str(next_external_project or ""):
+            raise HTTPException(409, "dedicated_project selector changes require a new approved project provisioning plan")
+    if values.get("external_repository"):
+        connection = await storage.get_pm_connection(current["connection_id"])
+        configured_repository = str((connection or {}).get("config", {}).get("repository") or "")
+        if configured_repository and values["external_repository"] != configured_repository:
+            raise HTTPException(403, "binding repository is outside the connection scope")
+    try:
+        updated = await storage.update_pm_binding(binding_id, **values)
+    except ValueError as exc:
+        status = 409 if "active" in str(exc).lower() or "activation" in str(exc).lower() else 422
+        raise HTTPException(status, str(exc)) from exc
+    if updated is None:
+        raise HTTPException(404, "PM binding not found for project")
+    return _serialize(updated)
+
+
+@app.get("/projects/{project_id}/pm-bindings")
+async def list_project_pm_bindings(project_id: UUID, request: Request) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_bindings(project_id=project_id)]
+
+
+@app.get("/integrations/conflicts")
+async def list_integration_conflicts(request: Request, connection_id: UUID | None = None, limit: int = Query(default=100, ge=1, le=1000)) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_conflicts(connection_id=connection_id, limit=limit)]
+
+
+@app.post("/integrations/conflicts/{conflict_id}/resolve")
+async def resolve_integration_conflict(
+    conflict_id: UUID,
+    req: PMConflictResolutionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().resolve_pm_conflict(
+        conflict_id,
+        status=req.status,
+        resolution=req.resolution,
+    )
+    if row is None:
+        raise HTTPException(404, "PM conflict not found")
+    return _serialize(row)
+
+
+@app.get("/integrations/outbox")
+async def list_integration_outbox(request: Request, connection_id: UUID | None = None, limit: int = Query(default=100, ge=1, le=1000)) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_outbox(connection_id=connection_id, limit=limit)]
+
+
+@app.get("/integrations/reconciliation-runs")
+async def list_integration_reconciliation_runs(
+    request: Request,
+    connection_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [
+        _serialize(row)
+        for row in await _storage().list_pm_reconciliation_runs(connection_id=connection_id, limit=limit)
+    ]
+
+
+@app.get("/integrations/cutovers")
+async def list_integration_cutovers(
+    request: Request,
+    project_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_cutovers(project_id=project_id, limit=limit)]
+
+
+@app.post("/integrations/outbox/drain")
+async def drain_integration_outbox(request: Request, limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    """Run a bounded delivery pass; production deployments may run this in a worker."""
+    _integration_operator(request, allow_gateway=True)
+    storage = _storage()
+    rows = await storage.list_pm_outbox(limit=limit)
+    synced = failed = dead_letter = 0
+    for candidate in rows:
+        outbox = await storage.claim_pm_outbox(candidate["id"])
+        if outbox is None:
+            continue
+        connection_row = await storage.get_pm_connection(outbox["connection_id"])
+        try:
+            if connection_row is None:
+                raise RuntimeError("connection was removed")
+            provider = _provider_for(connection_row)
+            connection = _provider_connection(connection_row)
+            # A connection may serve many canonical projects.  For every
+            # binding-scoped delivery, overlay the binding's provider project
+            # selector so a missing object mapping cannot fall back to the
+            # connection bootstrap project (AIAT) and leak work across
+            # projects.
+            binding_id_value = (outbox.get("payload") or {}).get("binding_id")
+            if binding_id_value:
+                binding_rows = await storage.list_pm_bindings(connection_id=connection.id)
+                binding_row = next(
+                    (item for item in binding_rows if str(item.get("id")) == str(binding_id_value)),
+                    None,
+                )
+                binding_project = str((binding_row or {}).get("external_project_id") or "")
+                if binding_project:
+                    connection = connection.model_copy(
+                        update={"config": {**connection.config, "project_id": binding_project}}
+                    )
+            if outbox["operation"] == "upsert_project":
+                project = CanonicalProject.model_validate(outbox["payload"]["project"])
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.PROJECT.value,
+                    aiat_object_id=project.id,
+                )
+                result = await provider.project_project(
+                    connection,
+                    project,
+                    external_id=mapping.get("external_id") if mapping else None,
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                await storage.upsert_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.PROJECT.value,
+                    aiat_object_id=project.id,
+                    external_id=str(result.external_id),
+                    provider_version=result.provider_version,
+                    exported_revision=project.revision,
+                )
+            elif outbox["operation"] == "upsert_iteration":
+                iteration = CanonicalIteration.model_validate(outbox["payload"]["iteration"])
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.SPRINT.value,
+                    aiat_object_id=iteration.id,
+                )
+                result = await provider.project_iteration(
+                    connection,
+                    iteration,
+                    external_id=mapping.get("external_id") if mapping else None,
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                await storage.upsert_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.SPRINT.value,
+                    aiat_object_id=iteration.id,
+                    external_id=str(result.external_id),
+                    provider_version=result.provider_version,
+                    exported_revision=iteration.revision,
+                )
+            elif outbox["operation"] == "upsert_work_item":
+                item = CanonicalWorkItem.model_validate(outbox["payload"]["item"])
+                mapping = await storage.get_pm_mapping(connection_id=connection.id, object_type="work_item", aiat_object_id=item.id)
+                result = await provider.project_work_item(connection, item, external_id=mapping.get("external_id") if mapping else None, idempotency_key=outbox["idempotency_key"])
+                await storage.upsert_pm_mapping(connection_id=connection.id, object_type="work_item", aiat_object_id=item.id, external_id=str(result.external_id), external_key=result.external_key, provider_version=result.provider_version, exported_revision=item.revision)
+            elif outbox["operation"] == "project_comment":
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type="work_item",
+                    aiat_object_id=outbox["aggregate_id"],
+                )
+                if mapping is None:
+                    raise RuntimeError("cannot project comment before work-item mapping exists")
+                comment = outbox["payload"].get("comment") or {}
+                result = await provider.project_comment(
+                    connection,
+                    external_id=str(mapping["external_id"]),
+                    body=str(comment.get("body") or ""),
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                comment_id = comment.get("id")
+                if comment_id and result.external_id:
+                    await storage.upsert_pm_mapping(
+                        connection_id=connection.id,
+                        object_type=ObjectType.COMMENT.value,
+                        aiat_object_id=UUID(str(comment_id)),
+                        external_id=str(result.external_id),
+                        provider_version=result.provider_version,
+                        exported_revision=int(outbox.get("canonical_revision") or 1),
+                    )
+            elif outbox["operation"] == "project_link":
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type="work_item",
+                    aiat_object_id=outbox["aggregate_id"],
+                )
+                if mapping is None:
+                    raise RuntimeError("cannot project link before work-item mapping exists")
+                capabilities = await provider.capabilities(connection)
+                if not capabilities.links:
+                    await storage.create_pm_conflict(
+                        connection_id=connection.id,
+                        binding_id=UUID(str((outbox.get("payload") or {}).get("binding_id")))
+                        if (outbox.get("payload") or {}).get("binding_id")
+                        else None,
+                        reason="unsupported_capability",
+                        object_type="link",
+                        aiat_object_id=outbox["aggregate_id"],
+                        external_snapshot={
+                            "provider": connection.provider_kind,
+                            "capability": "links",
+                            "link": outbox.get("payload", {}).get("link"),
+                        },
+                    )
+                    await storage.record_pm_delivery_attempt(
+                        outbox["id"],
+                        status="CONFLICT",
+                        response_metadata={"capability": "links"},
+                        error="provider does not support typed links",
+                    )
+                    await storage.mark_pm_outbox(
+                        outbox["id"],
+                        status="CONFLICT",
+                        error="provider does not support typed links",
+                    )
+                    failed += 1
+                    continue
+                result = await provider.project_link(
+                    connection,
+                    external_id=str(mapping["external_id"]),
+                    link=dict(outbox["payload"].get("link") or {}),
+                    idempotency_key=outbox["idempotency_key"],
+                )
+            else:
+                raise RuntimeError(f"unsupported outbox operation {outbox['operation']}")
+            projection_status = getattr(getattr(result, "status", None), "value", getattr(result, "status", None))
+            if projection_status not in {None, "synced", "SYNCED"}:
+                raise RuntimeError(f"provider projection returned non-synced status {projection_status!r}")
+            result_payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else {}
+            response_metadata = {
+                key: result_payload.get(key)
+                for key in ("external_id", "external_url", "provider_version", "object_type")
+                if result_payload.get(key) is not None
+            }
+            await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="SUCCEEDED",
+                response_metadata=response_metadata,
+            )
+            await storage.mark_pm_outbox(outbox["id"], status="SYNCED")
+            projection_evidence = getattr(storage, "record_pm_binding_evidence", None)
+            payload_binding_id = (outbox.get("payload") or {}).get("binding_id")
+            if callable(projection_evidence) and payload_binding_id:
+                recorded = projection_evidence(UUID(str(payload_binding_id)), projection_verified=True)
+                if hasattr(recorded, "__await__"):
+                    await recorded
+            synced += 1
+        except ValueError as exc:
+            if str(exc).startswith("PM mapping conflict:"):
+                payload = dict(outbox.get("payload") or {})
+                item_payload = payload.get("item") or payload.get("project") or payload.get("iteration") or {}
+                await storage.create_pm_conflict(
+                    connection_id=outbox["connection_id"],
+                    binding_id=UUID(str(payload["binding_id"])) if payload.get("binding_id") else None,
+                    reason="mapping_conflict",
+                    object_type=str(outbox.get("aggregate_type") or "provider_object"),
+                    aiat_object_id=UUID(str(item_payload["id"])) if item_payload.get("id") else None,
+                    external_snapshot={"error": str(exc), "payload": payload},
+                )
+                await storage.mark_pm_outbox(outbox["id"], status="CONFLICT", error=str(exc)[:1000])
+                failed += 1
+                continue
+            attempt = await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="FAILED",
+                provider_status=getattr(exc, "status_code", None),
+                error=str(exc)[:1000],
+                retry_after_seconds=getattr(exc, "retry_after", None),
+            )
+            if _provider_failure_is_permanent(exc) or (
+                attempt is not None and int(attempt.get("attempts") or 0) >= 5
+            ):
+                await storage.mark_pm_outbox(outbox["id"], status="DEAD_LETTER", error=str(exc)[:1000])
+                dead_letter += 1
+            else:
+                await storage.mark_pm_outbox(outbox["id"], status="PENDING", error=str(exc)[:1000])
+            failed += 1
+        except Exception as exc:
+            attempt = await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="FAILED",
+                provider_status=getattr(exc, "status_code", None),
+                error=str(exc)[:1000],
+                retry_after_seconds=getattr(exc, "retry_after", None),
+            )
+            if _provider_failure_is_permanent(exc) or (
+                attempt is not None and int(attempt.get("attempts") or 0) >= 5
+            ):
+                await storage.mark_pm_outbox(outbox["id"], status="DEAD_LETTER", error=str(exc)[:1000])
+                dead_letter += 1
+            else:
+                await storage.mark_pm_outbox(outbox["id"], status="PENDING", error=str(exc)[:1000])
+            failed += 1
+    return {"claimed": len(rows), "synced": synced, "failed": failed, "dead_letter": dead_letter}
+
+
+@app.post("/integrations/webhooks/{connection_id}", status_code=202)
+async def receive_integration_webhook(connection_id: UUID, request: Request) -> dict[str, Any]:
+    """Verify, persist, dedupe, and normalize a provider webhook."""
+    # Do not call ``_integration_operator`` here.  The public PM gateway does
+    # not expose the internal API key to providers; this route's authorization
+    # boundary is the configured provider header resolved by the adapter below.
+    max_body_bytes = 1 * 1024 * 1024
+    declared_length = request.headers.get("content-length")
+    if declared_length:
+        try:
+            if int(declared_length) > max_body_bytes:
+                raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+        except ValueError as exc:
+            raise HTTPException(400, "invalid webhook content length") from exc
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("status") or "DISABLED") == "DISABLED":
+        raise HTTPException(409, "integration connection is disabled")
+    chunks: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > max_body_bytes:
+            raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    headers = {key.lower(): value for key, value in request.headers.items()}
+    provider = _provider_for(row)
+    connection = _provider_connection(row)
+    verifier = getattr(provider, "verify_webhook_async", None)
+    try:
+        config = row.get("config", {}) or {}
+        secret_ref = config.get("webhook_secret_ref") or (config.get("webhook_secret_refs") or [None])[0]
+        provider_kind = str(row.get("provider_kind") or "").lower()
+        if provider_kind != "fake" and not secret_ref:
+            raise HTTPException(
+                503,
+                "managed webhook_secret_ref is required for non-fake providers",
+            )
+        if provider_kind != "fake" and verifier is None:
+            raise HTTPException(
+                503,
+                "provider does not expose an asynchronous managed-secret verifier",
+            )
+        if verifier is not None and secret_ref:
+            verifier_kwargs = {"secret_ref": str(secret_ref)} if str(row.get("provider_kind")) == "github" else {}
+            verified = await verifier(connection, body, headers, **verifier_kwargs)
+        else:
+            verified = provider.verify_webhook(connection, body, headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, f"webhook verifier unavailable: {exc}") from exc
+    if not verified:
+        raise HTTPException(401, "invalid provider webhook authentication")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "webhook body must be valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "webhook body must be a JSON object")
+    delivery_id = headers.get("x-github-delivery") or headers.get("x-youtrack-delivery") or headers.get("x-delivery-id") or hashlib.sha256(body).hexdigest()
+    event_type = headers.get("x-github-event") or str(payload.get("event_type") or payload.get("event") or "provider.event")
+    # Retain only non-secret transport metadata.  In particular, never write
+    # the API key used by an upstream gateway into the forensic event row.
+    retained_header_names = {
+        "content-type", "user-agent", "x-github-delivery", "x-github-event",
+        "x-hub-signature-256", "x-youtrack-delivery", "x-delivery-id",
+        "x-youtrack-signature", "x-webhook-signature",
+    }
+    retained_headers = {
+        key: value for key, value in headers.items() if key in retained_header_names
+    }
+    raw_payload_hash = hashlib.sha256(body).hexdigest()
+    inbox, inserted = await storage.create_pm_inbox_event(
+        connection_id=connection_id,
+        provider_delivery_id=delivery_id,
+        event_type=event_type,
+        payload=payload,
+        verified=True,
+        raw_body=body,
+        headers=retained_headers,
+        payload_hash=raw_payload_hash,
+    )
+    if not inserted:
+        incoming_hash = raw_payload_hash
+        if inbox.get("payload_hash") and inbox.get("payload_hash") != incoming_hash:
+            await storage.create_pm_conflict(
+                connection_id=connection_id,
+                reason="delivery_id_reuse",
+                object_type="event",
+                external_id=delivery_id,
+                external_snapshot={"event_type": event_type, "payload_hash": incoming_hash},
+            )
+            await storage.mark_pm_inbox_event(
+                inbox["id"],
+                status="CONFLICT",
+                error="provider delivery ID was reused with a different payload",
+            )
+            return {
+                "status": "conflict",
+                "delivery_id": delivery_id,
+                "reason": "delivery_id_reuse",
+                "inbox_id": str(inbox["id"]),
+            }
+        if str(inbox.get("status") or "RECEIVED").upper() in {"PROCESSED", "CONFLICT"}:
+            return {"status": "duplicate", "delivery_id": delivery_id, "inbox_id": str(inbox["id"])}
+        # A previous attempt may have committed the inbox row and crashed
+        # before normalization/acknowledgement.  Re-enter the normalizer for
+        # RECEIVED/FAILED rows so durable inbox persistence is a recoverable
+        # crash boundary rather than a permanent black hole.
+    normalized = provider.normalize_webhook(ExternalEvent(connection_id=connection_id, provider_delivery_id=delivery_id, event_type=event_type, payload=payload, verified=True))
+    if normalized is None:
+        await storage.mark_pm_inbox_event(
+            inbox["id"],
+            status="PROCESSED",
+            normalized_type="none",
+            result={"status": "accepted", "normalized": False},
+        )
+        return {"status": "accepted", "delivery_id": delivery_id, "normalized": False}
+    applied = await _apply_normalized_command(storage, normalized, inbox)
+    await storage.mark_pm_inbox_event(
+        inbox["id"],
+        status="CONFLICT" if applied.get("status") == "conflict" else "PROCESSED",
+        normalized_type=str(getattr(normalized.object_type, "value", normalized.object_type)),
+        result=applied,
+    )
+    return {
+        "status": "accepted" if applied.get("status") != "conflict" else "conflict",
+        "delivery_id": delivery_id,
+        "normalized": True,
+        "command": normalized.model_dump(mode="json"),
+        "result": applied,
+    }
+
+
+@app.post("/projects/{project_id}/issues", status_code=201)
+async def create_canonical_issue(project_id: UUID, req: CanonicalIssueCreateRequest, request: Request) -> dict[str, Any]:
+    """Typed canonical issue creation used by generic tools and integrations."""
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "project not found")
+    if req.sprint_id is not None:
+        sprint = await storage.get_sprint(req.sprint_id)
+        if sprint is None or sprint.get("project_id") != project_id:
+            raise HTTPException(404, "sprint not found for project")
+    if isinstance(storage, AgentStorage):
+        issue, queued = await storage.create_issue_with_pm_projections(
+            project_id=project_id,
+            **req.model_dump(),
+        )
+    else:  # keep lightweight endpoint tests and local storage doubles useful
+        issue = await storage.create_issue(project_id=project_id, **req.model_dump())
+        queued = await _enqueue_issue_projection(storage, issue)
+    return {"issue": _serialize(issue), "projections": [_serialize_projection(row) for row in queued]}
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}")
+async def get_canonical_issue(project_id: UUID, issue_id: UUID, request: Request) -> dict[str, Any]:
+    """Read one canonical work item with its durable integration metadata."""
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return {
+        "issue": _serialize(issue),
+        "comments": [_serialize(row) for row in await storage.list_work_item_comments(issue_id)],
+        "links": [_serialize(row) for row in await storage.list_work_item_links(issue_id)],
+    }
+
+
+@app.patch("/projects/{project_id}/issues/{issue_id}")
+async def update_canonical_issue(project_id: UUID, issue_id: UUID, req: CanonicalIssueUpdateRequest, request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    values = {key: value for key, value in req.model_dump(exclude_none=True).items() if key != "expected_revision"}
+    try:
+        if isinstance(storage, AgentStorage):
+            refreshed, queued = await storage.update_issue_with_pm_projections(
+                issue_id,
+                expected_revision=req.expected_revision or int(issue.get("revision") or 1),
+                **values,
+            )
+        else:
+            await storage.update_issue(
+                issue_id,
+                expected_revision=req.expected_revision or int(issue.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_issue(issue_id)
+            assert refreshed is not None
+            queued = await _enqueue_issue_projection(storage, refreshed)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"issue": _serialize(refreshed), "projections": [_serialize_projection(row) for row in queued]}
+
+
+@app.post("/projects/{project_id}/issues/{issue_id}/comments", status_code=201)
+async def comment_on_canonical_issue(project_id: UUID, issue_id: UUID, req: CanonicalIssueCommentRequest, request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    if isinstance(storage, AgentStorage):
+        comment, projections = await storage.create_work_item_comment_with_pm_projections(
+            issue_id=issue_id,
+            body=req.body,
+            actor_id=req.actor_id,
+            run_id=req.run_id,
+            approval_id=req.approval_id,
+            evidence_id=req.evidence_id,
+            body_blob_ref=req.body_blob_ref,
+        )
+    else:
+        comment = await storage.create_work_item_comment(
+            issue_id=issue_id,
+            body=req.body,
+            actor_id=req.actor_id,
+            run_id=req.run_id,
+            approval_id=req.approval_id,
+            evidence_id=req.evidence_id,
+            body_blob_ref=req.body_blob_ref,
+        )
+        projections = []
+    return {
+        "comment": _serialize(comment),
+        "issue_id": str(issue_id),
+        "projections": [_serialize_projection(row) for row in projections],
+    }
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}/comments")
+async def list_canonical_issue_comments(project_id: UUID, issue_id: UUID, request: Request) -> list[dict[str, Any]]:
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return [_serialize(row) for row in await storage.list_work_item_comments(issue_id)]
+
+
+@app.post("/projects/{project_id}/issues/{issue_id}/links", status_code=201)
+async def link_canonical_issue(
+    project_id: UUID,
+    issue_id: UUID,
+    req: CanonicalIssueLinkRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Create an idempotent link from a canonical work item to an external object."""
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    if isinstance(storage, AgentStorage):
+        link, projections = await storage.create_work_item_link_with_pm_projections(
+            issue_id=issue_id,
+            **req.model_dump(),
+        )
+    else:
+        link = await storage.create_work_item_link(issue_id=issue_id, **req.model_dump())
+        projections = []
+    return {
+        "link": _serialize(link),
+        "issue_id": str(issue_id),
+        "projections": [_serialize_projection(row) for row in projections],
+    }
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}/links")
+async def list_canonical_issue_links(
+    project_id: UUID,
+    issue_id: UUID,
+    request: Request,
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return [_serialize(row) for row in await storage.list_work_item_links(issue_id)]

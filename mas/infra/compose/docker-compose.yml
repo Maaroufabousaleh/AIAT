@@ -504,6 +504,10 @@ services:
       message-router:
         condition: service_started
     environment:
+      # Credential resolution must fail closed in the deployed stack.  Local
+      # unit tests that omit MAS_ENVIRONMENT still retain the manager's
+      # development-only fallback outside Compose.
+      MAS_ENVIRONMENT: "${MAS_ENVIRONMENT:-production}"
       REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       ROUTER_URL: "http://message-router:8001"
@@ -544,6 +548,67 @@ services:
       retries: 3
 
   # ── 8. Dashboard ────────────────────────────────────────────────────────────
+  pm-gateway:
+    image: mas/pm-gateway:latest
+    build:
+      context: ${MAS_BUILD_CONTEXT:-../..}
+      dockerfile: infra/docker/Dockerfile.pm-gateway
+    restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
+    networks:
+      - internal
+      - public
+    ports:
+      - "127.0.0.1:8010:8010"
+    depends_on:
+      orchestrator-api:
+        condition: service_healthy
+    environment:
+      ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+      PM_GATEWAY_PORT: "8010"
+      PM_GATEWAY_ENVIRONMENT: "${PM_GATEWAY_ENVIRONMENT:-production}"
+      PM_GATEWAY_OUTBOX_INTERVAL_SECONDS: "${PM_GATEWAY_OUTBOX_INTERVAL_SECONDS:-5}"
+      PM_GATEWAY_WEBHOOK_BODY_MAX_BYTES: "${PM_GATEWAY_WEBHOOK_BODY_MAX_BYTES:-1048576}"
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health').read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # Outbound-only connector for the published pm-gateway webhook hostname.
+  # The tunnel route must target http://pm-gateway:8010, never localhost.
+  cloudflared:
+    # The tunnel is an opt-in deployment extension.  Keep it out of the
+    # default stack so a missing token cannot prevent the rest of Compose from
+    # starting; enable it with `--profile cloudflare` when configured.
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:2026.7.0
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+    # Docker's embedded DNS is failing SRV lookups for the tunnel edge in this
+    # environment.  These resolvers are used only for the connector's outbound
+    # Cloudflare discovery; no service is exposed by this setting.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    environment:
+      # Compose interpolates service definitions even when a profile is not
+      # selected, so this must remain safe for the documented empty default.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    networks:
+      # Egress only: this does not publish a host port or make a Cloudflare
+      # route to any service other than the explicitly configured pm-gateway.
+      - public
+      - internal
+    depends_on:
+      pm-gateway:
+        condition: service_healthy
+
   dashboard:
     image: mas/dashboard:latest
     build:

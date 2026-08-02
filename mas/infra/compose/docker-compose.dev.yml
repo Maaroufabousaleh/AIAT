@@ -96,8 +96,13 @@ services:
         --host 0.0.0.0 --port 8000
     volumes:
       - ../../apps/orchestrator-api/orchestrator_api:/app/orchestrator_api
+      # Keep the provider-control-plane core hot-reloadable with the API in
+      # development; production remains image-pinned.
+      - ../../packages/mas-core/mas_core:/app/mas_core
       - ../../migrations:/app/migrations
     environment:
+      MAS_ENVIRONMENT: development
+      PYTHONPATH: /app
       LOG_LEVEL: DEBUG
       WATCHFILES_FORCE_POLLING: "true"
 
@@ -127,6 +132,17 @@ services:
     environment:
       LOG_LEVEL: DEBUG
       WATCHFILES_FORCE_POLLING: "true"
+
+  pm-gateway:
+    ports:
+      - "8010:8010"
+    command: >
+      uvicorn pm_gateway.main:app
+        --host 0.0.0.0 --port 8010
+    volumes:
+      - ../../apps/pm-gateway/pm_gateway:/usr/local/lib/python3.11/site-packages/pm_gateway
+    environment:
+      PM_GATEWAY_ENVIRONMENT: development
 
 secrets:
   orchestrator_api_key:
