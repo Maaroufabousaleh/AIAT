@@ -409,10 +409,13 @@ def _capture(command: Sequence[str], *, timeout: int = 30) -> str:
 
 
 def _git_snapshot() -> dict[str, Any]:
-    commit = _capture(["git", "rev-parse", "HEAD"])
+    safe_directory = f"safe.directory={WORKSPACE}"
+    commit = _capture(["git", "-c", safe_directory, "rev-parse", "HEAD"])
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise FinishRefused("repository HEAD is not a valid commit identifier")
-    status = _capture(["git", "status", "--porcelain", "--untracked-files=no"])
+    status = _capture(
+        ["git", "-c", safe_directory, "status", "--porcelain", "--untracked-files=no"]
+    )
     return {"commit": commit, "worktree_dirty": bool(status)}
 
 

@@ -501,6 +501,193 @@ def test_unexpected_failure_evidence_contains_only_safe_traceback_metadata(
         assert sensitive not in serialized
 
 
+def test_git_snapshot_uses_exact_per_command_safe_directory(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    outputs = iter(["a" * 40, ""])
+
+    def capture(command, **_kwargs):
+        calls.append(list(command))
+        return next(outputs)
+
+    monkeypatch.setattr(finish, "_capture", capture)
+    assert finish._git_snapshot() == {"commit": "a" * 40, "worktree_dirty": False}
+    safe_directory = f"safe.directory={finish.WORKSPACE}"
+    assert calls == [
+        ["git", "-c", safe_directory, "rev-parse", "HEAD"],
+        [
+            "git",
+            "-c",
+            safe_directory,
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ],
+    ]
+    assert all("config" not in command for command in calls)
+    assert all("--global" not in command and "--system" not in command for command in calls)
+
+
+def test_git_snapshot_source_never_mutates_global_or_system_config() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "git config" not in source
+    assert "--global" not in source
+    assert "--system" not in source
+
+
+def test_git_failure_is_fail_closed_and_preserves_sanitized_subprocess(
+    monkeypatch,
+) -> None:
+    secret = "SUPER_SECRET_AUTHORIZATION_VALUE"
+    observed: dict[str, object] = {}
+
+    def fail_git(command, **kwargs):
+        observed["command"] = list(command)
+        observed.update(kwargs)
+        return SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr=f"fatal: authorization={secret}",
+        )
+
+    monkeypatch.setattr(finish.subprocess, "run", fail_git)
+    with pytest.raises(finish.FinishRefused, match="read-only local inspection failed") as error:
+        finish._git_snapshot()
+    assert secret not in str(error.value)
+    assert observed["command"] == [
+        "git",
+        "-c",
+        f"safe.directory={finish.WORKSPACE}",
+        "rev-parse",
+        "HEAD",
+    ]
+    assert observed["cwd"] == finish.WORKSPACE
+    assert observed["env"] == finish._safe_environment()
+    assert observed["stdin"] == finish.subprocess.DEVNULL
+    assert observed["capture_output"] is True
+    assert observed["text"] is True
+    assert observed["timeout"] == 30
+    assert observed["check"] is False
+
+
+@pytest.mark.parametrize(
+    "commit",
+    [
+        "a" * 39,
+        "a" * 41,
+        "A" * 40,
+        "g" * 40,
+        f"{'a' * 40}\n{'b' * 40}",
+    ],
+    ids=["short", "long", "uppercase", "non-hex", "multiple-lines"],
+)
+def test_git_snapshot_rejects_malformed_commit_output(commit: str, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def capture(command, **_kwargs):
+        calls.append(list(command))
+        return commit
+
+    monkeypatch.setattr(finish, "_capture", capture)
+    with pytest.raises(finish.FinishRefused, match="valid commit identifier"):
+        finish._git_snapshot()
+    assert len(calls) == 1
+    assert calls[0][-2:] == ["rev-parse", "HEAD"]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_dirty"),
+    [("", False), (" M tracked-file.py", True)],
+    ids=["clean", "dirty"],
+)
+def test_git_snapshot_detects_clean_and_dirty_worktrees(
+    status: str, expected_dirty: bool, monkeypatch
+) -> None:
+    outputs = iter(["b" * 40, status])
+    monkeypatch.setattr(finish, "_capture", lambda _command, **_kwargs: next(outputs))
+    assert finish._git_snapshot() == {
+        "commit": "b" * 40,
+        "worktree_dirty": expected_dirty,
+    }
+
+
+def test_docker_snapshot_command_remains_unchanged(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    template = (
+        "{{.Id}}\t{{.Config.Image}}\t{{.State.Running}}\t{{.State.OOMKilled}}\t"
+        "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t"
+        "{{range .Mounts}}{{.Destination}}={{.RW}};{{end}}"
+    )
+
+    def capture(command, **_kwargs):
+        calls.append(list(command))
+        return f"container-id\t{finish.PINNED_IMAGE}\ttrue\tfalse\thealthy\t/data=true;"
+
+    monkeypatch.setattr(finish, "_capture", capture)
+    snapshot = finish._container_snapshot()
+    assert snapshot["running"] == "true"
+    assert calls == [
+        ["docker", "inspect", "--format", template, finish.STALWART_CONTAINER]
+    ]
+    assert "safe.directory" not in " ".join(calls[0])
+
+
+def test_git_snapshot_failure_blocks_mutation_and_writes_secret_safe_evidence(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    evidence_dir, _route_secret, _route_metadata = _prepare_initial_finish(
+        tmp_path, monkeypatch
+    )
+    secret = "SUPER_SECRET_GIT_VALUE"
+    calls: list[str] = []
+
+    def fail_git_snapshot():
+        raise finish.FinishRefused(f"Git snapshot failed password={secret}")
+
+    def forbidden(name: str):
+        def invoke(*_args, **_kwargs):
+            calls.append(name)
+            raise AssertionError(f"unexpected mutation: {name}")
+
+        return invoke
+
+    monkeypatch.setattr(finish, "_git_snapshot", fail_git_snapshot)
+    for name in (
+        "_provision_route_key",
+        "_validate_route_key",
+        "_run_route_command",
+        "_run_certification_validator",
+        "_run_certification_preflight",
+        "_revoke_route_key",
+        "_remove_create_permission",
+    ):
+        monkeypatch.setattr(finish, name, forbidden(name))
+
+    with pytest.raises(finish.FinishRefused):
+        finish._run_finish(tmp_path / "control.env", tmp_path / "admin-source.env")
+    assert calls == []
+    captured = capsys.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+    failure = (evidence_dir / "failure.json").read_text(encoding="utf-8")
+    assert secret not in failure
+    assert "password=<redacted>" in failure
+
+
+def test_git_failure_operator_output_is_secret_safe(monkeypatch, capsys) -> None:
+    secret = "SUPER_SECRET_GIT_VALUE"
+
+    def fail_finish(_control_file: Path, _admin_source_file: Path):
+        raise finish.FinishRefused(f"Git snapshot failed token={secret}")
+
+    monkeypatch.setattr(finish.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(finish, "_run_finish", fail_finish)
+    assert finish.main(["--control-file", "/tmp/control.env"]) == 1
+    captured = capsys.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+    assert "token=<redacted>" in captured.out
+
+
 def test_route_commands_keep_apply_key_separate_from_read_only_certificate_key(
     monkeypatch,
 ) -> None:
