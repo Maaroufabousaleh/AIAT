@@ -308,6 +308,24 @@ def test_activation_rejects_invalid_source_without_echoing_values(tmp_path: Path
     assert secret not in str(error.value)
 
 
+def test_permanent_admin_password_uses_admin_st_not_recovery_pair(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        admin_source,
+        "read_protected_admin_source",
+        lambda _path: {
+            "STALWART_RECOVERY_ADMIN": "admin:recovery-only-password",
+            "admin-st": "permanent-admin-password",
+            "guest": "app_gateway-password",
+        },
+    )
+    assert (
+        admin_source.read_permanent_admin_password(Path("/protected/admin-source.env"))
+        == "permanent-admin-password"
+    )
+
+
 def test_run_finish_reads_the_selected_dedicated_source(tmp_path: Path, monkeypatch) -> None:
     selected = tmp_path / "dedicated-admin-source.env"
     observed: list[Path] = []
@@ -708,6 +726,39 @@ def test_route_commands_keep_apply_key_separate_from_read_only_certificate_key(
     assert str(finish.ROUTE_METADATA_FILE) in apply_command
     assert str(cert_key) in verify_command
     assert str(finish.ROUTE_METADATA_FILE) not in verify_command
+
+
+def test_route_inspect_http_401_has_specific_secret_safe_refusal(
+    monkeypatch, capsys
+) -> None:
+    secret = "API_DO_NOT_LEAK"
+    monkeypatch.setattr(
+        finish.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Stalwart JMAP endpoint discovery refused: "
+                f"JMAP session request failed: HTTP_STATUS=401 token={secret}"
+            ),
+        ),
+    )
+    with pytest.raises(
+        finish.CertificationAuthenticationRefused,
+        match="certification API key authentication failed during route inspection",
+    ) as caught:
+        finish._run("route inspect", ["sh", "route-inspect"])
+    assert caught.value.safe_context == {
+        "operation": "route-inspect",
+        "endpoint_path": "/jmap/session",
+        "http_status": 401,
+        "authentication_mechanism": "bearer-certification-api-key",
+        "exception_class": "JmapEndpointError",
+    }
+    captured = capsys.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
 
 
 def test_orchestrator_source_has_no_certification_mutation() -> None:

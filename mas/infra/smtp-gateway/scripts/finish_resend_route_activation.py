@@ -106,6 +106,18 @@ class FinishRefused(RuntimeError):
     """A fail-closed refusal that is safe to show to the operator."""
 
 
+class CertificationAuthenticationRefused(FinishRefused):
+    """A sanitized certification-key authentication refusal."""
+
+    safe_context = {
+        "operation": "route-inspect",
+        "endpoint_path": "/jmap/session",
+        "http_status": 401,
+        "authentication_mechanism": "bearer-certification-api-key",
+        "exception_class": "JmapEndpointError",
+    }
+
+
 def _safe_message(value: Any) -> str:
     text = " ".join(str(value or "").split())
     text = re.sub(r"API_[A-Za-z0-9_-]+", "<redacted-api-key>", text)
@@ -386,6 +398,12 @@ def _run(label: str, command: Sequence[str], *, timeout: int = 180) -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         raise FinishRefused(f"{label} could not be executed") from exc
     if result.returncode != 0:
+        if label == "route inspect" and re.search(
+            r"(?:^|\s)HTTP_STATUS=401(?:\s|$)", result.stderr
+        ):
+            raise CertificationAuthenticationRefused(
+                "certification API key authentication failed during route inspection"
+            )
         raise FinishRefused(f"{label} failed with exit status {result.returncode}")
 
 
@@ -787,10 +805,18 @@ def _run_finish(
     except FinishRefused as exc:
         if evidence_dir is not None:
             with contextlib.suppress(FinishRefused):
+                failure = {
+                    "version": 1,
+                    "final_status": "BLOCKED",
+                    "reason": _safe_message(exc),
+                }
+                if isinstance(exc, CertificationAuthenticationRefused):
+                    failure.update(exc.safe_context)
+                    failure.update(_unexpected_exception_evidence(exc))
                 _write_evidence(
                     evidence_dir,
                     "failure.json",
-                    {"version": 1, "final_status": "BLOCKED", "reason": _safe_message(exc)},
+                    failure,
                 )
         raise
     except Exception as exc:

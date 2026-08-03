@@ -50,6 +50,11 @@ def responses(account_id: str = "u123") -> list[dict]:
                 ],
             ]
         },
+        {
+            "methodResponses": [
+                ["EmailSubmission/query", {"ids": [], "total": 0}, "submissions"]
+            ]
+        },
     ]
 
 
@@ -108,12 +113,13 @@ def test_wrong_account_id_is_rejected() -> None:
 
 def test_valid_least_privilege_credentials_pass() -> None:
     transport = FakeTransport(responses())
-    validation.validate_live(credentials(), "u123", transport)
+    assert validation.validate_live(credentials(), "u123", transport) == 0
     assert all(
         not (kwargs.get("payload") is not None and url.endswith("/api"))
         for (url, _authorization), kwargs in transport.calls
     )
     assert [url for (url, _authorization), _kwargs in transport.calls if url.endswith("/jmap/")] == [
+        f"{validation.EXPECTED_URL}/jmap/",
         f"{validation.EXPECTED_URL}/jmap/",
         f"{validation.EXPECTED_URL}/jmap/",
         f"{validation.EXPECTED_URL}/jmap/",
@@ -128,6 +134,25 @@ def test_valid_least_privilege_credentials_pass() -> None:
         "urn:ietf:params:jmap:mail",
         "urn:ietf:params:jmap:submission",
     ]
+    submission_call = next(
+        kwargs["payload"]
+        for (_url, _authorization), kwargs in transport.calls
+        if kwargs.get("jmap_method") == "EmailSubmission/query"
+    )
+    assert submission_call["methodCalls"] == [
+        ["EmailSubmission/query", {"accountId": "u123", "limit": 100}, "submissions"]
+    ]
+
+
+def test_nonzero_email_submission_inventory_is_rejected() -> None:
+    values = responses()
+    values[-1] = {
+        "methodResponses": [
+            ["EmailSubmission/query", {"ids": ["s1"], "total": 1}, "submissions"]
+        ]
+    }
+    with pytest.raises(validation.Refused, match="not zero"):
+        validation.validate_live(credentials(), "u123", FakeTransport(values))
 
 
 def test_missing_submission_capability_reproduces_live_unknown_method(
@@ -172,11 +197,16 @@ def test_missing_submission_capability_reproduces_live_unknown_method(
     assert "request failed" in message
 
 
-def test_session_authority_is_normalized_and_path_query_preserved() -> None:
+def test_session_authority_is_normalized_to_exact_local_jmap_endpoint() -> None:
     assert validation.resolve_jmap_api_url(
         validation.EXPECTED_URL,
-        "http://localhost:18080/jmap/?capabilities=1",
-    ) == "http://127.0.0.1:18080/jmap/?capabilities=1"
+        "http://localhost:18080/jmap/",
+    ) == "http://127.0.0.1:18080/jmap/"
+    with pytest.raises(validation.Refused, match="invalid JMAP"):
+        validation.resolve_jmap_api_url(
+            validation.EXPECTED_URL,
+            "http://localhost:18080/jmap/?capabilities=1",
+        )
 
 
 def test_lookup_account_id_uses_discovered_jmap_endpoint() -> None:

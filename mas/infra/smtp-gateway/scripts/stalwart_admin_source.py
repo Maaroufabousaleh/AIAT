@@ -144,8 +144,10 @@ def read_protected_admin_source(path: Path) -> dict[str, str]:
 
 
 def read_permanent_admin_password(path: Path) -> str:
-    recovery = read_protected_admin_source(path)["STALWART_RECOVERY_ADMIN"]
-    return recovery.split(":", 1)[1]
+    password = read_protected_admin_source(path)["admin-st"]
+    if any(character.isspace() for character in password):
+        _refuse()
+    return password
 
 
 def _ensure_destination_parent(path: Path) -> None:
