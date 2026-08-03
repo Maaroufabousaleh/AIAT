@@ -63,6 +63,8 @@ logs/
 
 # Local runtime/test temp directories
 codex_tmp/
+.local/
+mas/infra/compose/local-ca/
 .tmp/
 .pytest_tmp/
 temp_pytest/

@@ -77,6 +77,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/system", label: "System", icon: Settings },
       { href: "/tools",  label: "Tools",  icon: Wrench },
       { href: "/governance", label: "Governance", icon: ShieldCheck },
+      { href: "/integrations", label: "PM Integrations", icon: Network },
     ],
   },
 ];

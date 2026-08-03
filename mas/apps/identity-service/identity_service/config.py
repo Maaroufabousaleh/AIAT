@@ -19,6 +19,10 @@ class IdentitySettings(BaseSettings):
     """
 
     environment: str = Field(default="development", alias="MAS_ENVIRONMENT")
+    # Compose profiles set this explicitly.  Leaving it empty keeps library
+    # and unit-test construction backwards compatible while production/local
+    # deployments remain unambiguous at their boundary.
+    identity_profile: str = Field(default="", alias="IDENTITY_PROFILE")
     identity_database_dsn: str | None = None
     identity_database_host: str = "identity-postgres"
     identity_database_port: int = 5432
@@ -43,6 +47,9 @@ class IdentitySettings(BaseSettings):
     outbound_relay_port: int = 465
     outbound_relay_tls_mode: str = "implicit"
     resend_api_key: str = ""
+    # This is an activation latch, not a provider-health guess.  It may be
+    # enabled only after the operator records the live Resend certification.
+    outbound_relay_certified: bool = False
     direct_mx_outbound_enabled: bool = False
     default_mailbox_quota_mb: int = 100
     default_mail_retention_days: int = 180
@@ -112,19 +119,40 @@ class IdentitySettings(BaseSettings):
 
     @model_validator(mode="after")
     def _fail_closed_production(self) -> IdentitySettings:
+        profile = self.identity_profile.strip().lower()
+        if profile not in {"", "development", "production"}:
+            raise ValueError("IDENTITY_PROFILE must be development or production")
+        if profile == "production":
+            if not self.is_production:
+                raise ValueError("production identity profile requires MAS_ENVIRONMENT=production")
+            if self.agent_mail_domain != "agents.aiat.ca" or self.mail_hostname != "mail.aiat.ca":
+                raise ValueError("production identity profile requires agents.aiat.ca and mail.aiat.ca")
+        elif profile == "development":
+            if self.is_production:
+                raise ValueError("development identity profile cannot run with MAS_ENVIRONMENT=production")
+            if self.agent_mail_domain != "agents.aiat.local":
+                raise ValueError("development identity profile requires agents.aiat.local")
         if self.direct_mx_outbound_enabled:
             raise ValueError("DIRECT_MX_OUTBOUND_ENABLED must remain false")
         if self.default_outbound_enabled:
             raise ValueError("DEFAULT_OUTBOUND_ENABLED must remain false")
-        if self.outbound_relay_provider.lower() != "resend":
-            raise ValueError("Resend is the only approved outbound relay")
-        if self.outbound_relay_port not in {465, 587}:
-            raise ValueError("Resend relay must use authenticated TLS port 465 or 587")
-        expected_tls_mode = "implicit" if self.outbound_relay_port == 465 else "starttls"
-        if self.outbound_relay_tls_mode.strip().lower() != expected_tls_mode:
-            raise ValueError(
-                f"Resend port {self.outbound_relay_port} requires {expected_tls_mode} TLS mode"
-            )
+        relay_provider = self.outbound_relay_provider.strip().lower()
+        relay_disabled = relay_provider in {"disabled", "none", "off"}
+        if relay_disabled:
+            if self.outbound_relay_certified:
+                raise ValueError("OUTBOUND_RELAY_CERTIFIED requires the Resend relay")
+            if self.is_production:
+                raise ValueError("production identity service requires the approved Resend relay")
+        else:
+            if relay_provider != "resend":
+                raise ValueError("Resend is the only approved outbound relay")
+            if self.outbound_relay_port not in {465, 587}:
+                raise ValueError("Resend relay must use authenticated TLS port 465 or 587")
+            expected_tls_mode = "implicit" if self.outbound_relay_port == 465 else "starttls"
+            if self.outbound_relay_tls_mode.strip().lower() != expected_tls_mode:
+                raise ValueError(
+                    f"Resend port {self.outbound_relay_port} requires {expected_tls_mode} TLS mode"
+                )
         if self.is_production:
             required = {
                 "IDENTITY_DATABASE_PASSWORD": self.identity_database_password or self.identity_database_dsn,

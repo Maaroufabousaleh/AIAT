@@ -176,6 +176,24 @@ class TestModelsMetadata:
         "flows",
         "flow_instances",
         "flow_node_executions",
+        "pm_connections",
+        "pm_project_bindings",
+        "pm_object_mappings",
+        "pm_external_actor_mappings",
+        "pm_external_actor_mapping_audits",
+        "pm_inbox_events",
+        "pm_outbox_events",
+        "pm_outbox_dispositions",
+        "pm_delivery_attempts",
+        "pm_conflicts",
+        "pm_reconciliation_runs",
+        "pm_cutovers",
+        "pm_lifecycle_plans",
+        "pm_lifecycle_audits",
+        "pm_inbound_canary_plans",
+        "work_item_comments",
+        "work_item_links",
+        "integration_evidence_records",
     ]
 
     def test_all_current_tables_present(self):
@@ -201,6 +219,7 @@ class TestModelsMetadata:
             "created_by",
             "human_requester",
             "config",
+            "revision",
             "created_at",
             "updated_at",
         }
@@ -212,6 +231,25 @@ class TestModelsMetadata:
         assert "to_state" in cols
         assert "event" in cols
         assert "project_id" in cols
+
+    def test_integration_evidence_columns(self):
+        from mas_core.memory.models import integration_evidence_records
+
+        cols = {c.name for c in integration_evidence_records.columns}
+        assert {"connection_id", "evidence_type", "payload", "idempotency_key"} <= cols
+
+    def test_pm_forensics_columns(self):
+        from mas_core.memory.models import (
+            pm_inbound_canary_plans,
+            pm_inbox_events,
+            work_item_comments,
+        )
+
+        assert {"raw_body", "headers", "normalized_type", "result"} <= {c.name for c in pm_inbox_events.columns}
+        assert {"approval_id", "body_blob_ref"} <= {c.name for c in work_item_comments.columns}
+        assert {"expired_by", "expired_at"} <= {
+            c.name for c in pm_inbound_canary_plans.columns
+        }
 
     def test_documents_columns(self):
         cols = {c.name for c in documents.columns}
@@ -342,7 +380,7 @@ class TestAgentStorageCRUD:
         assert result["state"] == "INIT"
         assert result["created_by"] == "ceo_agent"
         assert isinstance(result["id"], UUID)
-        conn.execute.assert_awaited_once()
+        assert conn.execute.await_count == 2
 
     @pytest.mark.asyncio
     async def test_create_project_with_initial_context_is_atomic(self):
@@ -365,7 +403,7 @@ class TestAgentStorageCRUD:
         )
 
         assert result["name"] == "Context Project"
-        assert conn.execute.await_count == 2
+        assert conn.execute.await_count == 3
 
     @pytest.mark.asyncio
     async def test_create_project_with_explicit_id(self):
@@ -673,7 +711,7 @@ class TestAgentStorageCRUD:
         conn.execute = AsyncMock()
 
         await storage.update_issue(uuid4(), status="IN_PROGRESS", assigned_agent="worker_1")
-        conn.execute.assert_awaited_once()
+        assert conn.execute.await_count == 2
 
     # ── KPI Snapshots ──
 

@@ -2524,7 +2524,13 @@ class AgentStorage:
                 raise ValueError(f"canary plan cannot expire from {row['status']}")
             await conn.execute(t.pm_inbound_canary_plans.update().where(
                 t.pm_inbound_canary_plans.c.id == plan_id
-            ).values(status="EXPIRED", error="expired before command acceptance", updated_at=now))
+            ).values(
+                status="EXPIRED",
+                expired_by=actor,
+                expired_at=now,
+                error="expired before command acceptance",
+                updated_at=now,
+            ))
             updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
                 t.pm_inbound_canary_plans.c.id == plan_id
             ))).mappings().one()
@@ -3129,6 +3135,108 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
+
+    async def list_pm_outbox_dispositions(
+        self, *, connection_id: UUID | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        query = t.pm_outbox_dispositions.select().order_by(t.pm_outbox_dispositions.c.created_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_outbox_dispositions.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_pm_outbox_dead_letter_counts(
+        self, *, connection_id: UUID
+    ) -> dict[str, int]:
+        """Return exhaustive active and historical dead-letter counts.
+
+        The lifecycle gate must not infer safety from capped API pages.  This
+        anti-join counts the entire connection-scoped terminal set in the
+        database, where a disposition is guaranteed to be unique per outbox
+        event.
+        """
+        outbox = t.pm_outbox_events
+        dispositions = t.pm_outbox_dispositions
+        statement = (
+            sa.select(
+                sa.func.count(outbox.c.id).label("total"),
+                sa.func.count(outbox.c.id)
+                .filter(dispositions.c.outbox_id.is_(None))
+                .label("active"),
+            )
+            .select_from(
+                outbox.outerjoin(
+                    dispositions,
+                    dispositions.c.outbox_id == outbox.c.id,
+                )
+            )
+            .where(
+                outbox.c.connection_id == connection_id,
+                outbox.c.status == "DEAD_LETTER",
+            )
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(statement)).mappings().one()
+        total = int(row.get("total") or 0)
+        active = int(row.get("active") or 0)
+        return {"active": active, "historical": total - active, "total": total}
+
+    async def dispose_pm_outbox_dead_letter(
+        self,
+        outbox_id: UUID,
+        *,
+        disposition: str,
+        reason: str,
+        provider_state: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        """Persist a governed, immutable disposition without rewriting forensics."""
+        if disposition not in {"RESOLVED", "SUPERSEDED"}:
+            raise ValueError("invalid PM outbox disposition")
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            outbox = (await conn.execute(
+                t.pm_outbox_events.select().where(t.pm_outbox_events.c.id == outbox_id).with_for_update()
+            )).mappings().first()
+            if outbox is None:
+                raise ValueError("PM outbox event not found")
+            if str(outbox["status"]) != "DEAD_LETTER":
+                raise ValueError("only terminal DEAD_LETTER events may be dispositioned")
+            existing = (await conn.execute(
+                t.pm_outbox_dispositions.select().where(t.pm_outbox_dispositions.c.outbox_id == outbox_id)
+            )).mappings().first()
+            if existing is not None:
+                return {"disposition": dict(existing), "evidence_id": str(existing["evidence_id"])}
+            payload = outbox.get("payload") or {}
+            binding_id = payload.get("binding_id")
+            item = payload.get("item") or {}
+            project_id = item.get("project_id")
+            evidence = {
+                "id": uuid4(),
+                "connection_id": outbox["connection_id"],
+                "binding_id": binding_id,
+                "project_id": project_id,
+                "evidence_type": "pm_outbox_disposition",
+                "external_id": str(outbox_id),
+                "repository": None,
+                "payload": self._pm_json_safe({
+                    "outbox_id": str(outbox_id), "disposition": disposition,
+                    "reason": reason, "actor": actor, "provider_state": provider_state,
+                    "occurred_at": now.isoformat(),
+                }),
+                "idempotency_key": f"pm-outbox-disposition:{outbox_id}:{disposition}",
+                "created_at": now,
+            }
+            await conn.execute(t.integration_evidence_records.insert().values(**evidence))
+            row = {
+                "id": uuid4(), "outbox_id": outbox_id, "connection_id": outbox["connection_id"],
+                "binding_id": binding_id, "disposition": disposition, "reason": reason,
+                "actor": actor, "provider_state": self._pm_json_safe(provider_state),
+                "evidence_id": evidence["id"], "created_at": now,
+            }
+            await conn.execute(t.pm_outbox_dispositions.insert().values(**row))
+        return {"disposition": row, "evidence_id": str(evidence["id"])}
 
     async def recover_stale_pm_outbox(self, *, lease_seconds: int = 300) -> int:
         """Return abandoned PROCESSING deliveries to the retry queue.

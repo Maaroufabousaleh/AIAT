@@ -1,0 +1,183 @@
+# Local MAS mail sandbox. The mail-local profile contains the loopback-only
+# Stalwart backend plus the identity control plane and its dedicated database.
+# The production identity service, TLS ingress, relay, and public SMTP belong
+# to ../mail-edge when the deployment moves to an always-on self-hosted host.
+services:
+  stalwart:
+    profiles: [mail-local]
+    image: ghcr.io/stalwartlabs/stalwart:v0.16.7@sha256:6a8ddaa5728a5e78a8611085069f63414cd43c3a669471785dd41aad1ca16e63
+    restart: unless-stopped
+    environment:
+      # Used only for local bootstrap. Production is configured in mail-edge.
+      STALWART_PUBLIC_URL: "${STALWART_LOCAL_PUBLIC_URL:-http://localhost:18080}"
+      STALWART_RECOVERY_ADMIN: "${STALWART_RECOVERY_ADMIN:-}"
+    volumes:
+      # Preserve the same on-disk paths used by the self-hosted mail-edge bundle so
+      # configuration and mail data can be exported/imported during promotion.
+      - stalwart_local_config:/etc/stalwart
+      - stalwart_local_data:/var/lib/stalwart
+    networks:
+      # Provides outbound DNS/HTTPS for first-run UI assets. Host exposure is
+      # still limited to the two loopback bindings below.
+      - public
+      - internal
+    ports:
+      # No public SMTP/JMAP/Admin surface while this runs on the operator host.
+      - "127.0.0.1:${STALWART_LOCAL_SMTP_PORT:-2525}:25"
+      - "127.0.0.1:${STALWART_LOCAL_ADMIN_PORT:-18080}:8080"
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: "0.75"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H 'X-Forwarded-For: 127.0.0.1' http://127.0.0.1:8080/healthz/ready"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 8
+
+  identity-postgres:
+    profiles: [mail-local]
+    image: postgres:16.6-alpine@sha256:589f3b24f30e60a2b33f79543ed51c8f897589bcde5c59f4dc0e814551eeeb0f
+    restart: unless-stopped
+    env_file:
+      - path: .env.stalwart-local
+        format: raw
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: identity_service
+      POSTGRES_PASSWORD: "${IDENTITY_DATABASE_PASSWORD:?IDENTITY_DATABASE_PASSWORD is required in .env.stalwart-local}"
+    volumes:
+      - identity_postgres_local_data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity_service -d identity"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 8
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 384m
+    cpus: "0.50"
+
+  identity-migrate:
+    profiles: [mail-local]
+    image: mas/identity-service:local
+    build:
+      context: ../../apps/identity-service
+      dockerfile: ../../infra/docker/Dockerfile.identity-service
+    restart: "no"
+    env_file:
+      - path: .env.stalwart-local
+        format: raw
+    environment:
+      MAS_ENVIRONMENT: development
+      DEPLOYMENT_TOPOLOGY: local_stalwart_loopback
+      IDENTITY_PROFILE: development
+      IDENTITY_DATABASE_HOST: identity-postgres
+      IDENTITY_DATABASE_PORT: "5432"
+      IDENTITY_DATABASE_NAME: identity
+      IDENTITY_DATABASE_USER: identity_service
+      IDENTITY_DATABASE_PASSWORD: "${IDENTITY_DATABASE_PASSWORD:?IDENTITY_DATABASE_PASSWORD is required in .env.stalwart-local}"
+    entrypoint: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    mem_limit: 192m
+    cpus: "0.25"
+
+  identity-service:
+    profiles: [mail-local]
+    image: mas/identity-service:local
+    build:
+      context: ../../apps/identity-service
+      dockerfile: ../../infra/docker/Dockerfile.identity-service
+    restart: unless-stopped
+    env_file:
+      - path: .env.stalwart-local
+        format: raw
+    environment:
+      MAS_ENVIRONMENT: development
+      IDENTITY_PROFILE: development
+      IDENTITY_DATABASE_HOST: identity-postgres
+      IDENTITY_DATABASE_PORT: "5432"
+      IDENTITY_DATABASE_NAME: identity
+      IDENTITY_DATABASE_USER: identity_service
+      IDENTITY_DATABASE_PASSWORD: "${IDENTITY_DATABASE_PASSWORD:?IDENTITY_DATABASE_PASSWORD is required in .env.stalwart-local}"
+      IDENTITY_SERVICE_SECRET: "${IDENTITY_SERVICE_SECRET:?IDENTITY_SERVICE_SECRET is required in .env.stalwart-local}"
+      IDENTITY_CONTENT_ENCRYPTION_KEY: "${IDENTITY_CONTENT_ENCRYPTION_KEY:?IDENTITY_CONTENT_ENCRYPTION_KEY is required in .env.stalwart-local}"
+      IDENTITY_CLIENT_PUBLIC_KEYS_JSON: '${IDENTITY_CLIENT_PUBLIC_KEYS_JSON:?IDENTITY_CLIENT_PUBLIC_KEYS_JSON is required in .env.stalwart-local}'
+      IDENTITY_CLIENT_SCOPES_JSON: '${IDENTITY_CLIENT_SCOPES_JSON:?IDENTITY_CLIENT_SCOPES_JSON is required in .env.stalwart-local}'
+      STALWART_API_KEY: "${STALWART_API_KEY:?STALWART_API_KEY is required in .env.stalwart-local}"
+      STALWART_JMAP_SERVICE_TOKEN: "${STALWART_JMAP_SERVICE_TOKEN:?STALWART_JMAP_SERVICE_TOKEN is required in .env.stalwart-local}"
+      PRIMARY_DOMAIN: "${PRIMARY_DOMAIN:-aiat.local}"
+      AGENT_MAIL_DOMAIN: "${AGENT_MAIL_DOMAIN:-agents.aiat.local}"
+      MAIL_HOSTNAME: "${MAIL_HOSTNAME:-mail.localhost}"
+      STALWART_PUBLIC_URL: "http://stalwart:8080"
+      PUBLIC_IDENTITY_URL: "http://localhost:8011"
+      DIRECT_MX_OUTBOUND_ENABLED: "false"
+      DEFAULT_OUTBOUND_ENABLED: "false"
+      OUTBOUND_RELAY_PROVIDER: disabled
+      OUTBOUND_RELAY_HOST: ""
+      OUTBOUND_RELAY_PORT: "0"
+      OUTBOUND_RELAY_TLS_MODE: disabled
+      OUTBOUND_RELAY_CERTIFIED: "false"
+      RESEND_API_KEY: ""
+      BROWSER_RUNTIME_LOCATION: operator_laptop
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+      identity-migrate:
+        condition: service_completed_successfully
+      stalwart:
+        condition: service_healthy
+    # The public bridge is used only so Docker Desktop can publish the
+    # loopback host port; the only published bind is 127.0.0.1:8011.
+    networks: [internal, public]
+    ports:
+      - "127.0.0.1:${IDENTITY_LOCAL_PORT:-8011}:8010"
+    read_only: true
+    tmpfs: [/run, /tmp]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    mem_limit: 384m
+    cpus: "0.50"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/readyz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+
+  # The clients use signed requests to the service over the internal network.
+  # No provider credential is added to either client container.
+  orchestrator-api:
+    environment:
+      IDENTITY_SERVICE_URL: "http://identity-service:8010"
+      AIAT_IDENTITY_CLIENT_ID: "${AIAT_IDENTITY_CLIENT_ID:-operator-laptop}"
+      AIAT_IDENTITY_CLIENT_PRIVATE_KEY: "${AIAT_IDENTITY_CLIENT_PRIVATE_KEY:?AIAT_IDENTITY_CLIENT_PRIVATE_KEY is required in .env.stalwart-local}"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+
+  tool-service:
+    environment:
+      IDENTITY_SERVICE_URL: "http://identity-service:8010"
+      AIAT_IDENTITY_TOOL_CLIENT_ID: "${AIAT_IDENTITY_TOOL_CLIENT_ID:-tool-service}"
+      AIAT_IDENTITY_TOOL_PRIVATE_KEY: "${AIAT_IDENTITY_TOOL_PRIVATE_KEY:?AIAT_IDENTITY_TOOL_PRIVATE_KEY is required in .env.stalwart-local}"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+
+volumes:
+  stalwart_local_config:
+  stalwart_local_data:
+  identity_postgres_local_data:

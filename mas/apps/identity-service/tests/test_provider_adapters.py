@@ -28,14 +28,16 @@ async def test_stalwart_adapter_uses_jmap_idempotency_and_redacts_provider_failu
         adapter = StalwartAdapter(base_url="https://mail.example", api_key="not-returned", client=client)
         result = await adapter.create_mailbox("w-1@agents.example", quota_mb=100, idempotency_key="mailbox:identity-job")
 
-    assert observed["paths"] == ["/api", "/api"]
+    assert observed["paths"] == ["/jmap", "/jmap"]
     assert observed["idempotency"] == "mailbox:identity-job"
     assert result["provider_account_id"] == "a-1"
     assert "x:Account/set" in str(observed["body"])
     assert observed["body"]["using"] == ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"]  # type: ignore[index]
     account = next(iter(observed["body"]["methodCalls"][0][1]["create"].values()))  # type: ignore[index]
     assert account["domainId"] == "domain-1"
-    assert account["credentials"] == []
+    assert account["credentials"] == {}
+    assert account["permissions"]["@type"] == "Replace"
+    assert account["permissions"]["enabledPermissions"]["emailReceive"] is True
     assert account["quotas"]["maxDiskQuota"] == 100 * 1024 * 1024
 
 
@@ -118,6 +120,8 @@ async def test_stalwart_mail_operations_use_the_separate_jmap_service_token() ->
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/jmap"
         assert request.headers["Authorization"] == "Bearer mail-service-token"
+        payload = json.loads(request.content)
+        assert "filter" not in payload["methodCalls"][0][1]
         return httpx.Response(200, json={"methodResponses": [["Email/query", {"ids": []}, "list-mail"]]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

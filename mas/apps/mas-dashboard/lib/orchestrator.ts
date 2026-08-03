@@ -1,5 +1,7 @@
 const BASE = process.env.ORCHESTRATOR_URL ?? "http://localhost:8000";
 const KEY = process.env.MAS_API_KEY ?? "";
+const OPERATOR_KEY = process.env.AIAT_OPERATOR_API_KEY ?? "";
+const AUTH_KEY = OPERATOR_KEY || KEY;
 
 export class OrchestratorError extends Error {
   constructor(public status: number, message: string) {
@@ -15,7 +17,8 @@ export async function orchestratorFetch<T = unknown>(
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
-      "X-API-Key": KEY,
+      "X-API-Key": AUTH_KEY,
+      "X-AIAT-Actor-ID": "dashboard-operator",
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },

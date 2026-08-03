@@ -36,7 +36,7 @@ class FakeStalwart:
         return {"correlation_id": "alias"}
 
     async def read_message(self, _account_id, message_id):
-        return {"correlation_id": "provider-read", "result": {"list": [{"id": message_id, "bodyValues": {"x": {"value": "Code 481516"}}}]}}
+        return {"correlation_id": "provider-read", "result": {"list": [{"id": message_id, "receivedAt": "2026-07-28T20:00:00Z", "bodyValues": {"x": {"value": "Code 481516"}}}]}}
 
     async def list_messages(self, _account_id, *, limit, query=None):
         return {"result": {"ids": ["message-a"], "limit": limit, "query": query}, "correlation_id": "provider-list"}
@@ -91,6 +91,7 @@ async def identity_client():
             "worker-a": ["identity:delegate", "identity:browser-broker"],
             "worker-b": ["identity:delegate"],
         }),
+        outbound_relay_certified=True,
     )
     app = create_app(settings=settings, store=InMemoryIdentityStore())
     async with app.router.lifespan_context(app):
@@ -518,6 +519,36 @@ def test_production_policy_rejects_direct_mx_and_missing_crypto() -> None:
         IdentitySettings(direct_mx_outbound_enabled=True)
     with pytest.raises(ValueError, match="missing required production identity configuration"):
         IdentitySettings(MAS_ENVIRONMENT="production")
+
+
+def test_development_profile_can_disable_all_external_relay_paths() -> None:
+    settings = IdentitySettings(
+        MAS_ENVIRONMENT="development",
+        outbound_relay_provider="disabled",
+        outbound_relay_host="",
+        outbound_relay_port=0,
+        outbound_relay_tls_mode="disabled",
+    )
+    assert settings.outbound_relay_provider == "disabled"
+    assert settings.direct_mx_outbound_enabled is False
+    assert settings.default_outbound_enabled is False
+    assert settings.outbound_relay_certified is False
+
+
+def test_profile_domains_are_explicit_and_isolated() -> None:
+    development = IdentitySettings(
+        IDENTITY_PROFILE="development",
+        MAS_ENVIRONMENT="development",
+        agent_mail_domain="agents.aiat.local",
+    )
+    assert development.agent_mail_domain == "agents.aiat.local"
+    with pytest.raises(ValueError, match="agents.aiat.ca"):
+        IdentitySettings(
+            IDENTITY_PROFILE="production",
+            MAS_ENVIRONMENT="production",
+            agent_mail_domain="agents.aiat.local",
+            mail_hostname="mail.localhost",
+        )
 
 
 @pytest.mark.anyio

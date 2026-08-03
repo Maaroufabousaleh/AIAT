@@ -15,7 +15,7 @@ from .policy import OutboundPolicy
 
 
 class OutboundService:
-    def __init__(self, *, store: IdentityStore, provider: StalwartAdapter, approvals: ApprovalService, usage: UsageLedger, outbox: OutboxService, policy: OutboundPolicy, agent_domain: str, provider_rate_limit: int = 30) -> None:
+    def __init__(self, *, store: IdentityStore, provider: StalwartAdapter, approvals: ApprovalService, usage: UsageLedger, outbox: OutboxService, policy: OutboundPolicy, agent_domain: str, provider_rate_limit: int = 30, outbound_relay_certified: bool = False) -> None:
         self.store = store
         self.provider = provider
         self.approvals = approvals
@@ -24,8 +24,11 @@ class OutboundService:
         self.policy = policy
         self.agent_domain = agent_domain
         self.provider_rate_limit = provider_rate_limit
+        self.outbound_relay_certified = outbound_relay_certified
 
     async def request(self, *, worker_id: UUID, recipients: list[str], subject: str, body: str, recipient_class: str, idempotency_key: str) -> tuple[dict, dict, bool]:
+        if not self.outbound_relay_certified:
+            raise PermissionError("outbound mail is disabled until Resend relay certification passes")
         identity = await self.store.get_identity(worker_id)
         if identity is None or str(identity.get("state")) != "IDENTITY_ACTIVE":
             raise PermissionError("active identity is required before outbound mail")
@@ -37,6 +40,8 @@ class OutboundService:
         return request, approval, created
 
     async def send_approved(self, *, worker_id: UUID, outbound_request_id: UUID, idempotency_key: str) -> dict:
+        if not self.outbound_relay_certified:
+            raise PermissionError("outbound mail is disabled until Resend relay certification passes")
         request = await self.store.get_outbound_request(outbound_request_id)
         if request is None or request.get("worker_id") != worker_id:
             raise PermissionError("outbound request ownership denied")

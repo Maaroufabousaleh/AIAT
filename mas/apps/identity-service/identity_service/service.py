@@ -47,7 +47,17 @@ class IdentityService:
         self.approvals = ApprovalService(store)
         self.mailboxes = MailboxService(store=store, provider=stalwart, outbox=self.outbox, usage=self.usage, agent_mail_domain=settings.agent_mail_domain, quota_mb=settings.default_mailbox_quota_mb, retention_days=settings.default_mail_retention_days, provider_rate_limit=settings.provider_rate_limit_per_minute)
         self.domains = DomainService(store=store, provider=stalwart, outbox=self.outbox)
-        self.outbound = OutboundService(store=store, provider=stalwart, approvals=self.approvals, usage=self.usage, outbox=self.outbox, policy=OutboundPolicy(), agent_domain=settings.agent_mail_domain, provider_rate_limit=settings.outbound_rate_limit_per_minute)
+        self.outbound = OutboundService(
+            store=store,
+            provider=stalwart,
+            approvals=self.approvals,
+            usage=self.usage,
+            outbox=self.outbox,
+            policy=OutboundPolicy(),
+            agent_domain=settings.agent_mail_domain,
+            provider_rate_limit=settings.outbound_rate_limit_per_minute,
+            outbound_relay_certified=settings.outbound_relay_certified,
+        )
         self.stalwart = stalwart
         self.resend = resend
         self.external_policy = ExternalAccountPolicy()
@@ -617,7 +627,7 @@ class IdentityService:
             return rows
         health: dict[str, Any] = {
             "record_type": "relay_health",
-            "relay_provider": "resend",
+            "relay_provider": self.settings.outbound_relay_provider,
             "relay_host": self.settings.outbound_relay_host,
             "relay_port": self.settings.outbound_relay_port,
             "relay_tls_mode": self.settings.outbound_relay_tls_mode,
@@ -630,13 +640,16 @@ class IdentityService:
         except Exception as exc:
             health["stalwart_health"] = "unavailable"
             health["stalwart_error"] = type(exc).__name__
-        try:
-            health["resend_health"] = (await self.resend.health_check()).get(
-                "valid", False
-            )
-        except Exception as exc:
-            health["resend_health"] = "unavailable"
-            health["resend_error"] = type(exc).__name__
+        if str(self.settings.outbound_relay_provider).strip().lower() in {"disabled", "none", "off"}:
+            health["resend_health"] = "disabled"
+        else:
+            try:
+                health["resend_health"] = (await self.resend.health_check()).get(
+                    "valid", False
+                )
+            except Exception as exc:
+                health["resend_health"] = "unavailable"
+                health["resend_error"] = type(exc).__name__
         safe_attempts: list[dict[str, Any]] = []
         for stored in rows:
             row = dict(stored)

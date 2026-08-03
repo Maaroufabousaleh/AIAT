@@ -57,6 +57,8 @@ def _patch_env(monkeypatch):
     monkeypatch.setenv("ROUTER_URL", "http://localhost:9999")
     monkeypatch.setenv("ROUTER_SECRET", "test-router-secret")
     monkeypatch.setenv("MAS_API_KEY", "test-mas-key")
+    monkeypatch.setenv("AIAT_OPERATOR_API_KEY", "test-operator-key")
+    monkeypatch.setenv("PM_GATEWAY_API_KEY", "test-gateway-key")
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
 
 

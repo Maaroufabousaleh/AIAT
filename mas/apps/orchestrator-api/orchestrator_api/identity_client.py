@@ -1,4 +1,4 @@
-"""Signed laptop/control-plane client for the Oracle identity-service.
+"""Signed laptop/control-plane client for the self-hosted identity-service.
 
 This client intentionally exposes business operations only.  It contains no
 identity database DSN and no method for obtaining mailbox, Stalwart, Resend,

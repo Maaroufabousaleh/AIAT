@@ -1,5 +1,11 @@
 # AIAT Email Identity: Repository Implementation Map
 
+> Superseded topology notice (2026-07-29): this historical map records the
+> former Oracle/paid-VPS deployment assumptions. The active production
+> topology is `self_hosted_stalwart_resend` with `agents.aiat.ca`; the retained
+> historical content below is not an activation instruction. Use
+> `Docs/AIAT_Email_Identity_Domain_Migration.md` for current operations.
+
 ## Scope and boundary
 
 AIAT owns the control plane, identity API, lifecycle state, policy decisions,

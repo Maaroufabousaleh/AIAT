@@ -13,6 +13,7 @@ remaining validation work are tracked by the phased plans under
 ## What Is Included
 
 - FastAPI services: orchestrator API, message router, tool service, and team runner.
+- Provider-neutral PM/SCM adapter package plus the internet-facing `pm-gateway`.
 - Shared Python packages: `mas-core` and `mas-tools-sdk`.
 - Next.js dashboard at `apps/mas-dashboard`, exposed at `http://localhost:4000`.
 - 7 configured executive/C-suite teams, 12 worker manifests, and 7 system prompts.
@@ -30,8 +31,9 @@ remaining validation work are tracked by the phased plans under
 ## Repository Layout
 
 ```text
-apps/
-  orchestrator-api/      FastAPI project/workflow/control API
+  apps/
+    orchestrator-api/      FastAPI project/workflow/control API
+    pm-gateway/            Raw provider webhook ingress and bounded outbox trigger
   message-router/        Redis Streams broker and WebSocket subscriptions
   tool-service/          Central tool execution service
   team-runner/           Per-team agent process
@@ -201,6 +203,12 @@ Implementation truth is split across the active phased plans:
 Use `../Docs/AIAT_LIVE_TEST_LEDGER.md` for current live-test evidence, defects,
 fixes, enhancement opportunities, and remaining work. The old merged plan under
 `../.github/prompts/obsolete/AIAT_PLAN.md` is historical context only.
+
+Provider-neutral PM/SCM integration architecture and operator setup are documented in
+[`../Docs/PM_Platform_Integration_Plan.md`](../Docs/PM_Platform_Integration_Plan.md) and
+[`../Docs/PM_Platform_Integration_Runbook.md`](../Docs/PM_Platform_Integration_Runbook.md).
+See the linked ADR, adapter-authoring, provider setup, deployment, dashboard,
+and certification references in `../Docs/PM_Platform_*`.
 
 ## License
 

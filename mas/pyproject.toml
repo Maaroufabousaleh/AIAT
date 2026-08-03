@@ -11,6 +11,7 @@ dependencies = [
     "tool-service",
     "team-runner",
     "orchestrator-api",
+    "pm-gateway",
 ]
 
 # ── uv workspace ──────────────────────────────────────────────────────────────
@@ -27,6 +28,7 @@ members = [
     "apps/message-router",
     "apps/tool-service",
     "apps/identity-service",
+    "apps/pm-gateway",
 ]
 
 # ── shared dev dependencies ────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ tool-service = { workspace = true }
 identity-service = { workspace = true }
 team-runner = { workspace = true }
 orchestrator-api = { workspace = true }
+pm-gateway = { workspace = true }
 
 # ── ruff config (shared) ──────────────────────────────────────────────────────
 [tool.ruff]
@@ -81,6 +84,7 @@ testpaths = [
     "packages/mas-tools-sdk/tests",
     "apps/message-router/tests",
     "apps/orchestrator-api/tests",
+    "apps/pm-gateway/tests",
     "apps/team-runner/tests",
     "apps/tool-service/tests",
 ]

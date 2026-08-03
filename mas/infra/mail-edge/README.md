@@ -1,18 +1,26 @@
 # AIAT mail edge
 
-This is the production mail and identity deployment bundle for Oracle or a
-small paid VPS. It exposes only inbound SMTP (`25`) and Caddy HTTPS (`80/443`).
+This is the provider-neutral production mail and identity deployment bundle
+for a self-hosted AIAT machine. It exposes only inbound SMTP (`25`) and Caddy
+HTTPS (`80/443`).
 Postgres, the Stalwart management API, and identity-service do not publish
 ports. They communicate on `mail_private`; `mail_egress` permits only outbound
 ACME, Resend, and provider API traffic and does not publish an administration
 surface.
 
+This bundle is the separate `mail-production` profile. The loopback-only
+`mail-local` development profile remains in
+`infra/compose/docker-compose.stalwart-local.yml` with the independent
+`agents.aiat.local` namespace and Postgres/Stalwart volumes. Do not combine the
+two Compose environments or reuse their identity databases.
+
 ## Preconditions
 
-- Set `A`/`MX`/PTR records for `mail.aiat.ca`, `aiat.ca`, and `agents.aiat.ca`.
+- Publish the fixed Cloudflare records and copy the exact account-specific
+  Resend records from [`Docs/AIAT_Email_Identity_Domain_Migration.md`](../../../Docs/AIAT_Email_Identity_Domain_Migration.md).
 - Add the provider-issued Resend SPF/DKIM records and a DMARC record.
 - Create an age recipient for encrypted backups and store its private identity
-  outside the repository and VPS backup volume.
+  outside the repository and self-hosted backup volume.
 - Provide real values in a root-owned `.env.mail-edge` copied from the example.
   Do not commit this file. Enrol public Ed25519 client keys for the laptop and
   tool-service in `IDENTITY_CLIENT_PUBLIC_KEYS_JSON` with least-privilege
@@ -35,26 +43,25 @@ are not sufficient to start the production services.
 ```sh
 cd /mnt/c/projects/aiat/mas/infra/mail-edge
 cp .env.mail-edge.example .env.mail-edge.local
-./scripts/validate-mail-edge.sh .env.mail-edge.local
+sh scripts/validate-mail-edge.sh .env.mail-edge.local
 MAIL_EDGE_ENV_FILE=.env.mail-edge.local docker compose --env-file .env.mail-edge.local \
   --profile backup --profile restore --profile configure config -q
 MAIL_EDGE_ENV_FILE=.env.mail-edge.local docker compose --env-file .env.mail-edge.local \
   --profile backup build identity-service encrypted-backup
 ```
 
-On Oracle staging, and then production only after staging evidence is signed
-off, use a root-owned environment file and the exact reviewed commit:
+On the self-hosted staging machine, and then production only after staging
+evidence is signed off, use a root-owned environment file and the exact
+reviewed commit:
 
 ```sh
 git checkout --detach <reviewed-commit-sha>
 cd mas/infra/mail-edge
 install -m 0600 /secure/aiat/mail-edge.env .env.mail-edge
-./scripts/validate-mail-edge.sh .env.mail-edge
+sh scripts/validate-mail-edge.sh .env.mail-edge
 docker compose --env-file .env.mail-edge --profile backup build identity-service encrypted-backup
-docker compose --env-file .env.mail-edge up -d identity-postgres stalwart
-docker compose --env-file .env.mail-edge run --rm identity-migrate
-docker compose --env-file .env.mail-edge up -d identity-service ingress
-docker compose --env-file .env.mail-edge ps
+sh scripts/activate-production.sh stage .env.mail-edge
+sh scripts/preflight-self-hosted.sh .env.mail-edge --external-target mail.aiat.ca --external-only
 ```
 
 The detached source build above is the approved first-staging path (method A):
@@ -109,9 +116,10 @@ every Stalwart upgrade or route change. Stalwart's management API supports `x:Mt
 recipient. See the [Stalwart routing documentation](https://stalw.art/docs/mta/outbound/routing/)
 and [strategy reference](https://stalw.art/docs/ref/object/mta-outbound-strategy/).
 
-For first bootstrap only, Stalwart's HTTP admin listener is bound to VPS
+For first bootstrap only, Stalwart's HTTP admin listener is bound to the
+self-hosted machine's
 loopback as `127.0.0.1:18080`; it is not a public port. Reach it from the
-operator laptop with `ssh -N -L 18080:127.0.0.1:18080 <vps>` and open
+operator laptop with `ssh -N -L 18080:127.0.0.1:18080 <self-host-host>` and open
 `http://127.0.0.1:18080/admin`. Set a one-time `STALWART_RECOVERY_ADMIN` in
 the secret environment if DNS/TLS is not ready. Complete the wizard and save
 the API key in the secret store. Keep Stalwart's internal HTTP listener enabled
@@ -123,16 +131,43 @@ port in a hardened production override. Caddy keeps
 ## Operations
 
 ```sh
-./scripts/validate-firewall.sh
-PUBLIC_MAIL_IP=203.0.113.10 ./scripts/validate-dns.sh
-./scripts/validate-tls.sh
-./scripts/validate-smtp-relay.sh
+sh scripts/validate-mail-edge.sh .env.mail-edge
+sh scripts/preflight-self-hosted.sh .env.mail-edge --external-target mail.aiat.ca
 ./scripts/run-backup.sh .env.mail-edge
+```
+
+Use `scripts/activate-production.sh stage .env.mail-edge` to start the
+production bundle with outbound disabled. It is the required pre-certification
+path. Production activation is refused until the self-hosted preflight, DNS,
+MX, TLS, firewall, router forwarding, external inbound SMTP, and external
+Resend delivery evidence has been collected; see the migration/domain runbook.
+
+Run the public reachability checks from a separate network and retain the
+successful marker:
+
+```sh
+preflight_tmp="$(mktemp)"
+sh scripts/preflight-self-hosted.sh .env.mail-edge --external-target mail.aiat.ca --external-only >"$preflight_tmp" && {
+  cat "$preflight_tmp"
+  printf '%s\n' AIAT_SELF_HOSTED_PREFLIGHT=PASS
+} > /secure/evidence/self-hosted-preflight.txt
+rm -f "$preflight_tmp"
+```
+
+Only after the live Resend relay certification, external delivery/reply test,
+and all other evidence pass may the operator set `OUTBOUND_RELAY_CERTIFIED=true`
+in the root-owned environment file and run the final activation:
+
+```sh
+sh scripts/activate-production.sh activate .env.mail-edge \
+  --preflight-evidence /secure/evidence/self-hosted-preflight.txt \
+  --inbound-evidence /secure/evidence/inbound-smtp.txt \
+  --delivery-evidence /secure/evidence/resend-delivery.txt
 ```
 
 Schedule `run-backup.sh` from host cron/systemd (for example daily at
 02:15 UTC), then copy the encrypted `.age` artifact to a second provider or
-object-storage account. Keep the age private key off the VPS. A scheduled job
+object-storage account. Keep the age private key off the self-hosted machine. A scheduled job
 must alert on a missing artifact and perform a disposable restore drill at
 least quarterly; the archived PostgreSQL payload is a logical `pg_dump`, not
 a copied live database directory. The wrapper briefly stops identity-service
@@ -140,8 +175,9 @@ and Stalwart so the database and mail-file boundary is quiescent. Its exit trap
 restores only services that were running before the backup; it never starts a
 service that the operator had intentionally stopped.
 
-The firewall must accept inbound TCP `25`, `80`, and `443`; it must reject
-outbound TCP `25`. Do not expose `8010`, Postgres, or Stalwart `/api`/`/admin`.
+The self-hosted router and host firewall must accept inbound TCP `25`, `80`,
+and `443`; they must reject outbound TCP `25`. Do not expose `8010`, Postgres,
+development ports, or Stalwart `/api`/`/admin`.
 Caddy intentionally returns `404` for Stalwart management paths on the public
 mail host.
 
@@ -195,15 +231,18 @@ docker compose --env-file .env.mail-edge up -d stalwart identity-service ingress
 ## Promotion checklist
 
 1. `validate-mail-edge.sh`, firewall, DNS, and relay-TLS checks pass.
-2. `verify-stalwart-relay.sh` confirms no `Mx` route and the Resend relay route.
-3. A fresh worker is provisioned; it remains inactive until a real JMAP read
+2. The external inbound SMTP and Resend delivery evidence files pass
+   `scripts/activate-production.sh activate`; `OUTBOUND_RELAY_CERTIFIED` was
+   false during staging and is changed only after certification.
+3. `verify-stalwart-relay.sh` confirms no `Mx` route and the Resend relay route.
+4. A fresh worker is provisioned; it remains inactive until a real JMAP read
    confirms inbound delivery, then becomes `IDENTITY_ACTIVE`.
-4. A tool call cannot read another worker's mailbox or external-account state.
-5. An outbound request is approved by a human, sent through Stalwart, and has a
+5. A tool call cannot read another worker's mailbox or external-account state.
+6. An outbound request is approved by a human, sent through Stalwart, and has a
    stored delivery correlation without exporting the Resend credential.
-6. An encrypted backup is created and a restore is tested in a disposable
+7. An encrypted backup is created and a restore is tested in a disposable
    staging environment before production promotion.
-7. The JMAP service credential can read and submit only through the
+8. The JMAP service credential can read and submit only through the
    identity-service; verify it cannot be retrieved from any AIAT endpoint.
 
 ## Mandatory live certification
@@ -259,14 +298,14 @@ The remaining acceptance gates and their exact commands are:
 
 | Gate | Operator action and certification command |
 | --- | --- |
-| Oracle ingress, listeners, Resend egress, outbound MX denial | Configure the OCI NSG and host firewall, then run `cd mas/infra/mail-edge && ./scripts/validate-firewall.sh`. |
+| Self-hosted ingress, listeners, Resend egress, outbound MX denial | Configure the router/port forwards and host firewall, then run the full preflight on the self-hosted machine and the `--external-only` preflight from a separate network. |
 | Saved Stalwart Resend-only route | Run `docker compose --env-file .env.mail-edge --profile configure run --rm stalwart-relay-configurator`; it fails if an `Mx` route exists or the strategy is not `resend-relay`. |
-| Forward DNS, PTR, MX, SPF, DKIM, DMARC | Publish the records, then run `PUBLIC_MAIL_IP=<reserved-ip> ./scripts/validate-dns.sh`. |
+| Forward DNS, PTR, MX, SPF, DKIM, DMARC | Publish the records, then run `./scripts/validate-dns.sh` with the values from `.env.mail-edge`. |
 | Public TLS and identity health | Run `./scripts/validate-tls.sh`. |
 | Resend TLS reachability | Run `./scripts/validate-smtp-relay.sh`. |
 | Provisioning failure blocks activation | Run `cd /mnt/c/projects/aiat/mas && .venv-wsl/bin/python -m pytest apps/orchestrator-api/tests/test_identity_reconciliation.py -q`, then `cd apps/identity-service && PYTHONPATH=. ../../.venv-wsl/bin/python -m pytest tests/test_identity_service.py -q`; repeat the scenario on staging with Stalwart temporarily rejecting the dedicated new test mailbox and confirm the worker remains inactive before restoring service. |
-| Laptop-offline Oracle continuity | Stop the laptop orchestrator and tool service, send a new message from a separate external host, and on Oracle run `docker compose --env-file .env.mail-edge ps identity-postgres stalwart identity-service`; all three must remain healthy. |
-| Reconnection idempotency | Restart the laptop orchestrator twice, then run `cd /mnt/c/projects/aiat/mas && .venv-wsl/bin/python -m pytest apps/orchestrator-api/tests/test_identity_reconciliation.py -q` and verify the worker lifecycle/audit dashboard contains each Oracle sequence once. |
+| Laptop-offline self-hosted continuity | Stop the laptop orchestrator and tool service, send a new message from a separate external host, and on the self-hosted machine run `docker compose --env-file .env.mail-edge ps identity-postgres stalwart identity-service`; all three must remain healthy. |
+| Reconnection idempotency | Restart the laptop orchestrator twice, then run `cd /mnt/c/projects/aiat/mas && .venv-wsl/bin/python -m pytest apps/orchestrator-api/tests/test_identity_reconciliation.py -q` and verify the worker lifecycle/audit dashboard contains each self-hosted sequence once. |
 | External-account/browser isolation | With two explicitly approved staging test accounts, run `cd /mnt/c/projects/aiat/mas && .venv-wsl/bin/python -m pytest apps/tool-service/tests/test_browser_identity_isolation.py apps/tool-service/tests/test_signed_caller_auth.py -q`, then verify the two live profile paths, credentials, MFA state, and cookies remain distinct without exporting their contents. |
 | No credential leakage | Run `install -d -m 0700 /secure/evidence && docker compose --env-file .env.mail-edge logs --no-color identity-service stalwart > /secure/evidence/mail-edge.log`, then `python3 ./scripts/validate-secret-evidence.py .env.mail-edge /secure/evidence/mail-edge.log <other-evidence-files>`. The scanner reports variable names only and must return zero; securely remove plaintext evidence after signing the result. |
 | Identity Postgres is unreachable from laptop | From the laptop run `if timeout 5 bash -c ':</dev/tcp/identity.aiat.ca/5432' 2>/dev/null; then exit 1; else echo blocked; fi`. |

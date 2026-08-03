@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.routing import APIRoute
 
 from .clients.auth import SIGNATURE_VERSION, verify_request
-from .messages.verification_parser import extract_verification_code, extract_verification_link
+from .messages.verification_parser import extract_verification_code, extract_verification_link, message_text
 from .models import (
     ApprovalDecisionRequest,
     BrowserSessionLeaseRequest,
@@ -278,7 +278,7 @@ async def extract_code(body: MailQueryRequest, client: AuthenticatedClient = Dep
         message = await service.mail_read(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    code = extract_verification_code(str(message))
+    code = extract_verification_code(message_text(message))
     await service.record_verification_extraction(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id, code=code)
     return {"code": code}
 
@@ -291,7 +291,7 @@ async def extract_link(body: MailQueryRequest, client: AuthenticatedClient = Dep
         message = await service.mail_read(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    link = extract_verification_link(str(message))
+    link = extract_verification_link(message_text(message))
     await service.record_verification_extraction(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id, link=link)
     return {"link": link}
 

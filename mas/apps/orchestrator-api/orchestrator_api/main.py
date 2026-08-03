@@ -52,13 +52,13 @@ from mas_core.integrations.contracts import (
     CanonicalProject,
     CanonicalWorkItem,
     ExternalEvent,
-    ObjectType,
-    ProjectProvisioningPlan,
-    ProviderConnection,
     LifecyclePlanError,
     LifecyclePlanStatus,
-    PMLifecycleTransitionPlan,
+    ObjectType,
     PMInboundCanaryPlan,
+    PMLifecycleTransitionPlan,
+    ProjectProvisioningPlan,
+    ProviderConnection,
     normalize_project_mapping_profile,
     pm_binding_effective_policy,
     validate_credential_references,
@@ -1263,13 +1263,19 @@ class PMInboundCanaryPlanCreateRequest(BaseModel):
     mapping_id: UUID
     actor_mapping_id: UUID
     target_priority: Literal["low", "medium", "high", "urgent", "critical", "normal"] | None = None
-    ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    ttl_seconds: int = Field(default=900, ge=60, le=7200)
 
 
 class PMInboundCanaryPlanActionRequest(BaseModel):
     digest: str = Field(min_length=64, max_length=64)
     confirm: bool = False
     reason: str | None = Field(default=None, max_length=500)
+
+
+class PMOutboxDispositionRequest(BaseModel):
+    disposition: Literal["RESOLVED", "SUPERSEDED"]
+    reason: str = Field(min_length=1, max_length=1000)
+    provider_state: dict[str, Any] = Field(default_factory=dict)
 
 
 class SCMActionRequest(BaseModel):
@@ -13793,6 +13799,7 @@ async def get_inbound_canary_plan(plan_id: UUID, request: Request) -> dict[str, 
         "status": row["status"], "accepted_command_count": row["accepted_command_count"],
         "approved_by": row.get("approved_by"), "approved_at": row.get("approved_at"),
         "armed_by": row.get("armed_by"), "armed_at": row.get("armed_at"),
+        "expired_by": row.get("expired_by"), "expired_at": row.get("expired_at"),
         "completed_at": row.get("completed_at"), "result": row.get("result"), "error": row.get("error"),
         "updated_at": row.get("updated_at"),
     })
@@ -13889,7 +13896,13 @@ async def record_inbound_canary_audit_evidence(plan_id: UUID, req: PMInboundCana
     if plan is None or str(plan.get("digest")) != req.digest:
         raise HTTPException(409, "canary plan is missing or digest-mismatched")
     evidence: dict[str, Any] = {}
-    for action, actor_key, timestamp_key in (("approval", "approved_by", "approved_at"), ("arming", "armed_by", "armed_at")):
+    governed_actions = [
+        ("approval", "approved_by", "approved_at"),
+        ("arming", "armed_by", "armed_at"),
+    ]
+    if str(plan.get("status") or "") == "EXPIRED":
+        governed_actions.append(("expiry", "expired_by", "expired_at"))
+    for action, actor_key, timestamp_key in governed_actions:
         if plan.get(actor_key) and plan.get(timestamp_key):
             row = await storage.record_integration_evidence(
                 connection_id=plan["connection_id"], binding_id=plan["binding_id"], project_id=plan["project_id"],
@@ -14047,7 +14060,6 @@ async def doctor_integration_connection(connection_id: UUID, request: Request) -
         if str(binding.get("status") or "DISABLED").upper() == "ACTIVE"
         and str(binding.get("direction") or "outbound").lower() in {"inbound", "both"}
     ]
-    actor_mappings = config.get("external_actor_mappings") or {}
     durable_actor_mapping_count = 0
     counter = getattr(storage, "count_trusted_pm_external_actor_mappings", None)
     if callable(counter):
@@ -14057,9 +14069,10 @@ async def doctor_integration_connection(connection_id: UUID, request: Request) -
         if isinstance(counted, int):
             durable_actor_mapping_count = counted
     active_policy_blockers: list[str] = []
-    if active_bindings:
-        if durable_actor_mapping_count <= 0:
-            active_policy_blockers.append("ACTIVE inbound bindings require a trusted durable external actor mapping")
+    if active_bindings and durable_actor_mapping_count <= 0:
+        active_policy_blockers.append(
+            "ACTIVE inbound bindings require a trusted durable external actor mapping"
+        )
     checks.append(
         {
             "name": "active_inbound_command_policy",
@@ -14182,12 +14195,41 @@ async def _lifecycle_gate_snapshot(
     pending = await storage.list_pm_outbox(connection_id=connection_id, status="PENDING", limit=1000)
     processing = await storage.list_pm_outbox(connection_id=connection_id, status="PROCESSING", limit=1000)
     failed = await storage.list_pm_outbox(connection_id=connection_id, status="FAILED", limit=1000)
-    dead_letters = await storage.list_pm_outbox(connection_id=connection_id, status="DEAD_LETTER", limit=1000)
-    active_dead_letters = [
-        row for row in dead_letters
-        if "SUPERSEDED" not in str(row.get("last_error") or "").upper()
-        and "RESOLVED" not in str(row.get("last_error") or "").upper()
-    ]
+    dead_letter_counter = getattr(storage, "get_pm_outbox_dead_letter_counts", None)
+    dead_letter_counts: dict[str, int] | None = None
+    if callable(dead_letter_counter):
+        count_result = dead_letter_counter(connection_id=connection_id)
+        if inspect.isawaitable(count_result):
+            count_result = await count_result
+        if isinstance(count_result, dict):
+            dead_letter_counts = {
+                "active": int(count_result.get("active") or 0),
+                "historical": int(count_result.get("historical") or 0),
+                "total": int(count_result.get("total") or 0),
+            }
+    if dead_letter_counts is None:
+        # Lightweight storage doubles predate the database anti-join.  Their
+        # complete in-memory lists remain useful for endpoint unit tests.
+        dead_letters = await storage.list_pm_outbox(
+            connection_id=connection_id, status="DEAD_LETTER", limit=1000
+        )
+        disposition_reader = getattr(storage, "list_pm_outbox_dispositions", None)
+        disposition_result = (
+            disposition_reader(connection_id=connection_id)
+            if callable(disposition_reader)
+            else []
+        )
+        dispositions = (
+            await disposition_result
+            if hasattr(disposition_result, "__await__")
+            else disposition_result
+        )
+        active_dead_letters = _classify_pm_dead_letters(dead_letters, dispositions)
+        dead_letter_counts = {
+            "active": len(active_dead_letters),
+            "historical": len(dead_letters) - len(active_dead_letters),
+            "total": len(dead_letters),
+        }
     try:
         tls_context = provider_ssl_context()
         tls_verified = tls_context.verify_mode == ssl.CERT_REQUIRED and tls_context.check_hostname
@@ -14207,7 +14249,7 @@ async def _lifecycle_gate_snapshot(
         blockers.append("blocking PM conflicts are open")
     if pending or processing or failed:
         blockers.append("PM projections are pending, processing, or failed")
-    if active_dead_letters:
+    if int(dead_letter_counts.get("active") or 0) > 0:
         blockers.append("active PM dead letters exist")
     if not tls_verified:
         blockers.append("provider TLS certificate verification is not enabled")
@@ -14222,8 +14264,8 @@ async def _lifecycle_gate_snapshot(
         "pending_projections": len(pending),
         "processing_projections": len(processing),
         "failed_projections": len(failed),
-        "active_dead_letters": len(active_dead_letters),
-        "historical_dead_letters": len(dead_letters) - len(active_dead_letters),
+        "active_dead_letters": int(dead_letter_counts.get("active") or 0),
+        "historical_dead_letters": int(dead_letter_counts.get("historical") or 0),
         "tls_verification_enabled": bool(tls_verified),
         "binding_policy": pm_binding_effective_policy(
             str((binding or {}).get("status") or "DISABLED"),
@@ -14232,6 +14274,14 @@ async def _lifecycle_gate_snapshot(
         ) if binding else None,
     }
     return snapshot, blockers
+
+
+def _classify_pm_dead_letters(
+    dead_letters: list[dict[str, Any]], dispositions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return only unresolved failures; never infer resolution from error text."""
+    dispositioned = {str(row.get("outbox_id")) for row in dispositions}
+    return [row for row in dead_letters if str(row.get("id")) not in dispositioned]
 
 
 def _source_control_provider_for(row: dict[str, Any]) -> Any:
@@ -15620,6 +15670,24 @@ async def list_integration_reconciliation_runs(
         _serialize(row)
         for row in await _storage().list_pm_reconciliation_runs(connection_id=connection_id, limit=limit)
     ]
+
+
+@app.post("/integrations/outbox/{outbox_id}/disposition")
+async def dispose_integration_outbox(
+    outbox_id: UUID, req: PMOutboxDispositionRequest, request: Request
+) -> dict[str, Any]:
+    """Record an immutable operator disposition for a terminal PM failure."""
+    _integration_operator(request)
+    try:
+        return _serialize(await _storage().dispose_pm_outbox_dead_letter(
+            outbox_id,
+            disposition=req.disposition,
+            reason=req.reason,
+            provider_state=req.provider_state,
+            actor=_authenticated_principal(request),
+        ))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/integrations/cutovers")

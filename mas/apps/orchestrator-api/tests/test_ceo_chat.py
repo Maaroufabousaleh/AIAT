@@ -1974,6 +1974,8 @@ async def test_operator_send_to_ceo_fails_closed_without_configured_credentials(
 ):
     monkeypatch.delenv("MAS_API_KEY", raising=False)
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
+    monkeypatch.delenv("AIAT_OPERATOR_API_KEY", raising=False)
+    monkeypatch.delenv("PM_GATEWAY_API_KEY", raising=False)
 
     response = await client.post(
         "/ceo/message",

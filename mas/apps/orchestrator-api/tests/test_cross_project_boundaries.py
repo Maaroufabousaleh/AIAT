@@ -79,6 +79,7 @@ async def test_issue_creation_rejects_foreign_sprint(client):
                 "title": "must stay in project",
             },
         },
+        headers={"X-API-Key": "test-operator-key"},
     )
 
     assert response.status_code == 404
