@@ -1,5 +1,13 @@
 # AIAT Competitive and Open-Source Integration Assessment
 
+> **Repository reconciliation notice (2026-08-03):** This report is a July
+> 30, 2026 design/research snapshot. Its statement that the AIAT repository
+> was unavailable is historical and no longer true. The code-grounded status,
+> implementation decisions, and license corrections are maintained in
+> [`Docs/AIAT_Deep_Research_Implementation_Plan.md`](Docs/AIAT_Deep_Research_Implementation_Plan.md)
+> and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Do not treat this
+> report's old dependency recommendations as default-shipping authority.
+
 ## Executive summary and research assumptions
 
 This report evaluates [Zeenie OpenCompany](https://github.com/zeenie-ai/opencompany), [TinyHumans OpenCompany](https://github.com/tinyhumansai/opencompany/tree/main), and [Paperclip](https://github.com/paperclipai/paperclip) against the proposed AIAT architecture as of **July 30, 2026**. The repositories were reviewed from their default branches, including their README files, licenses, package manifests, architecture specifications, code-level extension contracts, database schemas, tests, issues, pull requests, and recent development activity.

@@ -52,6 +52,21 @@ def _entry(
         "cache_ttl_seconds": cache_ttl,
         "idempotent": idempotent,
         "transport": transport,
+        # Static entries predate typed tool classes.  They intentionally carry
+        # a permissive schema until the concrete implementation declares a
+        # Pydantic input/output model; the live ToolRegistry replaces these
+        # with generated schemas for typed tools.
+        "schema_version": "1",
+        "input_schema": {"type": "object", "additionalProperties": True},
+        "output_schema": {},
+        "schema_status": "legacy",
+        "risk_tier": "standard",
+        "approval_policy": "role",
+        "credential_requirements": [],
+        # Static entries cannot infer mutation semantics from idempotence (an
+        # idempotent upsert may still mutate state).  Keep the legacy contract
+        # conservative until the concrete tool declares this field.
+        "side_effect": True,
     }
 
 

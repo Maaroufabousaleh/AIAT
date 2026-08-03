@@ -75,6 +75,8 @@ def create_adapter(
         return _create_autogen_adapter(manifest, config, **kwargs)
     elif mode == "letta":
         return _create_letta_adapter(manifest, config, **kwargs)
+    elif mode in {"microsoft_agent_framework", "agent_framework"}:
+        return _create_microsoft_agent_framework_adapter(manifest, config, **kwargs)
     else:
         raise ValueError(f"Unknown isolation mode: {mode}")
 
@@ -385,3 +387,19 @@ def _create_letta_adapter(
     )
     capabilities = LettaCapabilities.from_config(manifest.runtime_config or {})
     return LettaAdapter(manifest=manifest, capabilities=capabilities)
+
+
+def _create_microsoft_agent_framework_adapter(
+    manifest: WorkerManifest,
+    config: AgentConfig,
+    **kwargs: Any,
+) -> Any:
+    """Create the Microsoft Agent Framework adapter."""
+    from mas_core.worker_registry.microsoft_agent_framework_adapter import (
+        MicrosoftAgentFrameworkAdapter,
+    )
+
+    return MicrosoftAgentFrameworkAdapter(
+        manifest=manifest,
+        capabilities=dict(manifest.runtime_config or {}),
+    )

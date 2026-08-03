@@ -1,5 +1,5 @@
 # ── docker-compose.yml ────────────────────────────────────────────────────────
-# 17 services: 10 platform/infra services + 7 executive/C-suite team-runners.
+# Core platform/infra services plus 11 governed department team-runners.
 # All infra is $0 self-hosted OSS; only LLM API costs apply.
 #
 # Usage:
@@ -316,6 +316,9 @@ services:
       REDIS_USERNAME: "toolcache_user"
       REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
+      ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+      MAS_API_KEY: "${MAS_API_KEY}"
+      AIAT_OPERATOR_API_KEY: "${AIAT_OPERATOR_API_KEY:?AIAT_OPERATOR_API_KEY must be configured for governed tool mutations}"
       PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       MINIO_ENDPOINT: "http://minio:9000"
       MINIO_ACCESS_KEY: "mas_agent"
@@ -514,6 +517,7 @@ services:
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
       MAS_API_KEY: "${MAS_API_KEY}"
+      AIAT_OPERATOR_API_KEY: "${AIAT_OPERATOR_API_KEY:?AIAT_OPERATOR_API_KEY must be configured}"
       LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"

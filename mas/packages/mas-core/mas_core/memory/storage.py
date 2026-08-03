@@ -30,13 +30,14 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from . import models as t
+from ..company_manifest import DEFAULT_COMPANY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ _AGENT_PROFILE_NUMERIC_MAX = Decimal("9.9999")
 # request reaches this service; keeping the invariant here protects direct
 # callers and tests as well.
 _PM_RAW_BODY_MAX_BYTES = 1 * 1024 * 1024
+TERMINAL_WORKER_RUN_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT")
 
 
 def document_to_context_item(document: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +193,7 @@ class AgentStorage:
         config: dict | None = None,
         initial_context: list[dict[str, Any]] | None = None,
         project_id: UUID | None = None,
+        company_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Insert a project and optional starter context atomically.
 
@@ -207,6 +210,7 @@ class AgentStorage:
             "state": state,
             "created_by": created_by,
             "human_requester": human_requester,
+            "company_id": company_id or DEFAULT_COMPANY_ID,
             "config": config,
             "revision": 1,
             "created_at": now,
@@ -246,6 +250,373 @@ class AgentStorage:
                 .first()
             )
         return dict(row) if row else None
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Company manifests and company-scoped assignments
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def get_company(self, company_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.companies, t.companies.c.id, company_id)
+
+    async def get_company_by_slug(self, slug: str) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(t.companies.select().where(t.companies.c.slug == slug))).mappings().first()
+        return dict(row) if row else None
+
+    async def list_companies(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = t.companies.select().order_by(t.companies.c.slug)
+        if status is not None:
+            query = query.where(t.companies.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_company_manifest(self, company_id: UUID, *, version: int | None = None) -> dict[str, Any] | None:
+        query = t.company_manifest_versions.select().where(t.company_manifest_versions.c.company_id == company_id)
+        if version is None:
+            company = await self.get_company(company_id)
+            active_id = company.get("active_manifest_version_id") if company else None
+            if active_id:
+                query = query.where(t.company_manifest_versions.c.id == active_id)
+            else:
+                query = query.order_by(t.company_manifest_versions.c.manifest_version.desc())
+        else:
+            query = query.where(t.company_manifest_versions.c.manifest_version == version)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query.limit(1))).mappings().first()
+        return dict(row) if row else None
+
+    async def list_company_manifest_versions(
+        self,
+        company_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return immutable manifest history newest first."""
+        query = (
+            t.company_manifest_versions.select()
+            .where(t.company_manifest_versions.c.company_id == company_id)
+            .order_by(t.company_manifest_versions.c.manifest_version.desc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_departments(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = t.company_departments.select().where(t.company_departments.c.company_id == company_id).order_by(t.company_departments.c.department_key)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_worker_assignments(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = t.company_worker_assignments.select().where(t.company_worker_assignments.c.company_id == company_id).order_by(t.company_worker_assignments.c.created_at)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_budgets(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = (
+            t.company_budgets.select()
+            .where(t.company_budgets.c.company_id == company_id)
+            .order_by(t.company_budgets.c.budget_key)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_company_read_model(self, company_id: UUID) -> dict[str, Any]:
+        async with self.engine.connect() as conn:
+            return await self._company_manifest_read_model(company_id, conn=conn)
+
+    async def apply_company_manifest(
+        self,
+        *,
+        company_id: UUID,
+        manifest: Any,
+        digest: str,
+        canonical: dict[str, Any],
+        source: str,
+        actor: str,
+        compiler_version: str = "aiat-company-compiler/1",
+    ) -> dict[str, Any]:
+        """Compile one validated manifest atomically and idempotently."""
+
+        async with self.engine.begin() as conn:
+            company = (await conn.execute(t.companies.select().where(t.companies.c.id == company_id).with_for_update())).mappings().first()
+            if company is None:
+                raise ValueError(f"company {company_id} does not exist")
+            existing = (
+                await conn.execute(
+                    t.company_manifest_versions.select().where(
+                        sa.and_(
+                            t.company_manifest_versions.c.company_id == company_id,
+                            t.company_manifest_versions.c.digest == digest,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if existing is not None:
+                return await self._company_manifest_read_model(company_id, conn=conn)
+
+            prior = (
+                await conn.execute(
+                    sa.select(sa.func.max(t.company_manifest_versions.c.manifest_version)).where(
+                        t.company_manifest_versions.c.company_id == company_id
+                    )
+                )
+            ).scalar()
+            manifest_version = int(prior or 0) + 1
+            manifest_id = uuid4()
+            await conn.execute(
+                t.company_manifest_versions.insert().values(
+                    id=manifest_id,
+                    company_id=company_id,
+                    schema_version=manifest.schema_version,
+                    manifest_version=manifest_version,
+                    digest=digest,
+                    source=source,
+                    manifest_json=canonical,
+                    compiler_version=compiler_version,
+                    status="APPLIED",
+                    compiled_by=actor,
+                )
+            )
+            await self._materialize_company_manifest_tx(
+                conn,
+                company_id=company_id,
+                manifest=manifest,
+                manifest_id=manifest_id,
+            )
+            await conn.execute(
+                t.companies.update().where(t.companies.c.id == company_id).values(
+                    slug=manifest.slug,
+                    name=manifest.name,
+                    description=manifest.description,
+                    active_manifest_version_id=manifest_id,
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+            return await self._company_manifest_read_model(company_id, conn=conn)
+
+    async def _company_manifest_read_model(self, company_id: UUID, *, conn: Any) -> dict[str, Any]:
+        company = (await conn.execute(t.companies.select().where(t.companies.c.id == company_id))).mappings().first()
+        manifest = (await conn.execute(t.company_manifest_versions.select().where(t.company_manifest_versions.c.id == company["active_manifest_version_id"]))).mappings().first() if company and company.get("active_manifest_version_id") else None
+        departments = (await conn.execute(t.company_departments.select().where(t.company_departments.c.company_id == company_id).order_by(t.company_departments.c.department_key))).mappings().all()
+        assignments = (await conn.execute(t.company_worker_assignments.select().where(t.company_worker_assignments.c.company_id == company_id).order_by(t.company_worker_assignments.c.created_at))).mappings().all()
+        budgets = (await conn.execute(t.company_budgets.select().where(t.company_budgets.c.company_id == company_id).order_by(t.company_budgets.c.budget_key))).mappings().all()
+        return {
+            "company": dict(company) if company else None,
+            "manifest": dict(manifest) if manifest else None,
+            "departments": [dict(row) for row in departments],
+            "assignments": [dict(row) for row in assignments],
+            "budgets": [dict(row) for row in budgets],
+        }
+
+    async def _materialize_company_manifest_tx(
+        self,
+        conn: Any,
+        *,
+        company_id: UUID,
+        manifest: Any,
+        manifest_id: UUID,
+    ) -> None:
+        """Reconcile compiled departments, assignments, and budgets in one transaction."""
+        workers: dict[str, Any] = {}
+        worker_names = {manifest.ceo_worker_id}
+        worker_names.update(item.worker_id for item in manifest.worker_assignments)
+        for worker_name in worker_names:
+            row = (
+                await conn.execute(
+                    t.worker_registry.select().where(t.worker_registry.c.name == worker_name)
+                )
+            ).mappings().first()
+            if row is None:
+                raise ValueError(f"manifest references unknown worker {worker_name!r}")
+            workers[worker_name] = row
+
+        now = datetime.now(tz=UTC)
+        await conn.execute(
+            t.company_departments.update()
+            .where(t.company_departments.c.company_id == company_id)
+            .values(status="INACTIVE", updated_at=now)
+        )
+        await conn.execute(
+            t.company_worker_assignments.update()
+            .where(t.company_worker_assignments.c.company_id == company_id)
+            .values(status="INACTIVE", updated_at=now)
+        )
+        department_ids: dict[str, UUID] = {}
+        for department in manifest.departments:
+            department_id = uuid5(company_id, f"department:{department.id}")
+            chief = workers.get(department.chief_worker_id) if department.chief_worker_id else None
+            await conn.execute(
+                pg_insert(t.company_departments)
+                .values(
+                    id=department_id,
+                    company_id=company_id,
+                    department_key=department.id,
+                    name=department.name,
+                    chief_worker_id=chief.get("id") if chief else None,
+                    approval_policy=department.approval_policy,
+                    metadata=department.metadata,
+                    status="ACTIVE",
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_department_key",
+                    set_={
+                        "name": department.name,
+                        "chief_worker_id": chief.get("id") if chief else None,
+                        "approval_policy": department.approval_policy,
+                        "metadata": department.metadata,
+                        "status": "ACTIVE",
+                        "updated_at": now,
+                    },
+                )
+            )
+
+            department_ids[department.id] = department_id
+        for assignment in manifest.worker_assignments:
+            worker = workers[assignment.worker_id]
+            assignment_id = uuid5(company_id, f"worker:{assignment.worker_id}")
+            await conn.execute(
+                pg_insert(t.company_worker_assignments)
+                .values(
+                    id=assignment_id,
+                    company_id=company_id,
+                    worker_id=worker["id"],
+                    department_id=department_ids[assignment.department_id],
+                    manifest_version_id=manifest_id,
+                    status=assignment.status,
+                    tool_grants=assignment.tool_grants,
+                    permission_grants=assignment.permission_grants,
+                    model_profile_id=assignment.model_profile_id,
+                    budget=assignment.budget,
+                    approval_required=assignment.approval_required,
+                    metadata=assignment.metadata,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_worker_assignment",
+                    set_={
+                        "department_id": department_ids[assignment.department_id],
+                        "manifest_version_id": manifest_id,
+                        "status": assignment.status,
+                        "tool_grants": assignment.tool_grants,
+                        "permission_grants": assignment.permission_grants,
+                        "model_profile_id": assignment.model_profile_id,
+                        "budget": assignment.budget,
+                        "approval_required": assignment.approval_required,
+                        "metadata": assignment.metadata,
+                        "updated_at": now,
+                    },
+                )
+            )
+        if manifest.budgets:
+            await conn.execute(
+                t.company_budgets.delete().where(
+                    sa.and_(
+                        t.company_budgets.c.company_id == company_id,
+                        t.company_budgets.c.budget_key.not_in(list(manifest.budgets)),
+                    )
+                )
+            )
+        else:
+            await conn.execute(
+                t.company_budgets.delete().where(t.company_budgets.c.company_id == company_id)
+            )
+        for budget_key, limit_value in manifest.budgets.items():
+            await conn.execute(
+                pg_insert(t.company_budgets)
+                .values(
+                    id=uuid5(company_id, f"budget:{budget_key}"),
+                    company_id=company_id,
+                    budget_key=budget_key,
+                    limit_value=limit_value,
+                    currency="USD",
+                    period="lifetime",
+                    metadata={},
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_budget_key",
+                    set_={"limit_value": limit_value, "updated_at": now},
+                )
+            )
+
+    async def rollback_company_manifest(
+        self,
+        company_id: UUID,
+        *,
+        manifest_version: int,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Activate a previously compiled manifest and reconcile its snapshot."""
+        from mas_core.company_manifest import compile_company_manifest
+
+        async with self.engine.begin() as conn:
+            company = (
+                await conn.execute(
+                    t.companies.select()
+                    .where(t.companies.c.id == company_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if company is None:
+                raise ValueError(f"company {company_id} does not exist")
+            target = (
+                await conn.execute(
+                    t.company_manifest_versions.select().where(
+                        sa.and_(
+                            t.company_manifest_versions.c.company_id == company_id,
+                            t.company_manifest_versions.c.manifest_version == manifest_version,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if target is None:
+                raise ValueError(f"manifest version {manifest_version} does not exist")
+            manifest, _digest, _canonical = compile_company_manifest(target["manifest_json"])
+            active_id = company.get("active_manifest_version_id")
+            await self._materialize_company_manifest_tx(
+                conn,
+                company_id=company_id,
+                manifest=manifest,
+                manifest_id=target["id"],
+            )
+            now = datetime.now(tz=UTC)
+            if active_id and active_id != target["id"]:
+                await conn.execute(
+                    t.company_manifest_versions.update()
+                    .where(t.company_manifest_versions.c.id == active_id)
+                    .values(status="ROLLED_BACK")
+                )
+            await conn.execute(
+                t.company_manifest_versions.update()
+                .where(t.company_manifest_versions.c.id == target["id"])
+                .values(status="APPLIED", error=None)
+            )
+            await conn.execute(
+                t.companies.update()
+                .where(t.companies.c.id == company_id)
+                .values(
+                    slug=manifest.slug,
+                    name=manifest.name,
+                    description=manifest.description,
+                    active_manifest_version_id=target["id"],
+                    updated_at=now,
+                )
+            )
+            result = await self._company_manifest_read_model(company_id, conn=conn)
+            result["rollback"] = {
+                "manifest_version": manifest_version,
+                "actor": actor,
+                "reason": reason,
+                "at": now,
+            }
+            return result
 
     async def update_project_config(
         self,
@@ -4511,21 +4882,52 @@ class AgentStorage:
         details: dict[str, Any] | None = None,
         occurred_at: datetime | None = None,
         event_id: UUID | None = None,
+        company_id: UUID | None = None,
+        run_id: UUID | None = None,
+        worker_id: UUID | None = None,
+        provider_id: str | None = None,
+        billing_code: str | None = None,
+        pricing_snapshot: dict[str, Any] | None = None,
+        resource_json: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Append one immutable, project-scoped LLM or tool usage event."""
+        """Append one immutable, project-scoped LLM or tool usage event.
+
+        Usage events are deliberately idempotent.  Worker retries, gateway
+        reconnects, and queue recovery must not double-charge a project.  The
+        database uniqueness constraint is the final arbiter; the read-before-
+        write below also makes the common replay path cheap and deterministic.
+        """
         if event_type not in {"llm", "tool"}:
             raise ValueError("event_type must be 'llm' or 'tool'")
         normalized_project_id = (
             project_id if isinstance(project_id, UUID) else UUID(str(project_id))
         )
+        if company_id is None:
+            async with self.engine.connect() as conn:
+                company_id = (
+                    await conn.execute(
+                        sa.select(t.projects.c.company_id).where(
+                            t.projects.c.id == normalized_project_id
+                        )
+                    )
+                ).scalar_one_or_none()
         values = {
             "id": event_id or uuid4(),
             "project_id": normalized_project_id,
+            "company_id": company_id,
+            "run_id": run_id,
+            "worker_id": worker_id,
             "event_type": event_type,
             "agent_id": agent_id,
             "team_id": team_id,
             "model": model,
+            "provider_id": provider_id,
             "tool_name": tool_name,
+            "billing_code": billing_code,
+            "pricing_snapshot": pricing_snapshot,
+            "resource_json": resource_json,
+            "idempotency_key": idempotency_key,
             "status": status,
             "prompt_tokens": max(0, int(prompt_tokens or 0)),
             "completion_tokens": max(0, int(completion_tokens or 0)),
@@ -4537,7 +4939,32 @@ class AgentStorage:
             "occurred_at": occurred_at or datetime.now(tz=UTC),
         }
         async with self.engine.begin() as conn:
-            await conn.execute(t.project_usage_events.insert().values(**values))
+            if idempotency_key:
+                existing = (
+                    await conn.execute(
+                        t.project_usage_events.select().where(
+                            t.project_usage_events.c.idempotency_key == idempotency_key
+                        )
+                    )
+                ).mappings().first()
+                if existing is not None:
+                    return dict(existing)
+                try:
+                    await conn.execute(t.project_usage_events.insert().values(**values))
+                except sa.exc.IntegrityError:
+                    # A concurrent writer won the unique idempotency race.
+                    existing = (
+                        await conn.execute(
+                            t.project_usage_events.select().where(
+                                t.project_usage_events.c.idempotency_key == idempotency_key
+                            )
+                        )
+                    ).mappings().first()
+                    if existing is None:
+                        raise
+                    return dict(existing)
+            else:
+                await conn.execute(t.project_usage_events.insert().values(**values))
         return values
 
     async def get_project_usage(self, project_id: UUID) -> dict[str, Any]:
@@ -4573,6 +5000,203 @@ class AgentStorage:
         result["available"] = True
         result["source"] = "project_usage_events"
         return result
+
+    async def list_project_usage_events(
+        self,
+        project_id: UUID,
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        query = (
+            t.project_usage_events.select()
+            .where(t.project_usage_events.c.project_id == project_id)
+            .order_by(t.project_usage_events.c.occurred_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def reserve_budget(
+        self,
+        *,
+        company_id: UUID,
+        budget_key: str,
+        amount: Decimal | float | int,
+        idempotency_key: str,
+        project_id: UUID | None = None,
+        worker_id: UUID | None = None,
+        run_id: UUID | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Reserve a company budget atomically.
+
+        ``None`` means the company has no configured limit for this key.  A
+        configured limit is fail-closed: reservations are locked and summed
+        inside one transaction so concurrent workers cannot oversubscribe it.
+        """
+        normalized_amount = Decimal(str(amount))
+        if normalized_amount < 0:
+            raise ValueError("budget reservation amount must be non-negative")
+        if not budget_key.strip() or not idempotency_key.strip():
+            raise ValueError("budget_key and idempotency_key are required")
+        async with self.engine.begin() as conn:
+            existing = (
+                await conn.execute(
+                    t.budget_reservations.select().where(
+                        t.budget_reservations.c.idempotency_key == idempotency_key
+                    )
+                )
+            ).mappings().first()
+            if existing is not None:
+                return dict(existing)
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select()
+                    .where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == company_id,
+                            t.company_budgets.c.budget_key == budget_key,
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if budget is None:
+                return None
+            reserved = (
+                await conn.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0))
+                    .where(
+                        sa.and_(
+                            t.budget_reservations.c.company_id == company_id,
+                            t.budget_reservations.c.budget_key == budget_key,
+                            t.budget_reservations.c.state.in_(("RESERVED", "COMMITTED")),
+                        )
+                    )
+                )
+            ).scalar_one()
+            limit_value = Decimal(str(budget["limit_value"]))
+            if Decimal(str(reserved or 0)) + normalized_amount > limit_value:
+                raise ValueError(
+                    f"BUDGET_EXCEEDED:{budget_key}:limit={limit_value}:"
+                    f"used={reserved}:requested={normalized_amount}"
+                )
+            values = {
+                "id": uuid4(),
+                "company_id": company_id,
+                "project_id": project_id,
+                "worker_id": worker_id,
+                "run_id": run_id,
+                "budget_key": budget_key,
+                "amount": normalized_amount,
+                "currency": str(budget.get("currency") or "USD"),
+                "state": "RESERVED",
+                "idempotency_key": idempotency_key,
+                "metadata": metadata or {},
+            }
+            await conn.execute(t.budget_reservations.insert().values(**values))
+        return values
+
+    async def settle_budget_reservation(
+        self,
+        reservation_id: UUID,
+        *,
+        state: str,
+    ) -> dict[str, Any] | None:
+        """Commit or release a reservation exactly once."""
+        if state not in {"COMMITTED", "RELEASED"}:
+            raise ValueError("budget reservation state must be COMMITTED or RELEASED")
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.budget_reservations.select()
+                    .where(t.budget_reservations.c.id == reservation_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            if row["state"] in {"COMMITTED", "RELEASED"}:
+                return dict(row)
+            values: dict[str, Any] = {"state": state}
+            values["committed_at" if state == "COMMITTED" else "released_at"] = now
+            await conn.execute(
+                t.budget_reservations.update()
+                .where(t.budget_reservations.c.id == reservation_id)
+                .values(**values)
+            )
+            refreshed = (
+                await conn.execute(
+                    t.budget_reservations.select().where(t.budget_reservations.c.id == reservation_id)
+                )
+            ).mappings().first()
+        return dict(refreshed) if refreshed is not None else None
+
+    async def list_budget_reservations(
+        self,
+        *,
+        run_id: UUID | None = None,
+        company_id: UUID | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        query = (
+            t.budget_reservations.select()
+            .order_by(t.budget_reservations.c.created_at.asc())
+            .limit(limit)
+        )
+        clauses = []
+        if run_id is not None:
+            clauses.append(t.budget_reservations.c.run_id == run_id)
+        if company_id is not None:
+            clauses.append(t.budget_reservations.c.company_id == company_id)
+        if clauses:
+            query = query.where(sa.and_(*clauses))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_budget_state(self, company_id: UUID, budget_key: str) -> dict[str, Any]:
+        """Return the authoritative limit, usage, and available balance."""
+        async with self.engine.connect() as conn:
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select().where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == company_id,
+                            t.company_budgets.c.budget_key == budget_key,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if budget is None:
+                return {"configured": False, "company_id": company_id, "budget_key": budget_key}
+            total = (
+                await conn.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0)).where(
+                        sa.and_(
+                            t.budget_reservations.c.company_id == company_id,
+                            t.budget_reservations.c.budget_key == budget_key,
+                            t.budget_reservations.c.state.in_(("RESERVED", "COMMITTED")),
+                        )
+                    )
+                )
+            ).scalar_one()
+        limit_value = Decimal(str(budget["limit_value"]))
+        used = Decimal(str(total or 0))
+        return {
+            "configured": True,
+            "company_id": company_id,
+            "budget_key": budget_key,
+            "limit": limit_value,
+            "used": used,
+            "available": max(Decimal("0"), limit_value - used),
+            "currency": budget.get("currency") or "USD",
+            "period": budget.get("period") or "lifetime",
+        }
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Task log (task execution audit trail)
@@ -6814,14 +7438,123 @@ class AgentStorage:
     async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.model_resolution_snapshots, t.model_resolution_snapshots.c.id, snapshot_id)
 
-    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED") -> dict[str, Any]:
+    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
             existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
             if existing:
                 return dict(existing)
-            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state}
+            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
             await conn.execute(t.worker_runs.insert().values(**values))
         return await self.get_worker_run(run_id)  # type: ignore[return-value]
+
+    async def claim_worker_run(
+        self,
+        *,
+        owner: str,
+        lease_seconds: int = 300,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically claim one queued run, or a specified queued run."""
+
+        now = datetime.now(tz=UTC)
+        lease_until = now + timedelta(seconds=max(1, lease_seconds))
+        async with self.engine.begin() as conn:
+            clauses = [
+                t.worker_runs.c.state == "QUEUED",
+                sa.or_(t.worker_runs.c.next_attempt_at.is_(None), t.worker_runs.c.next_attempt_at <= now),
+                sa.or_(t.worker_runs.c.lease_expires_at.is_(None), t.worker_runs.c.lease_expires_at <= now),
+            ]
+            if run_id is not None:
+                clauses.append(t.worker_runs.c.id == run_id)
+            query = t.worker_runs.select().where(sa.and_(*clauses)).order_by(
+                t.worker_runs.c.queue_priority.desc(),
+                t.worker_runs.c.created_at.asc(),
+            ).limit(1).with_for_update(skip_locked=True)
+            row = (await conn.execute(query)).mappings().first()
+            if row is None:
+                return None
+            await conn.execute(
+                t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
+                    state="CLAIMED",
+                    claim_owner=owner,
+                    claimed_at=now,
+                    heartbeat_at=now,
+                    lease_expires_at=lease_until,
+                    attempt_count=int(row.get("attempt_count") or 0) + 1,
+                    recovery_reason=None,
+                )
+            )
+            await conn.execute(
+                t.worker_run_transitions.insert().values(
+                    id=uuid4(),
+                    run_id=row["id"],
+                    from_state="QUEUED",
+                    to_state="CLAIMED",
+                    actor=owner,
+                    reason="worker run claimed",
+                    metadata={"lease_expires_at": lease_until.isoformat()},
+                )
+            )
+            updated = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == row["id"]))).mappings().first()
+        return dict(updated) if updated else None
+
+    async def heartbeat_worker_run(self, run_id: UUID, *, owner: str, lease_seconds: int = 300) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        result = None
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.worker_runs.update()
+                .where(sa.and_(t.worker_runs.c.id == run_id, t.worker_runs.c.claim_owner == owner, t.worker_runs.c.state.notin_(TERMINAL_WORKER_RUN_STATES)))
+                .values(heartbeat_at=now, lease_expires_at=now + timedelta(seconds=max(1, lease_seconds)))
+            )
+        return await self.get_worker_run(run_id) if result.rowcount else None
+
+    async def request_worker_run_cancel(self, run_id: UUID) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_runs.update().where(t.worker_runs.c.id == run_id).values(cancel_requested_at=now))
+        return await self.get_worker_run(run_id)
+
+    async def recover_expired_worker_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        now = datetime.now(tz=UTC)
+        recovered: list[dict[str, Any]] = []
+        async with self.engine.begin() as conn:
+            rows = (
+                await conn.execute(
+                    t.worker_runs.select().where(
+                        sa.and_(
+                            t.worker_runs.c.state.in_(("CLAIMED", "VALIDATING", "READY", "DISPATCHING", "RUNNING", "PAUSING", "RESUMING")),
+                            t.worker_runs.c.lease_expires_at.is_not(None),
+                            t.worker_runs.c.lease_expires_at < now,
+                        )
+                    ).order_by(t.worker_runs.c.lease_expires_at.asc()).limit(limit).with_for_update(skip_locked=True)
+                )
+            ).mappings().all()
+            for row in rows:
+                await conn.execute(
+                    t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
+                        state="QUEUED",
+                        claim_owner=None,
+                        claimed_at=None,
+                        heartbeat_at=None,
+                        lease_expires_at=None,
+                        next_attempt_at=now,
+                        recovery_reason="worker run lease expired; requeued by recovery loop",
+                    )
+                )
+                await conn.execute(
+                    t.worker_run_transitions.insert().values(
+                        id=uuid4(),
+                        run_id=row["id"],
+                        from_state=str(row["state"]),
+                        to_state="QUEUED",
+                        actor="worker-run-recovery",
+                        reason="lease expired",
+                        metadata={"attempt_count": int(row.get("attempt_count") or 0)},
+                    )
+                )
+                recovered.append({**dict(row), "state": "QUEUED", "recovery_reason": "worker run lease expired; requeued by recovery loop"})
+        return recovered
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.worker_runs, t.worker_runs.c.id, run_id)
@@ -6858,7 +7591,7 @@ class AgentStorage:
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        allowed = {"CREATED": {"VALIDATING", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
+        allowed = {"CREATED": {"QUEUED", "VALIDATING", "CANCELLED", "FAILED"}, "QUEUED": {"VALIDATING", "CANCELLED", "FAILED"}, "CLAIMED": {"VALIDATING", "QUEUED", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED", "QUEUED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED", "QUEUED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED", "QUEUED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED", "QUEUED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             current = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == run_id).with_for_update())).mappings().first()
@@ -6873,6 +7606,7 @@ class AgentStorage:
                 values["started_at"] = now
             if new_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
                 values["completed_at"] = now
+                values.update({"claim_owner": None, "lease_expires_at": None, "heartbeat_at": None})
             if result is not None:
                 values["result_json"] = result
             if error is not None:

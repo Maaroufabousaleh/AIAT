@@ -171,6 +171,13 @@ async def evaluate_runtime(
         checks["memory_if_enabled"] = True
         policy_notes.append("requires_approval=True — CrewAI crew activation needs human gate")
 
+    elif runtime_tier in {"microsoft_agent_framework", "agent_framework"}:
+        checks["instructions_defined"] = bool(runtime_config.get("instructions"))
+        checks["agent_name_safe"] = bool(str(runtime_config.get("agent_name") or "aiat-worker").strip())
+        checks["tool_bindings_resolved"] = True
+        checks["sandbox_profile_verified"] = str(runtime_config.get("sandbox_profile") or "gvisor") == "gvisor"
+        policy_notes.append("inner_runtime=True — Microsoft Agent Framework runs behind AIAT tool and approval boundaries")
+
     elif runtime_tier == "autogen":
         term = runtime_config.get("termination_strategy", {})
         checks["termination_strategy_defined"] = bool(term)

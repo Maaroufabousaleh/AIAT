@@ -28,6 +28,7 @@ import ssl
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from enum import Enum
 from functools import partial
 from typing import Any, Literal
@@ -64,7 +65,13 @@ from mas_core.integrations.contracts import (
     validate_credential_references,
 )
 from mas_core.integrations.providers.base import provider_ssl_context
+from mas_core.company_manifest import (
+    DEFAULT_COMPANY_ID,
+    CompanyManifestError,
+    compile_company_manifest,
+)
 from mas_core.llm_gateway.client import LLMGatewayClient
+from mas_core.memory import models as memory_models
 from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import MAS_PROJECT_STATE
@@ -897,11 +904,30 @@ def _delta_policy_for(integration_id: str) -> dict[str, Any]:
 
 async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
     seeded = (await storage.get_config("default_company_seeded")) == "true"
+    persistent_company: dict[str, Any] | None = None
+    try:
+        first_class = await storage.get_company_read_model(DEFAULT_COMPANY_ID)
+        if first_class.get("company"):
+            persistent_company = first_class
+            seeded = True
+    except Exception:
+        # Older test databases and pre-0031 installations use the bootstrap
+        # config read model until the migration has been applied.
+        logger.debug("company_read_model.first_class_unavailable", exc_info=True)
     ceo = _decode_json_config(
         await storage.get_config("default_company_ceo"),
         {"id": "ceo_agent", "name": "AIAT CEO", "role": "CEO"},
     )
     departments = _decode_json_config(await storage.get_config("default_company_departments"), [])
+    if persistent_company and persistent_company.get("departments"):
+        departments = [
+            {
+                "id": row.get("department_key"),
+                "name": row.get("name"),
+                "chief_worker_id": row.get("chief_worker_id"),
+            }
+            for row in persistent_company["departments"]
+        ]
     workers = await storage.list_workers()
     projects = await storage.list_projects(limit=1000)
     capabilities = await storage.list_capabilities()
@@ -961,8 +987,9 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
 
     return {
         "company": {
-            "id": "aiat",
-            "name": "AIAT",
+            "id": str((persistent_company or {}).get("company", {}).get("id") or DEFAULT_COMPANY_ID),
+            "slug": (persistent_company or {}).get("company", {}).get("slug") or "aiat-default",
+            "name": (persistent_company or {}).get("company", {}).get("name") or "AIAT",
             "seeded": seeded,
             "seeded_at": await storage.get_config("default_company_seeded_at"),
         },
@@ -980,6 +1007,9 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
             "capabilities": len(capabilities),
             "evaluation_warnings": sum(1 for w in workers if _worker_eval_warning(w)),
         },
+        "manifest": _serialize((persistent_company or {}).get("manifest")) if persistent_company else None,
+        "company_assignments": (persistent_company or {}).get("assignments") or [],
+        "company_budgets": (persistent_company or {}).get("budgets") or [],
     }
 
 
@@ -990,10 +1020,11 @@ async def _org_graph_read_model(storage: AgentStorage) -> dict[str, Any]:
     capability_by_id = {str(c["id"]): c for c in capabilities}
 
     nodes = [
-        {"id": "company_aiat", "type": "company", "label": company["company"]["name"]},
+        {"id": _graph_id("company", company["company"]["id"]), "type": "company", "label": company["company"]["name"]},
         {"id": "ceo_ceo_agent", "type": "ceo", "label": company["ceo"].get("name", "AIAT CEO")},
     ]
-    edges = [{"id": "company-ceo", "source": "company_aiat", "target": "ceo_ceo_agent", "label": "led by"}]
+    company_node = _graph_id("company", company["company"]["id"])
+    edges = [{"id": "company-ceo", "source": company_node, "target": "ceo_ceo_agent", "label": "led by"}]
 
     for department in company["departments"]:
         dept_node = _graph_id("department", department["id"])
@@ -1096,6 +1127,7 @@ class CreateProjectRequest(BaseModel):
     flow_id: UUID | None = None
     workspace: ProjectWorkspaceRequest | None = None
     initial_context: list[ProjectContextSeedRequest] = Field(default_factory=list, max_length=25)
+    company_id: UUID = DEFAULT_COMPANY_ID
 
     @field_validator("name")
     @classmethod
@@ -1104,6 +1136,23 @@ class CreateProjectRequest(BaseModel):
         if not normalized:
             raise ValueError("name must not be blank")
         return normalized
+
+
+class CompanyCreateRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9-]*$")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=20_000)
+    created_by: str = Field(default="operator", min_length=1, max_length=200)
+
+
+class CompanyManifestRequest(BaseModel):
+    manifest: dict[str, Any]
+    source: str = Field(default="api", min_length=1, max_length=1000)
+
+
+class CompanyManifestRollbackRequest(BaseModel):
+    manifest_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class PMConnectionCreateRequest(BaseModel):
@@ -1693,6 +1742,9 @@ class WorkerRunDispatchRequest(BaseModel):
     budget_usd: float | None = Field(default=None, ge=0)
     model_override_request_id: UUID | None = None
     model_override_approval_id: UUID | None = None
+    dispatch_mode: Literal["queued", "inline"] | None = None
+    queue_priority: int = Field(default=0, ge=-100, le=100)
+    lease_seconds: int = Field(default=300, ge=30, le=86_400)
 
 
 class WorkerRunPauseRequest(BaseModel):
@@ -2110,6 +2162,30 @@ async def update_monitor_loop(
             logger.exception("steward_update_monitor_loop_error")
 
 
+async def worker_run_recovery_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: int = 30,
+) -> None:
+    """Requeue worker runs whose executor lease expired after a restart."""
+    while not stop_event.is_set():
+        try:
+            await anyio.sleep(interval_seconds)
+            if stop_event.is_set():
+                break
+            recovered = await storage.recover_expired_worker_runs(limit=100)
+            if recovered:
+                logger.warning(
+                    "worker_run_leases_recovered",
+                    extra={"count": len(recovered)},
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("worker_run_recovery_loop_error")
+
+
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
@@ -2296,6 +2372,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     app.state.watchdog_task = None
     app.state.scheduler = None
     app.state.ceo_command_tasks = set()
+    app.state.worker_run_tasks = set()
 
     # Run resume sequence if DB is available
     if storage is not None:
@@ -2351,9 +2428,26 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             logger.exception("Worker manifest seeding failed; continuing anyway")
 
+        # Company compilation is separate from worker declaration seeding so
+        # an incomplete worker inventory can never partially activate an org.
+        # Apply the checked-in manifest only after all declarations have been
+        # persisted; AgentStorage keeps the operation atomic and idempotent.
+        try:
+            company_result = await _apply_default_company_manifest(storage)
+            if company_result is not None:
+                await storage.set_config("default_company_seeded", "true")
+                await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
+                logger.info(
+                    "default_company_manifest_applied",
+                    extra={"digest": (company_result.get("manifest") or {}).get("digest")},
+                )
+        except Exception:
+            logger.exception("Default company manifest bootstrap failed; continuing in compatibility mode")
+
         # Start after seeding so newly created external-worker stewardship
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
+        ceo_command_task_group.start_soon(worker_run_recovery_loop, storage, stop_event)
 
         try:
             await _recover_ceo_commands(storage)
@@ -2374,6 +2468,13 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     ceo_command_task_group.cancel_scope.cancel()
     await ceo_command_task_group.__aexit__(None, None, None)
     app.state.ceo_command_task_group = None
+
+    worker_tasks = list(getattr(app.state, "worker_run_tasks", set()))
+    for task in worker_tasks:
+        task.cancel()
+    if worker_tasks:
+        await asyncio.gather(*worker_tasks, return_exceptions=True)
+    app.state.worker_run_tasks.clear()
 
     for scope in list(_stage_directive_retry_scopes.values()):
         scope.cancel()
@@ -2453,6 +2554,7 @@ app.state.stop_event = anyio.Event()
 app.state.watchdog_task = None
 app.state.ceo_command_tasks = set()
 app.state.ceo_command_task_group = None
+app.state.worker_run_tasks = set()
 
 # ── LLM Gateway compatibility router (OpenAI-compatible) ─────────────────────
 from orchestrator_api.llm_gateway_compat import router as llm_compat_router  # noqa: E402
@@ -2616,6 +2718,9 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     bind_trace_id(tid)
 
     storage = _storage()
+    if inspect.iscoroutinefunction(getattr(storage, "get_company", None)):
+        if await storage.get_company(req.company_id) is None:
+            raise HTTPException(404, f"Company {req.company_id} not found")
     flow_for_instance: dict[str, Any] | None = None
     if req.flow_id is not None:
         flow_for_instance = await storage.get_flow(req.flow_id)
@@ -2652,6 +2757,7 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         description=req.description,
         created_by=req.human_requester or "human",
         human_requester=req.human_requester,
+        company_id=req.company_id,
         config=project_config or None,
         initial_context=[
             {
@@ -3023,6 +3129,25 @@ async def list_project_artifacts(
     if await storage.get_project(project_id) is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.get("/projects/{project_id}/usage/events")
+async def list_project_usage_events(
+    project_id: UUID,
+    limit: int = Query(default=1000, ge=1, le=10000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return [
+        _serialize(row)
+        for row in await storage.list_project_usage_events(
+            project_id,
+            limit=limit,
+            offset=offset,
+        )
+    ]
 
 
 @app.post("/projects/{project_id}/artifacts", status_code=201)
@@ -4949,6 +5074,37 @@ async def system_status() -> dict[str, Any]:
     }
 
 
+async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, Any] | None:
+    """Load and atomically apply the checked-in default company manifest."""
+    import inspect
+    from pathlib import Path
+    import yaml
+
+    manifest_path = Path(
+        os.environ.get("COMPANY_MANIFEST_PATH", "companies/default-software-company.yaml")
+    )
+    if not manifest_path.is_file():
+        logger.warning("Company manifest %s not found; skipping default company bootstrap", manifest_path)
+        return None
+    apply_manifest = getattr(storage, "apply_company_manifest", None)
+    # A few compatibility/test storage doubles predate the company control-plane
+    # API.  They must continue to support the legacy seed endpoint without
+    # attempting to await a dynamically-created MagicMock attribute.
+    if not inspect.iscoroutinefunction(apply_manifest):
+        logger.debug("Storage does not expose async company manifest application; skipping bootstrap")
+        return None
+    raw_manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    company_manifest, digest, canonical = compile_company_manifest(raw_manifest)
+    return await apply_manifest(
+        company_id=DEFAULT_COMPANY_ID,
+        manifest=company_manifest,
+        digest=digest,
+        canonical=canonical,
+        source=str(manifest_path),
+        actor="system-bootstrap",
+    )
+
+
 @app.post("/system/seed-default-company")
 async def seed_default_company() -> dict[str, Any]:
     """Idempotently seed the default AIAT company bootstrap metadata."""
@@ -5010,6 +5166,13 @@ async def seed_default_company() -> dict[str, Any]:
             "errors": sum(1 for r in results if r.action == "error"),
         }
 
+    company_result: dict[str, Any] | None = None
+    try:
+        company_result = await _apply_default_company_manifest(storage)
+    except (CompanyManifestError, ValueError, OSError) as exc:
+        logger.exception("Default company manifest compilation failed")
+        raise HTTPException(500, f"default company manifest could not be applied: {exc}") from exc
+
     await storage.set_config("default_company_seeded", "true")
     await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
     await storage.set_config("default_company_ceo", json.dumps(ceo))
@@ -5023,7 +5186,169 @@ async def seed_default_company() -> dict[str, Any]:
         "departments": departments,
         "sample_project_template": sample_project_template,
         "workers_imported": worker_summary,
+        "company": _serialize(company_result) if company_result is not None else None,
     }
+
+
+@app.get("/companies")
+async def list_companies() -> list[dict[str, Any]]:
+    return [_serialize(row) for row in await _storage().list_companies()]
+
+
+@app.post("/companies", status_code=201)
+async def create_company(request: Request, req: CompanyCreateRequest) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_company_by_slug(req.slug) is not None:
+        raise HTTPException(409, "company slug already exists")
+    company_id = uuid4()
+    now = datetime.now(tz=UTC)
+    async with storage.engine.begin() as conn:
+        await conn.execute(
+            memory_models.companies.insert().values(
+                id=company_id,
+                slug=req.slug,
+                name=req.name,
+                description=req.description,
+                status="ACTIVE",
+                created_by=_authenticated_principal(request),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return _serialize(await storage.get_company(company_id))
+
+
+@app.get("/companies/{company_id}")
+async def get_company(company_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    result = await storage.get_company_read_model(company_id)
+    if not result.get("company"):
+        raise HTTPException(404, "company not found")
+    return _serialize(result)
+
+
+@app.get("/companies/{company_id}/budgets")
+async def list_company_budgets(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    budgets = await storage.list_company_budgets(company_id)
+    states = [
+        await storage.get_budget_state(company_id, str(row["budget_key"]))
+        for row in budgets
+    ]
+    return [_serialize(row) for row in states]
+
+
+@app.get("/companies/{company_id}/departments")
+async def list_company_departments(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_departments(company_id)]
+
+
+@app.get("/companies/{company_id}/assignments")
+async def list_company_assignments(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_worker_assignments(company_id)]
+
+
+@app.get("/companies/{company_id}/budgets/{budget_key}")
+async def get_company_budget(company_id: UUID, budget_key: str) -> dict[str, Any]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    state = await storage.get_budget_state(company_id, budget_key)
+    if not state.get("configured"):
+        raise HTTPException(404, "budget not configured")
+    return _serialize(state)
+
+
+@app.get("/companies/{company_id}/budget-reservations")
+async def list_company_budget_reservations(
+    company_id: UUID,
+    run_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    rows = await storage.list_budget_reservations(company_id=company_id, run_id=run_id, limit=limit)
+    return [_serialize(row) for row in rows]
+
+
+@app.post("/companies/{company_id}/manifest/validate")
+async def validate_company_manifest(company_id: UUID, req: CompanyManifestRequest) -> dict[str, Any]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    try:
+        manifest, digest, canonical = compile_company_manifest(req.manifest)
+    except CompanyManifestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "valid": True,
+        "company_id": str(company_id),
+        "slug": manifest.slug,
+        "digest": digest,
+        "manifest": canonical,
+        "source": req.source,
+    }
+
+
+@app.get("/companies/{company_id}/manifest/history")
+async def company_manifest_history(
+    company_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_manifest_versions(company_id, limit=limit)]
+
+
+@app.post("/companies/{company_id}/manifest/apply")
+async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestRequest) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    try:
+        manifest, digest, canonical = compile_company_manifest(req.manifest)
+        result = await storage.apply_company_manifest(
+            company_id=company_id,
+            manifest=manifest,
+            digest=digest,
+            canonical=canonical,
+            source=req.source,
+            actor=_authenticated_principal(request),
+        )
+    except CompanyManifestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(result)
+
+
+@app.post("/companies/{company_id}/manifest/rollback")
+async def rollback_company_manifest(
+    company_id: UUID,
+    request: Request,
+    req: CompanyManifestRollbackRequest,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    try:
+        result = await _storage().rollback_company_manifest(
+            company_id,
+            manifest_version=req.manifest_version,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(result)
 
 
 @app.get("/system/company")
@@ -5186,6 +5511,7 @@ class RuntimeValidationRequest(BaseModel):
 RUNTIME_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     "langgraph": ("langgraph",),
     "crewai": ("crewai",),
+    "microsoft_agent_framework": ("agent_framework",),
     "autogen": ("autogen_agentchat", "autogen_core"),
     "letta": ("letta",),
 }
@@ -5230,6 +5556,13 @@ async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) ->
             "tasks_run": 1,
             "tasks_passed": 1,
             "output": {"crew_config_present": bool(runtime_config.get("crew_config"))},
+        }
+    if runtime_tier == "microsoft_agent_framework":
+        importlib.import_module("agent_framework")
+        return {
+            "tasks_run": 1,
+            "tasks_passed": 1,
+            "output": {"agent_name": runtime_config.get("agent_name") or "aiat-worker"},
         }
     if runtime_tier == "autogen":
         importlib.import_module("autogen_agentchat")
@@ -5289,6 +5622,20 @@ async def list_available_runtimes() -> dict[str, Any]:
                     "sandbox_required": "gvisor",
                     "allowed_tools": "controlled_by_manifest",
                     "crew_process": "sequential",
+                },
+            },
+            {
+                "id": "microsoft_agent_framework",
+                "name": "Microsoft Agent Framework",
+                **_runtime_readiness("microsoft_agent_framework"),
+                "tier": "departmental",
+                "description": "Microsoft Agent Framework worker runtime behind the AIAT contract",
+                "policy": {
+                    "inner_runtime": True,
+                    "requires_approval": False,
+                    "sandbox_required": "gvisor",
+                    "allowed_tools": "controlled_by_manifest",
+                    "can_spawn_subgraph": False,
                 },
             },
             {
@@ -7857,6 +8204,146 @@ async def preview_model_resolution(req: ModelResolutionPreviewRequest) -> dict[s
     return ModelProfileResolver().dry_run(await _persisted_model_profiles(storage), request)
 
 
+async def _reserve_worker_run_budgets(
+    *,
+    storage: Any,
+    request: Any,
+    worker_id: UUID,
+    project_id: UUID | None,
+) -> list[tuple[UUID, str]]:
+    """Reserve configured company budgets before a run enters the queue.
+
+    Cost and concurrency reservations use the request idempotency key, so a
+    retry of the dispatch request reuses the original reservation instead of
+    consuming the budget twice.  Lightweight storage doubles may omit this
+    optional ledger API; the durable AgentStorage path is fail-closed.
+    """
+    reserve = getattr(storage, "reserve_budget", None)
+    if not inspect.iscoroutinefunction(reserve):
+        return []
+    company_id = DEFAULT_COMPANY_ID
+    if project_id is not None:
+        project = await storage.get_project(project_id)
+        if project is not None and project.get("company_id"):
+            company_id = UUID(str(project["company_id"]))
+    requested_cost = request.budget_usd if hasattr(request, "budget_usd") else None
+    if requested_cost is None:
+        requested_cost = (request.budget or {}).get("max_cost_usd")
+    budgets: list[tuple[str, Decimal]] = []
+    if requested_cost is not None and float(requested_cost) > 0:
+        budgets.append(("max_cost_usd", Decimal(str(requested_cost))))
+    # A configured max_concurrent_runs budget is a semaphore: every active
+    # run consumes one unit and releases it on completion/cancellation.
+    budgets.append(("max_concurrent_runs", Decimal("1")))
+    reservations: list[tuple[UUID, str]] = []
+    try:
+        for budget_key, amount in budgets:
+            reservation = await reserve(
+                company_id=company_id,
+                budget_key=budget_key,
+                amount=amount,
+                idempotency_key=f"worker-run:{worker_id}:{request.idempotency_key}:{budget_key}",
+                project_id=project_id,
+                worker_id=worker_id,
+                run_id=request.run_id,
+                metadata={"task_type": request.task_type, "source": "worker_dispatch"},
+            )
+            if reservation is not None:
+                reservations.append((UUID(str(reservation["id"])), budget_key))
+    except Exception:
+        settle = getattr(storage, "settle_budget_reservation", None)
+        if inspect.iscoroutinefunction(settle):
+            for reservation_id, _budget_key in reservations:
+                await settle(reservation_id, state="RELEASED")
+        raise
+    return reservations
+
+
+async def _settle_worker_run_budgets(
+    storage: Any,
+    reservations: list[tuple[UUID, str]],
+    *,
+    state: str,
+) -> None:
+    settle = getattr(storage, "settle_budget_reservation", None)
+    if not inspect.iscoroutinefunction(settle):
+        return
+    successful = state == "SUCCEEDED"
+    for reservation_id, budget_key in reservations:
+        reservation_state = "RELEASED" if budget_key == "max_concurrent_runs" or not successful else "COMMITTED"
+        try:
+            await settle(reservation_id, state=reservation_state)
+        except Exception:
+            logger.exception(
+                "worker_budget_settlement_failed",
+                extra={"reservation_id": str(reservation_id), "state": reservation_state},
+            )
+
+
+async def _execute_queued_worker_run(
+    *,
+    controller: Any,
+    request: Any,
+    adapter: Any,
+    worker: dict[str, Any],
+    storage: AgentStorage,
+    model_resolution_snapshot_id: UUID | None,
+    lease_seconds: int,
+    canonical_run_id: UUID,
+    budget_reservations: list[tuple[UUID, str]] | None = None,
+) -> None:
+    """Execute one claimed run in an application-owned background task."""
+
+    run_id = canonical_run_id
+    owner = f"orchestrator-background:{run_id}"
+    heartbeat_task: asyncio.Task[Any] | None = None
+    outcome_state = "FAILED"
+
+    async def renew_lease() -> None:
+        while True:
+            await asyncio.sleep(max(5, lease_seconds // 3))
+            refreshed = await storage.heartbeat_worker_run(
+                run_id,
+                owner=owner,
+                lease_seconds=lease_seconds,
+            )
+            if refreshed is None:
+                return
+
+    try:
+        # A claim is persisted before this task is scheduled.  The heartbeat
+        # method is intentionally available to adapters and recovery loops;
+        # this bounded task still retains the existing event-driven controller.
+        heartbeat_task = asyncio.create_task(renew_lease())
+        outcome = await controller.execute(
+            request,
+            adapter,
+            worker_registry_id=worker["id"],
+            worker_shell_version_id=worker.get("active_shell_version_id"),
+            adapter_id=worker.get("active_adapter_id"),
+            steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+            model_resolution_snapshot_id=model_resolution_snapshot_id,
+        )
+        outcome_state = outcome.state
+    except asyncio.CancelledError:
+        logger.info("queued_worker_run_cancelled", extra={"run_id": str(run_id)})
+        raise
+    except Exception:
+        logger.exception("queued_worker_run_failed", extra={"run_id": str(run_id), "owner": owner, "lease_seconds": lease_seconds})
+    finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+        await _settle_worker_run_budgets(
+            storage,
+            budget_reservations or [],
+            state=outcome_state,
+        )
+        current = asyncio.current_task()
+        if current is not None:
+            app.state.worker_run_tasks.discard(current)
+
+
 @app.post("/workers/runs", status_code=202)
 async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     storage = _storage()
@@ -7997,7 +8484,10 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             permission_requirements=req.permission_requirements,
             workspace_mode=req.workspace_mode,
             timeout_seconds=req.timeout_seconds,
-            budget=req.budget,
+            budget={
+                **req.budget,
+                **({"max_cost_usd": req.budget_usd} if req.budget_usd is not None else {}),
+            },
             checkpoint_policy=req.checkpoint_policy,
             retry_policy=req.retry_policy,
             extensions=req.runtime_extensions,
@@ -8005,6 +8495,63 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     controller = WorkerRunController(storage=storage)
+    try:
+        budget_reservations = await _reserve_worker_run_budgets(
+            storage=storage,
+            request=request,
+            worker_id=req.worker_id,
+            project_id=req.project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, {"code": "BUDGET_EXCEEDED", "message": str(exc)}) from exc
+    dispatch_mode = req.dispatch_mode or ("queued" if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} else "inline")
+    if dispatch_mode == "queued":
+        queued = await storage.create_worker_run(
+            run_id=request.run_id,
+            worker_id=req.worker_id,
+            idempotency_key=req.idempotency_key,
+            task_type=req.task_type,
+            request=request.model_dump(mode="json"),
+            project_id=req.project_id,
+            flow_id=req.flow_id,
+            flow_instance_id=req.flow_instance_id,
+            flow_node_execution_id=req.flow_node_execution_id,
+            worker_shell_version_id=worker.get("active_shell_version_id"),
+            adapter_id=worker.get("active_adapter_id"),
+            steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+            model_resolution_snapshot_id=model_resolution_snapshot_id,
+            state="QUEUED",
+            queue_priority=req.queue_priority,
+        )
+        canonical_run_id = UUID(str(queued["id"]))
+        claim = await storage.claim_worker_run(
+            owner=f"orchestrator-background:{canonical_run_id}",
+            lease_seconds=req.lease_seconds,
+            run_id=canonical_run_id,
+        )
+        if claim is not None and str(claim.get("state")) == "CLAIMED":
+            task = asyncio.create_task(
+                _execute_queued_worker_run(
+                    controller=controller,
+                    request=request,
+                    adapter=adapter,
+                    worker=worker,
+                    storage=storage,
+                    model_resolution_snapshot_id=model_resolution_snapshot_id,
+                    lease_seconds=req.lease_seconds,
+                    canonical_run_id=canonical_run_id,
+                    budget_reservations=budget_reservations,
+                )
+            )
+            app.state.worker_run_tasks.add(task)
+        return {
+            "run_id": str(queued["id"]),
+            "state": str(queued.get("state") or "QUEUED"),
+            "dispatch_mode": "queued",
+            "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
+            "status_url": f"/workers/runs/{queued['id']}",
+            "events_url": f"/workers/runs/{queued['id']}/events",
+        }
     outcome = await controller.execute(
         request,
         adapter,
@@ -8014,9 +8561,11 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
         model_resolution_snapshot_id=model_resolution_snapshot_id,
     )
+    await _settle_worker_run_budgets(storage, budget_reservations, state=outcome.state)
     return {
         "run_id": str(outcome.run_id),
         "state": outcome.state,
+        "dispatch_mode": "inline",
         "accepted": outcome.accepted.model_dump(mode="json") if outcome.accepted else None,
         "result": outcome.result.model_dump(mode="json") if outcome.result else None,
         "events": [event.model_dump(mode="json") for event in outcome.events],
@@ -8031,6 +8580,27 @@ async def list_worker_runs_api(project_id: UUID | None = None, worker_id: UUID |
         return []
     rows = await storage.list_worker_runs(project_id=project_id, worker_id=worker_id, flow_instance_id=flow_instance_id, state=state, limit=limit, offset=offset)
     return [_serialize(row) for row in rows]
+
+
+@app.post("/workers/runs/recover-expired")
+async def recover_expired_worker_runs(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    rows = await _storage().recover_expired_worker_runs(limit=limit)
+    return {"recovered": len(rows), "runs": [_serialize(row) for row in rows]}
+
+
+@app.post("/workers/runs/{run_id}/heartbeat")
+async def heartbeat_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    owner = str(payload.get("owner") or "").strip()
+    if not owner:
+        raise HTTPException(422, "owner is required")
+    row = await _storage().heartbeat_worker_run(
+        run_id,
+        owner=owner,
+        lease_seconds=int(payload.get("lease_seconds") or 300),
+    )
+    if row is None:
+        raise HTTPException(409, "run is not owned by this executor or is terminal")
+    return _serialize(row)
 
 
 @app.get("/workers/runs/{run_id}")
@@ -8218,7 +8788,28 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
     row = await storage.get_worker_run(run_id)
     if row is None:
         raise HTTPException(404, "Worker run not found")
+    await storage.request_worker_run_cancel(run_id)
     if not row.get("adapter_id"):
+        if str(row.get("state")) in {"CREATED", "QUEUED", "CLAIMED"}:
+            cancelled = await storage.transition_worker_run(
+                run_id,
+                new_state="CANCELLED",
+                expected_state=str(row.get("state")),
+                error={
+                    "code": "CANCELLED",
+                    "message": str(payload.get("reason") or "operator cancellation"),
+                },
+                actor=str(payload.get("requested_by") or "operator"),
+                reason="cancelled before runtime activation",
+            )
+            if cancelled is None:
+                raise HTTPException(409, "worker run state changed before cancellation")
+            list_reservations = getattr(storage, "list_budget_reservations", None)
+            settle = getattr(storage, "settle_budget_reservation", None)
+            if inspect.iscoroutinefunction(list_reservations) and inspect.iscoroutinefunction(settle):
+                for reservation in await list_reservations(run_id=run_id):
+                    await settle(UUID(str(reservation["id"])), state="RELEASED")
+            return _serialize(cancelled)
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(row["worker_id"])))
     adapter = (
@@ -8237,6 +8828,11 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
     row = await WorkerRunController(storage=storage).cancel(run_id, adapter, reason=str(payload.get("reason") or "operator cancellation"), requested_by=str(payload.get("requested_by") or "operator"), force=bool(payload.get("force", False)))
     if row is None:
         raise HTTPException(404, "Worker run not found")
+    list_reservations = getattr(storage, "list_budget_reservations", None)
+    settle = getattr(storage, "settle_budget_reservation", None)
+    if str(row.get("state")) in {"CANCELLED", "FAILED", "TIMED_OUT"} and inspect.iscoroutinefunction(list_reservations) and inspect.iscoroutinefunction(settle):
+        for reservation in await list_reservations(run_id=run_id):
+            await settle(UUID(str(reservation["id"])), state="RELEASED")
     return _serialize(row)
 
 

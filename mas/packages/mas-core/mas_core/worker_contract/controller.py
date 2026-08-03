@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_RUN_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"})
 RUN_TRANSITIONS: dict[str, frozenset[str]] = {
-    "CREATED": frozenset({"VALIDATING", "FAILED", "CANCELLED"}),
+    "CREATED": frozenset({"QUEUED", "VALIDATING", "FAILED", "CANCELLED"}),
+    "QUEUED": frozenset({"VALIDATING", "FAILED", "CANCELLED"}),
+    "CLAIMED": frozenset({"VALIDATING", "QUEUED", "FAILED", "CANCELLED"}),
     "VALIDATING": frozenset({"READY", "FAILED", "CANCELLED"}),
     "READY": frozenset({"DISPATCHING", "FAILED", "CANCELLED"}),
     "DISPATCHING": frozenset({"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}),
@@ -237,6 +239,42 @@ class WorkerRunController:
                 "exact_model_id": usage.exact_model_id,
             },
         )
+        # The worker-specific record preserves the exact runtime payload;
+        # project_usage_events is the cross-tool/LLM accounting surface used
+        # by budgets and dashboards.  Keep this best-effort for lightweight
+        # storage doubles, but make the durable AgentStorage path idempotent.
+        project_id = request.project_id
+        record_usage = getattr(self.storage, "record_project_usage", None)
+        if project_id is not None and callable(record_usage):
+            worker_id: UUID | None = None
+            try:
+                worker_id = UUID(str(request.worker_id))
+            except (TypeError, ValueError):
+                pass
+            try:
+                await record_usage(
+                    project_id=project_id,
+                    event_type="llm",
+                    run_id=request.run_id,
+                    worker_id=worker_id,
+                    model=usage.exact_model_id,
+                    provider_id=usage.provider,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    cost_usd=usage.cost_usd,
+                    duration_ms=usage.duration_ms,
+                    resource_json={
+                        "cpu_seconds": usage.cpu_seconds,
+                        "memory_bytes": usage.memory_bytes,
+                    },
+                    idempotency_key=f"worker-run:{request.run_id}:usage",
+                    details={"source": "worker_result", "runtime_worker_id": request.worker_id},
+                )
+            except Exception:
+                # The worker-specific usage record above remains authoritative
+                # if a legacy storage double or a telemetry-only backend does
+                # not yet expose the project ledger columns.
+                logger.exception("project_usage_ledger_write_failed", extra={"run_id": str(request.run_id)})
 
     async def _mediate_tool_request(
         self,
@@ -373,7 +411,8 @@ class WorkerRunController:
         readiness: WorkerReadiness | None = None
         result: WorkerResult | None = None
         try:
-            await self.transition(request.run_id, "VALIDATING", expected="CREATED")
+            current_state = str((await self.get_run(request.run_id) or {}).get("state") or "CREATED")
+            await self.transition(request.run_id, "VALIDATING", expected=current_state)
             if (
                 bool((request.checkpoint_policy or {}).get("required"))
                 and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
@@ -506,9 +545,12 @@ class WorkerRunController:
             return None
         if row.get("state") in TERMINAL_RUN_STATES:
             return row
-        await adapter.cancel(WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force))
         current = str(row.get("state"))
-        if current in {"RUNNING", "DISPATCHING", "READY", "VALIDATING", "CREATED"}:
+        if current in {"QUEUED", "CLAIMED", "CREATED"}:
+            await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
+            return await self.get_run(run_id)
+        await adapter.cancel(WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force))
+        if current in {"RUNNING", "DISPATCHING", "READY", "VALIDATING"}:
             await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
         return await self.get_run(run_id)
 

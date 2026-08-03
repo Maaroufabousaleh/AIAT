@@ -59,6 +59,7 @@ class CrewAIAdapter:
         )
         self._crew = None
         self._initialized = False
+        self._availability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Instantiate the CrewAI crew from manifest.runtime_config."""
@@ -71,20 +72,17 @@ class CrewAIAdapter:
             # Verify crewai is installed
             importlib.import_module("crewai")
         except ImportError:
-            logger.warning(
-                "CrewAIAdapter %s: crewai package not installed; running in stub mode",
-                self.manifest.metadata.id,
-            )
-            self._initialized = True
+            self._availability_reason = "crewai package is not installed"
+            logger.warning("CrewAIAdapter %s unavailable: %s", self.manifest.metadata.id, self._availability_reason)
             return
 
         crew_cfg = self.capabilities.crew_config
         if not crew_cfg:
             logger.warning(
-                "CrewAIAdapter %s: no crew_config in runtime_config; running in stub mode",
+                "CrewAIAdapter %s unavailable: no crew_config in runtime_config",
                 self.manifest.metadata.id,
             )
-            self._initialized = True
+            self._availability_reason = "crew_config is required for an executable CrewAI worker"
             return
 
         try:
@@ -123,6 +121,9 @@ class CrewAIAdapter:
                 crew_kwargs["memory"] = True
 
             self._crew = Crew(**crew_kwargs)
+            if not agents or not tasks:
+                self._availability_reason = "crew_config must declare at least one agent and task"
+                return
             self._initialized = True
             logger.info(
                 "CrewAIAdapter %s initialized: %d agents, %d tasks, process=%s",
@@ -132,8 +133,8 @@ class CrewAIAdapter:
                 self.capabilities.process,
             )
         except Exception as exc:
-            logger.error("Failed to initialize CrewAI crew for %s: %s", self.manifest.metadata.id, exc)
-            self._initialized = True
+            self._availability_reason = f"CrewAI initialization failed: {exc}"
+            logger.exception("Failed to initialize CrewAI crew for %s", self.manifest.metadata.id)
 
     async def send_task(self, envelope: Any) -> dict[str, Any]:
         """Execute a task through the CrewAI crew."""
@@ -144,11 +145,12 @@ class CrewAIAdapter:
 
         if self._crew is None:
             return {
-                "status": "stub",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "crewai",
                 "worker_id": self.manifest.metadata.id,
+                "reason": self._availability_reason or "runtime is not initialized",
             }
 
         try:
@@ -176,6 +178,7 @@ class CrewAIAdapter:
     async def shutdown(self) -> None:
         self._crew = None
         self._initialized = False
+        self._availability_reason = None
         logger.info("CrewAIAdapter %s shut down", self.manifest.metadata.id)
 
     def _translate_input(self, envelope: Any) -> dict[str, Any]:

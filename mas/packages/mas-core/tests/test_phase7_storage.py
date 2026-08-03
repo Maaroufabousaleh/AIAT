@@ -194,6 +194,12 @@ class TestModelsMetadata:
         "work_item_comments",
         "work_item_links",
         "integration_evidence_records",
+        "companies",
+        "company_manifest_versions",
+        "company_departments",
+        "company_worker_assignments",
+        "company_budgets",
+        "budget_reservations",
     ]
 
     def test_all_current_tables_present(self):
@@ -211,6 +217,7 @@ class TestModelsMetadata:
         cols = {c.name for c in projects.columns}
         expected = {
             "id",
+            "company_id",
             "name",
             "description",
             "state",
