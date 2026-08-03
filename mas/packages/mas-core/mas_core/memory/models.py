@@ -29,6 +29,7 @@ projects = sa.Table(
     sa.Column("failed_from_state", sa.Text()),
     sa.Column("created_by", sa.Text(), nullable=False),
     sa.Column("human_requester", sa.Text()),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False),
     sa.Column("config", JSONB()),
     sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
     sa.Column(
@@ -207,6 +208,86 @@ issues = sa.Table(
         "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+)
+
+# ── 1a. companies and versioned manifests ───────────────────────────────────
+companies = sa.Table(
+    "companies",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("slug", sa.Text(), nullable=False, unique=True),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("description", sa.Text(), nullable=False, server_default=""),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("active_manifest_version_id", sa.UUID(), sa.ForeignKey("company_manifest_versions.id", ondelete="SET NULL")),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_manifest_versions = sa.Table(
+    "company_manifest_versions",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("schema_version", sa.Text(), nullable=False),
+    sa.Column("manifest_version", sa.Integer(), nullable=False),
+    sa.Column("digest", sa.String(64), nullable=False),
+    sa.Column("source", sa.Text(), nullable=False),
+    sa.Column("manifest_json", JSONB(), nullable=False),
+    sa.Column("compiler_version", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="APPLIED"),
+    sa.Column("compiled_by", sa.Text(), nullable=False),
+    sa.Column("compiled_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("error", sa.Text()),
+)
+
+company_departments = sa.Table(
+    "company_departments",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("department_key", sa.Text(), nullable=False),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("chief_worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
+    sa.Column("approval_policy", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_worker_assignments = sa.Table(
+    "company_worker_assignments",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("department_id", sa.UUID(), sa.ForeignKey("company_departments.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("manifest_version_id", sa.UUID(), sa.ForeignKey("company_manifest_versions.id", ondelete="RESTRICT")),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("tool_grants", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
+    sa.Column("permission_grants", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
+    sa.Column("model_profile_id", sa.Text()),
+    sa.Column("budget", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("approval_required", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_budgets = sa.Table(
+    "company_budgets",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("budget_key", sa.Text(), nullable=False),
+    sa.Column("limit_value", sa.Numeric(20, 8), nullable=False),
+    sa.Column("currency", sa.Text(), nullable=False, server_default="USD"),
+    sa.Column("period", sa.Text(), nullable=False, server_default="lifetime"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
 )
 
 # ── 9. kpi_snapshots ─────────────────────────────────────────────────────────
@@ -559,11 +640,19 @@ project_usage_events = sa.Table(
     sa.Column(
         "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     ),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="RESTRICT")),
+    sa.Column("run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="SET NULL")),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
     sa.Column("event_type", sa.Text(), nullable=False),
     sa.Column("agent_id", sa.Text()),
     sa.Column("team_id", sa.Text()),
     sa.Column("model", sa.Text()),
+    sa.Column("provider_id", sa.Text()),
     sa.Column("tool_name", sa.Text()),
+    sa.Column("billing_code", sa.Text()),
+    sa.Column("pricing_snapshot", JSONB()),
+    sa.Column("resource_json", JSONB()),
+    sa.Column("idempotency_key", sa.Text()),
     sa.Column("status", sa.Text(), nullable=False, server_default="success"),
     sa.Column("prompt_tokens", sa.Integer(), nullable=False, server_default="0"),
     sa.Column("completion_tokens", sa.Integer(), nullable=False, server_default="0"),
@@ -577,6 +666,30 @@ project_usage_events = sa.Table(
     ),
     sa.CheckConstraint(
         "event_type IN ('llm', 'tool')", name="ck_project_usage_events_event_type"
+    ),
+)
+
+budget_reservations = sa.Table(
+    "budget_reservations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE")),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
+    sa.Column("run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="SET NULL")),
+    sa.Column("budget_key", sa.Text(), nullable=False),
+    sa.Column("amount", sa.Numeric(20, 8), nullable=False),
+    sa.Column("currency", sa.Text(), nullable=False, server_default="USD"),
+    sa.Column("state", sa.Text(), nullable=False, server_default="RESERVED"),
+    sa.Column("idempotency_key", sa.Text(), nullable=False, unique=True),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("committed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("released_at", sa.TIMESTAMP(timezone=True)),
+    sa.CheckConstraint("amount >= 0", name="ck_budget_reservation_amount"),
+    sa.CheckConstraint(
+        "state IN ('RESERVED', 'COMMITTED', 'RELEASED')",
+        name="ck_budget_reservation_state",
     ),
 )
 
@@ -1302,6 +1415,15 @@ worker_runs = sa.Table(
     sa.Column("model_resolution_snapshot_id", sa.UUID(), sa.ForeignKey("model_resolution_snapshots.id", ondelete="SET NULL")),
     sa.Column("task_type", sa.Text(), nullable=False),
     sa.Column("state", sa.Text(), nullable=False, server_default="CREATED"),
+    sa.Column("queue_priority", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("claim_owner", sa.Text()),
+    sa.Column("claimed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("lease_expires_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("heartbeat_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("cancel_requested_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("recovery_reason", sa.Text()),
     sa.Column("request_json", JSONB(), nullable=False),
     sa.Column("negotiation_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("result_json", JSONB()),

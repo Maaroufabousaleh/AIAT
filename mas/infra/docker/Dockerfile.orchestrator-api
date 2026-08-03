@@ -37,6 +37,7 @@ RUN pip install --no-deps /tmp/mas-core && \
         psutil \
         aiolimiter \
         apscheduler \
+        pyyaml \
         alembic \
         psycopg2-binary \
         cryptography
@@ -49,6 +50,7 @@ COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
 COPY workers/ /app/workers/
+COPY companies/ /app/companies/
 COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 
 WORKDIR /app

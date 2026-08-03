@@ -55,6 +55,7 @@ class LettaAdapter:
         self._client = None
         self._agent_id = None
         self._initialized = False
+        self._availability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Connect to the Letta server or embed the Letta runtime."""
@@ -65,40 +66,25 @@ class LettaAdapter:
             import importlib
             importlib.import_module("letta")
         except ImportError:
-            logger.warning(
-                "LettaAdapter %s: letta package not installed; running in stub mode",
-                self.manifest.metadata.id,
-            )
-            self._initialized = True
+            self._availability_reason = "letta package is not installed"
+            logger.warning("LettaAdapter %s unavailable: %s", self.manifest.metadata.id, self._availability_reason)
             return
 
         if not self.capabilities.persona:
             logger.warning(
-                "LettaAdapter %s: no persona defined in runtime_config; running in stub mode",
+                "LettaAdapter %s unavailable: no persona defined in runtime_config",
                 self.manifest.metadata.id,
             )
-            self._initialized = True
+            self._availability_reason = "persona is required for an executable Letta worker"
             return
 
         try:
-            # Letta client setup would connect to a Letta server here
-            # For Epsilon, the adapter is registered and persona is validated
-            self._client = {
-                "persona": self.capabilities.persona,
-                "embedding_model": self.capabilities.embedding_model,
-                "persistence_store": self.capabilities.persistence_store,
-                "memory_block_types": self.capabilities.memory_block_types,
-            }
-            self._initialized = True
-            logger.info(
-                "LettaAdapter %s initialized: persona=%s, store=%s",
-                self.manifest.metadata.id,
-                self.capabilities.persona[:50],
-                self.capabilities.persistence_store,
-            )
+            # A client must be explicitly configured with an approved endpoint
+            # and credential.  Do not turn package presence into a fake agent.
+            self._availability_reason = "no certified Letta client endpoint is configured"
         except Exception as exc:
-            logger.error("Failed to initialize Letta agent for %s: %s", self.manifest.metadata.id, exc)
-            self._initialized = True
+            self._availability_reason = f"Letta initialization failed: {exc}"
+            logger.exception("Failed to initialize Letta agent for %s", self.manifest.metadata.id)
 
     async def send_task(self, envelope: Any) -> dict[str, Any]:
         """Send a task to the Letta agent."""
@@ -109,24 +95,26 @@ class LettaAdapter:
 
         if self._client is None:
             return {
-                "status": "stub",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "letta",
                 "worker_id": self.manifest.metadata.id,
+                "reason": self._availability_reason or "runtime is not initialized",
             }
 
         try:
             # Letta agent execution would send to the Letta server here
             return {
-                "status": "configured",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "letta",
                 "worker_id": self.manifest.metadata.id,
                 "persona": self.capabilities.persona[:50],
                 "memory_blocks": self.capabilities.memory_block_types,
-                "note": "Letta agent ready for activation; memory audit required",
+                "note": "Letta package detected but no certified client endpoint is configured",
+                "reason": self._availability_reason or "no certified client",
             }
         except Exception as exc:
             logger.error("Letta execution failed for %s: %s", self.manifest.metadata.id, exc)
@@ -145,6 +133,7 @@ class LettaAdapter:
         self._client = None
         self._agent_id = None
         self._initialized = False
+        self._availability_reason = None
         logger.info("LettaAdapter %s shut down", self.manifest.metadata.id)
 
     def _translate_input(self, envelope: Any) -> dict[str, Any]:

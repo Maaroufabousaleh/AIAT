@@ -16,7 +16,9 @@ remaining validation work are tracked by the phased plans under
 - Provider-neutral PM/SCM adapter package plus the internet-facing `pm-gateway`.
 - Shared Python packages: `mas-core` and `mas-tools-sdk`.
 - Next.js dashboard at `apps/mas-dashboard`, exposed at `http://localhost:4000`.
-- 7 configured executive/C-suite teams, 12 worker manifests, and 7 system prompts.
+- 11 configured departments, 39 worker manifests, and 11 role prompts.
+- Versioned company manifests, durable worker-run queues/leases, idempotent usage
+  accounting, and atomic company budget reservations.
 - Postgres-first workflow and knowledge model with MinIO blob storage and
   optional pgvector semantic retrieval.
 - Configurable orchestration flows with API and dashboard support.
@@ -47,8 +49,9 @@ infra/
   docker/                Dockerfiles
   systemd/               masctl and systemd service units
   sandbox/               Sandbox profile notes/templates
-teams/                   7 executive/C-suite team YAML configs
-workers/                 12 worker manifests
+companies/               Versioned company/org/budget manifests
+teams/                   11 department YAML configs
+workers/                 39 worker manifests
 prompts/                 11 role system prompts
 docs/                    Architecture notes
 ```
@@ -179,11 +182,14 @@ MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live
 
 ## Runtime Shape
 
-Base compose defines 17 long-running services plus two one-shot init jobs:
+Base compose defines the core infrastructure, control-plane services, analytics,
+and 11 team runners plus one-shot init jobs. The signed identity service and
+private identity database/migration are enabled by the `mail-local` profile in
+`infra/compose/docker-compose.stalwart-local.yml`.
 
 - Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
   orchestrator-api, message-router, tool-service, dashboard, LiteLLM,
-  OmniRoute, and 7 team runners.
+  OmniRoute, and 11 team runners.
 - One-shot init jobs: Redis ACL init and MinIO bucket/user init.
 - Dev overlay adds pgAdmin, RedisInsight, LiteLLM and OmniRoute host access,
   plus optional Prometheus platform metrics. Grafana is not bundled.
@@ -193,7 +199,9 @@ Next.js API routes, and those routes hold service credentials server-side.
 
 ## Planning
 
-Implementation truth is split across the active phased plans:
+The reconciled implementation plan is [`../Docs/AIAT_Deep_Research_Implementation_Plan.md`](../Docs/AIAT_Deep_Research_Implementation_Plan.md).
+Historical phased plans remain useful for context, but the reconciled plan and
+the license/provenance inventory are authoritative for current work:
 
 - `../.github/prompts/PLAN_alpha_beta.md`
 - `../.github/prompts/PLAN_gamma.md`

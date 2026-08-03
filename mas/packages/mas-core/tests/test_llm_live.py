@@ -21,22 +21,26 @@ from dotenv import load_dotenv
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.llm_gateway.models import ChatResponse, LLMConfig
 
-# Load root .env so local live runs inherit the same keys as Compose.
+# Load root .env only for an explicitly enabled live run.  Import-time dotenv
+# loading would leak local production-shaped settings into the unit-test
+# process (for example PM_GATEWAY_API_KEY), making unrelated configuration
+# tests order-dependent.
 _loaded = False
-for _base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
-    _d = _base
-    for _ in range(8):
-        _candidate = os.path.join(_d, ".env")
-        if os.path.isfile(_candidate):
-            load_dotenv(_candidate, override=False)
-            _loaded = True
+if os.environ.get("MAS_RUN_LIVE_TESTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+    for _base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+        _d = _base
+        for _ in range(8):
+            _candidate = os.path.join(_d, ".env")
+            if os.path.isfile(_candidate):
+                load_dotenv(_candidate, override=False)
+                _loaded = True
+                break
+            _parent = os.path.dirname(_d)
+            if _parent == _d:
+                break
+            _d = _parent
+        if _loaded:
             break
-        _parent = os.path.dirname(_d)
-        if _parent == _d:
-            break
-        _d = _parent
-    if _loaded:
-        break
 
 SIMPLE_PROMPT = [{"role": "user", "content": "What is 2+2? Reply with just the number."}]
 EXPECTED_ALIASES = {

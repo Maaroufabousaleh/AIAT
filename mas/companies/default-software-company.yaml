@@ -1,0 +1,91 @@
+schema_version: "1"
+slug: aiat-default
+name: AIAT Default Software Company
+description: Default governed software-company manifest for a fresh AIAT installation.
+ceo_worker_id: ceo
+departments:
+  - id: exec_ceo
+    name: CEO Office
+    chief_worker_id: ceo
+    worker_ids: [ceo]
+  - id: exec_coo
+    name: Operations
+    chief_worker_id: coo
+    worker_ids: [coo]
+  - id: office_cfo
+    name: CFO Office
+    chief_worker_id: cfo
+    worker_ids: [cfo]
+  - id: office_cio
+    name: CIO Office
+    chief_worker_id: cio
+    worker_ids: [cio]
+  - id: office_chrm
+    name: CHRM Office
+    chief_worker_id: chrm
+    worker_ids: [chrm]
+  - id: office_cso
+    name: CSO Office
+    chief_worker_id: cso
+    worker_ids: [cso]
+  - id: office_cto
+    name: CTO Office
+    chief_worker_id: cto
+    worker_ids: [cto]
+  - id: dept_production
+    name: Production
+    chief_worker_id: production_pm
+    worker_ids: [production_pm]
+  - id: dept_system
+    name: System
+    chief_worker_id: system_pm
+    worker_ids: [system_pm]
+  - id: dept_qa
+    name: Quality Assurance
+    chief_worker_id: qa_lead
+    worker_ids: [qa_lead]
+  - id: dept_devops
+    name: DevOps
+    chief_worker_id: devops_pm
+    worker_ids: [devops_pm]
+worker_assignments:
+  - worker_id: ceo
+    department_id: exec_ceo
+    status: ACTIVE
+    permission_grants: [company.manage, approval.decide]
+  - worker_id: coo
+    department_id: exec_coo
+    status: ACTIVE
+  - worker_id: cfo
+    department_id: office_cfo
+    status: ACTIVE
+  - worker_id: cio
+    department_id: office_cio
+    status: ACTIVE
+  - worker_id: chrm
+    department_id: office_chrm
+    status: ACTIVE
+  - worker_id: cso
+    department_id: office_cso
+    status: ACTIVE
+  - worker_id: cto
+    department_id: office_cto
+    status: ACTIVE
+  - worker_id: production_pm
+    department_id: dept_production
+    status: ACTIVE
+  - worker_id: system_pm
+    department_id: dept_system
+    status: ACTIVE
+  - worker_id: qa_lead
+    department_id: dept_qa
+    status: ACTIVE
+  - worker_id: devops_pm
+    department_id: dept_devops
+    status: ACTIVE
+budgets:
+  max_cost_usd: 100.0
+  max_concurrent_runs: 20
+policy:
+  require_human_approval_for_external_workers: true
+  default_sandbox_profile: gvisor

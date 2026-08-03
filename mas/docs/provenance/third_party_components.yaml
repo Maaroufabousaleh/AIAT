@@ -1,0 +1,113 @@
+schema_version: "1"
+policy:
+  product_license: proprietary
+  default_license_allowlist: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, MPL-2.0, ISC]
+  require_exact_version: true
+  require_source_and_license_evidence: true
+  prohibited_default_licenses: [AGPL-3.0, GPL-3.0-only, BUSL-1.1]
+  prohibited_default_components:
+    - trufflehog
+    - plane
+    - zitadel
+    - hashicorp-vault
+    - ansible
+    - openproject
+    - neo4j-community
+    - browser-use-unrestricted
+components:
+  - id: langgraph
+    role: default-worker-runtime
+    license: MIT
+    version: 0.6.11
+    source: https://github.com/langchain-ai/langgraph
+    license_evidence: https://github.com/langchain-ai/langgraph/blob/main/LICENSE
+    integration: python-dependency
+    status: approved
+  - id: crewai
+    role: default-worker-runtime
+    license: MIT
+    version: 1.6.1
+    source: https://github.com/crewAIInc/crewAI
+    license_evidence: https://github.com/crewAIInc/crewAI/blob/main/LICENSE
+    integration: python-dependency
+    status: approved
+  - id: microsoft-agent-framework
+    role: default-worker-runtime
+    license: MIT
+    version: optional-not-installed
+    source: https://github.com/microsoft/agent-framework
+    license_evidence: https://github.com/microsoft/agent-framework/blob/main/LICENSE
+    integration: optional-adapter
+    status: approved-pending-locked-mcp-compatibility
+  - id: opencode
+    role: coding-worker-runtime
+    license: MIT
+    version: 1.17.13
+    source: https://github.com/anomalyco/opencode
+    license_evidence: https://github.com/anomalyco/opencode/blob/dev/LICENSE
+    integration: pinned-container
+    status: approved
+  - id: docling
+    role: document-ingestion
+    license: MIT
+    version: operator-pinned
+    source: https://github.com/docling-project/docling
+    license_evidence: https://github.com/docling-project/docling/blob/main/LICENSE
+    integration: subprocess-adapter
+    status: approved
+  - id: semgrep
+    role: security-evaluator
+    license: LGPL-2.1
+    version: 1.168.0
+    source: https://github.com/semgrep/semgrep
+    license_evidence: https://github.com/semgrep/semgrep/blob/develop/LICENSE
+    integration: external-cli
+    status: approved-with-cli-boundary
+  - id: gvisor
+    role: sandbox
+    license: Apache-2.0
+    version: host-pinned
+    source: https://github.com/google/gvisor
+    license_evidence: https://github.com/google/gvisor/blob/master/LICENSE
+    integration: runtime-profile
+    status: approved
+  - id: firecracker
+    role: high-risk-sandbox
+    license: Apache-2.0
+    version: host-pinned
+    source: https://github.com/firecracker-microvm/firecracker
+    license_evidence: https://github.com/firecracker-microvm/firecracker/blob/main/LICENSE-APACHE
+    integration: optional-runtime-profile
+    status: approved
+  - id: opentofu
+    role: iac-adapter
+    license: MPL-2.0
+    version: operator-pinned
+    source: https://github.com/opentofu/opentofu
+    license_evidence: https://github.com/opentofu/opentofu/blob/main/LICENSE
+    integration: external-cli
+    status: approved-with-modification-boundary
+  - id: ccpm
+    role: planning-adapter
+    license: MIT
+    version: adapter-pinned
+    source: https://github.com/automazeio/ccpm
+    license_evidence: https://github.com/automazeio/ccpm/blob/main/LICENSE
+    integration: external-adapter
+    status: approved
+  - id: litellm
+    role: model-gateway-analytics
+    license: MIT
+    version: image-pinned
+    source: https://github.com/BerriAI/litellm
+    license_evidence: https://github.com/BerriAI/litellm/blob/main/LICENSE
+    integration: external-service
+    status: approved-outside-enterprise-tree
+  - id: omniroute
+    role: routing-analytics
+    license: MIT
+    version: 3.8.38
+    source: https://github.com/diegosouzapw/OmniRoute
+    license_evidence: https://github.com/diegosouzapw/OmniRoute/blob/main/LICENSE
+    integration: external-service
+    status: approved

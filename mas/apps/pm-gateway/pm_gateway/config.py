@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     )
     environment: str = Field(
         default="development",
-        validation_alias=AliasChoices("ENVIRONMENT", "PM_GATEWAY_ENVIRONMENT", "MAS_ENVIRONMENT"),
+        # Prefer the gateway-specific profile when a shared process also
+        # exports a generic ENVIRONMENT/MAS_ENVIRONMENT value.
+        validation_alias=AliasChoices("PM_GATEWAY_ENVIRONMENT", "ENVIRONMENT", "MAS_ENVIRONMENT"),
     )
 
     model_config = {"env_prefix": "", "case_sensitive": False, "populate_by_name": True}
