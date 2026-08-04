@@ -1088,6 +1088,18 @@ class TestWorkerManifestModel:
                 }
             )
 
+    def test_worker_manifest_accepts_microsoft_agent_framework(self):
+        manifest = WorkerManifest.model_validate(
+            {
+                "metadata": {"id": "ms_worker", "name": "Microsoft Worker"},
+                "runtime_tier": "microsoft_agent_framework",
+                "integration": {"isolation_mode": "microsoft_agent_framework"},
+            }
+        )
+
+        assert manifest.runtime_tier == "microsoft_agent_framework"
+        assert manifest.integration.isolation_mode == "microsoft_agent_framework"
+
     def test_placeholder_manifests_are_valid_and_not_seeded_by_default(self):
         placeholders = Path(__file__).resolve().parents[3] / "workers" / "placeholders"
         manifests = sorted(placeholders.glob("*.yaml"))

@@ -2950,7 +2950,7 @@ class AgentStorage:
             ).with_for_update())).mappings().first()
             if row is None or str(row["digest"]) != digest:
                 raise ValueError("canary plan not found or digest mismatch")
-            if str(row["status"]) in {"SUCCEEDED", "EXPIRED", "ROLLED_BACK", "FAILED"}:
+            if str(row["status"]) in {"SUCCEEDED", "ROLLED_BACK", "FAILED"}:
                 return dict(row)
             evidence = {
                 "id": uuid4(), "connection_id": row["connection_id"], "binding_id": row["binding_id"],
@@ -2959,7 +2959,13 @@ class AgentStorage:
                 "payload": self._pm_json_safe({"plan_id": str(plan_id), "digest": digest, "actor": actor, "reason": reason, "occurred_at": now.isoformat()}),
                 "idempotency_key": f"pm-inbound-canary:{plan_id}:disarm:{digest}", "created_at": now,
             }
-            await conn.execute(t.integration_evidence_records.insert().values(**evidence))
+            await conn.execute(
+                pg_insert(t.integration_evidence_records)
+                .values(**evidence)
+                .on_conflict_do_nothing(index_elements=[t.integration_evidence_records.c.idempotency_key])
+            )
+            if str(row["status"]) == "EXPIRED":
+                return dict(row)
             await conn.execute(t.pm_inbound_canary_plans.update().where(
                 t.pm_inbound_canary_plans.c.id == plan_id
             ).values(status="FAILED", error=reason, completed_at=now, updated_at=now))
@@ -5038,8 +5044,8 @@ class AgentStorage:
         inside one transaction so concurrent workers cannot oversubscribe it.
         """
         normalized_amount = Decimal(str(amount))
-        if normalized_amount < 0:
-            raise ValueError("budget reservation amount must be non-negative")
+        if not normalized_amount.is_finite() or normalized_amount < 0:
+            raise ValueError("budget reservation amount must be finite and non-negative")
         if not budget_key.strip() or not idempotency_key.strip():
             raise ValueError("budget_key and idempotency_key are required")
         async with self.engine.begin() as conn:
@@ -5105,12 +5111,56 @@ class AgentStorage:
         reservation_id: UUID,
         *,
         state: str,
+        amount: Decimal | float | int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Commit or release a reservation exactly once."""
+        """Commit actual usage or release a reservation exactly once.
+
+        Cost settlement is serialized with new reservations by locking the
+        company budget row before summing every other active reservation.  If
+        reported usage exceeds the remaining cap, only the remaining amount is
+        committed; the full billed amount and capped overage stay in metadata
+        for audit/reconciliation without ever making the budget ledger exceed
+        its configured limit.
+        """
         if state not in {"COMMITTED", "RELEASED"}:
             raise ValueError("budget reservation state must be COMMITTED or RELEASED")
-        now = datetime.now(tz=UTC)
+        committed_amount = Decimal(str(amount)) if amount is not None else None
+        if committed_amount is not None and (
+            state != "COMMITTED" or not committed_amount.is_finite() or committed_amount < 0
+        ):
+            raise ValueError("committed budget amount must be finite and non-negative")
         async with self.engine.begin() as conn:
+            reservation_snapshot = (
+                await conn.execute(
+                    t.budget_reservations.select().where(t.budget_reservations.c.id == reservation_id)
+                )
+            ).mappings().first()
+            if reservation_snapshot is None:
+                return None
+            if reservation_snapshot["state"] in {"COMMITTED", "RELEASED"}:
+                return dict(reservation_snapshot)
+
+            # Reserve and settle take this lock first, which prevents a
+            # concurrent reservation from passing its cap check while this
+            # settlement is reducing or committing the current amount.
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select()
+                    .where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == reservation_snapshot["company_id"],
+                            t.company_budgets.c.budget_key == reservation_snapshot["budget_key"],
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if budget is None and state == "COMMITTED":
+                raise ValueError(
+                    f"BUDGET_EXCEEDED:{reservation_snapshot['budget_key']}:configured budget is missing"
+                )
+
             row = (
                 await conn.execute(
                     t.budget_reservations.select()
@@ -5122,7 +5172,42 @@ class AgentStorage:
                 return None
             if row["state"] in {"COMMITTED", "RELEASED"}:
                 return dict(row)
+
+            now = datetime.now(tz=UTC)
             values: dict[str, Any] = {"state": state}
+            if committed_amount is not None:
+                # The current reservation is excluded because its original
+                # requested amount is being replaced by actual usage.
+                other_reserved = (
+                    await conn.execute(
+                        sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0))
+                        .where(
+                            sa.and_(
+                                t.budget_reservations.c.company_id == row["company_id"],
+                                t.budget_reservations.c.budget_key == row["budget_key"],
+                                t.budget_reservations.c.id != reservation_id,
+                                t.budget_reservations.c.state.in_(
+                                    ("RESERVED", "COMMITTED")
+                                ),
+                            )
+                        )
+                    )
+                ).scalar_one()
+                limit_value = Decimal(str(budget["limit_value"]))
+                available = max(Decimal("0"), limit_value - Decimal(str(other_reserved or 0)))
+                settled_amount = min(committed_amount, available)
+                values["amount"] = settled_amount
+                settlement_metadata = dict(row.get("metadata") or {})
+                settlement_metadata.update(metadata or {})
+                settlement_metadata["actual_cost_usd"] = str(committed_amount)
+                if committed_amount > settled_amount:
+                    settlement_metadata["budget_overage_usd"] = str(
+                        committed_amount - settled_amount
+                    )
+                    settlement_metadata["budget_settlement"] = "CAP_EXCEEDED"
+                values["metadata"] = settlement_metadata
+            elif metadata:
+                values["metadata"] = {**dict(row.get("metadata") or {}), **metadata}
             values["committed_at" if state == "COMMITTED" else "released_at"] = now
             await conn.execute(
                 t.budget_reservations.update()

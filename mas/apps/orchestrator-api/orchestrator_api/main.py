@@ -985,6 +985,7 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
             }
         )
 
+    manifest = (persistent_company or {}).get("manifest") if persistent_company else None
     return {
         "company": {
             "id": str((persistent_company or {}).get("company", {}).get("id") or DEFAULT_COMPANY_ID),
@@ -1007,7 +1008,7 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
             "capabilities": len(capabilities),
             "evaluation_warnings": sum(1 for w in workers if _worker_eval_warning(w)),
         },
-        "manifest": _serialize((persistent_company or {}).get("manifest")) if persistent_company else None,
+        "manifest": _serialize(manifest) if manifest is not None else None,
         "company_assignments": (persistent_company or {}).get("assignments") or [],
         "company_budgets": (persistent_company or {}).get("budgets") or [],
     }
@@ -1312,7 +1313,7 @@ class PMInboundCanaryPlanCreateRequest(BaseModel):
     mapping_id: UUID
     actor_mapping_id: UUID
     target_priority: Literal["low", "medium", "high", "urgent", "critical", "normal"] | None = None
-    ttl_seconds: int = Field(default=900, ge=60, le=7200)
+    ttl_seconds: int = Field(default=900, ge=60, le=14400)
 
 
 class PMInboundCanaryPlanActionRequest(BaseModel):
@@ -5078,14 +5079,28 @@ async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, An
     """Load and atomically apply the checked-in default company manifest."""
     import inspect
     from pathlib import Path
+
     import yaml
 
-    manifest_path = Path(
-        os.environ.get("COMPANY_MANIFEST_PATH", "companies/default-software-company.yaml")
-    )
+    configured_manifest_path = os.environ.get("COMPANY_MANIFEST_PATH")
+    if configured_manifest_path:
+        manifest_path = Path(configured_manifest_path)
+    else:
+        default_manifest_name = Path("companies/default-software-company.yaml")
+        # Compose runs from /app, while repository tests run from the
+        # workspace root. Resolve the checked-in default from either runtime
+        # layout, but never fall back when an explicit path was supplied.
+        candidates = (
+            default_manifest_name,
+            Path(__file__).resolve().parents[1] / default_manifest_name,
+            Path(__file__).resolve().parents[3] / default_manifest_name,
+        )
+        manifest_path = next(
+            (candidate for candidate in candidates if candidate.is_file()),
+            candidates[0],
+        )
     if not manifest_path.is_file():
-        logger.warning("Company manifest %s not found; skipping default company bootstrap", manifest_path)
-        return None
+        raise FileNotFoundError(f"default company manifest not found: {manifest_path}")
     apply_manifest = getattr(storage, "apply_company_manifest", None)
     # A few compatibility/test storage doubles predate the company control-plane
     # API.  They must continue to support the legacy seed endpoint without
@@ -8204,12 +8219,72 @@ async def preview_model_resolution(req: ModelResolutionPreviewRequest) -> dict[s
     return ModelProfileResolver().dry_run(await _persisted_model_profiles(storage), request)
 
 
+async def _enforce_company_dispatch_grants(
+    *,
+    storage: Any,
+    project_id: UUID | None,
+    worker_id: UUID,
+    tool_grants: list[str],
+    permission_requirements: list[str],
+) -> UUID | None:
+    """Require company-backed runs to stay within the active assignment grants."""
+
+    if project_id is None:
+        return None
+    project = await storage.get_project(project_id)
+    if project is None or not project.get("company_id"):
+        return None
+    company_id = UUID(str(project["company_id"]))
+    list_assignments = getattr(storage, "list_company_worker_assignments", None)
+    if not inspect.iscoroutinefunction(list_assignments):
+        raise HTTPException(
+            503,
+            {
+                "code": "COMPANY_ASSIGNMENT_STORE_UNAVAILABLE",
+                "message": "Company assignment grants cannot be verified",
+            },
+        )
+    assignments = await list_assignments(company_id)
+    assignment = next(
+        (
+            item
+            for item in assignments
+            if UUID(str(item["worker_id"])) == worker_id
+        ),
+        None,
+    )
+    if assignment is None or str(assignment.get("status")) != "ACTIVE":
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_REQUIRED",
+                "message": "Worker has no active assignment for this company",
+            },
+        )
+    unapproved_tools = sorted(set(tool_grants) - set(assignment.get("tool_grants") or []))
+    unapproved_permissions = sorted(
+        set(permission_requirements) - set(assignment.get("permission_grants") or [])
+    )
+    if unapproved_tools or unapproved_permissions:
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_GRANT_EXCEEDED",
+                "message": "Worker Run grants exceed the active company manifest assignment",
+                "unapproved_tool_grants": unapproved_tools,
+                "unapproved_permission_requirements": unapproved_permissions,
+            },
+        )
+    return company_id
+
+
 async def _reserve_worker_run_budgets(
     *,
     storage: Any,
     request: Any,
     worker_id: UUID,
     project_id: UUID | None,
+    company_id: UUID | None = None,
 ) -> list[tuple[UUID, str]]:
     """Reserve configured company budgets before a run enters the queue.
 
@@ -8221,11 +8296,11 @@ async def _reserve_worker_run_budgets(
     reserve = getattr(storage, "reserve_budget", None)
     if not inspect.iscoroutinefunction(reserve):
         return []
-    company_id = DEFAULT_COMPANY_ID
-    if project_id is not None:
+    resolved_company_id = company_id or DEFAULT_COMPANY_ID
+    if company_id is None and project_id is not None:
         project = await storage.get_project(project_id)
         if project is not None and project.get("company_id"):
-            company_id = UUID(str(project["company_id"]))
+            resolved_company_id = UUID(str(project["company_id"]))
     requested_cost = request.budget_usd if hasattr(request, "budget_usd") else None
     if requested_cost is None:
         requested_cost = (request.budget or {}).get("max_cost_usd")
@@ -8239,7 +8314,7 @@ async def _reserve_worker_run_budgets(
     try:
         for budget_key, amount in budgets:
             reservation = await reserve(
-                company_id=company_id,
+                company_id=resolved_company_id,
                 budget_key=budget_key,
                 amount=amount,
                 idempotency_key=f"worker-run:{worker_id}:{request.idempotency_key}:{budget_key}",
@@ -8264,15 +8339,31 @@ async def _settle_worker_run_budgets(
     reservations: list[tuple[UUID, str]],
     *,
     state: str,
+    actual_cost_usd: float | Decimal | None = None,
 ) -> None:
     settle = getattr(storage, "settle_budget_reservation", None)
     if not inspect.iscoroutinefunction(settle):
         return
     successful = state == "SUCCEEDED"
+    reported_cost = Decimal(str(actual_cost_usd)) if actual_cost_usd is not None else None
+    billed_failed_run = reported_cost is not None and reported_cost > 0
     for reservation_id, budget_key in reservations:
-        reservation_state = "RELEASED" if budget_key == "max_concurrent_runs" or not successful else "COMMITTED"
+        cost_has_authoritative_usage = successful and reported_cost is not None
+        cost_has_failed_usage = budget_key == "max_cost_usd" and billed_failed_run
+        reservation_state = (
+            "RELEASED"
+            if budget_key == "max_concurrent_runs"
+            or (budget_key == "max_cost_usd" and not (cost_has_authoritative_usage or cost_has_failed_usage))
+            or (budget_key != "max_cost_usd" and not successful)
+            else "COMMITTED"
+        )
         try:
-            await settle(reservation_id, state=reservation_state)
+            settlement_kwargs: dict[str, Any] = {"state": reservation_state}
+            if budget_key == "max_cost_usd" and reservation_state == "COMMITTED":
+                settlement_kwargs["amount"] = reported_cost or Decimal("0")
+                if not successful and billed_failed_run:
+                    settlement_kwargs["metadata"] = {"settlement_reason": "failed_run_billed_usage"}
+            await settle(reservation_id, **settlement_kwargs)
         except Exception:
             logger.exception(
                 "worker_budget_settlement_failed",
@@ -8298,6 +8389,7 @@ async def _execute_queued_worker_run(
     owner = f"orchestrator-background:{run_id}"
     heartbeat_task: asyncio.Task[Any] | None = None
     outcome_state = "FAILED"
+    actual_cost_usd: float | Decimal | None = None
 
     async def renew_lease() -> None:
         while True:
@@ -8325,6 +8417,8 @@ async def _execute_queued_worker_run(
             model_resolution_snapshot_id=model_resolution_snapshot_id,
         )
         outcome_state = outcome.state
+        if outcome.result is not None:
+            actual_cost_usd = outcome.result.usage.cost_usd
     except asyncio.CancelledError:
         logger.info("queued_worker_run_cancelled", extra={"run_id": str(run_id)})
         raise
@@ -8338,6 +8432,7 @@ async def _execute_queued_worker_run(
             storage,
             budget_reservations or [],
             state=outcome_state,
+            actual_cost_usd=actual_cost_usd,
         )
         current = asyncio.current_task()
         if current is not None:
@@ -8352,6 +8447,13 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         raise HTTPException(404, f"Worker {req.worker_id} not found")
     if worker.get("status") not in {"ACTIVE", "DRAINING"}:
         raise HTTPException(409, "Worker is not active")
+    company_id = await _enforce_company_dispatch_grants(
+        storage=storage,
+        project_id=req.project_id,
+        worker_id=req.worker_id,
+        tool_grants=req.tool_grants,
+        permission_requirements=req.permission_requirements,
+    )
     adapter = await _certified_worker_adapter(storage, worker)
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
@@ -8501,67 +8603,77 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             request=request,
             worker_id=req.worker_id,
             project_id=req.project_id,
+            company_id=company_id,
         )
     except ValueError as exc:
         raise HTTPException(409, {"code": "BUDGET_EXCEEDED", "message": str(exc)}) from exc
     dispatch_mode = req.dispatch_mode or ("queued" if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} else "inline")
-    if dispatch_mode == "queued":
-        queued = await storage.create_worker_run(
-            run_id=request.run_id,
-            worker_id=req.worker_id,
-            idempotency_key=req.idempotency_key,
-            task_type=req.task_type,
-            request=request.model_dump(mode="json"),
-            project_id=req.project_id,
-            flow_id=req.flow_id,
-            flow_instance_id=req.flow_instance_id,
-            flow_node_execution_id=req.flow_node_execution_id,
+    try:
+        if dispatch_mode == "queued":
+            queued = await storage.create_worker_run(
+                run_id=request.run_id,
+                worker_id=req.worker_id,
+                idempotency_key=req.idempotency_key,
+                task_type=req.task_type,
+                request=request.model_dump(mode="json"),
+                project_id=req.project_id,
+                flow_id=req.flow_id,
+                flow_instance_id=req.flow_instance_id,
+                flow_node_execution_id=req.flow_node_execution_id,
+                worker_shell_version_id=worker.get("active_shell_version_id"),
+                adapter_id=worker.get("active_adapter_id"),
+                steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+                model_resolution_snapshot_id=model_resolution_snapshot_id,
+                state="QUEUED",
+                queue_priority=req.queue_priority,
+            )
+            canonical_run_id = UUID(str(queued["id"]))
+            claim = await storage.claim_worker_run(
+                owner=f"orchestrator-background:{canonical_run_id}",
+                lease_seconds=req.lease_seconds,
+                run_id=canonical_run_id,
+            )
+            if claim is not None and str(claim.get("state")) == "CLAIMED":
+                task = asyncio.create_task(
+                    _execute_queued_worker_run(
+                        controller=controller,
+                        request=request,
+                        adapter=adapter,
+                        worker=worker,
+                        storage=storage,
+                        model_resolution_snapshot_id=model_resolution_snapshot_id,
+                        lease_seconds=req.lease_seconds,
+                        canonical_run_id=canonical_run_id,
+                        budget_reservations=budget_reservations,
+                    )
+                )
+                app.state.worker_run_tasks.add(task)
+            return {
+                "run_id": str(queued["id"]),
+                "state": str(queued.get("state") or "QUEUED"),
+                "dispatch_mode": "queued",
+                "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
+                "status_url": f"/workers/runs/{queued['id']}",
+                "events_url": f"/workers/runs/{queued['id']}/events",
+            }
+        outcome = await controller.execute(
+            request,
+            adapter,
+            worker_registry_id=req.worker_id,
             worker_shell_version_id=worker.get("active_shell_version_id"),
             adapter_id=worker.get("active_adapter_id"),
             steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
-            state="QUEUED",
-            queue_priority=req.queue_priority,
         )
-        canonical_run_id = UUID(str(queued["id"]))
-        claim = await storage.claim_worker_run(
-            owner=f"orchestrator-background:{canonical_run_id}",
-            lease_seconds=req.lease_seconds,
-            run_id=canonical_run_id,
-        )
-        if claim is not None and str(claim.get("state")) == "CLAIMED":
-            task = asyncio.create_task(
-                _execute_queued_worker_run(
-                    controller=controller,
-                    request=request,
-                    adapter=adapter,
-                    worker=worker,
-                    storage=storage,
-                    model_resolution_snapshot_id=model_resolution_snapshot_id,
-                    lease_seconds=req.lease_seconds,
-                    canonical_run_id=canonical_run_id,
-                    budget_reservations=budget_reservations,
-                )
-            )
-            app.state.worker_run_tasks.add(task)
-        return {
-            "run_id": str(queued["id"]),
-            "state": str(queued.get("state") or "QUEUED"),
-            "dispatch_mode": "queued",
-            "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
-            "status_url": f"/workers/runs/{queued['id']}",
-            "events_url": f"/workers/runs/{queued['id']}/events",
-        }
-    outcome = await controller.execute(
-        request,
-        adapter,
-        worker_registry_id=req.worker_id,
-        worker_shell_version_id=worker.get("active_shell_version_id"),
-        adapter_id=worker.get("active_adapter_id"),
-        steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
-        model_resolution_snapshot_id=model_resolution_snapshot_id,
+    except BaseException:
+        await _settle_worker_run_budgets(storage, budget_reservations, state="FAILED")
+        raise
+    await _settle_worker_run_budgets(
+        storage,
+        budget_reservations,
+        state=outcome.state,
+        actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
     )
-    await _settle_worker_run_budgets(storage, budget_reservations, state=outcome.state)
     return {
         "run_id": str(outcome.run_id),
         "state": outcome.state,

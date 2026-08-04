@@ -148,6 +148,16 @@ The AIAT sidebar links to both analytics pages. For remote or reverse-proxied
 deployments, set `LITELLM_DASHBOARD_URL` and `OMNIROUTE_DASHBOARD_URL` to the
 browser-reachable URLs.
 
+Prometheus is optional observability. The dashboard bounds each Prometheus
+request to `PROMETHEUS_TIMEOUT_MS` (default `750` ms), so a stopped metrics
+container cannot delay the overview page; the UI shows a degraded metrics
+state instead. The Compose development overlay starts Prometheus alongside
+the dashboard, while the OmniRoute data and log volumes are initialized for
+its non-root service user on every deployment. If a host security product or
+enterprise proxy re-signs HTTPS traffic, set `AIAT_EXTRA_CA_CERT` to a
+read-only PEM bundle containing that host root CA; Compose passes it through
+`NODE_EXTRA_CA_CERTS` without disabling TLS verification.
+
 The gateway path is AIAT -> LiteLLM -> OmniRoute -> provider. On `mas.sh up`,
 AIAT idempotently imports the configured legacy provider keys into OmniRoute,
 enables model/pricing synchronization, and starts 9Router and CLIProxyAPI.

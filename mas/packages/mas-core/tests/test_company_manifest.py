@@ -36,3 +36,20 @@ def test_company_manifest_rejects_duplicate_worker_assignment() -> None:
 
     with pytest.raises(CompanyManifestError, match="assignments must be unique"):
         compile_company_manifest(raw)
+
+
+@pytest.mark.parametrize("value", [-1.0, float("inf"), float("nan")])
+def test_company_manifest_rejects_invalid_company_budget(value: float) -> None:
+    raw = _default_manifest()
+    raw["budgets"]["max_cost_usd"] = value
+
+    with pytest.raises(CompanyManifestError, match="budgets"):
+        compile_company_manifest(raw)
+
+
+def test_company_manifest_rejects_chief_assigned_to_another_department() -> None:
+    raw = _default_manifest()
+    raw["worker_assignments"][1]["department_id"] = "exec_ceo"
+
+    with pytest.raises(CompanyManifestError, match="chief 'coo'.*assigned to 'exec_ceo'"):
+        compile_company_manifest(raw)

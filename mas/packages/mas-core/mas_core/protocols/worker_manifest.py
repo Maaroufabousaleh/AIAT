@@ -13,7 +13,8 @@ WORKER_SDK_VERSION = "aiat-worker-sdk.v1"
 
 # Epsilon runtime tiers — used in WorkerManifest.runtime_tier
 RUNTIME_TIER_LITERAL = Literal[
-    "builtin", "langgraph", "crewai", "autogen", "letta", "external"
+    "builtin", "langgraph", "crewai", "autogen", "letta",
+    "microsoft_agent_framework", "external",
 ]
 
 
@@ -44,10 +45,11 @@ class WorkerIntegration(BaseModel):
     wrapper_config: dict[str, Any] = Field(default_factory=dict)
     compatibility_tests: list[str] = Field(default_factory=list)
     # native/wrapper/fork: existing AIAT modes
-    # langgraph/crewai/autogen/letta: Epsilon advanced runtime modes
+    # langgraph/crewai/autogen/letta/microsoft_agent_framework: advanced runtime modes
     isolation_mode: Literal[
         "native", "wrapper", "fork",
         "langgraph", "crewai", "autogen", "letta", "opencode",
+        "microsoft_agent_framework",
     ] = "native"
     contract_version: str = "aiat.worker.v1"
     adapter_api_version: str = "aiat.adapter.v1"

@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 DEFAULT_COMPANY_ID = UUID("00000000-0000-4000-8000-000000000001")
+NonNegativeFiniteFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 class CompanyManifestError(ValueError):
@@ -50,7 +50,7 @@ class WorkerAssignmentManifest(BaseModel):
     tool_grants: list[str] = Field(default_factory=list)
     permission_grants: list[str] = Field(default_factory=list)
     model_profile_id: str | None = None
-    budget: dict[str, float] = Field(default_factory=dict)
+    budget: dict[str, NonNegativeFiniteFloat] = Field(default_factory=dict)
     approval_required: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -72,12 +72,12 @@ class CompanyManifest(BaseModel):
     ceo_worker_id: str = Field(min_length=1, max_length=120)
     departments: list[DepartmentManifest] = Field(min_length=1)
     worker_assignments: list[WorkerAssignmentManifest] = Field(default_factory=list)
-    budgets: dict[str, float] = Field(default_factory=dict)
+    budgets: dict[str, NonNegativeFiniteFloat] = Field(default_factory=dict)
     policy: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_references(self) -> "CompanyManifest":
+    def validate_references(self) -> CompanyManifest:
         department_ids = {item.id for item in self.departments}
         if len(department_ids) != len(self.departments):
             raise CompanyManifestError("department IDs must be unique")
@@ -90,6 +90,13 @@ class CompanyManifest(BaseModel):
                     f"department {department.id!r} chief {department.chief_worker_id!r} "
                     "must have a worker assignment"
                 )
+            if department.chief_worker_id:
+                chief_assignment = assignments[department.chief_worker_id]
+                if chief_assignment.department_id != department.id:
+                    raise CompanyManifestError(
+                        f"department {department.id!r} chief {department.chief_worker_id!r} "
+                        f"is assigned to {chief_assignment.department_id!r}"
+                    )
             for worker_id in department.worker_ids:
                 assignment = assignments.get(worker_id)
                 if assignment is None:
