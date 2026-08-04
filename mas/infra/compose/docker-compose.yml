@@ -79,6 +79,7 @@ volumes:
   minio_data:
   worker_mirrors:
   omniroute_data:
+  omniroute_logs:
   opencode_workspace:
   browser_profiles:
 
@@ -360,6 +361,25 @@ services:
   # ── 7a. OmniRoute ─────────────────────────────────────────────────────────
   # Internal OpenAI-compatible route optimizer used as an explicit LiteLLM
   # fallback/free-tier route.
+  omniroute-data-init:
+    image: alpine:3.21.3
+    restart: "no"
+    user: "0:0"
+    network_mode: "none"
+    volumes:
+      - omniroute_data:/data
+      - omniroute_logs:/logs
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /data
+        mkdir -p /logs
+        chown -R 10001:10001 /data
+        chown -R 10001:10001 /logs
+        chmod -R u+rwX /data
+        chmod -R u+rwX /logs
+
   omniroute:
     image: "${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
     restart: unless-stopped
@@ -387,10 +407,22 @@ services:
       NINEROUTER_DISABLE_MITM: "true"
       CLIPROXYAPI_PORT: "8317"
       LOCAL_HOSTNAMES: "omniroute,litellm,host.docker.internal"
+      # Trust only the explicitly supplied host CA bundle in addition to the
+      # image's public roots.  This supports enterprise/AV TLS interception
+      # without disabling certificate verification.
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/aiat-extra-ca.pem"
     volumes:
       - omniroute_data:/app/data
+      - omniroute_logs:/app/logs
+      - type: bind
+        source: "${AIAT_EXTRA_CA_CERT:-./aiat-extra-ca.pem}"
+        target: /usr/local/share/ca-certificates/aiat-extra-ca.pem
+        read_only: true
       - ./cliproxyapi-compat-wrapper.sh:/opt/aiat/cliproxyapi-compat-wrapper.sh:ro
       - ./repair-cliproxyapi.sh:/opt/aiat/repair-cliproxyapi.sh:ro
+    depends_on:
+      omniroute-data-init:
+        condition: service_completed_successfully
     mem_limit: 512m
     cpus: "0.5"
 
@@ -640,6 +672,7 @@ services:
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
       PROMETHEUS_URL: "http://prometheus:9090"
+      PROMETHEUS_TIMEOUT_MS: "${PROMETHEUS_TIMEOUT_MS:-750}"
       LITELLM_DASHBOARD_URL: "${LITELLM_DASHBOARD_URL:-http://localhost:4001/ui/}"
       OMNIROUTE_DASHBOARD_URL: "${OMNIROUTE_DASHBOARD_URL:-http://localhost:20128/dashboard/analytics}"
       NODE_ENV: "production"

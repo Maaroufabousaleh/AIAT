@@ -65,6 +65,8 @@ class SprintCreateTool(BaseTool):
                         "estimated_hours": kwargs.get("estimated_hours"),
                     },
                 },
+                context=kwargs.get("_aiat_context"),
+                principal="operator",
             )
         body = {
             "sprint_number": kwargs.get("sprint_number", 1),
@@ -195,7 +197,12 @@ class IssueDecomposeTool(BaseTool):
                 "sub_tasks": kwargs.get("sub_tasks", []),
             },
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            "/tasks",
+            body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class IssueUpdateStatusTool(BaseTool):
@@ -492,7 +499,12 @@ class KPIUpdateAgentProfileTool(BaseTool):
                 "alpha": kwargs.get("alpha", 0.5),
             },
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            "/tasks",
+            body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 # ── Velocity & estimation ─────────────────────────────────────────────────

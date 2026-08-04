@@ -756,6 +756,66 @@ class TestAgentStorageCRUD:
         )
         conn.execute.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_settle_budget_reservation_caps_actual_usage_under_lock(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        reservation_id = uuid4()
+        company_id = uuid4()
+        reservation = {
+            "id": reservation_id,
+            "company_id": company_id,
+            "budget_key": "max_cost_usd",
+            "amount": Decimal("2"),
+            "state": "RESERVED",
+            "metadata": {"source": "worker_dispatch"},
+        }
+        refreshed = {
+            **reservation,
+            "amount": Decimal("1"),
+            "state": "COMMITTED",
+            "metadata": {
+                "source": "worker_dispatch",
+                "actual_cost_usd": "5",
+                "budget_overage_usd": "4",
+                "budget_settlement": "CAP_EXCEEDED",
+            },
+        }
+
+        def result(*, row=None, scalar=None):
+            value = MagicMock()
+            value.mappings.return_value.first.return_value = row
+            value.scalar_one.return_value = scalar
+            return value
+
+        conn.execute = AsyncMock(
+            side_effect=[
+                result(row=reservation),
+                result(
+                    row={
+                        "company_id": company_id,
+                        "budget_key": "max_cost_usd",
+                        "limit_value": Decimal("10"),
+                    }
+                ),
+                result(row=reservation),
+                result(scalar=Decimal("9")),
+                result(),
+                result(row=refreshed),
+            ]
+        )
+
+        settled = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("5"),
+        )
+
+        assert settled == refreshed
+        assert settled["amount"] == Decimal("1")
+        assert settled["metadata"]["budget_settlement"] == "CAP_EXCEEDED"
+        assert conn.execute.await_count == 6
+
     # ── System Config ──
 
     @pytest.mark.asyncio

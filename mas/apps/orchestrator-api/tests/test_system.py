@@ -120,6 +120,20 @@ async def test_seed_default_company_is_idempotent(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_seed_default_company_fails_when_manifest_is_missing(client, monkeypatch):
+    monkeypatch.setenv("WORKERS_DIR", "__missing_workers_for_seed_test__")
+    monkeypatch.setenv("COMPANY_MANIFEST_PATH", "__missing_company_manifest__.yaml")
+    storage = _make_storage(system_state="RUNNING", projects=[])
+    _patch_state(storage)
+
+    resp = await client.post("/system/seed-default-company")
+
+    assert resp.status_code == 500
+    assert "default company manifest not found" in resp.json()["detail"]
+    storage.set_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_company_overview_returns_department_health(client):
     """GET /system/company returns seeded company and department health summaries."""
     storage = MagicMock()

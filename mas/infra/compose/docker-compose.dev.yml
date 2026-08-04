@@ -87,6 +87,14 @@ services:
     ports:
       - "20128:20128"
 
+  dashboard:
+    depends_on:
+      prometheus:
+        # Metrics are optional; start the dashboard as soon as Prometheus is
+        # launched and let the bounded query timeout handle a cold/unhealthy
+        # metrics backend without blocking the UI.
+        condition: service_started
+
   # Dev overrides for FastAPI services. These intentionally avoid uvicorn's
   # reload watcher because bind-mounted WSL workspaces can raise watchfiles
   # IO errors and crash otherwise healthy services during live-stack tests.
@@ -100,6 +108,9 @@ services:
       # development; production remains image-pinned.
       - ../../packages/mas-core/mas_core:/app/mas_core
       - ../../migrations:/app/migrations
+      # Keep the checked-in default company manifest in sync with the mounted
+      # development API instead of relying on a stale image layer.
+      - ../../companies:/app/companies:ro
     environment:
       MAS_ENVIRONMENT: development
       PYTHONPATH: /app

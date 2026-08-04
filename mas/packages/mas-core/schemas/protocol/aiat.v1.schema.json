@@ -2319,7 +2319,8 @@
                 "crewai",
                 "autogen",
                 "letta",
-                "opencode"
+                "opencode",
+                "microsoft_agent_framework"
               ],
               "title": "Isolation Mode",
               "type": "string"
@@ -2647,6 +2648,7 @@
               "crewai",
               "autogen",
               "letta",
+              "microsoft_agent_framework",
               "external"
             ],
             "type": "string"
@@ -2753,6 +2755,7 @@
             "crewai",
             "autogen",
             "letta",
+            "microsoft_agent_framework",
             "external"
           ],
           "title": "Runtime Tier",
