@@ -32,6 +32,12 @@ from .contracts import (
 )
 from .ports import SourceControlProvider, WorkManagementProvider
 from .registry import ProviderRegistry
+from .conformance import (
+    CONFORMANCE_FIXTURE_VERSION,
+    ConformanceCaseResult,
+    ProviderConformanceReport,
+    run_work_management_conformance,
+)
 
 __all__ = [
     "AdapterCapabilities",
@@ -60,4 +66,8 @@ __all__ = [
     "SourceControlProvider",
     "WorkManagementProvider",
     "ProviderRegistry",
+    "CONFORMANCE_FIXTURE_VERSION",
+    "ConformanceCaseResult",
+    "ProviderConformanceReport",
+    "run_work_management_conformance",
 ]
