@@ -822,8 +822,9 @@ an explicit open gate.
    broader governance forms, and broader chaos/live evidence remain. CEO API-owned action/read citations,
    explicit fallback markers, bounded project/flow/governance/worker/credential/
    integration/tool/project-evidence/log links, payload-free artifact/model/
-   runtime/usage/worker-run/trace references, and dedicated evidence records
-   now pass; resource-specific detail loading remains.
+   runtime/usage/worker-run/trace references, dedicated evidence records, and
+   the bounded eight-kind `aiat.evidence-detail.v1` scalar projection now pass;
+   broader detail kinds and stale/offline recovery remain.
 6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the 34/35 evidence count.
