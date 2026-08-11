@@ -202,6 +202,7 @@ external client-language SDK compatibility yet.
 - [x] Add the consolidated `aiat.project-evidence-package.v1` project API/dashboard read model, deterministic fixture, and operator-only durable snapshot path covering repository, documents, tests, security, deployment, cost, approvals, flow, worker, artifact, and audit evidence; the deterministic core/resolver/fixture batch is reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed in `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed in `82bbaeb`; project-page composition and live provider/worker artifact generation remain separate.
 - [x] Preserve the project evidence package after a failed dashboard refresh, label the retained package as last known, and expose a keyboard-visible Retry action; `project-evidence-states.spec.ts` passes the source-built failure → retained package → successful recovery path 1/1 (`bc80ad5`). Full project-page composition and live provider/worker artifact generation remain separate.
 - [x] Make project-detail first loads explicit and retryable: non-2xx project reads now preserve backend error detail, show Project unavailable with Retry instead of the misleading not-found state, and recover into the workspace; `project-detail-states.spec.ts` passes the source-built failure → Retry → recovered detail path 1/1 (`f364763`). Full project-page composition and live provider/worker artifact generation remain separate.
+- [x] Preserve the project workspace summary through failed `/workspace` or `/repository` refreshes, keep activity/resources/cost data visible, retain the last repository snapshot across partial failure, and expose stale/first-load Retry states; `project-workspace-states.spec.ts` passes the source-built failure → retained workspace → recovered workspace path 1/1 (`cb1c665`). Live workspace/provider/worker generation remains separate.
 - [x] Reconcile declared parallel branches, join fan-in, and switch case targets with persisted flow edges; `aiat.flow-topology-check.v1` covers valid/invalid definitions without worker dispatch or storage mutation. Live fan-out/join synchronization and crash/watchdog recovery remain separate evidence gates.
 - [x] Add `aiat.flow-execution-semantics.v1` and focused tests over the real
   traversal engine: parallel fan-out, one-branch join waiting, single join
@@ -324,6 +325,7 @@ external client-language SDK compatibility yet.
 - [x] Preserve the paired Projects list project/active-flow read on refresh failure, label the last known list, keep create/action errors separate, and expose a retry action; `e2e/projects-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live project evidence remains separate (`d3482ab`).
 - [x] Preserve the Project evidence package on refresh failure, label it as showing last-known evidence, keep the package visible while retrying, and expose a keyboard-visible Retry action; `e2e/project-evidence-states.spec.ts` passes the source-built failure/recovery path 1/1. Full project-page composition and live provider/worker generation remain separate (`bc80ad5`).
 - [x] Make project-detail first-load API failures explicit and retryable, preserving the backend detail and recovering into the workspace; `e2e/project-detail-states.spec.ts` passes the source-built failure/recovery path 1/1. Existing-project stale/retry recovery remains covered by the workspace golden path (`f364763`).
+- [x] Preserve the project workspace read model after failed workspace/repository refreshes, label retained data, preserve the last repository snapshot across partial failure, and expose Retry; `e2e/project-workspace-states.spec.ts` passes the source-built stale/recovery path 1/1 (`cb1c665`).
 - [x] Preserve the Tools catalogue definitions and circuit-breaker summaries on refresh failure, label the last known catalogue, keep the catalogue visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/tools-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live tool evidence remains separate (`5f4b0eb`).
 - [x] Preserve dead-letter queue messages and replay context on refresh failure, label the last known queue, keep cards visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/dlq-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live DLQ evidence remains separate (`823fa6d`).
 - [x] Preserve redacted credential metadata (names, placeholders, policy, usage) on refresh failure, label the last known credentials list, keep rows visible while retrying, and expose header Refresh plus banner Retry controls without rendering secret values; `e2e/credentials-states.spec.ts` passes the source-built failure/recovery path 1/1. The render-safe loading/error repair is committed in `e6e6980`; native/live credential expiry/revocation evidence remains separate (`970f09c`).
@@ -339,7 +341,7 @@ external client-language SDK compatibility yet.
 - Finish light/dark/system themes and mobile parity.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
-  visualization, identity tables, PM integrations, project list/detail, the
+  visualization, identity tables, PM integrations, project list/detail/workspace, the
   combined governance read surface, System Control, Tools catalogue,
   dead-letter queue, credentials list, Metrics, Project evidence package
   page, and flow editor now expose explicit
@@ -357,7 +359,7 @@ external client-language SDK compatibility yet.
   Agent Streams, flow editor, and Project evidence package recovery are also
   covered by `flows-states.spec.ts`, `flow-editor-states.spec.ts`,
   `logs-states.spec.ts`, `streams-states.spec.ts`, and
-  `project-evidence-states.spec.ts`;
+  `project-evidence-states.spec.ts` and `project-workspace-states.spec.ts`;
   broader stale/offline recovery and
   golden-path coverage remain.
 - [x] Run the stable local Compose Playwright matrix: 58/59 pass with one
@@ -368,7 +370,8 @@ external client-language SDK compatibility yet.
   partial/offline retry states. The source-built flow-editor recovery path
   also passes 1/1 for first-load unavailable, retained-canvas, stale-label,
   and Retry states; project-detail first-load unavailable and Retry recovery
-  also pass 1/1. Native-Linux
+  also pass 1/1; project-workspace stale/retry retention and recovery pass
+  1/1. Native-Linux
   Playwright, broader WCAG, mobile-page parity, and visual regression remain
   open.
 

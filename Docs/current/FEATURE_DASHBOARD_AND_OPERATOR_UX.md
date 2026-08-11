@@ -7,6 +7,12 @@ project, preserves backend error detail, and exposes a keyboard-visible Retry
 that recovers into the project workspace (`f364763`, source-built
 `project-detail-states.spec.ts` 1/1).
 
+The project workspace sub-surface now retains its last successful workspace
+summary when the workspace or repository refresh fails, labels the retained
+data, preserves the repository snapshot across a partial failure, and exposes
+a keyboard-visible Retry for both stale and first-load failure states
+(`cb1c665`, source-built `project-workspace-states.spec.ts` 1/1).
+
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -36,6 +42,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - The Flows list reads `/api/flows` with `cache: "no-store"`, retains the last successful definitions after a failed refresh, keeps rows visible while retrying, labels the view as showing last-known flows, and exposes header Refresh plus banner Retry controls. [`flows/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/page.tsx>) and [`flows-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flows-states.spec.ts) cover failure retention and successful recovery 1/1 against the source-built dashboard.
 - The flow editor reads a route-selected flow through the canonical store, shows an explicit first-load unavailable state with Retry instead of exposing a blank editable canvas, and provides Refresh plus last-known flow/Retry recovery after a failed refresh. Backend error details remain visible, and the source-built [`flow-editor-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flow-editor-states.spec.ts) covers first-load failure, retained nodes, stale labeling, and successful recovery 1/1 (`b5098e7`).
 - The project detail page distinguishes first-load API failure from a missing project, preserves backend error detail, shows an explicit Project unavailable state, and exposes a keyboard-visible Retry that recovers into the project workspace. [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>) and [`project-detail-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-detail-states.spec.ts) cover failure → Retry → recovered detail 1/1 (`f364763`).
+- The project workspace sub-surface retains its last successful workspace summary when `/workspace` or `/repository` refreshes fail, keeps canonical activity/resources/cost data visible, preserves the last repository snapshot across a partial failure, and exposes a keyboard-visible Retry. [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>) and [`project-workspace-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-workspace-states.spec.ts) cover failure → retained workspace → recovered workspace 1/1 (`cb1c665`).
 - Container Logs streams `/api/logs/[container]` over SSE, retains the last buffer when a reload emits an error, labels it as last-known data, and exposes Retry; a successful first event replaces the previous buffer so container switches do not mix lines. [`logs/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/logs/page.tsx>) and [`logs-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/logs-states.spec.ts) cover failure retention and successful recovery 1/1 against the source-built dashboard.
 - Agent Streams fetches bounded history with `cache: "no-store"`, guards reconnect generations so obsolete events cannot overwrite the active team, retains the last messages when history or SSE refresh fails, labels the view as last-known data, and exposes both Reconnect and Retry. [`streams/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/streams/page.tsx>) and [`streams-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/streams-states.spec.ts) cover failure retention and successful recovery 1/1 against the source-built dashboard.
 - System visualisation fetches each source independently, retains responding sections when another source is unavailable, labels partial data as stale, and offers a retry action; PM integrations use the same last-known/conflict-preserving pattern for refresh failures. The targeted resilience checks live in [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts).
@@ -110,6 +117,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - PM integration conflict/stale state: [`integrations/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/integrations/page.tsx>), [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts)
 - Project-detail stale/retry state: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>), [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts)
 - Project-detail first-load/retry state: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>), [`project-detail-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-detail-states.spec.ts)
+- Project-workspace stale/retry state: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>), [`project-workspace-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-workspace-states.spec.ts)
 - Project evidence package stale/retry state: [`projects/[id]/evidence/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/evidence/page.tsx>), [`project-evidence-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-evidence-states.spec.ts)
 - Governance stale/retry state: [`governance/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/governance/page.tsx>), [`governance-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/governance-states.spec.ts)
 - System status stale/retry state: [`system/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/system/page.tsx>), [`system-status-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/system-status-states.spec.ts)
@@ -174,7 +182,7 @@ The CEO cockpit summarises portfolio, company health, spend, risk, approvals, in
 - Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`.
 - Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.
 - Improve stale/conflict/rollback and partial-evidence experiences; system
-  visualization, identity tables, PM integrations, project list/detail, the
+  visualization, identity tables, PM integrations, project list/detail/workspace, the
   combined governance read surface, System Control, Tools catalogue,
   dead-letter queue, Metrics, credentials list, project evidence package page,
   flow editor, and project detail now have explicit
