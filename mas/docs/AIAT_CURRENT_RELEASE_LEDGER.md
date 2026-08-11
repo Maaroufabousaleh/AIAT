@@ -17,10 +17,10 @@ live evidence explicit.
 
 The bounded readiness/declaration groups `5553b19`, `adc7b26`, `d9b1262`,
 `569231f`, and `84a1c01` were reviewed after the aggregate snapshot above.
-Their rows below
-record the focused fixtures and authenticated/static read-only diagnostics;
-aggregate check counts and the release decision are intentionally not
-recomputed from the dirty working tree.
+Subsequent focused groups `09bdd19`, `22fc21a`, `234adfb`, `541d6e0`,
+`e378f40`, and `33e0384` are also recorded in the rows below with separate
+documentation commits; aggregate check counts and the release decision are
+intentionally not recomputed from the dirty working tree.
 
 ## Evidence index
 
