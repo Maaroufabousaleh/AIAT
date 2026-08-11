@@ -139,7 +139,8 @@ single frozen commit before production claims are made.
 ### Trace propagation
 
 - The pure trace-context/native-span/trace-evidence core is reviewed and
-  committed as `77d5494`; tool-service HTTP and usage-writer integration is
+  committed as `77d5494`; the bounded API-observation schema/migrations are
+  committed as `9c39919`; tool-service HTTP and usage-writer integration is
   committed as `53d38fc`, while broader API/storage writer integration remains a separate
   review group. Request-level trace propagation is now verified for the orchestrator API,
   message router, and tool service. Bounded `X-AIAT-Trace-ID` and W3C

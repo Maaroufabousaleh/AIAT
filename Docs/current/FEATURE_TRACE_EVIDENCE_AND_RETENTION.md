@@ -3,6 +3,7 @@
 **Baseline:** 2026-08-10  
 **Status:** the pure trace-context, native-span, and secret-safe trace-evidence
 contracts are reviewed and committed in `77d5494` with deterministic fixtures;
+the bounded API-observation schema/migrations are committed in `9c39919`, and
 the tool-service HTTP and usage-writer integration is committed in `53d38fc`.
 Broader API/storage writer integration remains a separate review group. Direct model-usage, worker-artifact, integration-evidence,
 API-request correlation, native transport/model/tool/audit/integration span
