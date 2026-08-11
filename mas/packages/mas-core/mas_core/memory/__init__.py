@@ -46,6 +46,15 @@ from mas_core.memory.object_store_backup import (
     copy_manifest_objects,
     verify_restored_manifest,
 )
+from mas_core.memory.object_store_rollout import (
+    OBJECT_STORE_MIGRATION_SCHEMA,
+    DualWriteRecord,
+    MigrationActorKind,
+    MigrationStatus,
+    MigrationTransition,
+    ObjectStoreMigrationError,
+    ObjectStoreMigrationWorkflow,
+)
 from mas_core.memory.storage import AgentStorage
 
 __all__ = [
@@ -71,5 +80,12 @@ __all__ = [
     "build_backup_manifest",
     "copy_manifest_objects",
     "verify_restored_manifest",
+    "OBJECT_STORE_MIGRATION_SCHEMA",
+    "DualWriteRecord",
+    "MigrationActorKind",
+    "MigrationStatus",
+    "MigrationTransition",
+    "ObjectStoreMigrationError",
+    "ObjectStoreMigrationWorkflow",
     "metadata",
 ]
