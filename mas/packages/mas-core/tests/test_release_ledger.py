@@ -183,7 +183,7 @@ def test_trace_evidence_live_check_uses_a_bounded_retained_trace_id() -> None:
         "--live",
         "--json",
         "--trace-id",
-        "aiat-live-trace-20260810-r2",
+        "aiat-live-trace-20260811-phase",
     )
 
 
