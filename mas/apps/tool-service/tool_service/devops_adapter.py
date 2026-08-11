@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -140,9 +141,7 @@ def provision(payload: dict[str, Any]) -> dict[str, Any]:
 
 def monitoring(payload: dict[str, Any]) -> dict[str, Any]:
     config = dict(payload.get("config") or {})
-    target = str(config.get("target") or "prometheus")
-    if target != "prometheus":
-        raise ValueError("only prometheus monitoring target is supported")
+    target = str(config.get("target") or "prometheus").strip().lower()
     output_dir = _safe_output(Path.cwd(), str(config.get("output_dir") or "monitoring"))
     output_dir.mkdir(parents=True, exist_ok=True)
     services = config.get(
@@ -155,6 +154,72 @@ def monitoring(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(services, dict) or not services:
         raise ValueError("services must be a non-empty object")
+
+    if target in {"analytics", "litellm", "omniroute", "litellm_omniroute"}:
+        def endpoint(name: str, default: str) -> str:
+            value = str(config.get(name) or default).strip().rstrip("/")
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError(f"{name} must be an http(s) URL with a hostname")
+            if parsed.username or parsed.password:
+                raise ValueError(f"{name} must not contain credentials")
+            return value
+
+        litellm_url = endpoint("litellm_url", "http://litellm:4000")
+        omniroute_url = endpoint("omniroute_url", "http://omniroute:20128")
+        analytics = {
+            "schema_version": "aiat.monitoring-analytics-plan.v1",
+            "surfaces": {
+                "litellm": {
+                    "base_url": litellm_url,
+                    "health_url": f"{litellm_url}/health/liveliness",
+                    "dashboard_url": f"{litellm_url}/ui",
+                },
+                "omniroute": {
+                    "base_url": omniroute_url,
+                    "health_url": f"{omniroute_url}/health",
+                    "analytics_url": f"{omniroute_url}/dashboard/providers/services",
+                },
+            },
+            "source_of_truth": "aiat_durable_observability",
+            "prometheus_compatible_metrics": "optional",
+        }
+        files = {
+            "aiat-analytics.json": analytics,
+            "synthetic_checks.yml": {
+                "checks": [
+                    {"name": "litellm", "url": analytics["surfaces"]["litellm"]["health_url"]},
+                    {"name": "omniroute", "url": analytics["surfaces"]["omniroute"]["health_url"]},
+                    *[
+                        {"name": str(name), "url": f"http://{target_value}/health"}
+                        for name, target_value in services.items()
+                    ],
+                ]
+            },
+        }
+        written: list[str] = []
+        for name, content in files.items():
+            path = output_dir / name
+            if path.suffix == ".json":
+                path.write_text(json.dumps(content, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            else:
+                path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
+            written.append(str(path.relative_to(Path.cwd())))
+        return {
+            "available": True,
+            "configured": True,
+            "target": "litellm_omniroute",
+            "files_written": written,
+            "checks": [
+                {"name": "litellm", "status": "configured"},
+                {"name": "omniroute", "status": "configured"},
+            ],
+            "network_probe_performed": False,
+        }
+
+    if target != "prometheus":
+        raise ValueError("monitoring target must be prometheus or litellm_omniroute")
+
     scrape_configs = [
         {"job_name": str(name), "static_configs": [{"targets": [str(target_value)]}]}
         for name, target_value in services.items()
