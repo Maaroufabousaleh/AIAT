@@ -19,24 +19,27 @@
 
 name: mas
 
-# ── Shared env vars (merged into each team's environment: block) ──────────────
-x-team-env: &team-env
+# ── Shared runner env (no direct data-plane credentials) ─────────────────────
+x-team-common-env: &team-common-env
   ROUTER_URL: "http://message-router:8001"
   ROUTER_SECRET: "${ROUTER_SECRET}"
   TOOL_SERVICE_URL: "http://tool-service:8002"
   TOOL_SECRET: "${TOOL_SECRET}"
-  PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
-  MINIO_ENDPOINT: "http://minio:9000"
-  MINIO_ACCESS_KEY: "mas_agent"
-  MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
-  MAS_API_KEY: "${MAS_API_KEY}"
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
   LLM_BACKEND: "${LLM_BACKEND:-litellm}"
   LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
   LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
+
+x-team-env: &team-env
+  <<: *team-common-env
+  AIAT_WORKER_API_KEY: "${AIAT_WORKER_API_KEY:?AIAT_WORKER_API_KEY must be configured}"
+
+x-team-ceo-env: &team-ceo-env
+  <<: *team-common-env
+  AIAT_CEO_API_KEY: "${AIAT_CEO_API_KEY:?AIAT_CEO_API_KEY must be configured}"
 
 # ── Shared team defaults ───────────────────────────────────────────────────
 x-team-defaults: &team-defaults
@@ -196,7 +199,6 @@ services:
       LISTEN_PORT: "5432"
     networks:
       - internal
-      - workers
     depends_on:
       postgres:
         condition: service_healthy
@@ -218,7 +220,6 @@ services:
       - minio_data:/data
     networks:
       - internal
-      - workers
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -480,7 +481,6 @@ services:
     user: "10001:10001"
     networks:
       - internal
-      - workers
     env_file:
       - path: ../../../.env
         format: raw
@@ -697,7 +697,7 @@ services:
     <<: *team-defaults
     container_name: mas-team-exec-ceo
     environment:
-      <<: *team-env
+      <<: *team-ceo-env
       TEAM_CONFIG: /app/teams/exec_ceo.yaml
 
   team-exec-coo:

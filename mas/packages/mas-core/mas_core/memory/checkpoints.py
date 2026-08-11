@@ -102,15 +102,20 @@ class CheckpointStore:
         self,
         agent_id: str,
         task_message_id: str | None = None,
+        team_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Load the most recent checkpoint for an agent.
 
         If *task_message_id* is given, loads the exact checkpoint for that task.
-        Otherwise, loads the newest checkpoint for the agent.
+        Otherwise, loads the newest checkpoint for the agent.  Deployed
+        team-runner callers also pass *team_id* so a shared worker key cannot
+        read another team's checkpoint by agent ID.
         """
         q = t.agent_checkpoints.select().where(
             t.agent_checkpoints.c.agent_id == agent_id
         )
+        if team_id:
+            q = q.where(t.agent_checkpoints.c.team_id == team_id)
         if task_message_id:
             q = q.where(t.agent_checkpoints.c.task_message_id == task_message_id)
         q = q.order_by(t.agent_checkpoints.c.saved_at.desc()).limit(1)
@@ -154,19 +159,21 @@ class CheckpointStore:
         self,
         agent_id: str,
         task_message_id: str,
+        team_id: str | None = None,
     ) -> bool:
         """Delete a checkpoint after successful task completion.
 
         Returns True if a row was deleted, False if not found.
         """
+        conditions = [
+            t.agent_checkpoints.c.agent_id == agent_id,
+            t.agent_checkpoints.c.task_message_id == task_message_id,
+        ]
+        if team_id:
+            conditions.append(t.agent_checkpoints.c.team_id == team_id)
         async with self._engine.begin() as conn:
             result = await conn.execute(
-                t.agent_checkpoints.delete().where(
-                    sa.and_(
-                        t.agent_checkpoints.c.agent_id == agent_id,
-                        t.agent_checkpoints.c.task_message_id == task_message_id,
-                    )
-                )
+                t.agent_checkpoints.delete().where(sa.and_(*conditions))
             )
         deleted = result.rowcount > 0
         if deleted:

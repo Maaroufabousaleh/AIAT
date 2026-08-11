@@ -152,6 +152,8 @@ def _check_auth(x_api_key: str | None = Header(None), authorization: str | None 
         ("operator", os.getenv("AIAT_OPERATOR_API_KEY", "")),
         ("pm_gateway", os.getenv("PM_GATEWAY_API_KEY", "")),
         ("service", os.getenv("MAS_API_KEY", "")),
+        ("ceo", os.getenv("AIAT_CEO_API_KEY", "")),
+        ("worker", os.getenv("AIAT_WORKER_API_KEY", "")),
         ("gateway", os.getenv("GATEWAY_API_KEY", "")),
     )
     configured_keys = tuple(item for item in configured_keys if item[1])
@@ -1521,6 +1523,29 @@ class ScheduleRequest(BaseModel):
     days: list[str] = Field(default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"])
     auto_shutdown: bool = True
     auto_resume: bool = True
+
+
+class TeamRunnerStorageRequest(BaseModel):
+    """Allow-listed storage operation issued by a deployed team runner."""
+
+    operation: Literal[
+        "storage_health",
+        "checkpoint_save",
+        "checkpoint_load",
+        "checkpoint_latest",
+        "checkpoint_delete",
+        "usage_record",
+        "document_get",
+        "document_create",
+        "document_update_status",
+        "review_create",
+        "review_get",
+        "review_update",
+        "review_comment_add",
+        "review_comments_get",
+        "review_list",
+    ]
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilitySearchRequest(BaseModel):
@@ -3991,6 +4016,168 @@ async def get_project_review_session(project_id: UUID, session_id: UUID) -> dict
         raise HTTPException(404, f"Review session {session_id} not found")
     session["comments"] = await storage.get_review_comments(session_id)
     return _serialize(session)
+
+
+# ── Deployed team-runner storage boundary ───────────────────────────────────
+
+_TEAM_RUNNER_PRINCIPALS = frozenset({"ceo", "worker"})
+_TEAM_RUNNER_UUID_FIELDS = frozenset(
+    {
+        "project_id",
+        "document_id",
+        "session_id",
+        "company_id",
+        "run_id",
+        "worker_id",
+        "checkpoint_id",
+    }
+)
+_TEAM_RUNNER_DATETIME_FIELDS = frozenset({"occurred_at", "completed_at"})
+_TEAM_RUNNER_REVIEW_UPDATE_FIELDS = frozenset({"status", "completed_at", "timeout_count"})
+
+
+def _team_runner_uuid(value: Any, *, field: str, allow_none: bool = False) -> UUID | None:
+    if value is None and allow_none:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, f"{field} must be a UUID") from exc
+
+
+def _team_runner_payload_values(
+    payload: dict[str, Any],
+    *,
+    uuid_fields: frozenset[str] = _TEAM_RUNNER_UUID_FIELDS,
+    datetime_fields: frozenset[str] = _TEAM_RUNNER_DATETIME_FIELDS,
+) -> dict[str, Any]:
+    """Normalize the JSON boundary before invoking AgentStorage methods."""
+    values = dict(payload)
+    for field in uuid_fields:
+        if field not in values or values[field] is None:
+            continue
+        values[field] = _team_runner_uuid(values[field], field=field)
+    for field in datetime_fields:
+        if field not in values or values[field] is None or isinstance(values[field], datetime):
+            continue
+        try:
+            values[field] = datetime.fromisoformat(str(values[field]))
+        except ValueError as exc:
+            raise HTTPException(422, f"{field} must be an ISO datetime") from exc
+    return values
+
+
+@app.post("/internal/team-runners/{team_id}/storage")
+async def team_runner_storage(
+    team_id: str,
+    req: TeamRunnerStorageRequest,
+    request: Request,
+) -> Any:
+    """Persist runner checkpoints/reviews through the control plane.
+
+    This is an operation allowlist rather than a generic SQL proxy. Team
+    runners authenticate with distinct CEO/worker keys and receive only the
+    narrow methods required for execution, resume, usage, and review storage.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", team_id):
+        raise HTTPException(422, "invalid team id")
+    principal = _authenticated_principal(request)
+    if principal not in _TEAM_RUNNER_PRINCIPALS:
+        raise HTTPException(403, "team-runner storage requires a CEO or worker principal")
+    if request.headers.get("x-aiat-team-id") != team_id:
+        raise HTTPException(403, "team identity does not match the storage path")
+
+    storage = _storage()
+    payload = dict(req.payload)
+    operation = req.operation
+    try:
+        from mas_core.memory.checkpoints import CheckpointStore
+
+        checkpoints = CheckpointStore(storage.engine)
+        if operation == "storage_health":
+            await storage.get_config("system_state")
+            return {"status": "ok"}
+        if operation == "checkpoint_save":
+            if str(payload.get("team_id") or team_id) != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            checkpoint = await checkpoints.save(
+                agent_id=str(payload["agent_id"]),
+                team_id=team_id,
+                project_id=_team_runner_uuid(payload.get("project_id"), field="project_id", allow_none=True),
+                task_message_id=str(payload["task_message_id"]),
+                iteration=int(payload.get("iteration", 0)),
+                messages_json=list(payload.get("messages_json") or []),
+                tool_results_json=list(payload.get("tool_results_json") or []),
+                budget_state_json=payload.get("budget_state_json"),
+                task_envelope_json=dict(payload.get("task_envelope_json") or {}),
+                checkpoint_id=_team_runner_uuid(payload.get("checkpoint_id"), field="checkpoint_id", allow_none=True),
+            )
+            return {"checkpoint_id": str(checkpoint)}
+        if operation == "checkpoint_load":
+            if str(payload.get("team_id") or team_id) != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            row = await checkpoints.load(
+                str(payload["agent_id"]),
+                str(payload["task_message_id"]) if payload.get("task_message_id") else None,
+                team_id=team_id,
+            )
+            return _serialize(row) if row is not None else None
+        if operation == "checkpoint_latest":
+            if str(payload.get("team_id") or team_id) != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            return [_serialize(row) for row in await checkpoints.load_latest_for_team_agents(team_id)]
+        if operation == "checkpoint_delete":
+            if str(payload.get("team_id") or team_id) != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            deleted = await checkpoints.delete(
+                str(payload["agent_id"]), str(payload["task_message_id"]), team_id=team_id
+            )
+            return {"deleted": deleted}
+        if operation == "usage_record":
+            values = _team_runner_payload_values(payload)
+            values["team_id"] = str(values.get("team_id") or team_id)
+            usage = await storage.record_project_usage(**values)
+            return _serialize(usage) if usage is not None else None
+        if operation == "document_get":
+            row = await storage.get_document(_team_runner_uuid(payload.get("document_id"), field="document_id"))
+            return _serialize(row) if row is not None else None
+        if operation == "document_create":
+            return _serialize(await storage.create_document(**_team_runner_payload_values(payload)))
+        if operation == "document_update_status":
+            await storage.update_document_status(
+                _team_runner_uuid(payload.get("document_id"), field="document_id"),
+                status=str(payload["status"]),
+            )
+            return {"updated": True}
+        if operation == "review_create":
+            return _serialize(await storage.create_review_session(**_team_runner_payload_values(payload)))
+        if operation == "review_get":
+            row = await storage.get_review_session(_team_runner_uuid(payload.get("session_id"), field="session_id"))
+            return _serialize(row) if row is not None else None
+        if operation == "review_update":
+            session_id = _team_runner_uuid(payload.get("session_id"), field="session_id")
+            raw_updates = dict(payload.get("updates") or {})
+            unknown_updates = set(raw_updates) - _TEAM_RUNNER_REVIEW_UPDATE_FIELDS
+            if unknown_updates:
+                raise HTTPException(422, f"review update contains unsupported fields: {sorted(unknown_updates)}")
+            await storage.update_review_session(session_id, **_team_runner_payload_values(raw_updates))
+            return {"updated": True}
+        if operation == "review_comment_add":
+            return _serialize(await storage.add_review_comment(**_team_runner_payload_values(payload)))
+        if operation == "review_comments_get":
+            session_id = _team_runner_uuid(payload.get("session_id"), field="session_id")
+            return [_serialize(row) for row in await storage.get_review_comments(session_id)]
+        if operation == "review_list":
+            project_id = _team_runner_uuid(payload.get("project_id"), field="project_id")
+            limit = min(1000, max(1, int(payload.get("limit", 100))))
+            return [_serialize(row) for row in await storage.list_review_sessions(project_id, limit=limit)]
+    except HTTPException:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(422, f"invalid {operation} payload: {exc}") from exc
+    raise HTTPException(422, f"unsupported team-runner storage operation: {operation}")
 
 
 @app.get("/projects/{project_id}/feasibility")

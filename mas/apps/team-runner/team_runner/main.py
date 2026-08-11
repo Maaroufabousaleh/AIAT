@@ -88,6 +88,9 @@ class RunnerSettings(BaseModel):
     pgbouncer_dsn: str | None = None
     orchestrator_url: str = "http://orchestrator-api:8000"
     mas_api_key: str | None = None
+    # Deployed runners use a distinct CEO/worker control-plane credential;
+    # MAS_API_KEY remains a local-fixture compatibility input only.
+    control_plane_api_key: str | None = None
     health_host: str = "0.0.0.0"
     health_port: int = 8080
     llm_model: str = "auto"
@@ -103,8 +106,15 @@ class RunnerSettings(BaseModel):
         elif router_url.startswith("wss://"):
             router_url = "https://" + router_url.removeprefix("wss://")
 
+        team_config_path = Path(team_config)
+        team_id_hint = team_config_path.stem.strip().lower()
+        control_plane_api_key = (
+            os.environ.get("AIAT_CEO_API_KEY")
+            if team_id_hint == "exec_ceo"
+            else os.environ.get("AIAT_WORKER_API_KEY")
+        ) or os.environ.get("MAS_API_KEY")
         return cls(
-            team_config_path=Path(team_config),
+            team_config_path=team_config_path,
             router_url=router_url.rstrip("/"),
             router_secret=(
                 os.environ.get("AGENT_TOKEN_SECRET")
@@ -116,6 +126,7 @@ class RunnerSettings(BaseModel):
             pgbouncer_dsn=os.environ.get("PGBOUNCER_DSN"),
             orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
             mas_api_key=os.environ.get("MAS_API_KEY"),
+            control_plane_api_key=control_plane_api_key,
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
             llm_model=os.environ.get("LLM_DEFAULT_MODEL", "auto"),
@@ -175,7 +186,7 @@ class CheckpointAdapter:
         agent_id: str,
         project_id: str,
     ) -> dict[str, Any] | None:
-        row = await self._store.load(agent_id)
+        row = await self._store.load(agent_id, team_id=self._team_id)
         if row is None:
             return None
         task_json = row.get("task_envelope_json") or {}
@@ -194,10 +205,10 @@ class CheckpointAdapter:
         agent_id: str,
         project_id: str,
     ) -> None:
-        row = await self._store.load(agent_id)
+        row = await self._store.load(agent_id, team_id=self._team_id)
         if row is None:
             return
-        await self._store.delete(agent_id, row["task_message_id"])
+        await self._store.delete(agent_id, row["task_message_id"], team_id=self._team_id)
 
     async def record_project_usage(self, **kwargs: Any) -> dict[str, Any] | None:
         """Expose the shared usage ledger through AgentBase's storage adapter."""
@@ -246,6 +257,21 @@ class TeamRuntime:
             self.storage = AgentStorage(self.settings.pgbouncer_dsn)
             await self.storage.connect()
             self.checkpoint_store = CheckpointStore(self.storage.engine)
+        elif self.settings.control_plane_api_key:
+            from team_runner.storage_client import ControlPlaneStorageClient
+
+            remote_storage = ControlPlaneStorageClient(
+                orchestrator_url=self.settings.orchestrator_url,
+                api_key=self.settings.control_plane_api_key,
+                team_id=self.team_config.team_id,
+            )
+            try:
+                await remote_storage.health_check()
+            except Exception:
+                await remote_storage.close()
+                raise
+            self.storage = remote_storage  # type: ignore[assignment]
+            self.checkpoint_store = remote_storage  # type: ignore[assignment]
 
         await self.router.start()
         self._instantiate_agents()
@@ -298,7 +324,9 @@ class TeamRuntime:
         if self.tool_client is not None:
             await self.tool_client.close()
         if self.storage is not None:
-            await self.storage.close()
+            close = getattr(self.storage, "close", None)
+            if close is not None:
+                await close()
         self._health_status = "stopped"
 
     async def run(self) -> None:
@@ -590,9 +618,9 @@ class TeamRuntime:
         # G5: HTTP-call /system/shutdown-ack or /system/shutdown-nack on orchestrator
         orchestrator_url = self.settings.orchestrator_url
         admin_id = self.admin_agent.agent_id if self.admin_agent else "unknown"
-        api_key = self.settings.mas_api_key
+        api_key = self.settings.control_plane_api_key or self.settings.mas_api_key
         if not api_key:
-            log.error("team_runner.shutdown_ack_not_sent", reason="MAS_API_KEY is not configured")
+            log.error("team_runner.shutdown_ack_not_sent", reason="control-plane API key is not configured")
             self._stop_event.set()
             return
         try:
