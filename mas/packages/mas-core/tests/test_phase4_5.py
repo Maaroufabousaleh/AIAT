@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mas_core.agent_runtime.base import AgentBase, _LRUSet
+from mas_core.observability.tracing import bind_trace_id, clear_trace_context, current_trace_id
 from mas_core.agent_runtime.budget import BudgetExhausted, BudgetTracker
 from mas_core.agent_runtime.config import AgentConfig
 from mas_core.agent_runtime.router_client import RouterClient
@@ -98,8 +99,10 @@ class _EchoAgent(AgentBase):
         self.handled: list[MessageEnvelope] = []
         self.budgets_seen: list[BudgetTracker | None] = []
         self.raise_on_next: Exception | None = None
+        self.trace_seen: str | None = None
 
     async def handle_message(self, envelope: MessageEnvelope) -> None:
+        self.trace_seen = current_trace_id()
         if self.raise_on_next:
             exc = self.raise_on_next
             self.raise_on_next = None
@@ -300,6 +303,15 @@ class TestAgentBase:
         frame = _make_frame(env)
         await agent._dispatch(frame)
         assert env in agent.handled
+
+    @pytest.mark.asyncio
+    async def test_dispatch_binds_envelope_trace_and_clears_context(self):
+        agent = self._make_agent()
+        env = _make_envelope()
+        await agent._dispatch(_make_frame(env))
+
+        assert agent.trace_seen == str(env.correlation_id)
+        assert current_trace_id() is None
 
     @pytest.mark.asyncio
     async def test_dispatch_skips_duplicate_message(self):
@@ -505,6 +517,37 @@ class TestRouterClientHTTP:
             entry_id = await client.publish(env)
             assert entry_id == "1234-0"
             await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_publish_forwards_bound_trace_id(self):
+        env = _make_envelope()
+        captured: dict[str, object] = {}
+
+        async def mock_post(_self, url, **kwargs):
+            captured.update(kwargs)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"entry_id": "1234-0"}
+            resp.text = ""
+            return resp
+
+        client = RouterClient(
+            router_url="http://fake:8000",
+            agent_id="a1",
+            agent_secret="s1",
+        )
+        import httpx
+
+        bind_trace_id("agent-router-flow")
+        try:
+            with patch.object(httpx.AsyncClient, "post", new=mock_post):
+                await client.start()
+                await client.publish(env)
+                await client.stop()
+        finally:
+            clear_trace_context()
+
+        assert captured["headers"]["X-AIAT-Trace-ID"] == "agent-router-flow"
 
     @pytest.mark.asyncio
     async def test_publish_duplicate_raises(self):
