@@ -1,7 +1,7 @@
 # AIAT Target Programme
 
 **Authoritative personal programme and implementation target**  
-**Baseline reviewed:** 2026-08-10
+**Baseline reviewed:** 2026-08-11
 **Programme status:** active  
 **Applies to:** the AIAT repository, personal instance, deployment profiles, agents, workers, adapters, integrations, and operator dashboard
 
@@ -1441,7 +1441,7 @@ All project documentation available in the reviewed workspace was read and used 
 
 ## Appendix B — current repository facts to keep synchronized
 
-These are snapshot facts as of the baseline date and must be regenerated rather than manually preserved forever:
+These are snapshot facts as of the 2026-08-11 baseline and must be regenerated rather than manually preserved forever:
 
 - 11 default authority/manager departments and 11 active default assignments.
 - 39 non-placeholder worker manifests plus 2 non-seeded placeholders.
