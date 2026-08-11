@@ -1,0 +1,15 @@
+[project]
+name = "mas-api-sdk"
+version = "0.1.0"
+description = "Generated Python contract and async client for the AIAT orchestrator API"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mas_api_sdk"]
