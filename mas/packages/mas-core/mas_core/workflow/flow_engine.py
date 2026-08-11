@@ -424,11 +424,25 @@ def get_next_nodes(
                 edge_cond = (
                     edge.condition or edge.label
                 )  # label is used as condition when condition is absent
-                if result and edge_cond in (None, "true", "pass"):
-                    next_ids.append(target)
-                elif not result and edge_cond in ("false", "fail"):
+                if (result and edge_cond in (None, "true", "pass")) or (
+                    not result and edge_cond in ("false", "fail")
+                ):
                     next_ids.append(target)
             continue  # condition node handled; skip generic outgoing logic
+
+        # A completed switch owns its case selection.  Do not also walk every
+        # outgoing edge through the generic path, or one traversal would
+        # schedule both the selected and unselected branches.
+        if source_node is not None and source_node.type == FlowNodeType.SWITCH:
+            switch_key = source_node.config.get("switch_key", "")
+            switch_cases = source_node.config.get("switch_cases", {})
+            context_value = (context or {}).get(switch_key)
+            matched_target = (
+                switch_cases.get(str(context_value)) if context_value is not None else None
+            )
+            if matched_target and matched_target not in completed_node_ids:
+                next_ids.append(matched_target)
+            continue
 
         for edge in outgoing:
             target = edge.target
@@ -445,7 +459,7 @@ def get_next_nodes(
             elif target_node.type == FlowNodeType.JOIN:
                 incoming = definition.get_incoming_edges(target)
                 all_completed = all(e.source in completed_node_ids for e in incoming)
-                if all_completed:
+                if target not in completed_node_ids and all_completed:
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.PARALLEL:
@@ -468,6 +482,10 @@ def get_next_nodes(
                 if target not in completed_node_ids:
                     next_ids.append(target)
 
+    # Multiple completed branch nodes can point at one join, and a traversal
+    # receives the full completed set on every call. Preserve graph order but
+    # never schedule the same node twice or re-activate a completed join.
+    next_ids = list(dict.fromkeys(next_ids))
     if not next_ids:
         end_nodes = definition.get_end_nodes()
         if all(n.id in completed_node_ids for n in end_nodes):
