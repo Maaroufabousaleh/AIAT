@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.worker-reconciliation-live-evidence.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T00:55:37Z",
+  "observed_at": "2026-08-11T20:39:56Z",
   "mode": "local-live",
   "status": "pass",
   "source_command": "scripts/check_worker_reconciliation.py --live --json",
