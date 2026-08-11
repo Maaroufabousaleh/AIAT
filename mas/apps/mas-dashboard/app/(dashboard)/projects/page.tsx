@@ -319,17 +319,19 @@ export default function ProjectsPage() {
         actions={
           <>
             <button
+              type="button"
               onClick={() => void load()}
               disabled={loading}
               aria-label="Refresh projects"
               title="Refresh"
-              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors"
             >
               <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
             </button>
             <button
+              type="button"
               onClick={() => setShowCreate(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
             >
               <Plus size={14} />
               New Project
@@ -360,6 +362,7 @@ export default function ProjectsPage() {
               active={filter === "non-archived"}
               onClick={() => setFilter("non-archived")}
               count={nonArchivedCount}
+              className="min-h-11"
             >
               Non archived
             </FilterChip>
@@ -367,6 +370,7 @@ export default function ProjectsPage() {
               active={filter === ""}
               onClick={() => setFilter("")}
               count={projects.length}
+              className="min-h-11"
             >
               All
             </FilterChip>
@@ -376,6 +380,7 @@ export default function ProjectsPage() {
                 active={filter === s}
                 onClick={() => setFilter(s)}
                 count={projects.filter((p) => p.state === s).length}
+                className="min-h-11"
               >
                 {s.replace(/_/g, " ")}
               </FilterChip>
@@ -402,7 +407,7 @@ export default function ProjectsPage() {
                   aria-label={`Sort by ${opt.label} ${active ? (sortDir === "asc" ? "(ascending)" : "(descending)") : ""}`}
                   aria-pressed={active}
                   className={clsx(
-                    "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold border transition-colors",
+                    "inline-flex min-h-11 items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border transition-colors",
                     active
                       ? "bg-blue-500/20 text-blue-100 border-blue-400/45"
                       : "bg-slate-950/55 text-slate-400 border-slate-700 hover:bg-slate-900 hover:text-slate-200"
@@ -451,8 +456,9 @@ export default function ProjectsPage() {
                 description="Create your first project to get the agent teams working."
                 action={
                   <button
+                    type="button"
                     onClick={() => setShowCreate(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                    className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                   >
                     <Plus size={14} />
                     New Project
@@ -468,8 +474,9 @@ export default function ProjectsPage() {
                 description="Try a different filter or clear it to see everything."
                 action={
                   <button
+                    type="button"
                     onClick={() => setFilter("non-archived")}
-                    className="text-xs text-blue-400 hover:text-blue-300"
+                    className="inline-flex min-h-11 items-center rounded px-2 text-xs text-blue-400 hover:text-blue-300"
                   >
                     Show non archived
                   </button>
@@ -478,50 +485,57 @@ export default function ProjectsPage() {
             </div>
           )
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-4 py-3 w-10">
-                  <SelectAllCheckbox
-                    checked={selection.isAllSelected}
-                    indeterminate={selection.isIndeterminate}
-                    onChange={selection.toggleAll}
-                    ariaLabel="Select all projects"
-                  />
-                </th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">State</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Created</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden md:table-cell">Updated</th>
-                <th className="px-4 py-3">
-                  <span className="sr-only">Quick actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/70">
-              {sorted.map((p) => {
-                const isSelected = selection.selected.has(p.id);
-                const isExpanded = expandedId === p.id;
-                const hasDescription = Boolean(p.description);
-                return (
-                  <ProjectRow
-                    key={p.id}
-                    project={p}
-                    isSelected={isSelected}
-                    isExpanded={isExpanded}
-                    hasDescription={hasDescription}
-                    onToggleSelect={() => selection.toggle(p.id)}
-                    onToggleExpand={() =>
-                      setExpandedId((curr) => (curr === p.id ? null : p.id))
-                    }
-                    onArchive={() => archiveProject(p)}
-                    onDelete={() => deleteProject(p)}
-                    actionsDisabled={bulkArchiving || bulkDeleteLoading}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" aria-label="Projects list">
+              <caption className="sr-only">
+                Projects list. Use the filters and sort controls to change the
+                displayed projects.
+              </caption>
+              <thead>
+                <tr className="border-b border-slate-800">
+                  <th scope="col" className="px-4 py-3 w-16">
+                    <SelectAllCheckbox
+                      checked={selection.isAllSelected}
+                      indeterminate={selection.isIndeterminate}
+                      onChange={selection.toggleAll}
+                      ariaLabel="Select all projects"
+                      className="min-h-11 min-w-11"
+                    />
+                  </th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">State</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Created</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden md:table-cell">Updated</th>
+                  <th scope="col" className="px-4 py-3">
+                    <span className="sr-only">Quick actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {sorted.map((p) => {
+                  const isSelected = selection.selected.has(p.id);
+                  const isExpanded = expandedId === p.id;
+                  const hasDescription = Boolean(p.description);
+                  return (
+                    <ProjectRow
+                      key={p.id}
+                      project={p}
+                      isSelected={isSelected}
+                      isExpanded={isExpanded}
+                      hasDescription={hasDescription}
+                      onToggleSelect={() => selection.toggle(p.id)}
+                      onToggleExpand={() =>
+                        setExpandedId((curr) => (curr === p.id ? null : p.id))
+                      }
+                      onArchive={() => archiveProject(p)}
+                      onDelete={() => deleteProject(p)}
+                      actionsDisabled={bulkArchiving || bulkDeleteLoading}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -731,6 +745,7 @@ function ProjectRow({
             checked={isSelected}
             onChange={onToggleSelect}
             ariaLabel={`Select ${p.name}`}
+            className="min-h-11 min-w-11"
           />
         </td>
         <td className="px-4 py-3">
@@ -745,8 +760,9 @@ function ProjectRow({
                     : `Expand description for ${p.name}`
                 }
                 aria-expanded={isExpanded}
+                aria-controls={`project-description-${p.id}`}
                 title={isExpanded ? "Hide description" : "Show description"}
-                className="mt-0.5 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 focus-visible:bg-slate-800/70 transition-colors"
+                className="mt-0.5 inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 focus-visible:bg-slate-800/70 transition-colors"
               >
                 {isExpanded ? (
                   <ChevronDown size={12} aria-hidden="true" />
@@ -761,7 +777,7 @@ function ProjectRow({
               <Link
                 href={`/projects/${p.id}`}
                 prefetch={false}
-                className="font-medium text-slate-100 group-hover:text-white transition-colors"
+                className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white transition-colors"
               >
                 {p.name}
               </Link>
@@ -803,7 +819,7 @@ function ProjectRow({
             <Link
               href={`/projects/${p.id}`}
               prefetch={false}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-white rounded transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
               aria-label={`Open ${p.name}`}
             >
               Open
@@ -818,7 +834,7 @@ function ProjectRow({
               disabled={actionsDisabled}
               title="Archive project"
               aria-label={`Archive project ${p.name}`}
-              className="p-1 text-slate-500 hover:text-amber-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-amber-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Archive size={12} aria-hidden="true" />
             </button>
@@ -831,7 +847,7 @@ function ProjectRow({
               disabled={actionsDisabled}
               title="Delete project"
               aria-label={`Delete project ${p.name}`}
-              className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Trash2 size={12} aria-hidden="true" />
             </button>
@@ -848,7 +864,7 @@ function ProjectRow({
           )}
         >
           <td />
-          <td colSpan={5} className="px-4 py-3">
+          <td id={`project-description-${p.id}`} colSpan={5} className="px-4 py-3">
             <div className="rounded-md border border-slate-800/80 bg-slate-900/60 p-3">
               <div className="text-xxs font-semibold uppercase tracking-wider text-slate-500 mb-1">
                 Description
