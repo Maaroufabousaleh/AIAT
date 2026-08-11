@@ -1,7 +1,7 @@
 # Identity, Mail, Credentials, and External Accounts Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implementation present; safe delivery-attempt trace correlation is implemented; production domain and transport certification pending
+**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; production domain and transport certification pending
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
