@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_image_provenance.py"
+LOCK_EXAMPLE = Path(__file__).resolve().parents[3] / "infra" / "compose" / "production-image-lock.example.env"
 
 
 def _load_runner():
@@ -43,6 +44,18 @@ def test_static_image_contract_emits_machine_readable_pass() -> None:
     assert report["mode"] == "static"
     assert report["status"] == "pass"
     assert "live" not in report
+
+
+def test_production_image_lock_example_covers_every_compose_image_input() -> None:
+    runner = _load_runner()
+    assert LOCK_EXAMPLE.is_file()
+    values = runner._env_file(LOCK_EXAMPLE)
+    expected = runner._compose_variables()
+
+    assert set(values) == expected
+    assert all(value.startswith("registry.example.invalid/") for value in values.values())
+    assert all("<64-hex-digest>" in value for value in values.values())
+    assert not any("password" in key.lower() or "secret" in key.lower() for key in values)
 
 
 def test_live_image_identity_is_fail_closed_without_deployment_refs() -> None:
