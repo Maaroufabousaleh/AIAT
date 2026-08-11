@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -35,7 +36,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }, [menuOpen]);
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-[var(--aiat-bg)] text-slate-100">
+    <div className="flex h-dvh overflow-hidden bg-[var(--aiat-bg)] text-[var(--aiat-text)]">
       <a
         href="#dashboard-main"
         className="sr-only fixed left-3 top-3 z-[100] rounded-lg border border-blue-300/60 bg-slate-950 px-3 py-2 text-sm font-semibold text-blue-100 shadow-xl focus:not-sr-only focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950"
@@ -58,7 +59,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-slate-800/90 bg-slate-950/90 px-3 backdrop-blur-xl lg:hidden">
+        <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-[var(--aiat-border)] bg-[var(--aiat-bg-deep)] px-3 backdrop-blur-xl lg:hidden">
           <button
             type="button"
             ref={menuButtonRef}
@@ -66,14 +67,17 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             aria-label={menuOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={menuOpen}
             aria-controls="primary-navigation"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-200"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-[var(--aiat-border-strong)] bg-[var(--aiat-surface)] text-[var(--aiat-text)]"
           >
             {menuOpen ? <X size={17} aria-hidden="true" /> : <Menu size={17} aria-hidden="true" />}
           </button>
-          <div className="text-sm font-semibold tracking-tight text-white">AIAT Control Plane</div>
-          <div className="flex items-center gap-2 text-xs text-emerald-200" role="status" aria-live="polite">
+          <div className="text-sm font-semibold tracking-tight text-[var(--aiat-text)]">AIAT Control Plane</div>
+          <div className="flex items-center gap-2">
+            <ThemeToggle compact />
+            <div className="flex items-center gap-2 text-xs text-[var(--aiat-status-online)]" role="status" aria-live="polite">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.75)]" aria-hidden="true" />
             <span className="sr-only">Control plane online</span>
+            </div>
           </div>
         </header>
 

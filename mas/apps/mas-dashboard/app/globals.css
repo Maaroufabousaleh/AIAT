@@ -4,12 +4,41 @@
 
 @layer base {
   :root {
+    color-scheme: dark;
     --aiat-bg: #070a0f;
+    --aiat-bg-deep: #05070b;
     --aiat-bg-soft: #0b1018;
     --aiat-surface: #111720;
     --aiat-surface-raised: #151d2b;
     --aiat-border: #263244;
+    --aiat-border-strong: #3a4b63;
+    --aiat-text: #f8fafc;
+    --aiat-text-muted: #c2cede;
+    --aiat-text-subtle: #8ea0b8;
     --aiat-muted: #8ea0b8;
+    --aiat-status-online: #a7f3d0;
+    --aiat-focus-offset: #070a0f;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --aiat-bg: #f5f7fb;
+    --aiat-bg-deep: #e9eef6;
+    --aiat-bg-soft: #eef2f8;
+    --aiat-surface: #ffffff;
+    --aiat-surface-raised: #f8fafc;
+    --aiat-border: #d4dce8;
+    --aiat-border-strong: #b7c3d4;
+    --aiat-text: #172033;
+    --aiat-text-muted: #42516a;
+    --aiat-text-subtle: #64748b;
+    --aiat-muted: #64748b;
+    --aiat-status-online: #047857;
+    --aiat-focus-offset: #f5f7fb;
   }
 
   * {
@@ -30,10 +59,11 @@
 
   body {
     @apply text-slate-100 antialiased;
+    color: var(--aiat-text);
     background:
       radial-gradient(circle at 18% 0%, rgba(37, 99, 235, 0.14), transparent 34rem),
       radial-gradient(circle at 88% 8%, rgba(45, 212, 191, 0.08), transparent 32rem),
-      linear-gradient(180deg, #070a0f 0%, #080b10 48%, #05070b 100%);
+      linear-gradient(180deg, var(--aiat-bg) 0%, var(--aiat-bg-soft) 48%, var(--aiat-bg-deep) 100%);
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   }
 
@@ -51,7 +81,8 @@
   input:focus-visible,
   textarea:focus-visible,
   select:focus-visible {
-    @apply outline-none ring-2 ring-blue-400/70 ring-offset-2 ring-offset-slate-950;
+    @apply outline-none ring-2 ring-blue-400/70 ring-offset-2;
+    --tw-ring-offset-color: var(--aiat-focus-offset);
   }
 
   /* Default scrollbar — themed for the slate design system. */
@@ -72,7 +103,7 @@
   /* Firefox scrollbar — matches the WebKit theme above. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(51 65 85 / 0.8) rgb(2 6 23);
+    scrollbar-color: var(--aiat-border-strong) var(--aiat-bg-deep);
   }
 }
 
@@ -332,5 +363,77 @@
   }
   .animate-pulse-glow {
     animation: aiat-pulse-glow 1.8s ease-in-out infinite;
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Theme adaptation                                                         */
+/*                                                                            */
+/* Most legacy surfaces still use Tailwind's slate utility vocabulary.      */
+/* These semantic remaps keep the existing information architecture intact   */
+/* while making the explicit light palette usable during the migration.      */
+/* ------------------------------------------------------------------------ */
+[data-theme="light"] [class*="bg-slate-950"] {
+  background-color: var(--aiat-bg-deep) !important;
+}
+
+[data-theme="light"] [class*="bg-slate-900"] {
+  background-color: var(--aiat-surface) !important;
+}
+
+[data-theme="light"] [class*="bg-slate-800"] {
+  background-color: var(--aiat-surface-raised) !important;
+}
+
+[data-theme="light"] [class*="bg-slate-700"],
+[data-theme="light"] [class*="bg-slate-600"] {
+  background-color: var(--aiat-bg-soft) !important;
+}
+
+[data-theme="light"] [class*="text-slate-100"],
+[data-theme="light"] [class*="text-slate-200"] {
+  color: var(--aiat-text) !important;
+}
+
+[data-theme="light"] [class*="text-slate-300"],
+[data-theme="light"] [class*="text-slate-400"] {
+  color: var(--aiat-text-muted) !important;
+}
+
+[data-theme="light"] [class*="text-slate-500"],
+[data-theme="light"] [class*="text-slate-600"] {
+  color: var(--aiat-text-subtle) !important;
+}
+
+[data-theme="light"] [class*="border-slate-"] {
+  border-color: var(--aiat-border) !important;
+}
+
+[data-theme="light"] [class*="placeholder-slate-"]::placeholder {
+  color: var(--aiat-text-subtle) !important;
+}
+
+[data-theme="light"] .text-emerald-200 {
+  color: #047857 !important;
+}
+
+[data-theme="light"] .text-blue-100,
+[data-theme="light"] .text-blue-200 {
+  color: #1d4ed8 !important;
+}
+
+[data-theme="light"] .text-cyan-100,
+[data-theme="light"] .text-cyan-200 {
+  color: #0e7490 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }
