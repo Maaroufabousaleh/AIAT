@@ -118,7 +118,11 @@ test.describe("Operational UI smoke flows", () => {
     );
 
     await page.getByRole("tab", { name: /team hierarchy/i }).click();
-    await page.getByRole("button", { name: /show communication policy/i }).click();
+    const policyToggle = page.getByRole("button", {
+      name: "Toggle communication policy overlay",
+    });
+    await policyToggle.click();
+    await expect(policyToggle).toHaveAttribute("aria-pressed", "true");
     await expect(
       page.getByRole("region", { name: "Communication policy overlay controls" }),
     ).toBeVisible();
@@ -127,9 +131,8 @@ test.describe("Operational UI smoke flows", () => {
       .selectOption("worker");
     await expect(page.getByText("Allowed path").first()).toBeVisible();
     await expect(page.getByText("Denied path").first()).toBeVisible();
-    await page
-      .getByRole("button", { name: /hide communication policy/i })
-      .click();
+    await policyToggle.click();
+    await expect(policyToggle).toHaveAttribute("aria-pressed", "false");
 
     await page.getByRole("tab", { name: /permissions/i }).click();
     await expect(page.getByText(/communication/i).first()).toBeVisible();
@@ -145,9 +148,8 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByText("Flow Details")).toBeVisible();
 
     await page.getByRole("button", { name: /toggle path trace mode/i }).click();
-    const selects = page.locator("select");
-    await selects.nth(0).selectOption({ index: 1 });
-    await selects.nth(1).selectOption({ index: 2 });
+    await page.locator("#trace-start").selectOption({ index: 1 });
+    await page.locator("#trace-end").selectOption({ index: 2 });
     await page.getByRole("button", { name: /find path/i }).click();
     await expect(page.getByRole("button", { name: /clear/i })).toBeVisible();
   });
