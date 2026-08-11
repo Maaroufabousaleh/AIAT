@@ -162,6 +162,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   `NO-RELEASE` in [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
 - [x] Bound each child checker with a configurable, capped timeout; a timed-out
   live checker is recorded as `blocked` and never upgraded to pass.
+- [x] Run independent release-ledger child checks through a bounded concurrent
+  pool while preserving inventory order (`fe97b87`); `AIAT_RELEASE_LEDGER_WORKERS`
+  is capped at 16 so aggregate evidence does not serialize every static probe or
+  create unbounded process fan-out.
 - Reuse valid historical fixtures, but rerun every P0 and changed-boundary test.
 - Label static, contract, integration, live API, live UI, recovery, security, and externally blocked evidence precisely.
 - Carry forward unresolved defects with owner, severity, evidence, and next action.

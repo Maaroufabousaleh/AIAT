@@ -177,9 +177,11 @@ The codebase already includes:
   and never changes the release decision to pass while scans, live gates, or a
   clean worktree are missing.
 - The release ledger bounds every child verifier with a capped timeout
-  (`AIAT_RELEASE_CHECK_TIMEOUT_SECONDS`, default 60 seconds for live checks);
-  timed-out live probes are recorded as `blocked`, keeping aggregate evidence
-  finite without treating unavailable infrastructure as a pass.
+  (`AIAT_RELEASE_CHECK_TIMEOUT_SECONDS`, default 60 seconds for live checks),
+  runs independent checks with a bounded four-worker pool (overrideable up to
+  16 through `AIAT_RELEASE_LEDGER_WORKERS`), and preserves inventory order
+  (`fe97b87`); timed-out live probes are recorded as `blocked`, keeping
+  aggregate evidence finite without treating unavailable infrastructure as a pass.
 - `scripts/check_docs_index.py --json` verifies the maintained target,
   eleven-feature/three-plan set, local Markdown links, roadmap references, and the
   personal/internal metadata-only policy; CI and the release ledger fail on
