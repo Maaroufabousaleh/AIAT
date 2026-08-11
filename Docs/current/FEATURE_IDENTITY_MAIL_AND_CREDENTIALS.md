@@ -1,7 +1,7 @@
 # Identity, Mail, Credentials, and External Accounts Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1); production domain and transport certification pending
+**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1); shared identity-resource refreshes are abort/generation-safe and prove stale-to-recovered retry (`46eccee`, source-built `identity-states.spec.ts` 1/1); production domain and transport certification pending
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -37,6 +37,7 @@ This boundary gives workers stable identities and tightly controlled access to m
   filter by that trace.
 - Orchestrator credential manager, approval requests, resolution audit, browser identity, and durable worker tool grants/nonces.
 - The dashboard credentials list reads with `cache: "no-store"`, retains the last successful redacted metadata set after a failed refresh, keeps placeholders/policy/usage rows visible while retrying, labels the list as stale, and exposes header Refresh plus banner Retry controls. [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) cover this path 1/1 without putting secret values in the fixture.
+- All identity-resource tables share an abortable, generation-guarded loader: an obsolete refresh cannot overwrite newer data, retained rows remain visible while retrying, and a successful retry clears the stale warning. [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts) prove the failure → retained-data → recovery path 1/1 without rendering sensitive fields (`46eccee`).
 - Local Stalwart, direct mail-edge, and SMTP gateway deployment/runbook assets.
 
 ## Code anchors
@@ -46,6 +47,7 @@ This boundary gives workers stable identities and tightly controlled access to m
 - Identity migrations: [`mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`](../../mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py) and [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py)
 - Credential manager: [`mas/packages/mas-core/mas_core/credentials/`](../../mas/packages/mas-core/mas_core/credentials/)
 - Dashboard credentials list: [`mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts)
+- Shared identity-resource dashboard surface: [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts)
 - Tool identity client/grants: [`mas/apps/tool-service/tool_service/identity_client.py`](../../mas/apps/tool-service/tool_service/identity_client.py) and [`tool_grants.py`](../../mas/apps/tool-service/tool_service/tool_grants.py)
 - External-account policy and human gate: [`mas/apps/identity-service/identity_service/external_accounts/service.py`](../../mas/apps/identity-service/identity_service/external_accounts/service.py) and [`mas/apps/identity-service/identity_service/routes.py`](../../mas/apps/identity-service/identity_service/routes.py)
 - External-account policy fixture: [`mas/scripts/check_external_account_action_policy.py`](../../mas/scripts/check_external_account_action_policy.py) and [`mas/packages/mas-core/tests/test_external_account_action_policy.py`](../../mas/packages/mas-core/tests/test_external_account_action_policy.py)
