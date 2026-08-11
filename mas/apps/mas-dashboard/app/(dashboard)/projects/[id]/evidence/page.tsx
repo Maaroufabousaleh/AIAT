@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, RefreshCw, ShieldAlert } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -69,11 +69,15 @@ export default function ProjectEvidencePage() {
   const [packageView, setPackageView] = useState<EvidencePackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [packageStale, setPackageStale] = useState(false);
+  const [packageRefreshError, setPackageRefreshError] = useState<string | null>(null);
+  const hasPackageRef = useRef(false);
 
   const loadPackage = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
+    setPackageRefreshError(null);
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(id)}/evidence/package`, {
         cache: "no-store",
@@ -83,9 +87,18 @@ export default function ProjectEvidencePage() {
         throw new Error(typeof payload.error === "string" ? payload.error : "Evidence package unavailable");
       }
       setPackageView(payload as EvidencePackage);
+      hasPackageRef.current = true;
+      setPackageStale(false);
+      setPackageRefreshError(null);
     } catch (cause) {
-      setPackageView(null);
-      setError(cause instanceof Error ? cause.message : "Evidence package unavailable");
+      const message = cause instanceof Error ? cause.message : "Evidence package unavailable";
+      if (hasPackageRef.current) {
+        setPackageStale(true);
+        setPackageRefreshError(message);
+      } else {
+        setPackageView(null);
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -113,6 +126,29 @@ export default function ProjectEvidencePage() {
       />
 
       {error && <div className="mt-6"><ErrorBanner tone="warning">{error}</ErrorBanner></div>}
+      {packageStale && packageRefreshError && (
+        <div className="mt-6" data-testid="project-evidence-stale">
+          <ErrorBanner
+            tone="warning"
+            title="Showing last known evidence package"
+            action={(
+              <button
+                type="button"
+                onClick={() => void loadPackage()}
+                disabled={loading}
+                aria-busy={loading}
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+                Retry
+              </button>
+            )}
+          >
+            {packageRefreshError} The last successful package remains visible
+            until a retry succeeds.
+          </ErrorBanner>
+        </div>
+      )}
       {loading && !packageView && <p className="mt-8 text-sm text-slate-400">Loading evidence package…</p>}
 
       {packageView && (
