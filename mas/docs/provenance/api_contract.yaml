@@ -30,7 +30,7 @@ python_sdk:
   generator: scripts/generate_python_api.py
   model_count: 130
   operation_count: 266
-  sha256: ca5d470b9076ab3b1d202a847f644990466bb005c056c2834944fde5d7481192
+  sha256: 9ab8f967744f7ac91269b567a1f406000904ba678099bdc071bc635cc16a1743
 
 # Licence/notices and stated restrictions remain metadata elsewhere; they are
 # not part of API/protocol compatibility or activation predicates.
