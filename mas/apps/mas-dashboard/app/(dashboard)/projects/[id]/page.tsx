@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -83,6 +90,14 @@ interface StateHistoryEntry {
   triggered_by?: string;
   payload?: Record<string, unknown>;
 }
+
+type WorkspaceSubTab = "activity" | "resources" | "cost";
+
+const WORKSPACE_SUB_TABS: readonly WorkspaceSubTab[] = [
+  "activity",
+  "resources",
+  "cost",
+];
 
 interface Decision {
   id: string;
@@ -300,9 +315,40 @@ export default function ProjectDetailPage() {
   // Sub-tabs within the workspace view let operators jump between the most
   // important slices (next action, project activity, live resources, spend)
   // without scrolling through every card on a tall screen.
-  const [workspaceSubTab, setWorkspaceSubTab] = useState<
-    "activity" | "resources" | "cost"
-  >("activity");
+  const [workspaceSubTab, setWorkspaceSubTab] =
+    useState<WorkspaceSubTab>("activity");
+
+  const handleWorkspaceSubTabKeyDown = useCallback(
+    (
+      event: ReactKeyboardEvent<HTMLButtonElement>,
+      current: WorkspaceSubTab,
+    ) => {
+      const currentIndex = WORKSPACE_SUB_TABS.indexOf(current);
+      let nextIndex: number | null = null;
+
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        nextIndex = (currentIndex + 1) % WORKSPACE_SUB_TABS.length;
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        nextIndex =
+          (currentIndex - 1 + WORKSPACE_SUB_TABS.length) %
+          WORKSPACE_SUB_TABS.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = WORKSPACE_SUB_TABS.length - 1;
+      }
+
+      if (nextIndex === null) return;
+
+      event.preventDefault();
+      const nextTab = WORKSPACE_SUB_TABS[nextIndex];
+      setWorkspaceSubTab(nextTab);
+      window.requestAnimationFrame(() => {
+        document.getElementById(`workspace-tab-${nextTab}`)?.focus();
+      });
+    },
+    [],
+  );
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceStale, setWorkspaceStale] = useState(false);
@@ -1353,13 +1399,21 @@ export default function ProjectDetailPage() {
             className="flex flex-wrap gap-1 dashboard-toolbar"
             role="tablist"
             aria-label="Workspace sections"
+            aria-orientation="horizontal"
           >
             <button
+              type="button"
+              id="workspace-tab-activity"
               onClick={() => setWorkspaceSubTab("activity")}
+              onKeyDown={(event) =>
+                handleWorkspaceSubTabKeyDown(event, "activity")
+              }
               role="tab"
               aria-selected={workspaceSubTab === "activity"}
+              aria-controls="workspace-panel-activity"
+              tabIndex={workspaceSubTab === "activity" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "activity"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1368,11 +1422,18 @@ export default function ProjectDetailPage() {
               <Activity size={12} /> Activity
             </button>
             <button
+              type="button"
+              id="workspace-tab-resources"
               onClick={() => setWorkspaceSubTab("resources")}
+              onKeyDown={(event) =>
+                handleWorkspaceSubTabKeyDown(event, "resources")
+              }
               role="tab"
               aria-selected={workspaceSubTab === "resources"}
+              aria-controls="workspace-panel-resources"
+              tabIndex={workspaceSubTab === "resources" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "resources"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1381,11 +1442,16 @@ export default function ProjectDetailPage() {
               <ListChecks size={12} /> Resources
             </button>
             <button
+              type="button"
+              id="workspace-tab-cost"
               onClick={() => setWorkspaceSubTab("cost")}
+              onKeyDown={(event) => handleWorkspaceSubTabKeyDown(event, "cost")}
               role="tab"
               aria-selected={workspaceSubTab === "cost"}
+              aria-controls="workspace-panel-cost"
+              tabIndex={workspaceSubTab === "cost" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "cost"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1428,7 +1494,13 @@ export default function ProjectDetailPage() {
           </div>
 
           {workspaceSubTab === "activity" && (
-            <div className="space-y-4">
+            <div
+              id="workspace-panel-activity"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-activity"
+              tabIndex={0}
+              className="space-y-4"
+            >
               <div className="dashboard-surface p-4">
                 <h2 className="text-sm font-medium text-white mb-3">
                   Next Operator Action
@@ -1566,7 +1638,13 @@ export default function ProjectDetailPage() {
           )}
 
           {workspaceSubTab === "resources" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div
+              id="workspace-panel-resources"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-resources"
+              tabIndex={0}
+              className="grid grid-cols-1 gap-4 md:grid-cols-2"
+            >
               <div className="dashboard-surface p-4 md:col-span-2">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
@@ -1734,7 +1812,13 @@ export default function ProjectDetailPage() {
           )}
 
           {workspaceSubTab === "cost" && (
-            <div className="dashboard-surface p-4">
+            <div
+              id="workspace-panel-cost"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-cost"
+              tabIndex={0}
+              className="dashboard-surface p-4"
+            >
               <h2 className="text-sm font-medium text-white mb-3">
                 Cost And Usage
               </h2>

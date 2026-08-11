@@ -153,6 +153,44 @@ test("project workspace retains data through a failed refresh and recovers", asy
   await expect(page.getByTestId("project-workspace-stale")).toHaveCount(0);
   await expect(page.getByText("Ship recovered workspace")).toBeVisible();
   await expect(page.getByText("Recovered workspace activity")).toBeVisible();
-  await page.getByRole("tab", { name: "Resources" }).click();
+  const activityTab = page.getByRole("tab", { name: "Activity", exact: true });
+  const resourcesTab = page.getByRole("tab", {
+    name: "Resources",
+    exact: true,
+  });
+  const costTab = page.getByRole("tab", { name: "Cost", exact: true });
+  await expect(activityTab).toHaveAttribute(
+    "aria-controls",
+    "workspace-panel-activity",
+  );
+  await expect(resourcesTab).toHaveAttribute(
+    "aria-controls",
+    "workspace-panel-resources",
+  );
+  await expect(costTab).toHaveAttribute(
+    "aria-controls",
+    "workspace-panel-cost",
+  );
+
+  await resourcesTab.click();
   await expect(page.getByText("recovered-report.md")).toBeVisible();
+
+  await resourcesTab.focus();
+  await resourcesTab.press("ArrowRight");
+  await expect(costTab).toBeFocused();
+  await expect(costTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#workspace-panel-cost")).toBeVisible();
+  await expect(page.locator("#workspace-panel-cost")).toHaveAttribute(
+    "aria-labelledby",
+    "workspace-tab-cost",
+  );
+
+  await costTab.press("Home");
+  await expect(activityTab).toBeFocused();
+  await expect(activityTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#workspace-panel-activity")).toBeVisible();
+
+  await activityTab.press("ArrowLeft");
+  await expect(costTab).toBeFocused();
+  await expect(costTab).toHaveAttribute("aria-selected", "true");
 });
