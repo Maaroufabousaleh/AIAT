@@ -526,8 +526,8 @@ Required outcomes:
   dedicated evidence-record route. Artifact, integration, model, runtime, tool,
   usage, worker-run, and trace IDs are citation-only and payload-free. Legacy
   fallback output accepts only explicit stripped `AIAT_EVIDENCE` markers and
-  labels those citations `unverified`; complete governed-flow coverage and
-  resource-specific detail loading remain;
+  labels those citations `unverified` (`f1801bb`); complete governed-flow
+  coverage and resource-specific detail loading remain;
 - model profile, routing, cost, and budget records reconcile (focused override-expiry, terminal-settlement replay, explicit LLM transient-status classification, persisted model/provider cooldown filtering, deterministic runtime/profile catalogue export/reconciliation, fail-closed `--live` catalogue and executive reconciliation verifiers with explicit approval/finding gates, an idempotent conflict-preserving bootstrap for the shipped `opencode-phase0b-coding` profile, all 93 registered model identities, and the `omniroute-coding` alias, bounded `aiat.executive-reconciliation.v1` reporting, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, and reservation/settlement invariant auditing now pass); local live evidence covers 92 approved profile versions out of 94 persisted versions, while one pending registered model and two non-registered rows remain findings; role-scoped `aiat.executive-action.v1` CFO/CTO/CEO write routes, dashboard proxies, and the typed confirmation panel are implemented, while provider-specific live recovery, broader governance forms, and broader chaos/live evidence remain;
 - mobile, themes, WCAG 2.2 AA, stale/conflict/rollback states, and evidence deep links complete;
 - native-Linux Playwright golden paths pass.

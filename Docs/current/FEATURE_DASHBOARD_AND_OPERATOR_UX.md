@@ -1,7 +1,7 @@
 # Dashboard and Operator UX Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, executive reconciliation/action surfaces (`d1b8839`), and the local Compose E2E matrix implemented; the ACL middleware and operator credential-proxy hardening are committed in `e9b4da4`; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
+**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, executive reconciliation/action surfaces (`d1b8839`), and the local Compose E2E matrix implemented; the ACL middleware and operator credential-proxy hardening are committed in `e9b4da4`; secret-safe deterministic and explicit-marker CEO evidence is committed in `f1801bb`; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -140,9 +140,10 @@ The CEO cockpit summarises portfolio, company health, spend, risk, approvals, in
   integrations, artifacts, usage, runtimes, and trace records; the dedicated
   evidence route never renders payloads. Rich resource-specific detail loading,
   stale/offline states, and full golden-path coverage remain.
-- Extend CEO evidence citations to richer free-form model responses. The fallback
-  response path now supports explicit, stripped `AIAT_EVIDENCE` markers and labels
-  them unverified; authoritative deterministic citations remain preferred.
+- The legacy CEO model fallback now supports explicit, stripped `AIAT_EVIDENCE`
+  markers and labels them unverified (`f1801bb`); authoritative deterministic
+  citations remain preferred. Resource-specific detail loading, stale/offline
+  states, and full golden-path coverage remain.
 - Run complete Playwright desktop/mobile golden paths on native Linux CI.
 - Add visual regression within stable, intentional thresholds.
 
