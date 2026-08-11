@@ -63,8 +63,9 @@ stale/retry recovery (`5f4b0eb`), and dead-letter queue stale/retry recovery
 (`823fa6d`), credentials metadata stale/retry recovery (`970f09c`), Metrics
 partial/stale/retry recovery (`85596b0`), and Flows list stale/retry recovery
 (`a0faf5b`), the credentials render-state lint repair (`e6e6980`), Container
-Logs stale/retry recovery (`280d363`), and Agent Streams reconnect/history
-recovery (`3e8a0ea`), each with separate
+Logs stale/retry recovery (`280d363`), Agent Streams reconnect/history
+recovery (`3e8a0ea`), and Hiring Board stale/retry recovery (`7541b84`), each
+with separate
 documentation updates. The static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain
