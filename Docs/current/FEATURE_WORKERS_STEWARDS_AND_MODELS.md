@@ -182,7 +182,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   acceptance, ordered-event, and normalized-terminal-result contract as native
   workers. This is deterministic adapter-contract evidence only; installed
   runtime, sandbox, canary, and live recovery certification remain separate.
-- The Microsoft Agent Framework adapter now has a deterministic compatibility
+- The Microsoft Agent Framework adapter (`fc528a8`) now has a deterministic compatibility
   fixture covering `Agent` construction, async `run` dispatch, shutdown, and
   fail-closed missing-package/instructions paths. This proves the AIAT-side
   translation boundary only. The locked compatibility contract now records
@@ -191,12 +191,12 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   mismatched, or missing the required symbols. The current workspace MCP pin
   is `1.23.3`, so MAF activation remains blocked until the optional dependency
   set is updated and installed.
-- Code review now has a reproducible AIAT deterministic diff reviewer as its
+- Code review (`fc528a8`) now has a reproducible AIAT deterministic diff reviewer as its
   default adapter when no external command is configured. The worker manifest
   points to a versioned adapter catalogue; PR-Agent, open-code-review, and
   stage-cli remain metadata-only external candidates until each receives an
   exact source/revision/version and representative review evidence.
-- Security scanner aliases now have a deterministic contract fixture: the
+- Security scanner aliases (`fc528a8`) now have a deterministic contract fixture: the
   `security.scan` path accepts Semgrep, SkillSpector, and TruffleHog, keeps
   SkillSpector's command configurable through `TOOL_SKILLSPECTOR_COMMAND`, and
   routes all three through the same bounded sandbox/audit boundary.
@@ -222,9 +222,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the current Docker host reports `runsc` unavailable and therefore remains blocked without a `runc` fallback.
 - Runtime benchmark probe: [`mas/scripts/check_runtime_benchmarks.py`](../../mas/scripts/check_runtime_benchmarks.py)
 - Runtime adapter conformance probe (`9a10a4b`): [`mas/scripts/check_runtime_adapter_conformance.py`](../../mas/scripts/check_runtime_adapter_conformance.py) and [`runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Deterministic LangGraph/CrewAI fixtures pass manifest/message translation, bounded completion, health, and shutdown; package-import and worker-canary evidence remain separate.
-- MAF/MCP compatibility contract and preflight: [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py)
-- Code-review adapter catalogue/default: [`mas/docs/provenance/code_review_adapters.yaml`](../../mas/docs/provenance/code_review_adapters.yaml), [`mas/scripts/check_code_review_adapters.py`](../../mas/scripts/check_code_review_adapters.py), [`mas/apps/tool-service/tool_service/code_review_runner.py`](../../mas/apps/tool-service/tool_service/code_review_runner.py), and [`CodeReviewTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py)
-- Security adapter aliases/fixture: [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py)
+- MAF/MCP compatibility contract and preflight (`fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py)
+- Code-review adapter catalogue/default (`fc528a8`): [`mas/docs/provenance/code_review_adapters.yaml`](../../mas/docs/provenance/code_review_adapters.yaml), [`mas/scripts/check_code_review_adapters.py`](../../mas/scripts/check_code_review_adapters.py), [`mas/apps/tool-service/tool_service/code_review_runner.py`](../../mas/apps/tool-service/tool_service/code_review_runner.py), and [`CodeReviewTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py)
+- Security adapter aliases/fixture (`fc528a8`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py)
 - Document ingestion/fallback: [`DocumentIngestTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_document_ingest_falls_back_to_text_when_docling_missing`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `document.ingest` readiness probe
 - Steward lifecycle contract (`c80e339`, fixture coverage `fe6fb8d`): [`mas/scripts/check_worker_steward_contract.py`](../../mas/scripts/check_worker_steward_contract.py) and [`test_worker_steward_contract.py`](../../mas/packages/mas-core/tests/test_worker_steward_contract.py). The deterministic domain exercise covers candidate immutability, compatibility evidence, promotion regression blocking, and rollback without claiming database or live-worker certification.
 - Executive reconciliation verifier: [`mas/scripts/check_executive_reconciliation.py`](../../mas/scripts/check_executive_reconciliation.py)
