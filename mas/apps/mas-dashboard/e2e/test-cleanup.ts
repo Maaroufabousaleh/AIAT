@@ -11,7 +11,7 @@ const ORCHESTRATOR_URL = runtimeEnv(
   "E2E_ORCHESTRATOR_URL",
   "http://127.0.0.1:8000",
 );
-const API_KEY = runtimeEnv("MAS_API_KEY");
+const API_KEY = runtimeEnv("AIAT_OPERATOR_API_KEY") || runtimeEnv("MAS_API_KEY");
 
 const PROJECT_PATTERNS = [
   /^aiat_smoke_[a-z0-9_]+$/i,
@@ -35,7 +35,6 @@ const WORKER_PATTERNS = [
   /^aiat_smoke_[a-z0-9_]+$/i,
   /^e2e_worker_\d+$/,
   /^e2e_candidate_\d+$/,
-  /^test_evaluation_worker$/,
   /^test-worker-\d+$/,
   /^live_probe_\d+_[a-f0-9]+_worker$/,
   /^live-audit-worker-[a-f0-9]+$/,

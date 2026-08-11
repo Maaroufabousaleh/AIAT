@@ -5090,10 +5090,14 @@ async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, An
         # Compose runs from /app, while repository tests run from the
         # workspace root. Resolve the checked-in default from either runtime
         # layout, but never fall back when an explicit path was supplied.
-        candidates = (
-            default_manifest_name,
-            Path(__file__).resolve().parents[1] / default_manifest_name,
-            Path(__file__).resolve().parents[3] / default_manifest_name,
+        # ``__file__`` has a different depth in the source tree and in the
+        # production image (where it is ``/app/orchestrator_api/main.py``).
+        # Iterate over available parents instead of indexing a presumed depth;
+        # the latter raised ``IndexError`` in the image and silently disabled
+        # default-company bootstrap after worker seeding.
+        candidates = (default_manifest_name,)
+        candidates += tuple(
+            parent / default_manifest_name for parent in Path(__file__).resolve().parents
         )
         manifest_path = next(
             (candidate for candidate in candidates if candidate.is_file()),
