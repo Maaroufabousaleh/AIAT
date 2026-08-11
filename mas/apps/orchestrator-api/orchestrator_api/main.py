@@ -104,7 +104,14 @@ from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 from mas_core.workflow import (
+    GateName,
+    ImprovementArtifactBundle,
+    ImprovementOpportunity,
+    ImprovementOutcomeKind,
     InvalidTransitionError,
+    SelfImprovementAuthorityError,
+    SelfImprovementLifecycle,
+    SelfImprovementTransitionError,
     WatchdogConfig,
     WorkflowController,
     WorkflowEvent,
@@ -1171,6 +1178,122 @@ class CreateProjectRequest(BaseModel):
         if not normalized:
             raise ValueError("name must not be blank")
         return normalized
+
+
+class SelfImprovementReferenceRequest(BaseModel):
+    """Link an existing canonical record to an improvement lifecycle."""
+
+    kind: Literal[
+        "issue",
+        "worker_run",
+        "artifact",
+        "artifact_readback",
+        "budget_reservation",
+        "branch",
+        "sbom",
+        "deployment",
+        "evidence",
+        "repository",
+    ]
+    reference: str = Field(min_length=1, max_length=512)
+
+    @field_validator("reference")
+    @classmethod
+    def normalize_reference(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reference must not be blank")
+        return normalized
+
+
+class SelfImprovementActionRequest(BaseModel):
+    """One governed mutation of a revisioned self-improvement lifecycle."""
+
+    action: Literal[
+        "record_gate",
+        "start_shadow",
+        "record_observation",
+        "start_canary",
+        "request_promotion",
+        "approve_promotion",
+        "rollback",
+        "record_outcome",
+        "record_artifacts",
+        "record_artifact_readback",
+    ]
+    gate: GateName | None = None
+    passed: bool | None = None
+    evidence_refs: list[str] = Field(default_factory=list, max_length=32)
+    detail: str | None = Field(default=None, max_length=2000)
+    candidate_version: str | None = Field(default=None, max_length=240)
+    stage: Literal["shadow", "canary"] | None = None
+    sample_count: int | None = Field(default=None, gt=0)
+    regression_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    irreversible_side_effects: int = Field(default=0, ge=0)
+    reason: str | None = Field(default=None, max_length=2000)
+    outcome_id: UUID | None = None
+    outcome: ImprovementOutcomeKind | None = None
+    cost_usd: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000000"))
+    incident_count: int | None = Field(default=None, ge=0, le=100000)
+    rollback_performed: bool | None = None
+    kpi_learning: dict[str, float] = Field(default_factory=dict)
+    artifact_bundle: ImprovementArtifactBundle | None = None
+    artifact_id: UUID | None = None
+    actual_sha256: str | None = Field(default=None, max_length=64)
+    actual_size_bytes: int | None = Field(default=None, ge=0, le=1_000_000_000_000)
+    readback_source: str | None = Field(default=None, max_length=240)
+    canonical_artifact_id: str | None = Field(default=None, max_length=160)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def normalize_evidence_refs(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("evidence_refs must not contain blank values")
+        return list(dict.fromkeys(normalized))
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> SelfImprovementActionRequest:
+        if self.action == "record_gate" and self.gate is None:
+            raise ValueError("record_gate requires gate")
+        if self.action == "record_gate" and self.passed is None:
+            raise ValueError("record_gate requires passed")
+        if self.action == "start_shadow" and not (self.candidate_version or "").strip():
+            raise ValueError("start_shadow requires candidate_version")
+        if (
+            self.action == "record_observation"
+            and (
+                self.stage is None
+                or self.sample_count is None
+                or self.regression_fraction is None
+            )
+        ):
+            raise ValueError(
+                "record_observation requires stage, sample_count, and regression_fraction"
+            )
+        if self.action == "rollback" and not (self.reason or "").strip():
+            raise ValueError("rollback requires reason")
+        if self.action == "record_outcome":
+            if self.outcome is None:
+                raise ValueError("record_outcome requires outcome")
+            if self.cost_usd is None:
+                raise ValueError("record_outcome requires cost_usd")
+            if self.incident_count is None:
+                raise ValueError("record_outcome requires incident_count")
+            if self.rollback_performed is None:
+                raise ValueError("record_outcome requires rollback_performed")
+        if self.action == "record_artifacts" and self.artifact_bundle is None:
+            raise ValueError("record_artifacts requires artifact_bundle")
+        if self.action == "record_artifact_readback":
+            if self.artifact_id is None:
+                raise ValueError("record_artifact_readback requires artifact_id")
+            if self.actual_sha256 is None:
+                raise ValueError("record_artifact_readback requires actual_sha256")
+            if self.actual_size_bytes is None:
+                raise ValueError("record_artifact_readback requires actual_size_bytes")
+            if not (self.readback_source or "").strip():
+                raise ValueError("record_artifact_readback requires readback_source")
+        return self
 
 
 class CompanyCreateRequest(BaseModel):
@@ -3307,6 +3430,39 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     return _serialize(project)
 
 
+@app.post("/projects/self-improvement", status_code=201)
+async def create_self_improvement_project(
+    req: ImprovementOpportunity,
+    request: Request,
+) -> dict[str, Any]:
+    """Create a guarded self-improvement opportunity as a normal project.
+
+    The typed opportunity is only a request projection.  Persistence remains
+    in the canonical project writer, and the authenticated API principal must
+    match the declared creator so callers cannot forge attribution.  Licence
+    or other restriction values are retained in the project configuration as
+    metadata only; they are not an admission or execution gate.
+    """
+    principal = _authenticated_principal(request)
+    if req.created_by != principal:
+        raise HTTPException(403, "created_by must match the authenticated principal")
+
+    storage = _storage()
+    writer = getattr(storage, "create_self_improvement_project", None)
+    if not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement project writer is unavailable")
+
+    company_id = req.company_id or DEFAULT_COMPANY_ID
+    get_company = getattr(storage, "get_company", None)
+    if inspect.iscoroutinefunction(get_company) and await get_company(company_id) is None:
+        raise HTTPException(404, f"Company {company_id} not found")
+
+    project = await writer(req)
+    if not isinstance(project, dict):
+        raise HTTPException(503, "Self-improvement project writer returned an invalid project")
+    return _serialize(project)
+
+
 @app.get("/projects")
 async def list_projects(
     state: str | None = None,
@@ -3329,26 +3485,313 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
     return _serialize(project)
 
 
-async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> Any:
-    from mas_core.workflow import evaluate_project_evidence, policy_for
+@app.get("/projects/{project_id}/self-improvement")
+async def get_self_improvement_lifecycle(
+    project_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Return the validated lifecycle snapshot stored in project config."""
+
+    _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader):
+        raise HTTPException(503, "Self-improvement lifecycle reader is unavailable")
+    lifecycle = await reader(project_id)
+    if lifecycle is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+    return _serialize(lifecycle)
+
+
+@app.post("/projects/{project_id}/self-improvement/references")
+async def link_self_improvement_reference(
+    project_id: UUID,
+    req: SelfImprovementReferenceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Attach an existing issue/run/artifact/budget/deployment reference.
+
+    The endpoint records a pointer in the canonical project lifecycle.  It
+    does not clone or reinterpret the referenced record; each service remains
+    authoritative for its own state and evidence.
+    """
+
+    principal = _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    writer = getattr(storage, "update_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader) or not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement lifecycle persistence is unavailable")
+    snapshot = await reader(project_id)
+    if snapshot is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+    try:
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        lifecycle.link_reference(req.kind, req.reference)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    project = await writer(project_id, lifecycle, actor=principal)
+    if project is None:
+        raise HTTPException(409, "Self-improvement lifecycle changed; re-read and retry")
+    return {"project": _serialize(project), "lifecycle": lifecycle.as_dict()}
+
+
+def _self_improvement_actor_kind(principal: str) -> Literal["human", "agent", "system"]:
+    """Map authenticated control-plane identities to lifecycle actor kinds."""
+
+    if principal == "operator":
+        return "human"
+    if principal == "worker":
+        return "agent"
+    return "system"
+
+
+@app.post("/projects/{project_id}/self-improvement/actions")
+async def apply_self_improvement_action(
+    project_id: UUID,
+    req: SelfImprovementActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Apply one governed lifecycle action through the canonical writer."""
+
+    principal = _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    writer = getattr(storage, "update_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader) or not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement lifecycle persistence is unavailable")
+    snapshot = await reader(project_id)
+    if snapshot is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+
+    actor_kind = _self_improvement_actor_kind(principal)
+    try:
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        if req.action == "record_gate":
+            assert req.gate is not None
+            assert req.passed is not None
+            lifecycle.record_gate(
+                req.gate,
+                passed=req.passed,
+                actor=principal,
+                actor_kind=actor_kind,
+                evidence_refs=tuple(req.evidence_refs),
+                detail=req.detail,
+            )
+        elif req.action == "start_shadow":
+            assert req.candidate_version is not None
+            lifecycle.start_shadow(
+                candidate_version=req.candidate_version,
+                actor=principal,
+                actor_kind=actor_kind,
+            )
+        elif req.action == "record_observation":
+            assert req.stage is not None
+            assert req.sample_count is not None
+            assert req.regression_fraction is not None
+            lifecycle.record_observation(
+                stage=req.stage,
+                sample_count=req.sample_count,
+                regression_fraction=req.regression_fraction,
+                irreversible_side_effects=req.irreversible_side_effects,
+            )
+        elif req.action == "start_canary":
+            lifecycle.start_canary(actor=principal, actor_kind=actor_kind)
+        elif req.action == "request_promotion":
+            lifecycle.request_promotion(actor=principal, actor_kind=actor_kind)
+        elif req.action == "approve_promotion":
+            lifecycle.approve_promotion(actor=principal, actor_kind=actor_kind)
+        elif req.action == "rollback":
+            assert req.reason is not None
+            lifecycle.rollback(actor=principal, actor_kind=actor_kind, reason=req.reason)
+        elif req.action == "record_outcome":
+            assert req.outcome is not None
+            assert req.cost_usd is not None
+            assert req.incident_count is not None
+            assert req.rollback_performed is not None
+            lifecycle.record_outcome(
+                outcome=req.outcome,
+                cost_usd=req.cost_usd,
+                incident_count=req.incident_count,
+                rollback_performed=req.rollback_performed,
+                kpi_learning=req.kpi_learning,
+                evidence_refs=tuple(req.evidence_refs),
+                actor=principal,
+                actor_kind=actor_kind,
+                outcome_id=req.outcome_id,
+                detail=req.detail,
+            )
+        elif req.action == "record_artifacts":
+            assert req.artifact_bundle is not None
+            lifecycle.record_artifact_bundle(
+                req.artifact_bundle,
+                actor=principal,
+                actor_kind=actor_kind,
+            )
+        elif req.action == "record_artifact_readback":
+            assert req.artifact_id is not None
+            assert req.actual_sha256 is not None
+            assert req.actual_size_bytes is not None
+            assert req.readback_source is not None
+            lifecycle.record_artifact_readback(
+                artifact_id=req.artifact_id,
+                actual_sha256=req.actual_sha256,
+                actual_size_bytes=req.actual_size_bytes,
+                source=req.readback_source,
+                actor=principal,
+                actor_kind=actor_kind,
+                canonical_artifact_id=req.canonical_artifact_id,
+            )
+    except SelfImprovementAuthorityError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except SelfImprovementTransitionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    project = await writer(project_id, lifecycle, actor=principal)
+    if project is None:
+        raise HTTPException(409, "Self-improvement lifecycle changed; re-read and retry")
+    return {"project": _serialize(project), "lifecycle": lifecycle.as_dict()}
+
+
+def _manifest_evidence_selection(
+    record: dict[str, Any] | None,
+    *,
+    milestone: str | None = None,
+) -> dict[str, Any] | None:
+    """Extract a company default or milestone override from a manifest row."""
+
+    milestone_policies, default = _manifest_evidence_scopes(record)
+    if isinstance(milestone, str):
+        selection = milestone_policies.get(milestone.strip())
+        if isinstance(selection, dict):
+            return selection
+    return default
+
+
+def _manifest_evidence_scopes(
+    record: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Extract company milestone and default selections without evaluating them."""
+
+    if not isinstance(record, dict):
+        return {}, None
+    manifest = record.get("manifest_json")
+    if not isinstance(manifest, dict):
+        nested = record.get("manifest")
+        manifest = nested.get("manifest_json") if isinstance(nested, dict) else None
+    if not isinstance(manifest, dict):
+        return {}, None
+    evidence = manifest.get("evidence_policy")
+    if not isinstance(evidence, dict):
+        return {}, None
+    milestones = evidence.get("milestone_policies")
+    milestone_policies = milestones if isinstance(milestones, dict) else {}
+    default = evidence.get("default_policy")
+    return milestone_policies, default if isinstance(default, dict) else None
+
+
+async def _project_active_milestone(
+    project: dict[str, Any], project_id: UUID, storage: AgentStorage
+) -> str | None:
+    config = dict(project.get("config") or {})
+    explicit = config.get("active_milestone") or project.get("milestone")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    list_sprints = getattr(storage, "list_sprints", None)
+    if not inspect.iscoroutinefunction(list_sprints):
+        return None
+    rows = await list_sprints(project_id)
+    candidates = [
+        row
+        for row in (rows or [])
+        if isinstance(row, dict)
+        and isinstance(row.get("milestone"), str)
+        and row.get("milestone", "").strip()
+        and str(row.get("status", "")).upper() not in {"COMPLETED", "CLOSED", "CANCELLED"}
+    ]
+    candidates.sort(key=lambda row: int(row.get("sprint_number") or 0), reverse=True)
+    return str(candidates[0]["milestone"]).strip() if candidates else None
+
+
+async def _company_evidence_selection(
+    project: dict[str, Any], storage: AgentStorage, *, milestone: str | None = None
+) -> dict[str, Any] | None:
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(get_manifest):
+        return None
+    company_id = project.get("company_id") or DEFAULT_COMPANY_ID
+    try:
+        record = await get_manifest(UUID(str(company_id)))
+    except (TypeError, ValueError):
+        return None
+    return _manifest_evidence_selection(record, milestone=milestone)
+
+
+async def _company_evidence_scopes(
+    project: dict[str, Any], storage: AgentStorage
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(get_manifest):
+        return {}, None
+    company_id = project.get("company_id") or DEFAULT_COMPANY_ID
+    try:
+        record = await get_manifest(UUID(str(company_id)))
+    except (TypeError, ValueError):
+        return {}, None
+    return _manifest_evidence_scopes(record)
+
+
+async def _collect_project_evidence(
+    project_id: UUID, storage: AgentStorage
+) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
+    from mas_core.workflow import (
+        evaluate_project_evidence,
+        policy_for,
+        resolve_evidence_policy_selection,
+    )
 
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     config = dict(project.get("config") or {})
-    selected = config.get("evidence_policy") or "manual"
+    flow_instance = await storage.get_flow_instance_by_project(project_id)
+    milestone = await _project_active_milestone(project, project_id, storage)
+    flow_selection = None
+    if flow_instance is not None:
+        get_flow = getattr(storage, "get_flow", None)
+        if inspect.iscoroutinefunction(get_flow):
+            flow = await get_flow(flow_instance["flow_id"])
+            metadata = dict((flow or {}).get("definition_json", {}).get("metadata") or {})
+            flow_selection = metadata.get("evidence_policy")
+    selected, selection_source = resolve_evidence_policy_selection(
+        milestone=milestone,
+        project_milestone_policies=config.get("evidence_policy_milestones"),
+        project_selection=config.get("evidence_policy"),
+        flow_selection=flow_selection,
+    )
+    if selection_source == "fallback":
+        company_milestones, company_default = await _company_evidence_scopes(project, storage)
+        selected, selection_source = resolve_evidence_policy_selection(
+            milestone=milestone,
+            project_milestone_policies=config.get("evidence_policy_milestones"),
+            project_selection=config.get("evidence_policy"),
+            flow_selection=flow_selection,
+            company_milestone_policies=company_milestones,
+            company_selection=company_default,
+        )
     if isinstance(selected, dict):
         policy = policy_for(str(selected.get("policy_id") or "custom"), version=selected.get("version"), requirements=dict(selected.get("requirements") or {}))
     else:
         policy = policy_for(str(selected))
     documents = await storage.list_documents(project_id)
     artifacts = await _project_artifact_rows(storage, project_id)
-    flow_instance = await storage.get_flow_instance_by_project(project_id)
     approvals = await storage.list_approval_gates(project_id=project_id)
     runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
     repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
     history = await storage.get_project_history(project_id)
-    return evaluate_project_evidence(
+    evidence = evaluate_project_evidence(
         project_id=str(project_id),
         policy=policy,
         project=project,

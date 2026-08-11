@@ -49,6 +49,15 @@ from mas_core.memory.models import (
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 from mas_core.memory.storage import AgentStorage
+from mas_core.workflow import (
+    ImprovementArtifact,
+    ImprovementArtifactBundle,
+    ImprovementArtifactKind,
+    ImprovementOpportunity,
+    ImprovementOutcomeKind,
+    ImprovementRisk,
+    ImprovementStatus,
+)
 
 # ===========================================================================
 # Helpers
@@ -425,6 +434,155 @@ class TestAgentStorageCRUD:
             project_id=pid,
         )
         assert result["id"] == pid
+
+    @pytest.mark.asyncio
+    async def test_create_self_improvement_project_uses_canonical_project_writer(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Storage-backed improvement",
+            description="Persist a governed improvement request.",
+            owner="cto",
+            risk=ImprovementRisk.MEDIUM,
+            budget_usd="3.50",
+            evidence_policy="software_delivery",
+            source="operator_goal",
+            created_by="operator",
+            created_by_kind="human",
+        )
+
+        result = await storage.create_self_improvement_project(opportunity, project_id=pid)
+
+        assert result["id"] == pid
+        assert result["name"] == "Improvement: Storage-backed improvement"
+        assert result["config"]["self_improvement"]["risk"] == "medium"
+        assert result["config"]["self_improvement"]["budget_usd"] == "3.50"
+        assert result["config"]["self_improvement"]["evidence_policy"] == "software_delivery"
+        lifecycle = result["config"]["self_improvement"]["lifecycle"]
+        assert lifecycle["status"] == "project_bound"
+        assert lifecycle["project_id"] == str(pid)
+        assert lifecycle["revision"] == 1
+        assert conn.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_self_improvement_lifecycle_reads_from_project_config(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Read lifecycle",
+            description="Read durable lifecycle state.",
+            owner="operator",
+            risk=ImprovementRisk.LOW,
+            budget_usd="1.00",
+            evidence_policy="software_delivery",
+            source="test",
+            created_by="operator",
+            created_by_kind="human",
+        )
+        from mas_core.workflow import SelfImprovementLifecycle
+
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(pid, actor="operator", actor_kind="human")
+        row = {
+            "id": pid,
+            "config": {
+                "self_improvement": {"lifecycle": lifecycle.as_dict()},
+            },
+        }
+        result_mock = MagicMock()
+        result_mock.mappings.return_value = _mock_mappings([row])
+        conn.execute = AsyncMock(return_value=result_mock)
+
+        snapshot = await storage.get_self_improvement_lifecycle(pid)
+
+        assert snapshot is not None
+        assert snapshot["status"] == "project_bound"
+        assert snapshot["opportunity"]["description"] == "Read durable lifecycle state."
+
+    @pytest.mark.asyncio
+    async def test_self_improvement_lifecycle_update_uses_revision_and_history(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Update lifecycle",
+            description="Persist a linked worker run.",
+            owner="operator",
+            risk=ImprovementRisk.LOW,
+            budget_usd="1.00",
+            evidence_policy="software_delivery",
+            source="test",
+            created_by="operator",
+            created_by_kind="human",
+        )
+        from mas_core.workflow import SelfImprovementLifecycle
+
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(pid, actor="operator", actor_kind="human")
+        current_config = {"self_improvement": {"lifecycle": lifecycle.as_dict()}}
+        next_lifecycle = SelfImprovementLifecycle.from_dict(lifecycle.as_dict())
+        next_lifecycle.link_reference("worker_run", "run-1")
+        next_lifecycle.status = ImprovementStatus.REJECTED
+        next_lifecycle.record_outcome(
+            outcome=ImprovementOutcomeKind.FAILURE,
+            cost_usd="2.25",
+            incident_count=1,
+            kpi_learning={"recovery_minutes": 7.0},
+            evidence_refs=("evidence/outcome",),
+            actor="operator",
+            actor_kind="human",
+        )
+        next_lifecycle.record_artifact_bundle(
+            ImprovementArtifactBundle(
+                bundle_id=uuid4(),
+                candidate_version="v2",
+                generated_by="operator",
+                generated_by_kind="human",
+                artifacts=tuple(
+                    ImprovementArtifact(
+                        artifact_id=uuid4(),
+                        kind=kind,
+                        uri=f"artifact://storage-test/v2/{kind.value}",
+                        sha256=(format(index + 1, "x") * 64)[:64],
+                        size_bytes=index + 1,
+                        candidate_version="v2",
+                        source_revision="storage-test-v2",
+                    )
+                    for index, kind in enumerate(ImprovementArtifactKind)
+                ),
+            ),
+            actor="operator",
+            actor_kind="human",
+        )
+        next_config = {"self_improvement": {"lifecycle": next_lifecycle.as_dict()}}
+        current_row = {"id": pid, "config": current_config, "revision": 1}
+        updated_row = {"id": pid, "config": next_config, "revision": 2}
+        results = [
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([current_row]))),
+            MagicMock(rowcount=1),
+            MagicMock(),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([updated_row]))),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([]))),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([updated_row]))),
+        ]
+        conn.execute = AsyncMock(side_effect=results)
+
+        result = await storage.update_self_improvement_lifecycle(
+            pid,
+            next_lifecycle,
+            actor="operator",
+        )
+
+        assert result is not None
+        assert next_lifecycle.revision == 2
+        assert next_lifecycle.as_dict()["outcomes"][0]["cost_usd"] == "2.25"
+        assert next_lifecycle.as_dict()["artifact_bundle"]["schema_version"] == (
+            "aiat.self-improvement-artifacts.v1"
+        )
+        assert conn.execute.await_count == 6
 
     @pytest.mark.asyncio
     async def test_get_project_returns_none_when_missing(self):

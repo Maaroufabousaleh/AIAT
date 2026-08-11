@@ -246,6 +246,167 @@ class AgentStorage:
             await self._enqueue_project_projections_tx(conn, values)
         return {**values, "failure_reason": None, "failed_from_state": None}
 
+    async def create_self_improvement_project(
+        self,
+        opportunity: ImprovementOpportunity,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Persist an improvement opportunity through the canonical project writer.
+
+        The opportunity model is a request projection, not a second project
+        store.  This method delegates to :meth:`create_project`, preserving
+        the normal project transaction, projection enqueue, company scope, and
+        lifecycle ownership while retaining risk/budget/evidence metadata in
+        the project config.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        request = opportunity.canonical_project_request(project_id=project_id)
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(
+            request["project_id"],
+            actor=opportunity.created_by,
+            actor_kind=opportunity.created_by_kind,
+        )
+        request_config = dict(request["config"])
+        self_improvement_config = dict(request_config["self_improvement"])
+        self_improvement_config["lifecycle"] = lifecycle.as_dict()
+        request_config["self_improvement"] = self_improvement_config
+        return await self.create_project(
+            name=str(request["name"]),
+            description=str(request["description"]),
+            state=str(request["state"]),
+            created_by=str(request["created_by"]),
+            human_requester=(
+                str(request["human_requester"])
+                if request.get("human_requester") is not None
+                else None
+            ),
+            config=request_config,
+            project_id=request["project_id"],
+            company_id=request.get("company_id"),
+        )
+
+    async def get_self_improvement_lifecycle(
+        self,
+        project_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Read the validated lifecycle snapshot from the canonical project.
+
+        Self-improvement state deliberately lives inside the project config
+        rather than in a second project database.  Rehydrating through the
+        typed contract catches stale or malformed snapshots before API clients
+        observe them.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        project = await self.get_project(project_id)
+        if project is None:
+            return None
+        config = project.get("config") or {}
+        self_improvement = config.get("self_improvement") or {}
+        snapshot = self_improvement.get("lifecycle")
+        if not isinstance(snapshot, Mapping):
+            return None
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        if lifecycle.project_id != project_id:
+            raise ValueError("self-improvement lifecycle project binding does not match project")
+        return lifecycle.as_dict()
+
+    async def update_self_improvement_lifecycle(
+        self,
+        project_id: UUID,
+        lifecycle: Any,
+        *,
+        actor: str,
+    ) -> dict[str, Any] | None:
+        """Persist a lifecycle snapshot with project-row locking and CAS.
+
+        The caller supplies the snapshot it read.  The current lifecycle
+        revision must match; the method then increments it, updates the
+        canonical project configuration, and appends a project-history record
+        in the same transaction.  ``None`` signals a stale revision or a
+        missing project, allowing the API to return a conflict without
+        overwriting newer gate/reference evidence.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        if not isinstance(lifecycle, SelfImprovementLifecycle):
+            lifecycle = SelfImprovementLifecycle.from_dict(lifecycle)
+        lifecycle.assert_invariants()
+        if lifecycle.project_id != project_id:
+            raise ValueError("self-improvement lifecycle project binding does not match project")
+        if not actor.strip():
+            raise ValueError("self-improvement lifecycle updates require an actor")
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current_row = (
+                await conn.execute(
+                    t.projects.select().where(t.projects.c.id == project_id).with_for_update()
+                )
+            ).mappings().first()
+            if current_row is None:
+                return None
+            current = dict(current_row)
+            current_config = dict(current.get("config") or {})
+            current_self_improvement = dict(current_config.get("self_improvement") or {})
+            current_snapshot = current_self_improvement.get("lifecycle")
+            if not isinstance(current_snapshot, Mapping):
+                raise ValueError("project has no self-improvement lifecycle snapshot")
+            from ..workflow.self_improvement import SelfImprovementLifecycle
+
+            current_lifecycle = SelfImprovementLifecycle.from_dict(current_snapshot)
+            if lifecycle.revision != current_lifecycle.revision:
+                return None
+            lifecycle.revision = current_lifecycle.revision + 1
+            persisted_snapshot = lifecycle.as_dict()
+            current_self_improvement["lifecycle"] = persisted_snapshot
+            current_config["self_improvement"] = current_self_improvement
+            await conn.execute(
+                t.projects.update()
+                .where(t.projects.c.id == project_id)
+                .values(
+                    config=current_config,
+                    revision=t.projects.c.revision + 1,
+                    updated_at=now,
+                )
+            )
+            from_status = str(current_lifecycle.status)
+            to_status = str(lifecycle.status)
+            await conn.execute(
+                t.project_state_history.insert().values(
+                    project_id=project_id,
+                    from_state=from_status,
+                    to_state=to_status,
+                    event=(
+                        "SELF_IMPROVEMENT_LIFECYCLE"
+                        if from_status != to_status
+                        else "SELF_IMPROVEMENT_METADATA"
+                    ),
+                    triggered_by=actor.strip(),
+                    payload={
+                        "schema_version": lifecycle.schema_version,
+                        "lifecycle_revision": lifecycle.revision,
+                        "from_status": from_status,
+                        "to_status": to_status,
+                        "integration_ref_kinds": sorted(lifecycle.integration_refs),
+                    },
+                    transitioned_at=now,
+                )
+            )
+            refreshed_row = (
+                await conn.execute(t.projects.select().where(t.projects.c.id == project_id))
+            ).mappings().first()
+            if refreshed_row is not None:
+                refreshed = dict(refreshed_row)
+                await self._enqueue_project_projections_tx(conn, refreshed)
+        return await self.get_project(project_id)
+
     async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
         """Fetch a project by ID."""
         async with self.engine.connect() as conn:
