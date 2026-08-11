@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ShieldCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { ExecutiveActionPanel } from "@/components/governance/ExecutiveActionPanel";
 
 type ModelProfile = {
   profile_id: string;
@@ -11,6 +12,17 @@ type ModelProfile = {
   status: string;
   approved_provider_ids?: string[];
   versions?: Array<{ version: string; provider_id: string; exact_model_id: string; status: string }>;
+};
+
+type ModelCatalogue = {
+  schema_version: string;
+  registry_model_count: number;
+  profile_count: number;
+  profile_version_count: number;
+  covered_profile_version_count: number;
+  profile_pending_model_count: number;
+  findings?: Array<{ code: string; profile_id: string; exact_model_id: string }>;
+  entries?: Array<{ model_id: string; provider_id: string; profile_state: string }>;
 };
 
 type WorkerRun = {
@@ -34,6 +46,7 @@ type Steward = {
 
 export default function GovernancePage() {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
+  const [catalogue, setCatalogue] = useState<ModelCatalogue | null>(null);
   const [runs, setRuns] = useState<WorkerRun[]>([]);
   const [stewards, setStewards] = useState<Steward[]>([]);
   const [error, setError] = useState("");
@@ -43,16 +56,18 @@ export default function GovernancePage() {
     setLoading(true);
     setError("");
     try {
-      const [profileResponse, runResponse, stewardResponse] = await Promise.all([
+      const [profileResponse, catalogueResponse, runResponse, stewardResponse] = await Promise.all([
         fetch("/api/governance/model-profiles"),
+        fetch("/api/governance/model-profiles/catalogue"),
         fetch("/api/governance/runs?limit=50"),
         fetch("/api/governance/stewards"),
       ]);
-      if (!profileResponse.ok || !runResponse.ok || !stewardResponse.ok) {
+      if (!profileResponse.ok || !catalogueResponse.ok || !runResponse.ok || !stewardResponse.ok) {
         throw new Error("Governance data is unavailable from the control plane");
       }
-      const [profileData, runData, stewardData] = await Promise.all([profileResponse.json(), runResponse.json(), stewardResponse.json()]);
+      const [profileData, catalogueData, runData, stewardData] = await Promise.all([profileResponse.json(), catalogueResponse.json(), runResponse.json(), stewardResponse.json()]);
       setProfiles(Array.isArray(profileData) ? profileData : []);
+      setCatalogue(catalogueData && typeof catalogueData === "object" ? catalogueData as ModelCatalogue : null);
       setRuns(Array.isArray(runData) ? runData : []);
       setStewards(Array.isArray(stewardData) ? stewardData : []);
     } catch (cause) {
@@ -77,6 +92,7 @@ export default function GovernancePage() {
       />
       {error && <ErrorBanner>{error}</ErrorBanner>}
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <ExecutiveActionPanel />
         <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-emerald-400" /> Model Profiles</div>
           {profiles.length === 0 ? <p className="text-sm text-slate-500">No persisted profiles are available.</p> : (
@@ -113,6 +129,19 @@ export default function GovernancePage() {
               })}
             </div>
           )}
+        </section>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 xl:col-span-2">
+          <div className="mb-4 flex items-center justify-between"><span className="text-sm font-semibold text-white">Runtime Model Catalogue</span><span className="font-mono text-xs text-slate-500">{catalogue?.schema_version ?? "unavailable"}</span></div>
+          {!catalogue ? <p className="text-sm text-slate-500">The runtime catalogue is unavailable.</p> : <>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-2xl font-semibold text-white">{catalogue.registry_model_count}</div><div className="text-xs text-slate-500">registered models</div></div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-2xl font-semibold text-white">{catalogue.profile_count}</div><div className="text-xs text-slate-500">governed profiles</div></div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-2xl font-semibold text-white">{catalogue.covered_profile_version_count}/{catalogue.profile_version_count}</div><div className="text-xs text-slate-500">profile versions reconciled</div></div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-2xl font-semibold text-amber-300">{catalogue.profile_pending_model_count}</div><div className="text-xs text-slate-500">models awaiting profile</div></div>
+            </div>
+            {(catalogue.entries ?? []).length > 0 && <div className="mt-4 grid gap-2 md:grid-cols-2 lg:grid-cols-3">{(catalogue.entries ?? []).slice(0, 12).map((entry) => <div key={`${entry.provider_id}:${entry.model_id}`} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs"><div className="font-mono text-slate-200">{entry.model_id}</div><div className="mt-1 text-slate-500">{entry.provider_id} · <span className={entry.profile_state === "approved_profile_present" ? "text-emerald-300" : "text-amber-300"}>{entry.profile_state}</span></div></div>)}</div>}
+            {(catalogue.findings ?? []).length > 0 && <div className="mt-3 text-xs text-rose-300">{catalogue.findings?.length} profile binding finding(s) require review.</div>}
+          </>}
         </section>
       </div>
     </div>

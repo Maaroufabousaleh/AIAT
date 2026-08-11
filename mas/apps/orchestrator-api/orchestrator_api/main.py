@@ -1781,6 +1781,34 @@ class WorkerRunDispatchRequest(BaseModel):
     lease_seconds: int = Field(default=300, ge=30, le=86_400)
 
 
+EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
+
+
+class ExecutiveCFOModelOverrideRequest(BaseModel):
+    """CFO request for a project-scoped model-profile override."""
+
+    project_id: UUID
+    requested_profile_id: str = Field(..., min_length=1, max_length=256)
+    requested_by: str = Field(default="cfo", min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+    scope: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutiveCTOWorkerRunRequest(BaseModel):
+    """CTO request for a governed worker run using the canonical dispatch contract."""
+
+    requested_by: str = Field(default="cto", min_length=1, max_length=256)
+    dispatch: WorkerRunDispatchRequest
+
+
+class ExecutiveCEOPrivilegedActionRequest(BaseModel):
+    """CEO request for a privileged operation through the audited gate."""
+
+    action: str = Field(..., min_length=1, max_length=256)
+    requested_by: str = Field(default="ceo", min_length=1, max_length=256)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkerRunPauseRequest(BaseModel):
     reason: str = Field(default="operator pause", min_length=1, max_length=4_000)
     requested_by: str = Field(default="operator", min_length=1, max_length=256)
@@ -8581,6 +8609,270 @@ async def add_model_profile_version(profile_id: str, req: ModelProfileVersionReq
 async def list_model_profiles() -> list[dict[str, Any]]:
     storage = _storage()
     return [profile.model_dump(mode="json") for profile in await _persisted_model_profiles(storage)]
+
+
+@app.get("/model-profiles/catalogue")
+async def model_profile_catalogue() -> dict[str, Any]:
+    """Return deterministic runtime-model/profile reconciliation metadata."""
+    from mas_core.llm_gateway import MODEL_REGISTRY, build_model_profile_catalogue
+
+    storage = _storage()
+    return build_model_profile_catalogue(await _persisted_model_profiles(storage), MODEL_REGISTRY)
+
+
+@app.get("/executive/reconciliation")
+async def executive_reconciliation(company_id: UUID | None = None) -> dict[str, Any]:
+    """Return read-only CFO/CTO/CEO reconciliation over durable evidence."""
+    from mas_core.llm_gateway import MODEL_REGISTRY, build_model_profile_catalogue
+    from mas_core.observability import build_executive_reconciliation
+
+    storage = _storage()
+    projects = await storage.list_projects(limit=100_000)
+    if company_id is not None:
+        if await storage.get_company(company_id) is None:
+            raise HTTPException(404, "company not found")
+        projects = [row for row in projects if str(row.get("company_id")) == str(company_id)]
+    project_ids = {str(row.get("id")) for row in projects}
+
+    usage_by_project: dict[str, dict[str, Any]] = {}
+    for project in projects:
+        project_id = str(project.get("id"))
+        try:
+            usage_by_project[project_id] = await storage.get_project_usage(UUID(project_id))
+        except Exception as exc:
+            usage_by_project[project_id] = {
+                "available": False,
+                "reason": f"project usage read failed: {type(exc).__name__}",
+            }
+
+    worker_runs = await storage.list_worker_runs(limit=100_000)
+    if project_ids:
+        worker_runs = [row for row in worker_runs if str(row.get("project_id")) in project_ids]
+    else:
+        worker_runs = []
+
+    companies = [await storage.get_company(company_id)] if company_id is not None else await storage.list_companies(status="ACTIVE")
+    budget_states: list[dict[str, Any]] = []
+    budget_reservations: list[dict[str, Any]] = []
+    for company in companies:
+        if not company:
+            continue
+        current_company_id = UUID(str(company["id"]))
+        for budget in await storage.list_company_budgets(current_company_id):
+            budget_states.append(await storage.get_budget_state(current_company_id, str(budget["budget_key"])))
+        budget_reservations.extend(
+            await storage.list_budget_reservations(company_id=current_company_id, limit=100_000)
+        )
+
+    profile_catalogue = build_model_profile_catalogue(
+        await _persisted_model_profiles(storage), MODEL_REGISTRY
+    )
+    model_summary = {
+        key: profile_catalogue.get(key)
+        for key in (
+            "schema_version",
+            "registry_model_count",
+            "profile_count",
+            "profile_version_count",
+            "covered_profile_version_count",
+            "profile_pending_model_count",
+            "duplicate_profile_bindings",
+            "findings",
+        )
+    }
+    return build_executive_reconciliation(
+        projects=projects,
+        project_usage=usage_by_project,
+        worker_runs=worker_runs,
+        budget_states=budget_states,
+        budget_reservations=budget_reservations,
+        model_catalogue=model_summary,
+    )
+
+
+@app.get("/executive/views/{role}")
+async def executive_role_view(
+    role: Literal["cfo", "cto", "ceo"],
+    company_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Return one bounded executive projection over the canonical report."""
+    from mas_core.observability import EXECUTIVE_VIEWS_SCHEMA
+
+    report = await executive_reconciliation(company_id=company_id)
+    views = report.get("views")
+    if not isinstance(views, dict) or role not in views:
+        # This is an internal invariant failure, not a user-selectable role
+        # error; Literal validation handles malformed path values before here.
+        raise HTTPException(500, "executive role projection is unavailable")
+    return {
+        "schema_version": EXECUTIVE_VIEWS_SCHEMA,
+        "role": role,
+        "status": report.get("status"),
+        "coverage": report.get("coverage") or {},
+        "view": views[role],
+        "company_id": str(company_id) if company_id is not None else None,
+    }
+
+
+_EXECUTIVE_WRITE_PRINCIPALS = frozenset({"operator", "ceo", "service"})
+
+
+def _require_executive_write_principal(request: Request) -> str:
+    """Require an authenticated control-plane principal for executive writes.
+
+    Logical role fields are audit attribution only. They never elevate a
+    caller that did not authenticate with an allowed control-plane credential.
+    """
+
+    principal = _authenticated_principal(request)
+    if principal not in _EXECUTIVE_WRITE_PRINCIPALS:
+        raise HTTPException(403, "executive write requires operator, CEO, or service identity")
+    return principal
+
+
+def _executive_action_envelope(
+    *,
+    role: str,
+    action: str,
+    requested_by: str,
+    authenticated_principal: str,
+    result: dict[str, Any],
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a stable, secret-safe executive action response envelope."""
+
+    return {
+        "schema_version": EXECUTIVE_ACTION_SCHEMA,
+        "role": role,
+        "action": action,
+        "requested_by": requested_by,
+        "authenticated_principal": authenticated_principal,
+        "result": result,
+        "evidence": {
+            "schema_version": EXECUTIVE_ACTION_SCHEMA,
+            "role": role,
+            "action": action,
+            **evidence,
+        },
+    }
+
+
+@app.post("/executive/actions/cfo/model-overrides", status_code=201)
+async def executive_cfo_model_override(
+    req: ExecutiveCFOModelOverrideRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Create a durable CFO model-override request for human decision."""
+
+    principal = _require_executive_write_principal(request)
+    result = await create_model_override(
+        ModelOverrideCreateRequest(
+            project_id=req.project_id,
+            requested_by=req.requested_by,
+            requested_profile_id=req.requested_profile_id,
+            reason=req.reason,
+            scope=req.scope,
+        )
+    )
+    override_id = result.get("id")
+    safe_result = {
+        key: _serialize_scalar(result.get(key))
+        for key in (
+            "id",
+            "status",
+            "project_id",
+            "requested_by",
+            "requested_profile_id",
+            "created_at",
+            "updated_at",
+        )
+        if key in result
+    }
+    return _executive_action_envelope(
+        role="cfo",
+        action="request_model_override",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=safe_result,
+        evidence={
+            "kind": "model_override_request",
+            "project_id": str(req.project_id),
+            "model_override_request_id": str(override_id) if override_id is not None else None,
+        },
+    )
+
+
+@app.post("/executive/actions/cto/worker-runs", status_code=202)
+async def executive_cto_worker_run(
+    req: ExecutiveCTOWorkerRunRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Dispatch one governed CTO worker run through the canonical route."""
+
+    principal = _require_executive_write_principal(request)
+    dispatch_result = await dispatch_worker_run(req.dispatch)
+    # Worker outputs/events may contain project data. The executive action
+    # surface returns only durable identifiers and routing state; callers can
+    # use the normal run/status/evidence endpoints with their existing grants.
+    summary = {
+        key: dispatch_result.get(key)
+        for key in ("run_id", "state", "dispatch_mode", "status_url", "events_url")
+        if key in dispatch_result
+    }
+    if isinstance(dispatch_result.get("accepted"), dict):
+        summary["accepted"] = {
+            key: dispatch_result["accepted"].get(key)
+            for key in ("run_id", "idempotency_key", "initial_state")
+            if key in dispatch_result["accepted"]
+        }
+    return _executive_action_envelope(
+        role="cto",
+        action="dispatch_worker_run",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=summary,
+        evidence={
+            "kind": "worker_run",
+            "project_id": str(req.dispatch.project_id) if req.dispatch.project_id else None,
+            "worker_id": str(req.dispatch.worker_id),
+            "run_id": str(dispatch_result.get("run_id")) if dispatch_result.get("run_id") else None,
+        },
+    )
+
+
+@app.post("/executive/actions/ceo/privileged-actions")
+async def executive_ceo_privileged_action(
+    req: ExecutiveCEOPrivilegedActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Request a CEO privileged operation through the audited approval gate."""
+
+    principal = _require_executive_write_principal(request)
+    result = await request_privileged_action(
+        PrivilegedActionRequest(
+            action=req.action,
+            actor_id=req.requested_by,
+            actor_role="ceo",
+            payload=req.payload,
+        )
+    )
+    safe_result = {
+        key: result.get(key)
+        for key in ("allowed", "level", "decision", "record_id", "risk", "reason")
+        if key in result
+    }
+    return _executive_action_envelope(
+        role="ceo",
+        action="request_privileged_action",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=safe_result,
+        evidence={
+            "kind": "privileged_action",
+            "action": req.action,
+            "record_id": str(result.get("record_id")) if result.get("record_id") else None,
+        },
+    )
 
 
 @app.post("/model-profiles/resolve-preview")

@@ -16,6 +16,40 @@ interface StateVisual {
   dot: string;
 }
 
+interface ExecutiveReconciliation {
+  schema_version: string;
+  status: string;
+  coverage: { project_count: number; worker_run_count: number; budget_count: number };
+  projects: { active_count: number; usage: { total_cost_usd: number } };
+  delivery: { successful_run_count: number; failed_run_count: number; success_rate: number | null };
+  budgets: { available_usd: number; used_usd: number; overages: Array<unknown> };
+  models?: { profile_pending_model_count?: number };
+  findings: Array<{ code: string; severity?: string }>;
+  views?: {
+    cfo: {
+      status: string;
+      spend_usd: number;
+      budget_available_usd: number;
+      reservation_active_usd: number;
+      reservation_anomaly_count: number;
+    };
+    cto: {
+      status: string;
+      active_worker_runs: number;
+      success_rate: number | null;
+      failed_worker_runs: number;
+      profile_coverage: { pending_models: number };
+    };
+    ceo: {
+      status: string;
+      active_projects: number;
+      total_projects: number;
+      finding_count: number;
+      budget_available_usd: number;
+    };
+  };
+}
+
 const STATE_VISUAL: Record<string, StateVisual> = {
   CREATED: { bg: "bg-slate-500/20", text: "text-slate-300", dot: "bg-slate-400" },
   PLANNING: { bg: "bg-blue-500/20", text: "text-blue-300", dot: "bg-blue-400" },
@@ -47,7 +81,7 @@ async function timedPromQuery(
 
 async function getOverviewData() {
   // Time the prometheus calls so we can show a "query time" on the health card.
-  const [projects, systemStatus, companyOverview, dlq, llmRate, dlqDepth] = await Promise.allSettled([
+  const [projects, systemStatus, companyOverview, dlq, llmRate, dlqDepth, executiveReport] = await Promise.allSettled([
     orchestratorFetch<Array<{ state: string }>>("/projects?limit=1000"),
     orchestratorFetch("/system/status"),
     orchestratorFetch<{
@@ -64,6 +98,7 @@ async function getOverviewData() {
     orchestratorFetch<unknown[]>("/dead-letters"),
     timedPromQuery("sum(rate(mas_llm_calls_total[5m]))"),
     timedPromQuery("sum(mas_dlq_depth)"),
+    orchestratorFetch<ExecutiveReconciliation>("/executive/reconciliation"),
   ]);
 
   const projectList = projects.status === "fulfilled"
@@ -104,6 +139,7 @@ async function getOverviewData() {
     : "0";
 
   const company = companyOverview.status === "fulfilled" ? companyOverview.value : null;
+  const executive = executiveReport.status === "fulfilled" ? executiveReport.value : null;
 
   return {
     projectList,
@@ -115,6 +151,7 @@ async function getOverviewData() {
     dlqDepthVal,
     promQueryMs,
     promOk,
+    executive,
     lastRefreshedAt,
   };
 }
@@ -307,6 +344,7 @@ export default async function HomePage() {
     dlqDepthVal,
     promQueryMs,
     promOk,
+    executive,
     lastRefreshedAt,
   } = await getOverviewData().catch(() => ({
     projectList: [] as Array<{ state: string }>,
@@ -318,6 +356,7 @@ export default async function HomePage() {
     dlqDepthVal: "0",
     promQueryMs: null as number | null,
     promOk: false,
+    executive: null as ExecutiveReconciliation | null,
     lastRefreshedAt: new Date(),
   }));
 
@@ -402,6 +441,66 @@ export default async function HomePage() {
           tone={dlqCount > 0 ? "negative" : "positive"}
         />
       </div>
+
+      {executive && (
+        <section className="dashboard-surface p-4" aria-label="Executive reconciliation">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-sm font-medium text-white">Executive reconciliation</h2>
+              <p className="text-xs text-slate-500 mt-0.5">CFO cost, CTO delivery, and CEO portfolio reads from durable control-plane evidence.</p>
+            </div>
+            <span className={clsx("text-xs uppercase tracking-wide", executive.status === "reconciled" ? "text-emerald-300" : "text-amber-300")}>
+              {executive.status.replace(/_/g, " ")}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">${executive.projects.usage.total_cost_usd.toFixed(2)}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">recorded usage cost</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">{executive.projects.active_count}/{executive.coverage.project_count}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">active projects</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">{executive.delivery.success_rate === null ? "—" : `${Math.round(executive.delivery.success_rate * 100)}%`}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">terminal run success</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">${executive.budgets.available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">budget available</div></div>
+          </div>
+          {executive.findings.length > 0 && <div className="mt-3 text-xs text-amber-300">{executive.findings.length} reconciliation finding(s); model profiles pending: {executive.models?.profile_pending_model_count ?? 0}.</div>}
+          {executive.views && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3" aria-label="Executive role views">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CFO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.cfo.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.cfo.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.spend_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">spend</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.budget_available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">available</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.reservation_active_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">reserved/committed</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cfo.reservation_anomaly_count}</div><div className="text-xxs text-slate-500">ledger anomalies</div></div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CTO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.cto.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.cto.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.success_rate === null ? "—" : `${Math.round(executive.views.cto.success_rate * 100)}%`}</div><div className="text-xxs text-slate-500">run success</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.active_worker_runs}</div><div className="text-xxs text-slate-500">active runs</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.failed_worker_runs}</div><div className="text-xxs text-slate-500">failed runs</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.profile_coverage.pending_models}</div><div className="text-xxs text-slate-500">models pending</div></div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CEO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.ceo.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.ceo.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">{executive.views.ceo.active_projects}/{executive.views.ceo.total_projects}</div><div className="text-xxs text-slate-500">active projects</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.ceo.finding_count}</div><div className="text-xxs text-slate-500">findings</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.ceo.budget_available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">budget available</div></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* First run callout — quiet, not alarming */}
       {firstRun !== "seeded" && (
