@@ -34,6 +34,14 @@ class AgentConfig(BaseSettings):
     # --- Identity ---
     agent_id: str = Field(..., description="Unique agent identifier, e.g. 'ceo_agent'.")
     team_id: str = Field(..., description="Team this agent belongs to, e.g. 'exec_ceo'.")
+    worker_manifest_ref: str | None = Field(
+        default=None,
+        description=(
+            "Explicit checked-in worker manifest identity for this team-runner agent. "
+            "The reference is metadata for runtime provenance; it never registers or "
+            "activates a worker."
+        ),
+    )
     agent_role: AgentRole = Field(..., description="Role in the corporate hierarchy.")
     agent_secret: str = Field(
         ...,

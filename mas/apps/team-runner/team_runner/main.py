@@ -39,6 +39,9 @@ from mas_core.agent_runtime.tool_catalog import tool_definitions_for_agent
 from mas_core.observability import configure_logging
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
+from mas_core.worker_registry.team_manifest_refs import (
+    reconcile_team_worker_manifest_refs,
+)
 from mas_tools_sdk.client import ToolServiceClient
 from mas_tools_sdk.manifest import resolve_tool_name
 
@@ -98,6 +101,7 @@ class RunnerSettings(BaseModel):
     company_timezone: str = "UTC"
     tool_manifest_startup_attempts: int = 30
     tool_manifest_retry_seconds: float = 1.0
+    worker_manifests_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> RunnerSettings:
@@ -141,6 +145,11 @@ class RunnerSettings(BaseModel):
             ),
             tool_manifest_retry_seconds=float(
                 os.environ.get("TOOL_MANIFEST_RETRY_SECONDS", "1")
+            ),
+            worker_manifests_dir=(
+                Path(raw_workers_dir)
+                if (raw_workers_dir := os.environ.get("WORKER_MANIFESTS_DIR"))
+                else None
             ),
         )
 
@@ -360,6 +369,10 @@ class TeamRuntime:
                 entry.get("available") is not False
                 for entry in (self._runtime_tool_manifest or [])
             ),
+            "agent_worker_manifest_refs": {
+                spec.agent_id: spec.worker_manifest_ref
+                for spec in [self.team_config.admin, *self.team_config.workers]
+            },
             "agent_tool_counts": {
                 agent_id: len(agent.available_tool_definitions())
                 for agent_id, agent in sorted(self.agents_by_id.items())
@@ -393,6 +406,7 @@ class TeamRuntime:
         config = AgentConfig.model_construct(
             agent_id=spec.agent_id,
             team_id=self.team_config.team_id,
+            worker_manifest_ref=spec.worker_manifest_ref,
             agent_role=spec.role,
             agent_secret=self.settings.router_secret,
             router_url=self.settings.router_url,
@@ -832,11 +846,26 @@ class TeamRuntime:
         await agent._dispatch(frame)
 
 
-def load_team_config(path: Path) -> TeamConfig:
-    """Parse the configured YAML file into TeamConfig."""
+def load_team_config(path: Path, *, workers_dir: Path | None = None) -> TeamConfig:
+    """Parse one team YAML and optionally verify its mounted worker manifests.
+
+    ``workers_dir`` is supplied by the production entrypoint.  The reconciliation
+    is deliberately read-only and checks every mounted team declaration so a
+    runner cannot start with a missing, inferred, or mismatched manifest identity.
+    Tests and local callers may omit it when exercising isolated YAML parsing.
+    """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = TeamConfig.model_validate(raw)
     _normalize_and_validate_team_tools(config)
+    if workers_dir is not None:
+        report = reconcile_team_worker_manifest_refs(
+            teams_dir=path.parent,
+            workers_dir=workers_dir,
+        )
+        if report["status"] != "pass":
+            errors = "; ".join(str(error) for error in report["errors"][:8])
+            suffix = "" if len(report["errors"]) <= 8 else "; ..."
+            raise ValueError(f"team worker-manifest reconciliation failed: {errors}{suffix}")
     return config
 
 
@@ -909,7 +938,8 @@ async def main() -> None:
     configure_logging("team-runner", json=os.environ.get("LOG_FORMAT") != "console")
 
     settings = RunnerSettings.from_env()
-    team_config = load_team_config(settings.team_config_path)
+    workers_dir = settings.worker_manifests_dir or settings.team_config_path.parent.parent / "workers"
+    team_config = load_team_config(settings.team_config_path, workers_dir=workers_dir)
     runtime = TeamRuntime(settings, team_config)
     health_app = build_health_app(runtime)
     stop_event = asyncio.Event()
