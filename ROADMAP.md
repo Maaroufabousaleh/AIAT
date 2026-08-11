@@ -272,7 +272,9 @@ technical evidence items and `NO-RELEASE`; the read-only secret-safe
 `/system/diagnostics` route and regenerated 236-path/269-operation API
 contract are covered by focused tests (`2860838`), and the API-facing
 `scripts/mas-ctl` status/diagnostics/bootstrap wrapper is covered by six
-deterministic CLI cases (`380daf5`); native/live/release gates remain open
+deterministic CLI cases (`380daf5`); message-router sender role/team coherence
+is enforced before dedupe/enqueue with static and mocked-router coverage
+(`fb39128`); native/live/release gates remain open
 
 The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9` with its router boundary clarified in `33e0384`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`, and the dashboard typecheck repair is committed as `fc4f0fa`; live storage/provider/worker evidence remains a separate gate.
 
@@ -311,6 +313,11 @@ Required outcomes:
   fail-closed `bootstrap` commands plus explicit `resume`/`shutdown` actions;
   it does not invoke container lifecycle operations or expose upstream error
   bodies (`380daf5`; executable mode `f8df50e`).
+- [x] message-router publication validates declared sender role/team coherence
+  before dedupe/enqueue; workers cannot claim CEO/C-suite trust teams,
+  sub-agents require a known parent team, and spoofed direct worker-to-CEO
+  paths are covered by policy and mocked-router tests (`fb39128`). Live
+  external-router and dashboard hierarchy evidence remain separate.
 
 **Exit:** no Critical defects and every P0 gate has current reproducible evidence.
 

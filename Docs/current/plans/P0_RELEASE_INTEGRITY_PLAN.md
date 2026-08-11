@@ -67,6 +67,12 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   through an allow-listed control-plane API with a fail-closed startup probe.
 - [x] Implement CEO service identity and persisted per-section ACLs.
 - [x] Add human/CEO/service/worker negative and positive dashboard/API tests.
+- [x] Enforce sender role/team coherence at the message-router policy boundary
+  (`fb39128`). Non-CEO envelopes cannot claim a team owned by another trust
+  tier; workers are limited to department/C-suite parent teams, sub-agents
+  require a known parent team, and spoofed direct worker-to-CEO messages fail
+  before Redis dedupe/enqueue. Static policy and mocked-router tests pass;
+  live external-router evidence remains separate.
 
 ### Evidence
 

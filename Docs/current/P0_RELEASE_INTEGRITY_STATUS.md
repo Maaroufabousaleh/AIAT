@@ -8,6 +8,9 @@ The secret-safe operational diagnostics group (`2860838`) and API-facing
 operator wrapper (`380daf5`) are implemented and covered by focused
 API/contract tests; both are bounded operational surfaces and do not turn
 dependency or licence metadata into a release gate.
+The communication-policy hardening group (`fb39128`) now validates declared
+sender role/team coherence before any router enqueue, closing a worker-to-CEO
+team-spoof path with static and mocked-router evidence.
 
 **Plan:** [P0 Release Integrity Plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)  
 **Roadmap:** [ROADMAP.md](../../ROADMAP.md)
@@ -180,6 +183,18 @@ single frozen commit before production claims are made.
   normalization, ready/degraded bootstrap, HTTP-error redaction, and explicit
   POST methods. The operational API suite now verifies that the executable
   wrapper is present; only per-service restart remains a documented TODO.
+
+### Communication-policy boundary
+
+- The message router now rejects non-CEO envelopes whose declared sender team
+  is not owned by the declared trust tier (`fb39128`). Workers can run under
+  department/C-suite parent teams and sub-agents under any known parent team,
+  but a worker cannot claim `exec_ceo` to make a direct or intra-team message
+  appear authorised. Rejection occurs before Redis dedupe/enqueue.
+- `test_policy.py`, `test_phase3.py`, and `test_test12_comms_policy.py` cover
+  valid worker/admin/sub-agent paths, spoofed worker/admin teams, role-specific
+  message types, and mocked-router HTTP 403 behavior. The remaining hierarchy
+  graph item is live dashboard evidence, not an unimplemented policy path.
 
 ### Runner network and control-plane storage boundary
 
@@ -427,6 +442,7 @@ single frozen commit before production claims are made.
 | API observation ledger | PASS (bounded static/unit/API) | `uv run --isolated pytest packages/mas-core/tests/test_api_observations.py apps/orchestrator-api/tests/test_trace_propagation.py -q`; `uv run --isolated python scripts/check_api_observability.py --json` passes the payload-free normalized-route fixture; migrations `0034_api_request_observations`, `0035_trace_correlation_evidence`, and `0036_native_trace_spans`, durable table/readers, and trace/SLO projections are implemented |
 | Secret-safe system diagnostics | PASS (static/unit/API) | Commit `2860838`; `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q` covers database, router, tool-service, optional object-store, degraded aggregation, no-storage 503, and dependency-payload redaction. The route is read-only and returns only bounded status/latency/connection facts or exception type |
 | Operator control CLI | PASS (static/unit) | Commits `380daf5` and `f8df50e`; `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six deterministic cases, and `test_test10_ops_scripts.py` verifies the executable `scripts/mas-ctl` wrapper. `bootstrap` requires healthy `/health` plus `ok` diagnostics; error bodies are never returned |
+| Communication-policy sender identity | PASS (static/unit/mocked router) | Commit `fb39128`; `uv run --isolated pytest packages/mas-core/tests/test_policy.py apps/message-router/tests/test_phase3.py apps/message-router/tests/test_publish_auth.py apps/orchestrator-api/tests/test_test12_comms_policy.py -q` covers sender role/team coherence, spoofed worker-to-CEO/admin paths, role-specific message types, and HTTP 403 before enqueue. Live external-router and dashboard hierarchy evidence remain separate |
 | SLO/capacity suite | PASS (bounded; native/live open) | `uv run --isolated pytest packages/mas-core/tests/test_slo.py apps/orchestrator-api/tests/test_slo_capacity.py -q`; `uv run --isolated python scripts/check_slo_capacity.py --json` passes the deterministic fixture and `--live --json` returns `blocked` without an API; missing service telemetry remains explicit |
 | Provenance inventory | PASS | `uv run --isolated python scripts/check_provenance.py` — 21 components, including the metadata-only operator-supplied SkillSpector record |
 | Python compilation | PASS | isolated `compileall` for changed runtime, API, policy, image-contract, and provenance paths |
