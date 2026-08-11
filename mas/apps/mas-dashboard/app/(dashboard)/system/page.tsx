@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw,
   Power,
@@ -142,8 +142,10 @@ const CRON_HELP =
 
 export default function SystemPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const statusRef = useRef<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [showShutdownConfirm, setShowShutdownConfirm] = useState(false);
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [actionState, setActionState] = useState<Record<string, ActionState>>({});
@@ -157,13 +159,16 @@ export default function SystemPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/system/status');
+      const res = await fetch('/api/system/status', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: SystemStatus = await res.json();
+      statusRef.current = json;
       setStatus(json);
       setError(null);
+      setStale(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch system status');
+      setStale(statusRef.current !== null);
     } finally {
       setLoading(false);
     }
@@ -235,6 +240,11 @@ export default function SystemPage() {
     [status?.scheduled_resume]
   );
 
+  const requestRefresh = () => {
+    if (status === null) setLoading(true);
+    void fetchStatus();
+  };
+
   const statusColor = {
     running: 'text-emerald-300 bg-emerald-950/30 border-emerald-800/70',
     shutdown: 'text-rose-300 bg-rose-950/30 border-rose-800/70',
@@ -264,7 +274,7 @@ export default function SystemPage() {
         description="Monitor and control MAS runtime state"
         actions={
           <button
-            onClick={() => { setLoading(true); fetchStatus(); }}
+            onClick={requestRefresh}
             aria-label="Refresh system status"
             className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm border border-slate-700/80 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
@@ -275,8 +285,16 @@ export default function SystemPage() {
       />
 
       {error && (
-        <ErrorBanner tone="warning" title="Could not reach the orchestrator">
-          {error}
+        <ErrorBanner
+          tone="warning"
+          title={stale ? "Showing last known system status" : "Could not reach the orchestrator"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${error}. The latest system status refresh failed; retained status remains visible.` : error}
         </ErrorBanner>
       )}
 
@@ -518,7 +536,7 @@ export default function SystemPage() {
                     ? 'bg-emerald-700 text-white'
                     : scheduleSaveResult === 'err'
                     ? 'bg-rose-700 text-white'
-                    : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-700 disabled:text-slate-500'
+                    : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-700 disabled:text-white/80'
                 )}
               >
                 {scheduleSaving
