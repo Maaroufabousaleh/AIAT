@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 
@@ -93,35 +93,51 @@ export default function EvidenceRecordPage() {
   const supported = Boolean(id) && SUPPORTED_KINDS.has(kind) && Boolean(canonicalHref);
   const detailSupported = supported && DETAIL_KINDS.has(kind);
   const [detail, setDetail] = useState<EvidenceDetail | null>(null);
-  const [detailState, setDetailState] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "loaded" | "stale" | "unavailable">("idle");
+  const [detailAttempt, setDetailAttempt] = useState(0);
+  const latestDetail = useRef<EvidenceDetail | null>(null);
+  const detailKey = useRef("");
 
   useEffect(() => {
     if (!detailSupported) {
       setDetail(null);
+      latestDetail.current = null;
+      detailKey.current = "";
       setDetailState("idle");
       return;
     }
+    const currentKey = `${kind}:${id}`;
+    if (detailKey.current !== currentKey) {
+      detailKey.current = currentKey;
+      latestDetail.current = null;
+      setDetail(null);
+    }
     let active = true;
+    const controller = new AbortController();
     setDetailState("loading");
-    void fetch(`/api/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`)
+    void fetch(`/api/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error("evidence detail unavailable");
         return response.json() as Promise<EvidenceDetail>;
       })
       .then((value) => {
         if (!active) return;
+        latestDetail.current = value;
         setDetail(value);
         setDetailState("loaded");
       })
       .catch(() => {
         if (!active) return;
-        setDetail(null);
-        setDetailState("unavailable");
+        setDetailState(latestDetail.current ? "stale" : "unavailable");
       });
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [detailSupported, id, kind]);
+  }, [detailAttempt, detailSupported, id, kind]);
 
   return (
     <div className="min-h-full p-6 lg:p-8">
@@ -153,11 +169,19 @@ export default function EvidenceRecordPage() {
               <div className="mt-5 border-t border-slate-800 pt-5" data-testid="ceo-evidence-detail">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bounded record detail</h2>
-                  <span className="font-mono text-[11px] text-slate-500">aiat.evidence-detail.v1</span>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setDetailAttempt((attempt) => attempt + 1)} className="rounded-md border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800" data-testid="ceo-evidence-retry">Refresh</button>
+                    <span className="font-mono text-[11px] text-slate-500">aiat.evidence-detail.v1</span>
+                  </div>
                 </div>
                 {detailState === "loading" && <p className="mt-3 text-xs text-slate-500" role="status" aria-live="polite">Loading safe record fields…</p>}
-                {detailState === "unavailable" && <p className="mt-3 text-xs text-amber-300" role="status" aria-live="polite">Safe detail is temporarily unavailable; the citation identity remains valid.</p>}
-                {detailState === "loaded" && detail && (
+                {detailState === "unavailable" && (
+                  <p className="mt-3 text-xs text-amber-300" role="status" aria-live="polite">Safe detail is temporarily unavailable; the citation identity remains valid.</p>
+                )}
+                {detailState === "stale" && (
+                  <p className="mt-3 text-xs text-amber-300" role="status" aria-live="polite">Safe detail is temporarily unavailable; showing the last successful scalar projection.</p>
+                )}
+                {(detailState === "loaded" || detailState === "stale") && detail && (
                   <dl className="mt-3 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-[9rem_1fr]">
                     {Object.entries(detail.record).map(([key, value]) => (
                       <Fragment key={key}>

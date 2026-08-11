@@ -182,8 +182,26 @@ test.describe("CEO evidence detail", () => {
     await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("configuration");
   });
 
-  test("preserves citation identity when detail is temporarily unavailable", async ({ page }) => {
+  test("retains the last safe detail while a refresh is temporarily unavailable", async ({ page }) => {
+    let requestCount = 0;
     await page.route("**/api/evidence/model/model-down", async (route) => {
+      if (requestCount++ === 0) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            schema_version: "aiat.evidence-detail.v1",
+            kind: "model",
+            id: "model-down",
+            source: "control-plane",
+            record: {
+              model_id: "model-down",
+              profile_state: "approved_profile_present",
+            },
+          }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -197,7 +215,11 @@ test.describe("CEO evidence detail", () => {
     await authenticate(page, "/evidence/model/model-down");
 
     await expect(page.getByTestId("ceo-evidence-record")).toContainText("model-down");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("approved_profile_present");
+    await page.getByTestId("ceo-evidence-retry").click();
     await expect(page.getByTestId("ceo-evidence-detail")).toContainText("temporarily unavailable");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("last successful scalar projection");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("approved_profile_present");
     await expect(page.getByTestId("ceo-evidence-canonical-link")).toHaveAttribute(
       "href",
       "/governance?evidence_kind=model&evidence_id=model-down",
