@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Plus,
   Key,
@@ -336,7 +336,7 @@ function CopyButton({ value }: { value: string }) {
           "focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900",
           copied
             ? "bg-emerald-500/15 text-emerald-300"
-            : "text-slate-500 hover:text-blue-300 hover:bg-blue-500/10 opacity-60 group-hover/copy:opacity-100"
+            : "text-white/80 hover:text-blue-100 hover:bg-blue-500/10 opacity-60 group-hover/copy:opacity-100"
         )}
       >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -347,8 +347,11 @@ function CopyButton({ value }: { value: string }) {
 
 export default function CredentialsPage() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const credentialsRef = useRef<Credential[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadStale, setLoadStale] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -385,13 +388,18 @@ export default function CredentialsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
-      const res = await fetch("/api/credentials");
-      if (!res.ok) throw new Error(await res.text());
-      setCredentials(await res.json());
+      const res = await fetch("/api/credentials", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const next = await res.json();
+      if (!Array.isArray(next)) throw new Error("Invalid credentials response");
+      credentialsRef.current = next;
+      setCredentials(next);
+      setLoadStale(false);
     } catch (e: unknown) {
-      setError(String(e));
+      setLoadError(e instanceof Error ? e.message : "Failed to load credentials");
+      setLoadStale(credentialsRef.current !== null);
     } finally {
       setLoading(false);
     }
@@ -400,6 +408,11 @@ export default function CredentialsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const requestRefresh = () => {
+    if (loading) return;
+    void load();
+  };
 
   async function deleteCredential(name: string) {
     if (!confirm(`Delete credential "${name}"? This cannot be undone.`)) return;
@@ -426,7 +439,7 @@ export default function CredentialsPage() {
         actions={
           <>
             <button
-              onClick={load}
+              onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh credentials"
@@ -468,8 +481,22 @@ export default function CredentialsPage() {
         </div>
       </div>
 
+      {loadError && (
+        <ErrorBanner
+          tone={loadStale ? "warning" : "error"}
+          title={loadStale ? "Showing last known credentials" : "Credentials load failed"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {loadStale ? `${loadError}. The latest credentials refresh failed; retained metadata remains visible.` : loadError}
+        </ErrorBanner>
+      )}
+
       {error && (
-        <ErrorBanner tone="error" title="Credentials load failed">
+        <ErrorBanner tone="error" title="Credential action failed">
           {error}
         </ErrorBanner>
       )}
@@ -510,7 +537,7 @@ export default function CredentialsPage() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loading && credentialsRef.current === null ? (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                   Loading…
@@ -591,7 +618,7 @@ export default function CredentialsPage() {
                           "p-1.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
                           isDeleting
                             ? "text-red-400 bg-red-500/10"
-                            : "text-slate-500 hover:text-red-400 hover:bg-red-500/10"
+                            : "text-white/80 hover:text-red-100 hover:bg-red-500/10"
                         )}
                         title={isDeleting ? "Deleting…" : "Delete"}
                       >
