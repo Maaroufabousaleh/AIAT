@@ -1793,8 +1793,18 @@ class WorkerRunResumeRequest(BaseModel):
 
 class EvidencePolicyRequest(BaseModel):
     policy_id: str
-    policy_version: str
-    requirements: dict[str, Any]
+    policy_version: str = "1.0"
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    scope: Literal["project", "milestone"] = "project"
+    milestone: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "EvidencePolicyRequest":
+        if self.scope == "milestone" and not self.milestone:
+            raise ValueError("milestone is required for milestone-scoped evidence policy")
+        if self.scope == "project" and self.milestone is not None:
+            raise ValueError("milestone is only valid for milestone-scoped evidence policy")
+        return self
 
 
 
@@ -3065,10 +3075,106 @@ async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest
         from mas_core.workflow import evaluate_project_evidence, policy_for
         documents = await storage.list_documents(project_id)
         artifacts = await _project_artifact_rows(storage, project_id)
-        evidence = evaluate_project_evidence(project_id=str(project_id), policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements), project=project, documents=documents, artifacts=artifacts, flow_instance=await storage.get_flow_instance_by_project(project_id), approvals=await storage.list_approval_gates(project_id=project_id), audit_events=await storage.get_project_history(project_id))
+        flow_instance = await storage.get_flow_instance_by_project(project_id)
+        approvals = await storage.list_approval_gates(project_id=project_id)
+        runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
+        repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
+        evidence = evaluate_project_evidence(
+            project_id=str(project_id),
+            policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements),
+            project=project,
+            documents=documents,
+            artifacts=artifacts,
+            flow_instance=flow_instance,
+            approvals=approvals,
+            worker_runs=runs,
+            repository=repository,
+            audit_events=await storage.get_project_history(project_id),
+        )
     else:
         evidence = await _build_project_evidence(project_id, storage)
     return evidence.model_dump(mode="json")
+
+
+@app.put("/projects/{project_id}/evidence-policy")
+async def set_project_evidence_policy(
+    project_id: UUID, request: Request, req: EvidencePolicyRequest
+) -> dict[str, Any]:
+    """Persist a project default or milestone-specific evidence policy."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    update_config = getattr(storage, "update_project_config", None)
+    if not inspect.iscoroutinefunction(update_config):
+        raise HTTPException(501, "Storage does not support project policy persistence")
+    config = dict(project.get("config") or {})
+    selection = {
+        "policy_id": req.policy_id,
+        "version": req.policy_version,
+        "requirements": req.requirements,
+    }
+    if req.scope == "milestone":
+        milestone_policies = dict(config.get("evidence_policy_milestones") or {})
+        milestone_policies[req.milestone or ""] = selection
+        config["evidence_policy_milestones"] = milestone_policies
+    else:
+        config["evidence_policy"] = selection
+    updated = await update_config(project_id, config=config)
+    if updated is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return {
+        "project": _serialize(updated),
+        "evidence_policy": selection,
+        "scope": req.scope,
+        "milestone": req.milestone,
+    }
+
+
+@app.put("/companies/{company_id}/evidence-policy")
+async def set_company_evidence_policy(
+    company_id: UUID, request: Request, req: EvidencePolicyRequest
+) -> dict[str, Any]:
+    """Persist the company default evidence policy in its active manifest."""
+
+    if req.scope != "project":
+        raise HTTPException(422, "company evidence policy must use project scope")
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    apply_manifest = getattr(storage, "apply_company_manifest", None)
+    if not inspect.iscoroutinefunction(get_manifest) or not inspect.iscoroutinefunction(apply_manifest):
+        raise HTTPException(501, "Storage does not support company policy persistence")
+    current = await get_manifest(company_id)
+    if not isinstance(current, dict) or not isinstance(current.get("manifest_json"), dict):
+        raise HTTPException(409, "company has no active manifest to update")
+    raw_manifest = dict(current["manifest_json"])
+    evidence_policy = dict(raw_manifest.get("evidence_policy") or {})
+    evidence_policy["default_policy"] = {
+        "policy_id": req.policy_id,
+        "version": req.policy_version,
+        "requirements": req.requirements,
+    }
+    raw_manifest["evidence_policy"] = evidence_policy
+    try:
+        manifest, digest, canonical = compile_company_manifest(raw_manifest)
+        result = await apply_manifest(
+            company_id=company_id,
+            manifest=manifest,
+            digest=digest,
+            canonical=canonical,
+            source="api:company-evidence-policy",
+            actor=_authenticated_principal(request),
+        )
+    except CompanyManifestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"company": _serialize(result), "evidence_policy": evidence_policy["default_policy"]}
 
 
 @app.delete("/projects/{project_id}")
