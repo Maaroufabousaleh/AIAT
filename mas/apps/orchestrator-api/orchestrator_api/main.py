@@ -74,7 +74,11 @@ from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory import models as memory_models
 from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
-from mas_core.observability.metrics import MAS_PROJECT_STATE
+from mas_core.observability.metrics import (
+    observe_project_state,
+    record_project_state_transition,
+    reconcile_project_state_metrics,
+)
 from mas_core.observability.tracing import bind_trace_id, new_trace_id
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
@@ -2146,12 +2150,16 @@ async def watchdog_loop(
                     pid = str(project["id"])
                     logger.warning("Watchdog timeout for project=%s state=%s", pid, state_str)
                     try:
-                        await controller.transition(
+                        watchdog_result = await controller.transition(
                             project_id=pid,
                             current_state=state,
                             event=WorkflowEvent.WATCHDOG_TIMEOUT,
                             actor_id="watchdog",
                             context={"reason": "Watchdog timeout — project stuck"},
+                        )
+                        record_project_state_transition(
+                            watchdog_result.prior_state,
+                            watchdog_result.next_state,
                         )
                     except InvalidTransitionError:
                         logger.debug(
@@ -2271,6 +2279,18 @@ async def _publish_project_resume(
     return False
 
 
+async def _reconcile_project_state_metrics(storage: AgentStorage) -> None:
+    """Refresh bounded project-state gauges from the durable source of truth."""
+
+    try:
+        states = await storage.list_project_states()
+        reconcile_project_state_metrics(states)
+    except Exception:  # noqa: BLE001
+        # Metrics must never prevent a restart/resume sequence. The next
+        # committed transition will still update the in-process aggregate.
+        logger.warning("project_state_metric_reconciliation_failed", exc_info=True)
+
+
 async def run_resume_sequence(storage: AgentStorage) -> int:
     """Re-publish DIRECTIVE(action=RESUME) for all non-terminal projects.
 
@@ -2278,6 +2298,7 @@ async def run_resume_sequence(storage: AgentStorage) -> int:
     decision, while COMPLETED/ARCHIVED projects have no automatic work to
     resume.  Returns the count of directives accepted by the router.
     """
+    await _reconcile_project_state_metrics(storage)
     projects = await storage.list_projects()
     count = 0
     for project in projects:
@@ -2847,18 +2868,25 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         }
         project = await _persist_project_workspace(storage, project, requested_workspace)
 
-    MAS_PROJECT_STATE.labels(project_id=pid, state="INIT").set(1)
+    # Keep the state gauge bounded. Per-project drill-down belongs in the
+    # structured workflow/audit records, not an unbounded Prometheus label.
+    observe_project_state(ProjectState.INIT)
     projects_created_total.inc()
 
     # Trigger workflow: INIT → FEASIBILITY_CHECK
     try:
-        await _controller().transition(
+        creation_transition = await _controller().transition(
             project_id=pid,
             current_state=ProjectState.INIT,
             event=WorkflowEvent.PROJECT_CREATED,
             actor_id=req.human_requester or "human",
             context={"name": req.name, "description": req.description},
         )
+        if creation_transition is not None:
+            record_project_state_transition(
+                creation_transition.prior_state,
+                creation_transition.next_state,
+            )
     except InvalidTransitionError:
         logger.warning("Could not auto-transition new project %s", pid)
 
@@ -3572,16 +3600,10 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
         ProjectState(result.next_state),
     )
 
-    # Update Prometheus project-state gauge and transition counter
+    # Update the bounded aggregate project-state gauge and transition counter
+    # after the controller has committed the transition.
     try:
-        MAS_PROJECT_STATE.labels(
-            project_id=str(result.project_id),
-            state=str(result.prior_state),
-        ).set(0)
-        MAS_PROJECT_STATE.labels(
-            project_id=str(result.project_id),
-            state=str(result.next_state),
-        ).set(1)
+        record_project_state_transition(result.prior_state, result.next_state)
         workflow_transitions_total.labels(
             from_state=str(result.prior_state),
             to_state=str(result.next_state),
@@ -3730,6 +3752,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                 "edits": req.edits,
             },
         )
+        record_project_state_transition(result.prior_state, result.next_state)
         return {
             "status": "transitioned",
             "gate_id": str(gate_id),
@@ -3757,6 +3780,10 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                         "comments": req.comments,
                         "edits": req.edits,
                     },
+                )
+                record_project_state_transition(
+                    retried_result.prior_state,
+                    retried_result.next_state,
                 )
                 return {
                     "status": "transitioned",
@@ -4579,6 +4606,10 @@ async def retry_project(project_id: UUID) -> dict[str, Any]:
             if updated is None:
                 raise HTTPException(409, "Stale state conflict during retry")
 
+        record_project_state_transition(
+            getattr(result, "prior_state", ProjectState.FAILED),
+            next_state,
+        )
         await _ensure_workflow_approval_gate(storage, project_id, next_state)
         return {
             "status": "retried",
@@ -4613,6 +4644,7 @@ async def archive_project(project_id: UUID) -> dict[str, Any]:
             event=WorkflowEvent.ARCHIVE_REQUESTED,
             actor_id="human",
         )
+        record_project_state_transition(result.prior_state, result.next_state)
         return {"status": "archived", "next_state": str(result.next_state)}
     except InvalidTransitionError as e:
         raise HTTPException(409, f"Cannot archive from state {project['state']}: {e}")
