@@ -38,7 +38,11 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   explicit `AIAT_EVIDENCE: kind=id` markers, strips them from prose, and labels
   the resulting references `unverified`.
 - Mermaid organisation definition can be copied as text; Mermaid rendering is not a bundled dashboard capability.
-- Dashboard API proxies attach a bounded `X-AIAT-Dashboard-Section` context. The orchestrator applies persisted `system_config` ACLs for human operator, CEO, service, worker, gateway, and PM-gateway principals; the operator is the only full-surface principal.
+- Dashboard API proxies attach a bounded `X-AIAT-Dashboard-Section` context. The
+  finite section policy and deterministic persisted ACL normalizer are committed
+  as `d405ccb`; the orchestrator applies them for human operator, CEO, service,
+  worker, gateway, and PM-gateway principals, with the operator as the only
+  full-surface recovery principal.
 - `GET /dashboard/access`, `GET /dashboard/sections/{section}`, and operator-only `PUT /dashboard/sections/{section}/acl` expose the auditable section capability and persistence boundary.
 - Credential and identity proxy routes use the operator principal rather than
   silently falling back to the shared service key; missing operator
