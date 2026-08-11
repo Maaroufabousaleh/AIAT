@@ -104,3 +104,79 @@ def test_live_image_identity_classifies_match_and_mismatch(monkeypatch) -> None:
     report = runner.inspect_live(env)
     assert report["status"] == "fail"
     assert any(mismatch_id in error for error in report["errors"])
+
+
+def test_require_sbom_validates_cyclonedx_structure(tmp_path: Path) -> None:
+    runner = _load_runner()
+    valid = tmp_path / "aiat-sbom.cdx.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "metadata": {"component": {"type": "application", "name": "aiat"}},
+                "components": [
+                    {
+                        "type": "library",
+                        "name": "example",
+                        "version": "1.0.0",
+                        "bom-ref": "pkg:pypi/example@1.0.0",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runner._validate_sbom_artifact(valid) is None
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "metadata": {"component": {"type": "application", "name": "aiat"}},
+                "components": [
+                    {"type": "library", "name": "example", "bom-ref": "same"},
+                    {"type": "library", "name": "other", "bom-ref": "same"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert "duplicates bom-ref" in (runner._validate_sbom_artifact(malformed) or "")
+
+
+def test_require_sbom_is_fail_closed_for_invalid_declared_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner = _load_runner()
+    sbom = tmp_path / "invalid-sbom.json"
+    sbom.write_text("{\"bomFormat\":\"not-cyclonedx\"}", encoding="utf-8")
+    scan = tmp_path / "scan.json"
+    scan.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        runner,
+        "_inventory_rows",
+        lambda: [
+            {
+                "id": "fixture",
+                "ref_env": "FIXTURE_IMAGE_REF",
+                "sbom": str(sbom),
+                "scan": str(scan),
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "_docker_engine_available", lambda: True)
+    monkeypatch.setattr(
+        runner,
+        "_inspect_image_digests",
+        lambda reference: ([runner._digest_value(reference)], None),
+    )
+    digest = "sha256:" + ("a" * 64)
+    report = runner.inspect_live(
+        {"FIXTURE_IMAGE_REF": f"registry.invalid/fixture@{digest}"},
+        require_sbom=True,
+    )
+    assert report["status"] == "blocked"
+    assert any("bomFormat" in error for error in report["errors"])

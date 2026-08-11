@@ -28,6 +28,7 @@ IMAGE_INVENTORY_PATH = Path(__file__).resolve().parents[1] / "docs" / "provenanc
 DIGEST_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}(?:$|[\s\"'])")
 VARIABLE_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::[-?][^}]*)?\}")
 DIGEST_VALUE_RE = re.compile(r"@(?P<digest>sha256:[0-9a-fA-F]{64})$")
+CYCLONEDX_SPEC_RE = re.compile(r"^1\.[0-9]+$")
 SCHEMA_VERSION = "aiat.image-provenance.v1"
 
 
@@ -221,6 +222,56 @@ def _metadata_artifact_status(row: dict[str, Any], field: str) -> str | None:
         path = IMAGE_INVENTORY_PATH.parent.parent / path
     if not path.is_file():
         return f"{field} artifact is not present at the declared path"
+    if field == "sbom":
+        return _validate_sbom_artifact(path)
+    return None
+
+
+def _validate_sbom_artifact(path: Path) -> str | None:
+    """Validate the minimum CycloneDX evidence contract without exposing it.
+
+    The release runner may use any Syft-compatible CycloneDX producer.  This
+    check therefore validates the portable schema boundary (format, version,
+    metadata component, and non-empty named components) rather than a
+    producer-specific extension.  Licence fields inside the SBOM are retained
+    as artifact metadata and are never inspected as an admission predicate.
+    """
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return f"sbom artifact is not valid UTF-8 JSON ({type(exc).__name__})"
+    if not isinstance(payload, dict):
+        return "sbom artifact root must be a JSON object"
+    if payload.get("bomFormat") != "CycloneDX":
+        return "sbom artifact bomFormat must be CycloneDX"
+    spec_version = str(payload.get("specVersion") or "")
+    if not CYCLONEDX_SPEC_RE.fullmatch(spec_version):
+        return "sbom artifact specVersion must be a CycloneDX 1.x value"
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return "sbom artifact metadata object is required"
+    metadata_component = metadata.get("component")
+    if not isinstance(metadata_component, dict) or not str(
+        metadata_component.get("name") or ""
+    ).strip():
+        return "sbom artifact metadata.component.name is required"
+    components = payload.get("components")
+    if not isinstance(components, list) or not components:
+        return "sbom artifact must contain at least one component"
+    seen_refs: set[str] = set()
+    for index, component in enumerate(components):
+        if not isinstance(component, dict):
+            return f"sbom component {index} must be an object"
+        if not str(component.get("type") or "").strip():
+            return f"sbom component {index} is missing type"
+        if not str(component.get("name") or "").strip():
+            return f"sbom component {index} is missing name"
+        bom_ref = str(component.get("bom-ref") or "").strip()
+        if bom_ref:
+            if bom_ref in seen_refs:
+                return f"sbom component {index} duplicates bom-ref"
+            seen_refs.add(bom_ref)
     return None
 
 
