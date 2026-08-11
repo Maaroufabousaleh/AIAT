@@ -146,20 +146,29 @@ prepare_build_context() {
     warn "Using clean staged Docker context because repo temp ACLs are unreadable: $stage_root"
     rm -rf -- "$stage_root"
     mkdir -p -- "$stage_root"
-    tar -C "$context_root" \
-        --exclude='./.tmp-pytest' \
-        --exclude='./.tmp-delete-me' \
-        --exclude='./.venv*' \
-        --exclude='./.uv-cache' \
-        --exclude='./node_modules' \
-        --exclude='*/node_modules' \
-        --exclude='*/.next' \
-        --exclude='*/test-results' \
-        --exclude='*/playwright-report' \
-        --exclude='*/__pycache__' \
-        --exclude='*/.pytest_cache' \
-        --exclude='*/.ruff_cache' \
-        -cf - . | tar -C "$stage_root" -xf -
+    # Exclude every disposable temporary tree, including protected review
+    # directories whose ACLs may prevent tar from opening them. Keep the
+    # pipeline fail-closed so a partial context is never used for a build.
+    if ! (
+        set -o pipefail
+        tar -C "$context_root" \
+            --exclude='./.tmp*' \
+            --exclude='*/.tmp*' \
+            --exclude='./.venv*' \
+            --exclude='./.uv-cache' \
+            --exclude='./node_modules' \
+            --exclude='*/node_modules' \
+            --exclude='*/.next' \
+            --exclude='*/test-results' \
+            --exclude='*/playwright-report' \
+            --exclude='*/__pycache__' \
+            --exclude='*/.pytest_cache' \
+            --exclude='*/.ruff_cache' \
+            -cf - . | tar -C "$stage_root" -xf -
+    ); then
+        error "Unable to stage a complete Docker build context: $stage_root"
+        return 1
+    fi
     export MAS_BUILD_CONTEXT="$stage_root"
 }
 
