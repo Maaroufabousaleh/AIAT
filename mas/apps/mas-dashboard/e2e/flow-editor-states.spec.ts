@@ -14,20 +14,42 @@ const FLOW_FIXTURE = {
   definition_json: {
     schema_version: "aiat.flow-node-schemas.v1.0",
     nodes: [
-      { id: "start", type: "start", label: "Start", config: {}, position: { x: 80, y: 80 } },
-      { id: "end", type: "end", label: "End", config: {}, position: { x: 280, y: 80 } },
+      {
+        id: "start",
+        type: "start",
+        label: "Start",
+        config: {},
+        position: { x: 80, y: 80 },
+      },
+      {
+        id: "end",
+        type: "end",
+        label: "End",
+        config: {},
+        position: { x: 280, y: 80 },
+      },
     ],
     edges: [{ id: "edge-start-end", source: "start", target: "end" }],
   },
 };
 
-test("flow editor exposes first-load and stale refresh recovery", async ({ page }) => {
+test("flow editor exposes first-load and stale refresh recovery", async ({
+  page,
+}) => {
   let requestCount = 0;
   await page.route("**/api/workers", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    });
   });
   await page.route("**/api/governance/model-profiles", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    });
   });
   await page.route("**/api/flows/flow-editor-recovery", async (route) => {
     requestCount += 1;
@@ -39,9 +61,10 @@ test("flow editor exposes first-load and stale refresh recovery", async ({ page 
       });
       return;
     }
-    const payload = requestCount >= 4
-      ? { ...FLOW_FIXTURE, name: "Recovered Flow", version: 2 }
-      : FLOW_FIXTURE;
+    const payload =
+      requestCount >= 4
+        ? { ...FLOW_FIXTURE, name: "Recovered Flow", version: 2 }
+        : FLOW_FIXTURE;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -50,20 +73,69 @@ test("flow editor exposes first-load and stale refresh recovery", async ({ page 
   });
 
   await authenticate(page, "/flows/flow-editor-recovery");
-  await expect(page.getByRole("heading", { name: "Flow unavailable" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Flow unavailable" }),
+  ).toBeVisible();
   await expect(page.getByText("flow fixture unavailable")).toBeVisible();
 
   await page.getByTestId("flow-load-retry").click();
-  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue(
+    "Recovery Flow",
+  );
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
 
   await page.getByRole("button", { name: "Refresh flow" }).click();
   await expect(page.getByTestId("flow-editor-stale")).toBeVisible();
-  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue(
+    "Recovery Flow",
+  );
 
-  await page.getByTestId("flow-editor-stale").getByRole("button", { name: "Retry" }).click();
+  await page
+    .getByTestId("flow-editor-stale")
+    .getByRole("button", { name: "Retry" })
+    .click();
   await expect(page.getByTestId("flow-editor-stale")).toHaveCount(0);
-  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovered Flow");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue(
+    "Recovered Flow",
+  );
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
+
+  await expect(page.getByRole("main", { name: "Flow editor" })).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Flow node palette" }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Flow canvas" })).toBeVisible();
+  for (const control of [
+    page.getByRole("link", { name: "Back to flows" }),
+    page.getByRole("textbox", { name: "Flow name" }),
+    page.getByRole("button", { name: "Refresh flow" }),
+    page.getByRole("button", { name: "Undo last change" }),
+    page.getByRole("button", { name: "Redo last undone change" }),
+    page.getByRole("checkbox", { name: "Mark flow as active" }),
+    page.getByRole("button", { name: "Save", exact: true }),
+    page.getByRole("button", { name: "Save As New Version" }),
+    page.getByRole("button", { name: "Add Task node" }),
+  ]) {
+    await expect(control).toHaveCSS("min-height", "44px");
+  }
+
+  await page.locator(".react-flow__node").first().click();
+  const nodeConfiguration = page.getByRole("complementary", {
+    name: "Node configuration",
+  });
+  await expect(nodeConfiguration).toBeVisible();
+  await expect(
+    nodeConfiguration.getByRole("button", { name: "Close node config panel" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    nodeConfiguration.getByRole("textbox", { name: "Node label" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    nodeConfiguration.getByRole("button", { name: "Delete Node" }),
+  ).toHaveCSS("min-height", "44px");
+  await nodeConfiguration
+    .getByRole("button", { name: "Close node config panel" })
+    .click();
+  await expect(nodeConfiguration).toHaveCount(0);
   expect(requestCount).toBe(4);
 });

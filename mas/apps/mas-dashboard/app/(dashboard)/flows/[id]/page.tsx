@@ -545,12 +545,12 @@ export default function FlowEditorPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100">
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
+      <header className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/flows"
             aria-label="Back to flows"
-            className="p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           >
             <ArrowLeft size={18} />
           </Link>
@@ -564,7 +564,7 @@ export default function FlowEditorPage() {
               placeholder="Flow name..."
               aria-label="Flow name"
               data-testid="flow-name-input"
-              className="text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
+              className="min-h-11 text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
             />
             {currentFlow && (
               <p className="text-xs text-slate-500 mt-0.5">
@@ -601,7 +601,7 @@ export default function FlowEditorPage() {
               aria-label="Undo last change"
               title="Undo (Ctrl+Z)"
               data-testid="flow-undo-button"
-              className="p-1.5 rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
             >
               <Undo2 size={14} />
             </button>
@@ -612,12 +612,12 @@ export default function FlowEditorPage() {
               aria-label="Redo last undone change"
               title="Redo (Ctrl+Shift+Z)"
               data-testid="flow-redo-button"
-              className="p-1.5 rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
             >
               <Redo2 size={14} />
             </button>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
+          <label className="flex min-h-11 items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
             <input
               type="checkbox"
               checked={isActive}
@@ -626,36 +626,38 @@ export default function FlowEditorPage() {
                 setSaveStatus("dirty");
               }}
               aria-label="Mark flow as active"
-              className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-400/60"
+              className="min-h-11 min-w-11 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-400/60"
             />
             Active
           </label>
           <button
+            type="button"
             onClick={handleSave}
             disabled={saving || loading}
             data-testid="flow-save-button"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 disabled:text-slate-300 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           >
             <Save size={14} />
             {saving ? "Saving..." : "Save"}
           </button>
           {currentFlow && (
             <button
+              type="button"
               onClick={handleSaveAsNewVersion}
               disabled={saving || loading}
               data-testid="flow-save-version-button"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 disabled:bg-slate-900 disabled:text-slate-500 text-white text-sm rounded-lg border border-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 disabled:bg-slate-900 disabled:text-slate-500 text-white text-sm rounded-lg border border-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
             >
               <Copy size={14} />
               Save As New Version
             </button>
           )}
         </div>
-      </div>
+      </header>
 
       {/* Node count summary strip — total / edges / undo depth, with KPI tiles
           for each node type so the user can see composition at a glance. */}
-      <div className="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-slate-800 bg-slate-900/45">
+      <section aria-label="Flow summary" className="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-slate-800 bg-slate-900/45">
         <KpiCard
           label="Total nodes"
           value={nodeSummary.total}
@@ -705,7 +707,7 @@ export default function FlowEditorPage() {
           <span aria-hidden="true">·</span>
           <span>Ctrl+Shift+Z redo</span>
         </div>
-      </div>
+      </section>
 
       {validationError && (
         <div className="px-4 py-2 border-b border-slate-800">
@@ -739,17 +741,18 @@ export default function FlowEditorPage() {
         </div>
       )}
 
-      <div className="flex-1 flex">
-        <div className="w-48 border-r border-slate-800 bg-slate-900/60 p-3 space-y-2">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</p>
+      <main aria-label="Flow editor" className="flex-1 flex min-h-0">
+        <aside aria-label="Flow node palette" className="w-48 border-r border-slate-800 bg-slate-900/60 p-3 space-y-2">
+          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</h2>
           {NODE_TYPES_OPTIONS.map((type) => (
             <button
+              type="button"
               key={type}
               onClick={() => addNode(type)}
               data-testid={`add-node-${type}`}
               aria-label={`Add ${NODE_TYPE_LABELS[type]} node`}
               className={clsx(
-                "w-full px-2 py-1.5 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
+                "w-full min-h-11 px-2 py-2 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
                 FLOW_NODE_COLORS[type]
               )}
             >
@@ -760,9 +763,9 @@ export default function FlowEditorPage() {
             <Info size={12} className="flex-shrink-0 mt-0.5 text-slate-600" />
             <span>Drag from a node&apos;s bottom handle to another node to connect them.</span>
           </div>
-        </div>
+        </aside>
 
-        <div className="flex-1 relative">
+        <section aria-label="Flow canvas" className="flex-1 relative min-w-0">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -775,7 +778,7 @@ export default function FlowEditorPage() {
             className="bg-slate-950"
           >
             <Background color="#334155" gap={16} />
-            <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-200 [&>button:hover]:!bg-slate-700" />
+            <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!min-h-11 [&>button]:!min-w-11 [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-200 [&>button:hover]:!bg-slate-700" />
             <MiniMap className="!bg-slate-900 !border-slate-700 !pointer-events-none" />
           </ReactFlow>
           {/* Dirty canvas indicator — corner badge that surfaces the unsaved
@@ -790,16 +793,17 @@ export default function FlowEditorPage() {
               Unsaved changes
             </div>
           )}
-        </div>
+        </section>
 
         {showConfig && selectedNode && (
-          <div className="w-72 border-l border-slate-800 bg-slate-900/60 p-4 space-y-4 overflow-y-auto">
+          <aside aria-label="Node configuration" className="w-72 border-l border-slate-800 bg-slate-900/60 p-4 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-white">Node Config</h3>
               <button
+                type="button"
                 onClick={() => setShowConfig(false)}
                 aria-label="Close node config panel"
-                className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
               >
                 <X size={14} />
               </button>
@@ -812,7 +816,7 @@ export default function FlowEditorPage() {
                 onChange={(e) => updateNodeLabel(selectedNode.id, e.target.value)}
                 data-testid="node-label-input"
                 aria-label="Node label"
-                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                className="min-h-11 w-full bg-slate-800 border border-slate-700 rounded px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60"
               />
             </div>
 
@@ -997,7 +1001,7 @@ export default function FlowEditorPage() {
                       type="button"
                       onClick={addSwitchCase}
                       data-testid="switch-case-add-button"
-                      className="w-full px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                      className="w-full min-h-11 px-2 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
                     >
                       Add Case
                     </button>
@@ -1067,14 +1071,15 @@ export default function FlowEditorPage() {
             </details>
 
             <button
+              type="button"
               onClick={deleteSelectedNode}
-              className="w-full px-2 py-1.5 bg-rose-600/20 text-rose-300 border border-rose-800/60 text-xs rounded hover:bg-rose-600/30 active:bg-rose-600/40 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-400/60"
+              className="w-full min-h-11 px-2 py-2 bg-rose-600/20 text-rose-300 border border-rose-800/60 text-xs rounded hover:bg-rose-600/30 active:bg-rose-600/40 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-400/60"
             >
               Delete Node
             </button>
-          </div>
+          </aside>
         )}
-      </div>
+      </main>
     </div>
   );
 }

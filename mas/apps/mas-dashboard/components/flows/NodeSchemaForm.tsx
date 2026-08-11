@@ -71,7 +71,7 @@ function parseCsv(value: string): string[] {
 }
 
 function inputClass(): string {
-  return "w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors";
+  return "min-h-11 w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-2 text-sm text-white placeholder-slate-500 transition-colors";
 }
 
 function fieldTestId(nodeType: FlowNodeType, name: string): string {
@@ -257,13 +257,14 @@ export function NodeSchemaForm({
                 ) : field.widget === "json" ? (
                   <JsonField field={field} value={fieldValue} onChange={(next) => updateField(field, next)} />
                 ) : field.type === "boolean" ? (
-                  <label className="inline-flex items-center gap-2 text-xs text-slate-300">
+                  <label className="inline-flex min-h-11 items-center gap-2 text-xs text-slate-300">
                     <input
                       id={fieldTestId(nodeType, field.name)}
                       type="checkbox"
                       checked={Boolean(fieldValue ?? field.default)}
                       onChange={(event) => updateField(field, event.target.checked)}
                       data-testid={fieldTestId(nodeType, field.name)}
+                      className="min-h-11 min-w-11"
                     />
                     Enabled
                   </label>
