@@ -278,9 +278,10 @@ is enforced before dedupe/enqueue with static and mocked-router coverage
 The hierarchy graph communication-policy overlay and source-built allowed/denied
 path coverage are implemented in `8b7d9f1`; the focused authenticated hierarchy
 and path-tracing E2E passes 1/1 against a current locally rebuilt
-`mas/dashboard:overlay` image (`d5f596e`). Normal WSL Docker-context rebuild and
-release-image evidence remain open because protected `.tmp-*` paths are still
-traversed (generalized exclusions are recorded in `b3a2e8e`).
+`mas/dashboard:overlay` image (`d5f596e`). The `mas.sh` build wrapper now stages
+all disposable `.tmp*` paths and fails closed on an incomplete tar context
+(`45ee42c`); direct unwrapped WSL Docker-context and release-image evidence
+remain separate gates because protected paths can still be traversed there.
 
 The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9` with its router boundary clarified in `33e0384`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`, and the dashboard typecheck repair is committed as `fc4f0fa`; live storage/provider/worker evidence remains a separate gate.
 
@@ -328,9 +329,10 @@ Required outcomes:
   overlay with color-coded/labeled allowed and denied team paths; dashboard
   typecheck and focused lint/build pass; the focused authenticated hierarchy
   and path-tracing E2E passes 1/1 against a current locally rebuilt
-  `mas/dashboard:overlay` image (`d5f596e`). Normal WSL Docker-context rebuild
-  and release-image evidence remain open while protected `.tmp-*` paths are
-  still traversed (`b3a2e8e`).
+  `mas/dashboard:overlay` image (`d5f596e`). The `mas.sh` wrapper now stages
+  all disposable `.tmp*` paths and fails closed on an incomplete context
+  (`45ee42c`); direct unwrapped WSL Docker-context and release-image evidence
+  remain open while protected paths can still be traversed there.
 
 **Exit:** no Critical defects and every P0 gate has current reproducible evidence.
 

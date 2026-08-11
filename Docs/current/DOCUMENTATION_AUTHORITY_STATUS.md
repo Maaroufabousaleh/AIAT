@@ -74,8 +74,9 @@ route/API contract group (`2860838`) and the API-facing operator CLI group
 (`380daf5`, executable-mode follow-up `f8df50e`), and the message-router
 sender role/team coherence group (`fb39128`), the hierarchy communication-policy
 overlay group (`8b7d9f1`), its evidence-test cleanup (`3dc61ad`), focused live
-E2E selector hardening (`d5f596e`), and generalized Docker temp-context
-exclusions (`b3a2e8e`), each with separate documentation updates. The storage
+E2E selector hardening (`d5f596e`), generalized Docker temp-context exclusions
+(`b3a2e8e`), and fail-closed staged-context handling (`45ee42c`), each with
+separate documentation updates. The storage
 safety group `93bf755` now rejects
 non-empty restore prefixes before copy and records clean-target verification;
 the static contract currently passes 11 team files and

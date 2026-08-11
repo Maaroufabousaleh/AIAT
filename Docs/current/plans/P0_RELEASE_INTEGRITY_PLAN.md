@@ -78,9 +78,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   changing policy. Dashboard typecheck, focused lint/build, and the focused
   authenticated Playwright flow pass 1/1 against a current locally rebuilt
   `mas/dashboard:overlay` image (`d5f596e`). The image used a clean explicit
-  context because the normal WSL Docker context still traverses protected
-  `.tmp-*` paths; generalized exclusions are recorded in `b3a2e8e`, while
-  normal-context rebuild and release-image evidence remain separate.
+  context because direct unwrapped WSL Docker contexts can traverse protected
+  `.tmp-*` paths. The `mas.sh` wrapper now excludes all disposable `.tmp*`
+  paths and fails closed on incomplete staging (`45ee42c`); direct unwrapped
+  context and release-image evidence remain separate.
 
 ### Evidence
 
@@ -227,8 +228,9 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - `npm run typecheck`, focused ESLint, and `npm run build` in
   `apps/mas-dashboard` pass for the hierarchy policy overlay. The focused
   authenticated E2E now passes 1/1 against the current `mas/dashboard:overlay`
-  image (`d5f596e`); the normal WSL Docker context remains blocked by protected
-  temporary paths, so native/release image verification remains open.
+  image (`d5f596e`). The `mas.sh` wrapper stages a complete context and fails
+  closed on tar errors (`45ee42c`); native/release image verification remains
+  open.
 
 ### Exit gate
 
