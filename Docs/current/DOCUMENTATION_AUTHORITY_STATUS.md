@@ -55,8 +55,9 @@ persisted model-profile bootstrap (`09bdd19`), flow schema/retry hardening
 typecheck repair (`fc4f0fa`), team-runner boundary hardening (`22fc21a`),
 dashboard operation-selector hardening (`e378f40`), metric reconciliation
 compatibility (`541d6e0`), and the isolated project-evidence router boundary
-(`33e0384`), bounded artifact/usage evidence reads (`2ca5f3d`), and stale
-evidence-detail refresh retention (`6c52552`), each with separate
+(`33e0384`), bounded artifact/usage evidence reads (`2ca5f3d`), stale
+evidence-detail refresh retention (`6c52552`), and governance read-surface
+stale/retry recovery (`52de581`), each with separate
 documentation updates. The static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain

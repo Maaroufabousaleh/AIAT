@@ -307,6 +307,7 @@ external client-language SDK compatibility yet.
 
 - [x] Establish the mobile shell accessibility baseline: semantic header/navigation/main landmarks, a keyboard-visible skip link, 44px menu target, focus transfer/restoration, Escape recovery, and an exposed interactive backdrop close action are covered by `e2e/dashboard-shell-accessibility.spec.ts` (2/2 focused tests pass). This does not close the full WCAG, theme, native-Linux, or page-level visual gates.
 - [x] Preserve identity-resource last-known records on refresh failure, label the stale state, and expose a retry action; `e2e/identity-states.spec.ts` passes the authenticated failure/retry path without rendering sensitive fields. Provider/live identity evidence remains separate.
+- [x] Preserve the combined governance model-profile/catalogue/WorkerRun/steward read surface on refresh failure, label it as the last known governance state, and expose header Refresh plus banner Retry controls; `e2e/governance-states.spec.ts` passes the source-built failure/recovery path 1/1. Provider/live governance evidence remains separate (`52de581`).
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
 - [x] Make the project flow selector read the active catalogue with `cache: "no-store"` so newly created/versioned flows are selectable immediately; the one-test flow-builder golden path and the aggregate local dashboard matrix pass again.
 - [x] Add the dashboard theme preference foundation (`5e3cc13`): persisted `system`/`light`/`dark` selection, no-flash bootstrap, system media changes, light-palette migration tokens, compact mobile control, and reduced-motion defaults; source-built focused Playwright coverage passes 2/2 while full page parity remains open.
@@ -314,14 +315,16 @@ external client-language SDK compatibility yet.
 - Finish light/dark/system themes and mobile parity.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
-  visualization, identity tables, PM integrations, and project detail now
-  expose explicit stale/partial/conflict endpoint failures and retryable first-load/offline
-  states; broader page-specific denial and rollback coverage remains.
+  visualization, identity tables, PM integrations, project detail, and the
+  combined governance read surface now expose explicit stale/partial/conflict
+  endpoint failures and retryable first-load/offline states; broader page-specific
+  denial and rollback coverage remains.
 - Deep-link statuses to evidence, traces, decisions, and recovery; the CEO
   citation route is implemented, including bounded tool/model/integration/
   artifact/usage/worker-run/runtime/trace links. Resource-specific detail now
   covers all fourteen canonical kinds through scalar-only reads and retains
-  safe detail across a failed refresh; broader stale/offline recovery and
+  safe detail across a failed refresh; governance read-state recovery is also
+  covered by a focused 1/1 source-built test; broader stale/offline recovery and
   golden-path coverage remain.
 - [x] Run the stable local Compose Playwright matrix: 34/35 pass with one
   explicit safe DLQ-fixture skip, including shell skip-link/mobile focus
