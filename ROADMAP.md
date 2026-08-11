@@ -11,7 +11,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
-| R0 — documentation authority | complete | Canonical target, eleven feature documents, three plans, root navigation, and 20 maintained links pass `check_docs_index.py`; personal/internal metadata-only resource policy is explicit. |
+| R0 — documentation authority | in progress | Canonical target, eleven feature documents, three plans, root navigation, and the personal/internal metadata-only policy are present. The current dirty workspace passes `check_docs_index.py`; a clean detached checkout remains blocked by referenced implementation/provenance files that are still awaiting their own bounded commits. |
 | R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. Current configured live ledger: 55 pass, 0 fail, 9 blocked, 4 pending, `NO-RELEASE` across 64 checks; local runtime benchmark, model-profile, private-network object-store, container runtime-import, network-boundary, and authenticated 39/39 default-worker binding evidence are retained. Native-Linux, trace/tool endpoint configuration, immutable image/SBOM, sandbox, provider/mail, clean-worktree, and selected live evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the local Compose dashboard suite now passes 34/35 tests (one explicit operator-fixture skip), including a focused 2/2 shell accessibility regression for skip-link and mobile focus recovery, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; provider-pair migration, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement lifecycle remain later work. |
@@ -21,6 +21,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Need | Read |
 | --- | --- |
 | Programme vision, architecture laws, minimal/optional stack, consolidated decisions, programme completion | [AIAT Target Programme](AIAT_TARGET_PROGRAMME.md) |
+| Documentation audit, authority precedence, and clean-checkout limitation | [Documentation Authority Status](Docs/current/DOCUMENTATION_AUTHORITY_STATUS.md) |
 | Current control plane, company, authority, policy, and budget target | [Control Plane and Company](Docs/current/FEATURE_CONTROL_PLANE_AND_COMPANY.md) |
 | Worker contract, stewards, tools, models, certification, and runtime target | [Workers, Stewards, Tools, and Models](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Projects, lifecycle, flow builder/runtime, knowledge, and evidence target | [Projects, Flows, Knowledge, and Evidence](Docs/current/FEATURE_PROJECTS_FLOWS_AND_EVIDENCE.md) |
@@ -216,10 +217,10 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 
 ### R0 — documentation authority established
 
-**Status:** complete in this documentation change
+**Status:** in progress — the authority set and policy are consolidated; clean-checkout link closure remains open
 
 - One normative target programme.
-- Ten current feature specifications.
+- Eleven current feature specifications.
 - Three ordered delivery plans.
 - Root roadmap linking the maintained set.
 - Repository-checked documentation index and metadata-policy markers.

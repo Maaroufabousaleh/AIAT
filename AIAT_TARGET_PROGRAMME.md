@@ -85,7 +85,7 @@ The core database migration graph has a single current head at `0036_native_trac
 | External Worker Steward architecture | **Implemented foundation** | Dedicated steward, documentation snapshots, immutable candidates/bundles, steward-owned compatibility matrices, certification, rollout, transition history, monitoring, and rollback models/APIs exist. The deterministic lifecycle fixture covers every externally sourced default worker, API restart rehydrates durable compatibility evidence and active immutable pointers, and `scripts/check_default_worker_bindings.py` reconciles the 15 documented default slots with their implementation declarations, runtime-catalogue transport/isolation support, and matching runtime/integration adapter entrypoints; breadth of live-certified runtimes remains incomplete. |
 | Third-party licence handling | **Implemented; metadata-only** | Steward/API certification, repository evaluation, and provenance validation record licence/restriction metadata without using it as a gate. Remaining P0 work concerns deployment/image/network evidence, not a licence decision. |
 | Model governance | **Implemented foundation** | Versioned model profiles, deterministic policy intersection, override approvals, resolution snapshots, LiteLLM-compatible routes, usage/budget records, explicit transient-status classification, persisted model/provider cooldown failover state, deterministic `aiat.model-profile-catalogue.v1` API/dashboard reconciliation, a fail-closed `scripts/check_model_profile_catalogue.py --live --require-approved` verifier, an idempotent conflict-preserving bootstrap for the evidence-referenced `opencode-phase0b-coding` profile, all registered model identities, and the `omniroute-coding` alias, bounded `aiat.executive-reconciliation.v1` reporting, `aiat.executive-views.v1` CFO/CTO/CEO role projections, dedicated read-only `/executive/views/{role}` endpoints, a secret-safe `scripts/check_executive_reconciliation.py --live --json` verifier with optional finding-free enforcement, and role-scoped `aiat.executive-action.v1` CFO/CTO/CEO write routes exist. The typed governance action panel is implemented; local live evidence observes 92 approved covered profile versions out of 94 persisted versions, with one pending model and two non-registered rows retained as findings; provider-specific live recovery, broader governance forms, and immutable gateway pinning remain release work. |
-| Visual flow platform | **Implemented foundation** | React Flow authoring and nine backend node types exist with validation, dry run, instances, node actions, override, switching, retry, escalation, and execution history. Versioned node-schema JSON/API/dashboard metadata, editable generated forms, explicitly mapped active-node graph-rewrite migration, deterministic dry-run alias auditing, operator-approved immutable saved-definition worker migration, deterministic real traversal semantics for fan-out/join/switch, asynchronous governed task binding (`aiat.flow-worker-binding.v1`), safe-retry re-dispatch, non-destructive `SUPERSEDED` retry evidence, and deterministic watchdog/recovery semantics now exist; live worker canary/recovery proofs remain target work. |
+| Visual flow platform | **Implemented foundation** | React Flow authoring and nine backend node types exist with validation, dry run, instances, node actions, override, switching, retry, escalation, and execution history. Versioned node-schema JSON/API/dashboard metadata, editable generated forms, six canonical reusable templates, deterministic export/hash/diff/import/publication, evidence-preserving compatible instance migration with explicit active-node graph-rewrite mapping, deterministic dry-run alias auditing, operator-approved immutable saved-definition worker migration, deterministic real traversal semantics for fan-out/join/switch, asynchronous governed task binding (`aiat.flow-worker-binding.v1`), safe-retry re-dispatch, non-destructive `SUPERSEDED` retry evidence, and deterministic watchdog/recovery semantics now exist; live worker canary/recovery proofs remain target work. |
 | Project workspace and evidence | **Implemented** | Project overview, artifacts, documents, review sessions, issues, flow state, audit timeline, context, repository, usage, pending decisions, evidence validation, and next actions are exposed. Evidence-policy scope precedence is centralized and fixture-checked; licence/restriction values remain notices only. |
 | Identity and email control plane | **Implemented; production certification pending** | Dedicated identity service, Postgres store, signed clients, mailbox lifecycle, JMAP/Stalwart, approvals, outbound relay, external accounts, browser sessions, credential leases, sync/outbox, audit, and dashboard surfaces exist. The versioned external-account action taxonomy now makes rotation/closure human gates and suspension safety revocation explicit; independent fixtures cover its five-action/category/fail-closed contract plus the real service's signup idempotency, one-use leases, rotation/closure/suspension revocation, and secret-safe output. The real outbound-mail fixture also proves approval pause, request/submission idempotency, definitive-failure retry, ambiguous-outage reconciliation hold, and secret-safe reporting without an external relay call. Final public-domain, provider, and mail-path certification is operator/environment dependent. |
 | PM provider control plane | **Implemented; ACTIVE command certification pending** | Provider-neutral ports, YouTrack adapter, canonical issues, mappings, inbox/outbox, CAS, actor mappings, canaries, lifecycle plans, reconciliation, conflicts, evidence, dashboard, and gateway exist. The real YouTrack declaration and mocked HTTP health/configuration, projection/read-back, cursor, comment/link, actor, and webhook paths are fixture-reconciled without external calls; the latest live evidence ends with the connection ACTIVE and binding READ_ONLY after the required human browser action timed out. |
@@ -452,6 +452,23 @@ The current v1 node types are:
 - `escalate` for authority escalation.
 
 Every flow must have exactly one start, at least one reachable end, no unreachable nodes, valid required configuration, valid branch targets, bounded retries/timeouts, and a deterministic version digest. Parallel branch declarations, join fan-in, and switch case targets must agree with persisted edges; `aiat.flow-topology-check.v1` proves this contract without executing workers. Published instances pin the definition version.
+
+The canonical catalogue currently provides six reusable templates: software
+delivery, research, hiring, incident response, integration rollout, and
+self-improvement. Template creation reuses the normal parser/topology
+validation path and the dashboard remaps node IDs and references without
+changing the source template. The portability surface uses a versioned
+`aiat.flow-export.v1` envelope, stable definition hashes, deterministic
+node/edge/metadata diffs, validated import, and non-destructive publish/
+deprecate operations. Import is a definition operation only: it never silently
+executes a flow or overwrites an existing immutable version.
+
+Running-instance migration is separate from unrestricted recovery switching.
+Matching schema versions and unchanged active node IDs/types are required by
+default. A graph rewrite is explicit, one-to-one, and limited to currently
+active nodes; the migration updates the pinned flow/version while retaining
+historical node executions and recording a bounded actor/mapping record in
+instance context and project history.
 
 ### 8.4 Flow execution target
 
@@ -981,6 +998,8 @@ The programme is organised around completing and hardening the existing architec
 **Outcome:** an operator can design, execute, inspect, and recover a complete project without database or log archaeology.
 
 - Finish compatibility-alias consolidation and publish migrated immutable definitions; generated typed node forms, bounded active-node graph-rewrite migration, deterministic legacy-alias dry-run audit, and `POST /flows/{flow_id}/migrate-legacy-tasks` worker mapping/evidence are implemented, while live worker canary/recovery remains.
+- [x] Add the canonical reusable-template catalogue and validated create-from-template path; live dashboard selection and persisted template execution remain separate evidence gates.
+- [x] Add deterministic flow export/hash/diff/import/publication and evidence-preserving running-instance migration; live storage atomicity, browser confirmation, worker coordination, and recovery rehearsal remain separate gates.
 - [x] Add `scripts/check_flow_instance_recovery.py` for read-only flow-instance
   status/history and explicit-confirmation action evidence; full project,
   worker canary, UI, and live failure/recovery proof remain separate gates.
@@ -1304,6 +1323,20 @@ All project documentation available in the reviewed workspace was read and used 
   parallel/join/switch topology and traversal-semantic validation; duplicate
   join scheduling and unselected switch branches are rejected by the real
   traversal path, with no worker or storage mutation.
+- `mas/packages/mas-core/mas_core/workflow/templates.py`,
+  `mas/packages/mas-core/mas_core/workflow/definition_tools.py`,
+  `mas/apps/orchestrator-api/tests/test_flow_definition_lifecycle_api.py`,
+  and `Docs/current/FLOW_DEFINITION_PORTABILITY_STATUS.md` — canonical
+  reusable templates plus deterministic flow export/hash/diff/import and
+  publication controls; imported definitions reuse normal validation and do
+  not execute or overwrite existing versions.
+- `mas/apps/orchestrator-api/orchestrator_api/main.py` (the
+  `/flows/instances/{instance_id}/migrate` route),
+  `mas/packages/mas-core/mas_core/memory/storage.py`,
+  `mas/apps/mas-dashboard/app/api/flows/instances/[id]/migrate/route.ts`,
+  and `Docs/current/FLOW_INSTANCE_MIGRATION_STATUS.md` — compatible running
+  instance migration with explicit active-node graph rewrites, preserved
+  execution history, and bounded migration evidence.
 - `mas/packages/mas-core/mas_core/workflow/worker_binding.py`,
   `mas/scripts/check_flow_worker_binding.py`, and
   `mas/packages/mas-core/tests/test_flow_worker_binding.py` — governed task
