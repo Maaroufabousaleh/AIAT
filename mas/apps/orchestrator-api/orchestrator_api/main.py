@@ -2808,6 +2808,21 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             logger.exception("Default company manifest bootstrap failed; continuing in compatibility mode")
 
+        # Persist only the explicitly shipped, evidence-referenced model
+        # profiles.  The helper is idempotent and never overwrites an
+        # operator-owned profile/version; conflicts remain visible as a
+        # governance blocker instead of becoming an implicit route.
+        try:
+            from mas_core.llm_gateway import seed_default_model_profiles
+
+            model_profile_result = await seed_default_model_profiles(storage)
+            if model_profile_result.get("status") != "pass":
+                logger.error("Default model-profile bootstrap requires operator review: %s", model_profile_result)
+            else:
+                logger.info("Default model-profile bootstrap reconciled: %s", model_profile_result)
+        except Exception:
+            logger.exception("Default model-profile bootstrap failed; continuing with profile resolution fail-closed")
+
         # Start after seeding so newly created external-worker stewardship
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
@@ -6753,6 +6768,10 @@ async def seed_default_company() -> dict[str, Any]:
         logger.exception("Default company manifest compilation failed")
         raise HTTPException(500, f"default company manifest could not be applied: {exc}") from exc
 
+    from mas_core.llm_gateway import seed_default_model_profiles
+
+    model_profile_result = await seed_default_model_profiles(storage)
+
     await storage.set_config("default_company_seeded", "true")
     await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
     await storage.set_config("default_company_ceo", json.dumps(ceo))
@@ -6766,6 +6785,7 @@ async def seed_default_company() -> dict[str, Any]:
         "departments": departments,
         "sample_project_template": sample_project_template,
         "workers_imported": worker_summary,
+        "model_profiles": model_profile_result,
         "company": _serialize(company_result) if company_result is not None else None,
     }
 
