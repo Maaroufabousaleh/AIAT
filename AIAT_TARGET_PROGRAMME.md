@@ -1048,7 +1048,8 @@ The programme is organised around completing and hardening the existing architec
 - [x] Add bounded HTTP trace propagation across the orchestrator API, message
   router, and tool service, including safe incoming IDs, orchestrator/SDK
   forwarding, response IDs, tool request/response continuity, and async-context
-  cleanup; agent message dispatch binds envelope IDs for the handler lifetime
+  cleanup (`5bc0aae` for router/agent forwarding and envelope cleanup); agent
+  message dispatch binds envelope IDs for the handler lifetime
   and RouterClient forwards active traces, while envelope correlation IDs
   continue into message/worker records.
 - [x] Add the bounded operator-only `aiat.trace-evidence.v1` query over task
