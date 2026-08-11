@@ -346,7 +346,7 @@ function WorkerRow({
                 disabled={evaluating}
                 title="Evaluate"
                 aria-label={`Evaluate ${worker.worker_id}`}
-                className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-40"
+                className="p-1.5 rounded text-blue-300/70 hover:text-blue-200 hover:bg-blue-500/10 transition-colors disabled:opacity-40"
               >
                 <ClipboardCheck size={14} />
               </button>
@@ -363,8 +363,8 @@ function WorkerRow({
               className={clsx(
                 "p-1.5 rounded transition-colors disabled:opacity-40",
                 worker.status === "ACTIVE"
-                  ? "text-emerald-400 hover:text-rose-400 hover:bg-rose-400/10"
-                  : "text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10",
+                  ? "text-emerald-400 hover:text-rose-300 hover:bg-rose-500/10"
+                  : "text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-500/10",
               )}
             >
               <Power size={14} />
@@ -374,7 +374,7 @@ function WorkerRow({
               disabled={transitioning || worker.status !== "ACTIVE"}
               title="Drain"
               aria-label={`Drain ${worker.worker_id}`}
-              className="p-1.5 rounded text-slate-500 hover:text-cyan-400 hover:bg-cyan-400/10 transition-colors disabled:opacity-30"
+              className="p-1.5 rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors disabled:opacity-30"
             >
               <RefreshCw size={14} />
             </button>
@@ -983,6 +983,8 @@ export default function WorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [stale, setStale] = useState(false);
+  const hasLoadedRef = useRef(false);
   // Filter state — initialized from localStorage so user choices persist
   // across page reloads. Falls back to empty/ALL on first visit.
   const [search, setSearch] = useState<string>(() => {
@@ -1018,13 +1020,16 @@ export default function WorkersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setStale(false);
     try {
       const workersRes = await fetch("/api/workers");
       if (!workersRes.ok) throw new Error(await workersRes.text());
       const workersData = await workersRes.json();
       setWorkers(Array.isArray(workersData) ? workersData : []);
+      hasLoadedRef.current = true;
     } catch (e: unknown) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : "Workers could not be loaded");
+      setStale(hasLoadedRef.current);
     } finally {
       setLoading(false);
     }
@@ -1268,8 +1273,22 @@ export default function WorkersPage() {
       </div>
 
       {error && (
-        <ErrorBanner tone="error" title="Workers load failed">
-          {error}
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known workers" : "Workers unavailable"}
+          action={(
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10"
+            >
+              Retry
+            </button>
+          )}
+        >
+          {stale
+            ? `${error} Retained workers remain visible while the refresh is retried.`
+            : error}
         </ErrorBanner>
       )}
 
@@ -1357,7 +1376,7 @@ export default function WorkersPage() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && workers.length === 0 ? (
                 <tr>
                   <td
                     colSpan={9}
@@ -1365,6 +1384,12 @@ export default function WorkersPage() {
                   >
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading workers…
+                  </td>
+                </tr>
+              ) : error && workers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    Workers are unavailable. Use Retry above to try again.
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
