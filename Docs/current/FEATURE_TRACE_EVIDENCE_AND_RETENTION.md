@@ -10,7 +10,10 @@ read-route integration is committed in `84a1c01`. Direct model-usage,
 worker-artifact, integration-evidence, API-request correlation, native
 transport/model/tool/audit/integration span persistence, and a deterministic
 metadata-only retention planner are now queryable through the bounded route.
-The refreshed local orchestrator deployment is at migration
+Worker-run trace/span context propagation into artifact and usage evidence is
+now committed in `ceb7011`; the request contract validates bounded correlation
+identifiers separately from task input, and task creation/dispatch reuse the
+active request trace. The refreshed local orchestrator deployment is at migration
 `0036_native_trace_spans`; bounded live transport and representative pure-tool
 probes pass. The tool probe proves one
 `project_usage_events` row plus one `tool_service` native span and is retained
@@ -47,6 +50,9 @@ projection joins:
   allow-listed metadata only; request bodies, tool/model payloads, provider
   headers, credentials, mail content, and arbitrary JSON are dropped before
   persistence.
+- Worker-run requests carry bounded `trace_id`/`span_id` correlation metadata
+  outside task input; controller completion copies those identifiers to worker
+  usage and artifact records without storing task payloads.
 - When the signed identity-service boundary is configured, outbound delivery
   attempts carrying safe trace/span IDs are projected as bounded `mail` spans.
   This correlates an AIAT request to the identity authority without importing
