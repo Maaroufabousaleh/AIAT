@@ -1,32 +1,55 @@
-# AIAT third-party component policy
+# AIAT third-party metadata notice
 
-AIAT is proprietary. Third-party components are consumed as isolated
-dependencies, external processes, or adapter-backed services; they do not
-become AIAT authority code. The machine-readable inventory is
+AIAT is a personal, single-operator, internal-use programme. Third-party
+resources are selected for their technical usefulness and are normally used
+through dependencies, external processes, services, CLIs, or AIAT adapters.
+They do not become AIAT authority code.
+
+The machine-readable inventory is
 [`mas/docs/provenance/third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml).
+Technical runtime/CLI reproducibility is tracked separately in
+[`mas/docs/provenance/operator_pins.yaml`](mas/docs/provenance/operator_pins.yaml)
+and checked by [`mas/scripts/check_operator_pins.py`](mas/scripts/check_operator_pins.py).
+An exact technical pin or an explicitly unavailable host/deployment identity
+is not a licence decision and does not create a licence allowlist.
 
-## Default-shipped policy
+## Metadata-only policy
 
-The default product may ship permissively licensed components such as
-LangGraph, CrewAI, Microsoft Agent Framework (when its dependency set is
-compatible with the locked MCP version), OpenCode, OpenHands core,
-Playwright, pytest, Docling, GitHub Spec Kit, Mermaid, Scrapling, Semgrep,
-gVisor, Firecracker, OpenTofu, ccpm/GitHub Issues adapters, Letta, Qdrant,
-Temporal, LiteLLM, OmniRoute, and MCP SDKs. Each release must record the exact
-version, source URL, license evidence, and whether the component is embedded,
-executed as a subprocess, or reached through an external adapter.
+For each resource, AIAT records metadata when known:
 
-The default image must not embed AGPL/GPL/BUSL or otherwise restricted
-components without an explicit legal review. TruffleHog, Plane, ZITADEL, Vault,
-Ansible, OpenProject, Neo4j Community, and unrestricted browser-use are
-optional external/user-installed integrations, not default AIAT modules.
+- name, exact version/release/commit/image digest, and canonical source;
+- integration mode and active adapter version;
+- detected or declared licence identifier and licence/source link;
+- notices and stated restrictions, including non-commercial,
+  no-modification, source-disclosure, redistribution, network-use, or other
+  conditions;
+- dependency lock/SBOM and security provenance where available.
 
-## Release evidence
+Licence classification is informational in this internal programme. It is not
+an automated hiring, activation, installation, update, execution, or release
+gate. Missing or unusual licence metadata creates an operator notice, not a
+denial. AIAT has no licence allowlist or prohibited-component list for personal
+internal use.
 
-Every release pipeline must produce an SPDX or CycloneDX SBOM, preserve source
-and license evidence, run the prohibited-license check, and publish the
-artifact with the image digest. A missing or ambiguous license fails the
-release gate; it is never silently classified as permissive.
+TruffleHog, Plane, ZITADEL, Vault, Ansible, OpenProject, Neo4j Community, and
+other resources previously excluded for distribution concerns may be used
+normally when the operator chooses them and their technical/security
+integration is suitable.
 
-This file is an engineering control, not legal advice. Re-run the provenance
-review when a dependency, image, adapter, or license changes.
+## What remains enforced
+
+This metadata policy does not weaken:
+
+- source/version authenticity and reproducibility;
+- vulnerability, secret, and malicious-instruction checks;
+- sandbox, network, filesystem, credential, privacy, and data-loss controls;
+- adapter compatibility and recovery tests;
+- human approval for dangerous or consequential actions.
+
+## Scope-change notice
+
+Recording metadata does not change or waive third-party terms. The personal
+operator remains responsible for the decision to use each resource and for any
+obligations that apply. If AIAT is later distributed, sold, commercially
+hosted, or operated for other people, perform a new distribution-specific
+review; do not treat this internal-only metadata policy as that review.

@@ -1,19 +1,12 @@
 schema_version: "1"
 policy:
-  product_license: proprietary
-  default_license_allowlist: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, MPL-2.0, ISC]
+  programme_scope: personal-internal-only
+  license_handling: metadata-only
+  enforce_license_gate: false
+  license_metadata_missing_action: operator-notice
+  license_metadata_restriction_action: operator-notice
   require_exact_version: true
-  require_source_and_license_evidence: true
-  prohibited_default_licenses: [AGPL-3.0, GPL-3.0-only, BUSL-1.1]
-  prohibited_default_components:
-    - trufflehog
-    - plane
-    - zitadel
-    - hashicorp-vault
-    - ansible
-    - openproject
-    - neo4j-community
-    - browser-use-unrestricted
+  record_source_and_license_metadata_when_known: true
 components:
   - id: langgraph
     role: default-worker-runtime
@@ -22,7 +15,7 @@ components:
     source: https://github.com/langchain-ai/langgraph
     license_evidence: https://github.com/langchain-ai/langgraph/blob/main/LICENSE
     integration: python-dependency
-    status: approved
+    status: available
   - id: crewai
     role: default-worker-runtime
     license: MIT
@@ -30,15 +23,19 @@ components:
     source: https://github.com/crewAIInc/crewAI
     license_evidence: https://github.com/crewAIInc/crewAI/blob/main/LICENSE
     integration: python-dependency
-    status: approved
+    status: available
   - id: microsoft-agent-framework
     role: default-worker-runtime
     license: MIT
-    version: optional-not-installed
-    source: https://github.com/microsoft/agent-framework
+    version: "1.13.0 (locked; optional-not-installed)"
+    source: https://github.com/microsoft/agent-framework/tree/main/python
     license_evidence: https://github.com/microsoft/agent-framework/blob/main/LICENSE
     integration: optional-adapter
-    status: approved-pending-locked-mcp-compatibility
+    status: available-locked-pending-install
+    compatibility_lock: mas/docs/provenance/runtime_compatibility.yaml
+    mcp_compatibility: ">=1.27,<2"
+    current_workspace_mcp: "==1.23.3"
+    activation_preflight: mas/scripts/check_runtime_compatibility.py
   - id: opencode
     role: coding-worker-runtime
     license: MIT
@@ -46,15 +43,15 @@ components:
     source: https://github.com/anomalyco/opencode
     license_evidence: https://github.com/anomalyco/opencode/blob/dev/LICENSE
     integration: pinned-container
-    status: approved
+    status: available
   - id: docling
     role: document-ingestion
     license: MIT
-    version: operator-pinned
+    version: 2.110.0
     source: https://github.com/docling-project/docling
     license_evidence: https://github.com/docling-project/docling/blob/main/LICENSE
     integration: subprocess-adapter
-    status: approved
+    status: available
   - id: semgrep
     role: security-evaluator
     license: LGPL-2.1
@@ -62,47 +59,62 @@ components:
     source: https://github.com/semgrep/semgrep
     license_evidence: https://github.com/semgrep/semgrep/blob/develop/LICENSE
     integration: external-cli
-    status: approved-with-cli-boundary
+    status: available
+  - id: skillspector
+    role: security-evaluator
+    license: unknown
+    version: null
+    source: operator-supplied
+    source_identity: unresolved-until-configured
+    license_evidence: null
+    integration: sandboxed-cli-adapter
+    status: unavailable-until-configured
+    unavailable_reason: Exact SkillSpector repository/CLI identity is operator-supplied and is not present in this workspace.
+    operator_notice: Exact SkillSpector repository/CLI identity may be recorded when configured; missing or unusual licence metadata is informational only for this personal internal-use programme.
   - id: gvisor
     role: sandbox
     license: Apache-2.0
-    version: host-pinned
+    version: null
     source: https://github.com/google/gvisor
     license_evidence: https://github.com/google/gvisor/blob/master/LICENSE
     integration: runtime-profile
-    status: approved
+    status: unavailable-until-host-pinned
+    unavailable_reason: Native runsc registration is not present in the current Docker host.
   - id: firecracker
     role: high-risk-sandbox
     license: Apache-2.0
-    version: host-pinned
+    version: null
     source: https://github.com/firecracker-microvm/firecracker
     license_evidence: https://github.com/firecracker-microvm/firecracker/blob/main/LICENSE-APACHE
     integration: optional-runtime-profile
-    status: approved
+    status: unavailable-until-host-pinned
+    unavailable_reason: A measured Firecracker host binary/profile is not present in the current evidence environment.
   - id: opentofu
     role: iac-adapter
     license: MPL-2.0
-    version: operator-pinned
+    version: 1.11.7
     source: https://github.com/opentofu/opentofu
     license_evidence: https://github.com/opentofu/opentofu/blob/main/LICENSE
     integration: external-cli
-    status: approved-with-modification-boundary
+    status: available
   - id: ccpm
     role: planning-adapter
     license: MIT
-    version: adapter-pinned
+    version: null
     source: https://github.com/automazeio/ccpm
     license_evidence: https://github.com/automazeio/ccpm/blob/main/LICENSE
     integration: external-adapter
-    status: approved
+    status: unavailable-until-pinned
+    unavailable_reason: No exact upstream ccpm release is installed or recorded in this workspace.
   - id: litellm
     role: model-gateway-analytics
     license: MIT
-    version: image-pinned
+    version: null
     source: https://github.com/BerriAI/litellm
     license_evidence: https://github.com/BerriAI/litellm/blob/main/LICENSE
     integration: external-service
-    status: approved-outside-enterprise-tree
+    status: unavailable-until-image-pinned
+    unavailable_reason: LITELLM_IMAGE_REF is deployment-supplied and no immutable ref is configured in this workspace.
   - id: omniroute
     role: routing-analytics
     license: MIT
@@ -110,4 +122,77 @@ components:
     source: https://github.com/diegosouzapw/OmniRoute
     license_evidence: https://github.com/diegosouzapw/OmniRoute/blob/main/LICENSE
     integration: external-service
-    status: approved
+    status: unavailable-until-image-pinned
+    unavailable_reason: OMNIROUTE_IMAGE_REF is deployment-supplied and no immutable ref is configured in this workspace.
+  - id: trufflehog
+    role: secret-scanner
+    license: AGPL-3.0
+    version: not-installed
+    source: https://github.com/trufflesecurity/trufflehog
+    license_evidence: https://github.com/trufflesecurity/trufflehog/blob/main/LICENSE
+    integration: tool-or-cli-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: plane
+    role: project-management-provider
+    license: AGPL-3.0
+    version: not-installed
+    source: https://github.com/makeplane/plane
+    license_evidence: https://github.com/makeplane/plane/blob/preview/LICENSE.txt
+    integration: external-service-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: zitadel
+    role: identity-provider
+    license: AGPL-3.0
+    version: not-installed
+    source: https://github.com/zitadel/zitadel
+    license_evidence: https://github.com/zitadel/zitadel/blob/main/LICENSE
+    integration: external-service-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: hashicorp-vault
+    role: secrets-provider
+    license: BUSL-1.1
+    version: not-installed
+    source: https://github.com/hashicorp/vault
+    license_evidence: https://github.com/hashicorp/vault/blob/main/LICENSE
+    integration: external-service-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: ansible
+    role: configuration-management-adapter
+    license: GPL-3.0
+    version: not-installed
+    source: https://github.com/ansible/ansible
+    license_evidence: https://github.com/ansible/ansible/blob/devel/COPYING
+    integration: cli-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: openproject
+    role: project-management-provider
+    license: GPL-3.0
+    version: not-installed
+    source: https://github.com/opf/openproject
+    license_evidence: https://github.com/opf/openproject/blob/dev/LICENSE
+    integration: external-service-adapter
+    status: available-on-demand
+    operator_notice: License metadata is informational for this personal internal-use programme.
+  - id: neo4j-community
+    role: optional-graph-store
+    license: GPL-commercial-model
+    version: not-installed
+    source: https://github.com/neo4j/neo4j
+    license_evidence: https://github.com/neo4j/neo4j/blob/dev/LICENSE.txt
+    integration: external-service-adapter
+    status: available-on-demand
+    operator_notice: Exact edition and license metadata must be recorded when selected; metadata does not block internal activation.
+  - id: browser-use
+    role: browser-worker-runtime
+    license: MIT
+    version: not-installed
+    source: https://github.com/browser-use/browser-use
+    license_evidence: https://github.com/browser-use/browser-use/blob/main/LICENSE
+    integration: sandboxed-worker-adapter
+    status: available-on-demand
+    operator_notice: Guardrails are required for technical/security reasons, not licence classification.
