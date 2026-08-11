@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import type { RefObject } from "react";
 import { clsx } from "clsx";
 import {
   LayoutDashboard,
@@ -82,13 +83,17 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+type SidebarProps = {
+  mobileOpen?: boolean;
+  onNavigate?: () => void;
+  sidebarRef?: RefObject<HTMLElement | null>;
+};
+
 export default function Sidebar({
   mobileOpen = false,
   onNavigate,
-}: {
-  mobileOpen?: boolean;
-  onNavigate?: () => void;
-}) {
+  sidebarRef,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -98,10 +103,14 @@ export default function Sidebar({
   }
 
   return (
-    <aside className={clsx(
-      "fixed inset-y-0 left-0 z-50 flex w-72 flex-shrink-0 flex-col border-r border-slate-800/90 bg-slate-950 shadow-2xl shadow-black/40 transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:bg-slate-950/80",
-      mobileOpen ? "translate-x-0" : "-translate-x-full",
-    )}>
+    <aside
+      ref={sidebarRef}
+      aria-label="Primary navigation"
+      className={clsx(
+        "fixed inset-y-0 left-0 z-50 flex w-72 flex-shrink-0 flex-col border-r border-slate-800/90 bg-slate-950 shadow-2xl shadow-black/40 transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:bg-slate-950/80",
+        mobileOpen ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
       {/* Logo */}
       <div className="px-5 py-5 border-b border-slate-800/80">
         <Link href="/" prefetch={false} onClick={onNavigate} className="flex items-center gap-3 group">
@@ -116,9 +125,9 @@ export default function Sidebar({
           </div>
         </Link>
         <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" />
-            Control plane online
+          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200" role="status" aria-live="polite">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" aria-hidden="true" />
+            <span>Control plane online</span>
           </div>
           <div className="mt-1 text-xxs text-slate-400">
             Projects, workers, streams and tools stay governed here.
@@ -127,7 +136,7 @@ export default function Sidebar({
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      <nav id="primary-navigation" aria-label="Primary" className="flex-1 px-3 py-4 overflow-y-auto">
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="mb-5 last:mb-0">
             <div className="px-2 mb-2 text-xxs font-semibold text-slate-500 uppercase tracking-wider">
@@ -147,7 +156,7 @@ export default function Sidebar({
                     prefetch={false}
                     onClick={onNavigate}
                     className={clsx(
-                      "group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
+                      "group flex min-h-11 items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
                       active
                         ? "border-blue-500/40 bg-blue-500/15 text-blue-100 font-medium shadow-sm shadow-blue-500/10"
                         : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-900/80 hover:border-slate-800"
@@ -176,8 +185,9 @@ export default function Sidebar({
           <span>Operator session</span>
         </div>
         <button
+          type="button"
           onClick={handleLogout}
-          className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm
+          className="flex min-h-11 items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm
                      text-slate-400 hover:text-slate-100 hover:bg-slate-900/80
                      transition-colors w-full"
         >
