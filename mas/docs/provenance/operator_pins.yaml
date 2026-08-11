@@ -1,0 +1,123 @@
+schema_version: "aiat.operator-pin-contract.v1"
+programme_scope: personal-internal-only
+policy:
+  exact_pin_required: true
+  unavailable_is_explicit: true
+  licence_metadata_is_gate: false
+
+# This file records technical reproducibility only.  Licence and restriction
+# notices remain in third-party provenance/notice metadata and are not read by
+# the operator-pin checker.
+pins:
+  - id: uv
+    kind: python-cli
+    version: "0.4.30"
+    status: locked
+    scope: production-images
+    assertions:
+      - {file: infra/docker/Dockerfile.orchestrator-api, contains: "uv==0.4.30"}
+      - {file: infra/docker/Dockerfile.message-router, contains: "uv==0.4.30"}
+      - {file: infra/docker/Dockerfile.team-runner, contains: "uv==0.4.30"}
+      - {file: infra/docker/Dockerfile.tool-service, contains: "uv==0.4.30"}
+  - id: docker-cli
+    kind: container-cli
+    version: "27.4.1"
+    status: locked
+    scope: orchestrator-image
+    assertions:
+      - {file: infra/docker/Dockerfile.orchestrator-api, contains: "docker-27.4.1.tgz"}
+  - id: mcp
+    kind: python-dependency
+    version: "1.23.3"
+    status: locked
+    scope: production-images
+    assertions:
+      - {file: infra/docker/Dockerfile.tool-service, contains: '"mcp==1.23.3"'}
+      - {file: uv.lock, contains: 'version = "1.23.3"'}
+  - id: semgrep
+    kind: security-cli
+    version: "1.168.0"
+    status: locked
+    scope: security-evaluator
+    assertions:
+      - {file: infra/docker/Dockerfile.orchestrator-api, contains: '"semgrep==1.168.0"'}
+      - {file: infra/docker/Dockerfile.tool-service, contains: '"semgrep==1.168.0"'}
+  - id: docling
+    kind: document-runtime
+    version: "2.110.0"
+    status: locked
+    scope: tool-service-extensions
+    assertions:
+      - {file: infra/docker/Dockerfile.tool-service, contains: '"docling==2.110.0"'}
+  - id: playwright
+    kind: browser-runtime
+    version: "1.58.0"
+    status: locked
+    scope: tool-service-extensions
+    assertions:
+      - {file: infra/docker/Dockerfile.tool-service, contains: '"playwright==1.58.0"'}
+      - {file: uv.lock, contains: 'version = "1.58.0"'}
+  - id: mermaid-cli
+    kind: diagram-cli
+    version: "11.12.0"
+    status: locked
+    scope: tool-service-extensions
+    assertions:
+      - {file: infra/docker/Dockerfile.tool-service, contains: "ARG MERMAID_CLI_VERSION=11.12.0"}
+  - id: opentofu
+    kind: infrastructure-cli
+    version: "1.11.7"
+    status: locked
+    scope: tool-service-extensions
+    assertions:
+      - {file: infra/docker/Dockerfile.tool-service, contains: "ARG OPENTOFU_VERSION=1.11.7"}
+  - id: opencode
+    kind: coding-runtime
+    version: "1.17.13"
+    status: locked
+    scope: opencode-runtime
+    assertions:
+      - {file: infra/docker/Dockerfile.opencode, contains: "ARG OPENCODE_VERSION=1.17.13"}
+      - {file: infra/compose/docker-compose.yml, contains: 'OPENCODE_VERSION: "1.17.13"'}
+  - id: microsoft-agent-framework
+    kind: optional-python-runtime
+    version: "1.13.0"
+    status: unavailable
+    scope: optional-worker-runtime
+    reason: "The exact compatibility lock exists, but the package and compatible MCP range are not installed in this workspace."
+  - id: gvisor
+    kind: host-sandbox-runtime
+    version: null
+    status: unavailable
+    scope: external-worker-sandbox
+    reason: "Native runsc registration is not present in the current Docker host; no runc fallback is permitted."
+  - id: firecracker
+    kind: host-sandbox-runtime
+    version: null
+    status: unavailable
+    scope: high-risk-worker-sandbox
+    reason: "A native Firecracker binary and measured host profile are not present in the current evidence environment."
+  - id: skillspector
+    kind: security-cli
+    version: null
+    status: unavailable
+    scope: optional-security-evaluator
+    reason: "SkillSpector is operator-supplied; its exact repository, revision, and executable identity must be configured before use."
+  - id: ccpm
+    kind: planning-adapter
+    version: null
+    status: unavailable
+    scope: optional-planning-adapter
+    reason: "The adapter contract is present, but no exact upstream release is installed or recorded in this workspace."
+  - id: litellm
+    kind: model-gateway
+    version: null
+    status: unavailable
+    scope: optional-deployment-service
+    reason: "The deployment image is supplied through LITELLM_IMAGE_REF and no immutable ref is configured in this workspace."
+  - id: omniroute
+    kind: routing-analytics
+    version: null
+    status: unavailable
+    scope: optional-deployment-service
+    reason: "The deployment image is supplied through OMNIROUTE_IMAGE_REF and no immutable ref is configured in this workspace."

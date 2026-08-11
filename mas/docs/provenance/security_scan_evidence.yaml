@@ -1,0 +1,48 @@
+schema_version: aiat.security-scan-evidence.v1
+programme_scope: personal-internal-only
+policy:
+  security_scan_is_technical_gate: true
+  licence_metadata_is_gate: false
+  findings_require_review: true
+
+# This is a secret-safe summary of the exact-source scan. The full temporary
+# scanner output is intentionally not copied into the repository; the digest
+# identifies the captured JSON artifact from the evidence run.
+scans:
+  - id: opencode-1.17.13-semgrep-2026-08-10
+    scanner: semgrep
+    scanner_version: 1.168.0
+    mode: auto-ruleset
+    source_repo: https://github.com/anomalyco/opencode
+    source_revision: v1.17.13
+    source_commit: 10c894bdeef3618f5666fb506ef7f9491bb964d8
+    target_workers: [coding_worker, tester]
+    captured_at: 2026-08-10
+    status: findings_review_required
+    scanned_file_count: 5062
+    finding_count: 316
+    engine_warning_count: 54
+    severity_counts:
+      error: 19
+      medium: 1
+      warning: 279
+      info: 17
+    highest_severity: error
+    result_sha256: e960a57d7b397d8af9271025b2025b0f46567967b4c684eaab8652a75d47d3b5
+    rule_counts:
+      javascript.lang.security.audit.path-join-resolve-traversal: 261
+      javascript.lang.security.audit.detect-non-literal-regexp: 13
+      javascript.audit.detect-replaceall-sanitization: 11
+      yaml.github-actions.security.gha-curl-pipe-shell: 7
+      javascript.lang.security.audit.unsafe-formatstring: 6
+      yaml.github-actions.security.run-shell-injection: 5
+      javascript.lang.security.audit.spawn-shell-true: 3
+      javascript.lang.security.detect-child-process: 2
+      problem-based-packs.insecure-transport.js-node.bypass-tls-verification: 2
+      package_managers.bun.bun-missing-minimum-release-age: 1
+      yaml.github-actions.security.github-actions-mutable-action-tag: 1
+      javascript.lang.security.audit.prototype-pollution: 1
+      dockerfile.security.missing-user-entrypoint: 1
+      dockerfile.security.missing-user: 1
+      javascript.express.security.cors-misconfiguration: 1
+    review_action: "Triage findings and Semgrep engine warnings in an isolated review run before activation; neither worker may use this evidence as a passed security gate."
