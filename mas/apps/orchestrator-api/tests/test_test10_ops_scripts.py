@@ -12,7 +12,8 @@ The AIAT MAS operational control is built into the orchestrator-api routes:
   GET  /system/logs/{container}
   PUT  /system/schedule
 
-No separate scripts directory exists — ops is fully API-driven.
+The API-facing operator wrapper is `scripts/mas-ctl`; Compose lifecycle
+commands remain in `infra/compose/mas.sh`.
 """
 
 from __future__ import annotations
@@ -429,17 +430,13 @@ async def test_system_status_diagnostic_fields(client):
 # ---------------------------------------------------------------------------
 
 
-def test_todo_no_bootstrap_script():
-    """
-    TODO (production gap): No standalone bootstrap/startup CLI script exists.
-    All operational control is via REST API. For a production MAS, a CLI wrapper
-    (e.g. `mas-ctl bootstrap`, `mas-ctl status`) that wraps these API calls
-    would improve operability. Currently, ops must be done via curl/httpx.
-    """
-    pytest.skip(
-        "TODO: No mas-ctl bootstrap script exists. "
-        "Ops is fully API-driven via orchestrator-api routes."
-    )
+def test_mas_ctl_bootstrap_script_exists():
+    """The operator-facing API wrapper is present and executable."""
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[3] / "scripts" / "mas-ctl"
+    assert script.is_file()
+    assert script.stat().st_mode & 0o111
 
 
 def test_todo_no_service_restart_endpoint():
