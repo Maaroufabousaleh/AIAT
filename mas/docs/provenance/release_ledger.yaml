@@ -40,7 +40,7 @@ checks:
     # Reuse the bounded trace emitted by the live transport probe.  This keeps
     # the aggregate read-back deterministic without creating project/worker
     # state; the trace endpoint returns `not_found` on a fresh deployment.
-    live_args: [--live, --json, --trace-id, aiat-live-trace-20260810-r2]
+    live_args: [--live, --json, --trace-id, aiat-live-trace-20260811-phase]
   - id: live_trace_observability
     category: integration
     script: scripts/check_live_trace_observability.py
