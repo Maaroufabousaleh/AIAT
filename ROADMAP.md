@@ -531,9 +531,9 @@ Required outcomes:
   responses; the chat renders them, links bounded project/flow/governance/
   worker/credential/integration/tool/project-evidence/log kinds, and exposes a
   dedicated evidence-record route. Scalar `aiat.evidence-detail.v1` summaries
-  now load eleven kinds (including model, integration, and trace), while
-  artifact, tool, and usage IDs remain payload-free citations unless a bounded
-  detail authority exists. Legacy fallback output accepts only
+  now load twelve kinds (including model, integration, tool, and trace), while
+  artifact and usage IDs remain payload-free citations unless a bounded detail
+  authority exists. Legacy fallback output accepts only
   explicit stripped `AIAT_EVIDENCE` markers and labels those citations
   `unverified` (`f1801bb`); complete governed-flow coverage, broader detail
   loading, and recovery states remain;
@@ -825,7 +825,7 @@ an explicit open gate.
    explicit fallback markers, bounded project/flow/governance/worker/credential/
    integration/tool/project-evidence/log links, payload-free artifact/model/
    runtime/usage/worker-run/trace references, dedicated evidence records, and
-   the bounded eleven-kind `aiat.evidence-detail.v1` scalar projection and
+   the bounded twelve-kind `aiat.evidence-detail.v1` scalar projection and
    temporary-detail-unavailable identity recovery now pass; broader detail
    kinds and stale/offline recovery remain.
 6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
