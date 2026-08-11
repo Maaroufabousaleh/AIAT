@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
@@ -19,38 +20,70 @@ export default function IntegrationsPage() {
   const [bindingId, setBindingId] = useState("");
   const [reviewedDigest, setReviewedDigest] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [stale, setStale] = useState(false);
+  const hasData = useRef(false);
 
-  const refresh = () => {
-    fetch("/api/integrations/pm", { cache: "no-store" })
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Integration API failed");
-        setData(payload);
-      })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Integration API failed"));
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/integrations/pm", { cache: "no-store" })
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || "Integration API failed");
-        if (!cancelled) setData(payload);
-      })
-      .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Integration API failed");
-      });
-    return () => { cancelled = true; };
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/integrations/pm", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Integration API failed");
+      setData(payload);
+      hasData.current = true;
+      setStale(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Integration API failed");
+      setStale(hasData.current);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
 
   return (
     <main className="p-6 space-y-6">
       <PageHeader
         title="PM integrations"
         description="Provider connections, synchronization health, reconciliation runs, and conflicts."
+        actions={(
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={loading}
+            aria-busy={loading}
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+            Refresh
+          </button>
+        )}
       />
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner
+          tone={stale && data ? "warning" : "error"}
+          title={stale && data ? "Showing last known integration state" : "Integration data unavailable"}
+          action={(
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              disabled={loading}
+              aria-busy={loading}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+              Retry
+            </button>
+          )}
+        >
+          {stale && data
+            ? `The latest integration refresh failed (${error}). Conflict and reconciliation data may be out of date.`
+            : error}
+        </ErrorBanner>
+      )}
       {!data && !error && <p className="text-sm text-slate-400">Loading integration state…</p>}
       {data && (
         <>
@@ -92,16 +125,16 @@ export default function IntegrationsPage() {
               <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-blue-200/80">{JSON.stringify({ outbox: data.outbox, runs: data.runs }, null, 2)}</pre>
             </div>
           </section>
-          <section className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4 space-y-4">
+          <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4">
             <div>
-              <h2 className="text-sm font-semibold text-violet-100">Governed lifecycle plans</h2>
-              <p className="mt-1 text-xs text-violet-200/70">Plans are generated and persisted by the control plane. This dashboard only submits explicit operator actions.</p>
+              <h2 className="text-sm font-semibold text-cyan-100">Governed lifecycle plans</h2>
+              <p className="mt-1 text-xs text-cyan-200/70">Plans are generated and persisted by the control plane. This dashboard only submits explicit operator actions.</p>
             </div>
             <div className="grid gap-2 md:grid-cols-3">
               <input className="rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Connection UUID" value={connectionId} onChange={(event) => setConnectionId(event.target.value)} />
               <input className="rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Binding UUID" value={bindingId} onChange={(event) => setBindingId(event.target.value)} />
               <button
-                className="rounded bg-violet-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                className="rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 disabled={busy || !connectionId || !bindingId}
                 onClick={async () => {
                   setBusy(true);
@@ -136,7 +169,7 @@ export default function IntegrationsPage() {
                       <span className="font-medium text-slate-100">{planId}</span>
                       <span className="rounded-full border border-slate-700 px-2 py-1">{status}</span>
                     </div>
-                    <div className="mt-2 break-all font-mono text-violet-200">Digest: {digest}</div>
+                    <div className="mt-2 break-all font-mono text-cyan-200">Digest: {digest}</div>
                     <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify({ operations: plan.operations, rollback_operations: plan.rollback_operations, blockers: plan.blockers, expires_at: plan.expires_at }, null, 2)}</pre>
                     <label className="mt-2 flex items-center gap-2 text-slate-400">
                       <input type="checkbox" checked={reviewedDigest === digest} onChange={(event) => setReviewedDigest(event.target.checked ? digest : "")} />

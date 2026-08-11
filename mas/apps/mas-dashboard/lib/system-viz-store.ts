@@ -20,6 +20,8 @@ interface SystemVizStore {
   setLoading: (loading: boolean) => void;
   error: string | null;
   setError: (error: string | null) => void;
+  partialErrors: string[];
+  setPartialErrors: (errors: string[]) => void;
   highlightedPath: string[] | null;
   setHighlightedPath: (path: string[] | null) => void;
 }
@@ -41,6 +43,8 @@ export const useSystemVizStore = create<SystemVizStore>((set) => ({
   setLoading: (loading) => set({ loading }),
   error: null,
   setError: (error) => set({ error }),
+  partialErrors: [],
+  setPartialErrors: (errors) => set({ partialErrors: errors }),
   highlightedPath: null,
   setHighlightedPath: (path) => set({ highlightedPath: path }),
 }));

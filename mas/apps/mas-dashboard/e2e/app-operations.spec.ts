@@ -135,6 +135,105 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByRole("button", { name: /clear/i })).toBeVisible();
   });
 
+  test("system visualization exposes partial data failures with a retry path", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/permissions**", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "permissions fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    await expect(
+      page.getByRole("heading", { name: "System Visualization" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Some visualization data is stale or unavailable"),
+    ).toBeVisible();
+    await expect(page.getByText(/permissions failed to refresh/i)).toBeVisible();
+
+    await page.getByRole("tab", { name: /permissions/i }).click();
+    await expect(page.getByText("Permissions data unavailable")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Retry$/i }).first(),
+    ).toBeVisible();
+  });
+
+  test("system visualization exposes an offline hierarchy state", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "hierarchy fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    await expect(page.getByText("Visualization unavailable")).toBeVisible();
+    await expect(
+      page.getByText(/Failed to load system hierarchy/i),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Retry$/i }).first(),
+    ).toBeVisible();
+  });
+
+  test("PM integrations preserve conflicts and expose a stale refresh retry", async ({
+    page,
+  }) => {
+    let requestCount = 0;
+    await page.route("**/api/integrations/pm**", async (route) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            connections: [
+              {
+                id: "connection-e2e-001",
+                display_name: "E2E YouTrack",
+                provider_kind: "youtrack",
+                base_url: "https://example.invalid",
+                status: "ACTIVE",
+              },
+            ],
+            conflicts: [{ id: "conflict-e2e-001", status: "OPEN" }],
+            outbox: [],
+            runs: [],
+            lifecyclePlans: [],
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "integration fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/integrations");
+    await expect(
+      page.getByRole("heading", { name: "PM integrations" }),
+    ).toBeVisible();
+    await expect(page.getByText("E2E YouTrack")).toBeVisible();
+    await expect(page.getByText("conflict-e2e-001")).toBeVisible();
+
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(
+      page.getByText("Showing last known integration state"),
+    ).toBeVisible();
+    await expect(page.getByText(/latest integration refresh failed/i)).toBeVisible();
+    await expect(page.getByText("conflict-e2e-001")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
     page,
   }) => {

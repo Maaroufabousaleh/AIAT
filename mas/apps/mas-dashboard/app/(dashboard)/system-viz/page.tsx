@@ -100,6 +100,8 @@ export default function SystemVisualizationPage() {
     setLoading,
     error,
     setError,
+    partialErrors,
+    setPartialErrors,
     highlightedPath,
     setHighlightedPath,
   } = useSystemVizStore();
@@ -118,12 +120,14 @@ export default function SystemVisualizationPage() {
     setLoading(true);
     setError(null);
 
-    // Fetch all data in parallel, handling each independently
+    // Fetch all data in parallel, handling each independently. A network
+    // failure is represented as a missing response so the operator can still
+    // inspect any sections that did respond.
     const [sysRes, permRes, orchRes, orgRes] = await Promise.all([
-      fetch("/api/system/hierarchy"),
-      fetch("/api/system/permissions"),
-      fetch("/api/system/orchestration"),
-      fetch("/api/system/org-graph"),
+      fetch("/api/system/hierarchy").catch(() => null),
+      fetch("/api/system/permissions").catch(() => null),
+      fetch("/api/system/orchestration").catch(() => null),
+      fetch("/api/system/org-graph").catch(() => null),
     ]);
 
     // Parse all responses - handle each independently to allow partial content
@@ -134,8 +138,8 @@ export default function SystemVisualizationPage() {
     const errors: string[] = [];
 
     // Helper to safely parse JSON - handles both HTTP errors and JSON parsing errors
-    const parseJson = async (res: Response, name: string): Promise<unknown> => {
-      if (!res.ok) {
+    const parseJson = async (res: Response | null, name: string): Promise<unknown> => {
+      if (!res || !res.ok) {
         errors.push(name);
         return null;
       }
@@ -160,9 +164,15 @@ export default function SystemVisualizationPage() {
     orchData = orchRaw as OrchestrationData | null;
     orgGraphData = orgRaw as OrgGraphSummary | null;
 
-    // Only set error if system hierarchy failed - that's critical. Other data is optional.
-    if (!sysData && errors.length > 0) {
+    // A hierarchy failure is fatal only on the first load. If a previous
+    // hierarchy exists, retain it and expose the failed refresh as a stale
+    // partial state instead of discarding the operator's current context.
+    const existingSystemData = useSystemVizStore.getState().systemData;
+    setPartialErrors(errors);
+    if (!sysData && !existingSystemData && errors.length > 0) {
       setError(`Failed to load ${errors.join(", ")}`);
+    } else {
+      setError(null);
     }
 
     // Set data even if some APIs failed (allows partial content to show)
@@ -179,6 +189,7 @@ export default function SystemVisualizationPage() {
     setOrchestrationData,
     setLoading,
     setError,
+    setPartialErrors,
   ]);
 
   useEffect(() => {
@@ -454,6 +465,26 @@ export default function SystemVisualizationPage() {
           </>
         }
       />
+
+      {partialErrors.length > 0 && (
+        <ErrorBanner
+          tone="warning"
+          title="Some visualization data is stale or unavailable"
+          action={
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-100 transition-colors hover:bg-amber-900/50"
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              Retry
+            </button>
+          }
+        >
+          {partialErrors.join(", ")} failed to refresh. Existing data remains
+          visible where available.
+        </ErrorBanner>
+      )}
 
       {/* View-mode switcher as a toolbar */}
       <div
