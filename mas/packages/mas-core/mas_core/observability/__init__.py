@@ -7,6 +7,12 @@ from mas_core.observability.api_observations import (
     build_api_observation,
     normalize_api_route,
 )
+from mas_core.observability.executive_reconciliation import (
+    EXECUTIVE_RECONCILIATION_SCHEMA,
+    EXECUTIVE_VIEWS_SCHEMA,
+    build_executive_reconciliation,
+    build_executive_views,
+)
 from mas_core.observability.logging import configure_logging
 from mas_core.observability.metrics import (
     AIAT_METRIC_COLLECTORS,
@@ -71,6 +77,10 @@ __all__ = [
     "APIObservation",
     "build_api_observation",
     "normalize_api_route",
+    "EXECUTIVE_RECONCILIATION_SCHEMA",
+    "EXECUTIVE_VIEWS_SCHEMA",
+    "build_executive_views",
+    "build_executive_reconciliation",
     # Prometheus metrics
     "MAS_MESSAGES_TOTAL",
     "MAS_TOOL_CALLS_TOTAL",
