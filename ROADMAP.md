@@ -270,7 +270,7 @@ The deterministic evidence-package core/resolver/fixtures are reviewed and commi
 
 Required outcomes:
 
-- [x] licence and redistribution fields are metadata-only in code and cannot block discovery, installation, hiring, activation, rollout, updating, or execution; evaluator diagnostics retain operator notices without score weight or rejection power (`cbdcfa6`);
+- [x] licence and redistribution fields are metadata-only in code and cannot block discovery, installation, hiring, activation, rollout, updating, or execution; evaluator diagnostics retain operator notices without score weight or rejection power (`cbdcfa6`), and certification/rollout predicates plus delta integration gates were hardened to use source/version and technical security evidence only (`9b84af3`);
 - [x] the historical `LICENSE_REVIEW` label is optional metadata capture; the normal source-review path can continue directly to technical security review;
 - [x] worker certification/provenance records use a shared operational predicate;
 - [x] coding/tester scan-state contradiction is closed; exact-source Semgrep
