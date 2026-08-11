@@ -43,7 +43,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Optional Microsoft Agent Framework/MCP compatibility | [`runtime_compatibility.yaml`](mas/docs/provenance/runtime_compatibility.yaml), [`maf_compatibility.py`](mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`check_runtime_compatibility.py`](mas/scripts/check_runtime_compatibility.py) |
 | Default worker steward lifecycle contract | [`check_worker_steward_contract.py`](mas/scripts/check_worker_steward_contract.py), [`ExternalWorkerSteward`](mas/packages/mas-core/mas_core/worker_registry/steward.py), [worker matrix](mas/docs/provenance/worker_certification_matrix.yaml) |
 | Selected steward/candidate certification-readiness preflight | [`check_worker_steward_readiness.py`](mas/scripts/check_worker_steward_readiness.py), [`worker_steward_readiness.py`](mas/packages/mas-core/mas_core/worker_registry/worker_steward_readiness.py), [`test_worker_steward_readiness.py`](mas/packages/mas-core/tests/test_worker_steward_readiness.py) |
-| Team-runner agent→worker manifest identity bindings | [`check_team_worker_manifest_refs.py`](mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), [`test_team_worker_manifest_refs.py`](mas/packages/mas-core/tests/test_team_worker_manifest_refs.py), [`mas/teams/`](mas/teams/) |
+| Team-runner agent→worker manifest identity bindings | [`check_team_worker_manifest_refs.py`](mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), [`team_runner/main.py`](mas/apps/team-runner/team_runner/main.py), [`agent_runtime/config.py`](mas/packages/mas-core/mas_core/agent_runtime/config.py), [`test_team_worker_manifest_refs.py`](mas/packages/mas-core/tests/test_team_worker_manifest_refs.py), [`test_team_config.py`](mas/apps/team-runner/tests/test_team_config.py), [`mas/teams/`](mas/teams/) |
 | Third-party and production-image metadata/evidence | [Third-party notices](THIRD_PARTY_NOTICES.md), [component provenance](mas/docs/provenance/third_party_components.yaml), [production images](mas/docs/provenance/production_images.yaml), [image budgets](mas/infra/docker/image-budgets.yaml), [`check_image_provenance.py`](mas/scripts/check_image_provenance.py), [`check_image_budgets.py`](mas/scripts/check_image_budgets.py) |
 | Deterministic API/protocol/dashboard/Python SDK contracts | [API contract artifact](mas/schemas/http/orchestrator.openapi.json), [dashboard types](mas/apps/mas-dashboard/lib/generated/orchestrator-api.ts), [Python SDK](mas/packages/mas-api-sdk/mas_api_sdk/generated.py), [contract provenance](mas/docs/provenance/api_contract.yaml), [`check_api_contract.py`](mas/scripts/check_api_contract.py), [`generate_typescript_api.py`](mas/scripts/generate_typescript_api.py), [`generate_python_api.py`](mas/scripts/generate_python_api.py) |
 | Executive model/budget reconciliation and role views | [`aiat.executive-reconciliation.v1` / `aiat.executive-views.v1`](mas/packages/mas-core/mas_core/observability/executive_reconciliation.py), [`/executive/reconciliation`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/views/{role}`](mas/apps/orchestrator-api/orchestrator_api/main.py), [System Overview](<mas/apps/mas-dashboard/app/(dashboard)/page.tsx>) |
@@ -110,6 +110,9 @@ The codebase already includes:
 - explicit `worker_manifest_ref` bindings for all 39 team-runner agents; the
   static identity reconciliation is separate from runtime registration,
   activation, and live certification;
+- production team-runner startup repeats the read-only reconciliation against
+  mounted worker manifests and carries exact references into agent config and
+  health metadata (`569231f`); missing or mismatched declarations fail closed;
 - visual flows with nine node types and durable instances/executions;
 - project/document/review/approval/sprint/issue/KPI/context/evidence workspaces;
 - LiteLLM/OmniRoute gateway and analytics paths;
@@ -311,6 +314,12 @@ worker manifest IDs. The static checker passes 11 team files and 39 agents
 without inferring missing references or registering workers. Runtime
 registration, activation, and live certification remain separate.
 
+Commit `569231f` makes the production team-runner entrypoint repeat that
+read-only reconciliation against its mounted worker directory before agent
+instantiation. The exact reference is retained in `AgentConfig` and health
+metadata; missing or mismatched declarations fail closed without registration
+or activation.
+
 Commit `adc7b26` adds the read-only `aiat.worker-steward-readiness.v1`
 preflight for one explicitly selected external worker/candidate. Its fixture
 passes, while the current coding-worker selection is blocked by
@@ -375,6 +384,10 @@ Required outcomes:
   `scripts/check_team_worker_manifest_refs.py` reconcile all 11 team files and
   39 exact agent→manifest bindings; no registration/activation or live
   certification is claimed.
+- [x] Production team-runner startup repeats the read-only team/worker
+  reconciliation and carries each exact reference into `AgentConfig` and
+  health metadata (`569231f`); missing or mismatched references fail closed
+  without registering or activating a worker.
 - [x] deterministic default-worker binding matrix reconciles all 15 documented
   worker slots with implementation declarations and runtime/integration
   adapter entrypoints; installed runtime, adapter conformance, canary, live-run,

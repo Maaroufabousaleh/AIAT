@@ -15,11 +15,11 @@ This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
 live evidence explicit.
 
-The bounded readiness/declaration groups `5553b19`, `adc7b26`, and `d9b1262`
-were reviewed after the aggregate snapshot above. Their rows below record the
-focused fixtures and authenticated/static read-only diagnostics; aggregate
-check counts and the release decision are intentionally not recomputed from
-the dirty working tree.
+The bounded readiness/declaration groups `5553b19`, `adc7b26`, `d9b1262`, and
+`569231f` were reviewed after the aggregate snapshot above. Their rows below
+record the focused fixtures and authenticated/static read-only diagnostics;
+aggregate check counts and the release decision are intentionally not
+recomputed from the dirty working tree.
 
 ## Evidence index
 
@@ -64,6 +64,7 @@ the dirty working tree.
 | Selected worker-run readiness preflight | fixture + authenticated read-only live diagnostic | PASS (fixture); BLOCKED (current selected live state) | Commit `5553b19`; `uv run --isolated pytest packages/mas-core/tests/test_worker_run_readiness.py -q` and `uv run --isolated python scripts/check_worker_run_readiness.py --json` pass the complete snapshot fixture. The live checker requires explicit worker/project UUIDs, reads only bounded worker/project/company/assignment/budget/profile/health records, and never auto-selects, activates, provisions identity, reserves budget, dispatches, or returns payloads. The current local coding-worker/terminal-project selection exits 2 with inactive worker, missing immutable pointers, terminal project, and missing assignment; identity, sandbox runtime, canary, live-run, rollback, and licence metadata remain separate/not-gated |
 | Selected steward certification readiness preflight | fixture + authenticated read-only live diagnostic | PASS (fixture); BLOCKED (current selected live state) | Commit `adc7b26`; `uv run --isolated pytest packages/mas-core/tests/test_worker_steward_readiness.py -q` and `uv run --isolated python scripts/check_worker_steward_readiness.py --json` pass the complete candidate fixture. The live checker requires explicit worker/candidate UUIDs, reads only bounded worker/steward/candidate records, and never generates or certifies a candidate, approves, activates, rolls out, dispatches, or returns payloads. The current local coding-worker selection exits 2 with `steward_not_ready`, `security_scan_not_passed`, and `candidate_not_found`; licence metadata remains separate/not-gated |
 | Team-runner manifest identity bindings | static/unit | PASS | Commit `d9b1262`; `uv run --isolated pytest packages/mas-core/tests/test_team_worker_manifest_refs.py apps/team-runner/tests/test_team_config.py -q` and `uv run --isolated python scripts/check_team_worker_manifest_refs.py --json` reconcile 11 team files and 39 exact agent→manifest IDs; no registration/activation mutation and licence metadata remains informational |
+| Team-runner startup manifest enforcement | unit/startup contract | PASS | Commit `569231f`; `uv run --isolated pytest apps/team-runner/tests/test_team_config.py apps/team-runner/tests/test_shutdown.py -q` verifies mounted-manifest reconciliation, fail-closed missing references, exact `AgentConfig` propagation, and health metadata; startup remains read-only and does not register or activate workers |
 | Exact OpenCode security scan | external source + Semgrep evidence | FINDINGS_REVIEW_REQUIRED | Exact commit `10c894bdeef3618f5666fb506ef7f9491bb964d8` (`v1.17.13`) scanned with Semgrep `1.168.0`; 5,062 files, 316 findings, 19 `ERROR`, 54 engine warnings; evidence digest `e960a57d7b397d8af9271025b2025b0f46567967b4c684eaab8652a75d47d3b5` |
 | Worker certification matrix | deterministic static declaration | PASS | Commit `4c5fd68`; `uv run --isolated python scripts/generate_worker_certification_matrix.py --check`; 39 rows separate declared runtime/adapter inputs from pending security, canary, and live evidence; `test_worker_certification_matrix.py` and the generated artifact reconcile deterministically |
 | Microsoft Agent Framework adapter boundary | unit/fixture | PASS (compatibility boundary; activation open) | Commit `fc528a8`; `uv run --isolated pytest packages/mas-core/tests/test_microsoft_agent_framework_adapter.py -q`; fake-module coverage proves bounded Agent/ChatAgent construction, async run/invoke translation, shutdown, and missing package/instructions fail-closed paths; locked package/MCP compatibility and activation are tracked separately |

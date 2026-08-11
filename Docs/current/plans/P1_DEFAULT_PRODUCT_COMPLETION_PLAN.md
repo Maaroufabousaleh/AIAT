@@ -115,6 +115,10 @@ external client-language SDK compatibility yet.
   static contract passes 11 team files/39 agents without inferring missing
   references or registering/activating workers; runtime registration and live
   certification remain separate.
+- [x] Make production team-runner startup repeat the read-only reconciliation
+  against its mounted worker directory and carry each exact reference into
+  `AgentConfig`/health metadata (`569231f`). Missing or mismatched references
+  fail closed; this does not register, activate, or certify a worker.
 - [x] Persist the compatibility matrix produced by certification through the
   canonical storage owner, retaining runtime/adapter/contract versions,
   fixtures, capability/model context, and pass/fail status with the

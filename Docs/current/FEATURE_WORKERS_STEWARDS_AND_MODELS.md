@@ -84,6 +84,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   files and 39 agent bindings without inferring missing references or
   registering/activating workers; runtime registration remains a separate
   integration step.
+- Production team-runner startup now reuses that reconciliation against its
+  mounted worker directory before instantiating agents (`569231f`). The
+  explicit reference is retained in `AgentConfig` and health metadata; missing
+  or mismatched declarations fail closed without registering or activating a
+  worker.
 - OpenCode 1.17.13 live-interface evidence and an approved Phase 0B report.
 - `scripts/check_worker_reconciliation.py` statically reconciles all 39 worker
   manifests with the runtime catalogue, company manifest, Compose/OpenCode
@@ -246,7 +251,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Protocol model: [`mas/packages/mas-core/mas_core/protocols/worker_contract.py`](../../mas/packages/mas-core/mas_core/protocols/worker_contract.py)
 - Worker registry/stewards: [`mas/packages/mas-core/mas_core/worker_registry/`](../../mas/packages/mas-core/mas_core/worker_registry/)
 - Runtime catalogue: [`mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py)
-- Team-runner manifest binding contract (`d9b1262`): [`mas/scripts/check_team_worker_manifest_refs.py`](../../mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](../../mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), and [`test_team_worker_manifest_refs.py`](../../mas/packages/mas-core/tests/test_team_worker_manifest_refs.py). Static mode reconciles 11 team files/39 agent declarations to exact manifest IDs; it is read-only and does not register or activate workers.
+- Team-runner manifest binding contract (`d9b1262`, runtime binding `569231f`): [`mas/scripts/check_team_worker_manifest_refs.py`](../../mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](../../mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), [`team_runner/main.py`](../../mas/apps/team-runner/team_runner/main.py), [`agent_runtime/config.py`](../../mas/packages/mas-core/mas_core/agent_runtime/config.py), [`test_team_worker_manifest_refs.py`](../../mas/packages/mas-core/tests/test_team_worker_manifest_refs.py), and [`test_team_config.py`](../../mas/apps/team-runner/tests/test_team_config.py). Static mode reconciles 11 team files/39 agent declarations; production startup repeats the read-only check against mounted manifests and carries the exact reference into agent config/health without registering or activating workers.
 - Static and read-only live reconciliation: [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py) and [`worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). The default mode validates all 39 declarations; the authenticated local `--live` run matches 39/39 persisted defaults with zero missing rows or binding mismatches. It compares exact adapter, sandbox, model, source-pin, capability, and active immutable-record bindings and reports missing API/configuration as blocked.
 - Default worker implementation binding matrix (`4c5fd68`): [`mas/scripts/check_default_worker_bindings.py`](../../mas/scripts/check_default_worker_bindings.py) and [`test_default_worker_bindings.py`](../../mas/packages/mas-core/tests/test_default_worker_bindings.py). The static contract covers all 15 documented default slots, verifies each declared transport/isolation pair against `RUNTIME_CATALOG`, and requires matching runtime/integration adapter entrypoints; `--live` remains an explicit operator/environment boundary and never mutates runtime state.
 - Worker-run lifecycle fixture (`fe6fb8d`): [`mas/scripts/check_worker_run_lifecycle.py`](../../mas/scripts/check_worker_run_lifecycle.py) and [`test_worker_run_lifecycle.py`](../../mas/packages/mas-core/tests/test_worker_run_lifecycle.py). The static fixture checks real controller ordering, failure normalization, and recovery invariants; `--live` reports the explicit operator/database boundary.
@@ -278,7 +283,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 
 ## Target worker lifecycle
 
-1. Register a stable shell with role, department, permissions, tools, budget, sandbox, model requirements, and an explicit `worker_manifest_ref`.
+1. Register a stable shell with role, department, permissions, tools, budget, sandbox, model requirements, and an explicit `worker_manifest_ref`; team-runner startup must reconcile that reference against its mounted manifest before instantiation.
 2. Assign exactly one steward for each external worker.
 3. Capture canonical source, exact version/digest, documentation snapshot, SBOM/lock, and scans; record licence/notices as non-blocking metadata when known.
 4. Generate an immutable adapter and skill-bundle candidate.
@@ -377,6 +382,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   manifests and add `check_team_worker_manifest_refs.py` (`d9b1262`). The
   declaration check passes 11 team files/39 agents; control-plane registration,
   worker activation, and live run certification remain separate gates.
+- [x] Make production team-runner startup repeat the read-only manifest
+  reconciliation and carry each exact reference into `AgentConfig`/health
+  metadata (`569231f`). Missing or mismatched references fail closed; no
+  registration, activation, or certification is implied.
 - [x] Reconcile worker manifests, runtime catalogue, Compose/OpenCode links, provenance, and notices in CI; the read-only live binding checker compares persisted default-worker rows without treating licence metadata as a gate; installed-package availability, image digests/SBOMs, and live worker-run certification remain separate gates.
 - [x] Reconcile the 15 documented default worker slots with their implementation
   declarations (department, runtime, transport, isolation, capability,
