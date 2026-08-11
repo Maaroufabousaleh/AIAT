@@ -2569,9 +2569,18 @@ async def _reconcile_project_state_metrics(storage: AgentStorage) -> None:
     """Refresh bounded project-state gauges from the durable source of truth."""
 
     try:
-        states = await storage.list_project_states()
-        reconcile_project_state_metrics(states)
-    except Exception:  # noqa: BLE001
+        state_reader = getattr(storage, "list_project_states", None)
+        if inspect.iscoroutinefunction(state_reader):
+            states = await state_reader()
+        else:
+            # Lightweight storage doubles from older tests do not implement
+            # the state-only query; keep the compatibility fallback bounded by
+            # their existing project-list API.
+            projects = await storage.list_projects(limit=100_000)
+            states = [project.get("state") for project in projects]
+        if isinstance(states, (list, tuple)):
+            reconcile_project_state_metrics(states)
+    except Exception:
         # Metrics must never prevent a restart/resume sequence. The next
         # committed transition will still update the in-process aggregate.
         logger.warning("project_state_metric_reconciliation_failed", exc_info=True)
