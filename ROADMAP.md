@@ -225,6 +225,8 @@ tool-service profile split, and read-only persisted default-worker binding
 reconciliation implemented; native/live/release gates remain
 open
 
+The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`; API/storage/dashboard snapshot wiring remains a separate reviewed group.
+
 Required outcomes:
 
 - [x] licence and redistribution fields are metadata-only in code and cannot block discovery, installation, hiring, activation, rollout, updating, or execution;
