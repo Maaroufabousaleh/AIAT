@@ -100,6 +100,16 @@ from mas_core.observability.tracing import (
     new_trace_id,
     resolve_trace_id,
 )
+from mas_core.policy.dashboard_access import (
+    DASHBOARD_PRINCIPALS,
+    DASHBOARD_SECTION_ACL_CONFIG_KEY,
+    DASHBOARD_SECTIONS,
+    DEFAULT_DASHBOARD_SECTION_ACL,
+    normalize_dashboard_acl,
+    principal_can_access_section,
+    sections_for_principal,
+    serialize_dashboard_acl,
+)
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
@@ -1672,6 +1682,12 @@ class ScheduleRequest(BaseModel):
     auto_resume: bool = True
 
 
+class DashboardSectionACLRequest(BaseModel):
+    """Human-managed principals for one dashboard section."""
+
+    principals: list[str] = Field(default_factory=list)
+
+
 class TeamRunnerStorageRequest(BaseModel):
     """Allow-listed storage operation issued by a deployed team runner."""
 
@@ -2652,6 +2668,10 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Store in app state
     app.state.storage = storage
     app.state.controller = controller
+    # Section ACLs are durable system configuration, with a safe in-process
+    # default for development/test startup without Postgres.  The middleware
+    # reads this snapshot on every request; updates replace it atomically.
+    app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
     app.state.watchdog_config = watchdog_config
     app.state.boot_at = boot_at
     app.state.stop_event = stop_event
@@ -2662,6 +2682,16 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
 
     # Run resume sequence if DB is available
     if storage is not None:
+        try:
+            persisted_dashboard_acl = await storage.get_config(DASHBOARD_SECTION_ACL_CONFIG_KEY)
+            if persisted_dashboard_acl:
+                app.state.dashboard_acl = normalize_dashboard_acl(persisted_dashboard_acl)
+        except ValueError:
+            # A malformed operator policy must not silently become an access
+            # bypass.  Keep the safe defaults and leave an actionable record in
+            # the logs for the operator to repair.
+            logger.exception("dashboard_acl_config_invalid_using_defaults")
+            app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
         try:
             await storage.set_config("system_state", "STARTING")
             resumed = await run_resume_sequence(storage)
@@ -2825,6 +2855,36 @@ async def require_control_plane_auth(request: Request, call_next):  # type: igno
         )
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    # Next.js dashboard/API proxies send this explicit section context.  Keep
+    # it separate from the route path because one section is composed from
+    # several API endpoints.  Direct control-plane callers remain governed by
+    # their normal endpoint authorization; a caller that opts into a dashboard
+    # section must also satisfy the persisted section ACL.
+    requested_dashboard_section = str(
+        request.headers.get("x-aiat-dashboard-section") or ""
+    ).strip().lower()
+    if requested_dashboard_section:
+        if requested_dashboard_section not in DASHBOARD_SECTIONS:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Unknown dashboard section: {requested_dashboard_section}"},
+            )
+        principal = str(request.state.aiat_auth_principal)
+        if not principal_can_access_section(
+            principal,
+            requested_dashboard_section,
+            getattr(request.app.state, "dashboard_acl", DEFAULT_DASHBOARD_SECTION_ACL),
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": (
+                        f"principal {principal!r} is not authorized for dashboard section "
+                        f"{requested_dashboard_section!r}"
+                    )
+                },
+            )
+        request.state.aiat_dashboard_section = requested_dashboard_section
     response = await call_next(request)
     if requested_v1:
         response.headers["X-AIAT-API-Version"] = "v1"
@@ -2887,6 +2947,7 @@ async def propagate_trace_context(request: Request, call_next):  # type: ignore[
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
+app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
 app.state.controller = WorkflowController(storage=None, event_publisher=publish_system_event)
 app.state.watchdog_config = WatchdogConfig()
 app.state.boot_at = datetime.now(tz=UTC)
@@ -12485,6 +12546,100 @@ async def identity_dashboard_action(req: IdentityDashboardActionRequest, _auth: 
         return await _identity_client().request("POST", path, body)
     except Exception as exc:
         raise HTTPException(503, "identity action could not be completed") from exc
+
+
+def _dashboard_acl_snapshot() -> dict[str, frozenset[str]]:
+    """Return the validated in-process ACL snapshot used by middleware/routes."""
+
+    try:
+        return normalize_dashboard_acl(
+            getattr(app.state, "dashboard_acl", DEFAULT_DASHBOARD_SECTION_ACL)
+        )
+    except ValueError:
+        # Never turn a malformed in-memory override into an authorization
+        # bypass. The operator can repair the persisted row through a fresh
+        # process start or a valid PUT below.
+        logger.exception("dashboard_acl_snapshot_invalid_using_defaults")
+        return dict(DEFAULT_DASHBOARD_SECTION_ACL)
+
+
+def _validate_dashboard_section(section: str) -> str:
+    normalized = str(section).strip().lower()
+    if normalized not in DASHBOARD_SECTIONS:
+        raise HTTPException(404, f"Unknown dashboard section: {section}")
+    return normalized
+
+
+@app.get("/dashboard/access")
+async def dashboard_access(request: Request) -> dict[str, Any]:
+    """Return the sections visible to the authenticated principal."""
+
+    principal = _authenticated_principal(request)
+    acl = _dashboard_acl_snapshot()
+    return {
+        "principal": principal,
+        "sections": list(sections_for_principal(principal, acl)),
+        "all_sections": list(DASHBOARD_SECTIONS),
+        "policy_key": DASHBOARD_SECTION_ACL_CONFIG_KEY,
+    }
+
+
+@app.get("/dashboard/sections/{section}")
+async def dashboard_section_access(section: str, request: Request) -> dict[str, Any]:
+    """Authorize one dashboard section for an API caller.
+
+    Dashboard proxies use the same predicate through the middleware header;
+    this explicit endpoint gives CEO/service/worker runtimes a small,
+    auditable capability check without granting them operator UI access.
+    """
+
+    normalized = _validate_dashboard_section(section)
+    principal = _authenticated_principal(request)
+    acl = _dashboard_acl_snapshot()
+    if not principal_can_access_section(principal, normalized, acl):
+        raise HTTPException(
+            403,
+            f"principal {principal!r} is not authorized for dashboard section {normalized!r}",
+        )
+    return {"section": normalized, "principal": principal, "allowed": True}
+
+
+@app.put("/dashboard/sections/{section}/acl")
+async def update_dashboard_section_acl(
+    section: str,
+    req: DashboardSectionACLRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Persist one section's principal list; only a human operator may edit it."""
+
+    _require_operator_identity(request)
+    normalized = _validate_dashboard_section(section)
+    requested_principals = {str(item).strip().lower() for item in req.principals if str(item).strip()}
+    unknown = requested_principals - set(DASHBOARD_PRINCIPALS)
+    if unknown:
+        raise HTTPException(422, f"Unknown dashboard principals: {sorted(unknown)}")
+    if "operator" not in requested_principals:
+        raise HTTPException(422, "operator must retain access to every dashboard section")
+
+    acl = _dashboard_acl_snapshot()
+    updated: dict[str, set[str]] = {
+        principal: set(acl.get(principal, frozenset()))
+        for principal in DASHBOARD_PRINCIPALS
+    }
+    for principal in DASHBOARD_PRINCIPALS:
+        if principal in requested_principals:
+            updated[principal].add(normalized)
+        else:
+            updated[principal].discard(normalized)
+    validated = normalize_dashboard_acl(updated)
+    await _storage().set_config(DASHBOARD_SECTION_ACL_CONFIG_KEY, serialize_dashboard_acl(validated))
+    app.state.dashboard_acl = validated
+    return {
+        "section": normalized,
+        "principals": sorted(requested_principals),
+        "policy_key": DASHBOARD_SECTION_ACL_CONFIG_KEY,
+        "persisted": True,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════

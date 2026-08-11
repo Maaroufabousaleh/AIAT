@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-const ORCHESTRATOR = process.env.ORCHESTRATOR_URL ?? "http://orchestrator-api:8000";
-const ORCHESTRATOR_HEADERS = {
-  "X-API-Key": process.env.MAS_API_KEY ?? "",
-};
 const SENSITIVE_RESPONSE_KEYS = new Set(["value", "encrypted_value", "secret", "token", "password", "api_key"]);
 
 function stripCredentialSecrets(data: unknown): unknown {
@@ -18,28 +15,24 @@ function stripCredentialSecrets(data: unknown): unknown {
 
 export async function GET() {
   try {
-    const res = await fetch(`${ORCHESTRATOR}/credentials`, {
-      cache: "no-store",
-      headers: ORCHESTRATOR_HEADERS,
-    });
-    const data = await res.json();
-    return NextResponse.json(stripCredentialSecrets(data), { status: res.status });
-  } catch {
-    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status: 502 });
+    const data = await orchestratorFetch("/credentials");
+    return NextResponse.json(stripCredentialSecrets(data));
+  } catch (error) {
+    const status = error instanceof OrchestratorError ? error.status : 502;
+    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status });
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const res = await fetch(`${ORCHESTRATOR}/credentials`, {
+    const data = await orchestratorFetch("/credentials", {
       method: "POST",
-      headers: { ...ORCHESTRATOR_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    return NextResponse.json(stripCredentialSecrets(data), { status: res.status });
-  } catch {
-    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status: 502 });
+    return NextResponse.json(stripCredentialSecrets(data));
+  } catch (error) {
+    const status = error instanceof OrchestratorError ? error.status : 502;
+    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status });
   }
 }

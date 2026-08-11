@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,6 +23,13 @@ if _tests_dir not in sys.path:
 
 PROJECT_ID: uuid.UUID = uuid.UUID("00000000-0000-4000-a000-000000000001")
 NOW_ISO: str = "2026-01-01T00:00:00+00:00"
+
+
+def _fresh_test_controller() -> MagicMock:
+    """Provide an isolated controller double for every ASGI test client."""
+    controller = MagicMock()
+    controller.transition = AsyncMock(return_value=MagicMock(next_state="IN_PROGRESS"))
+    return controller
 
 
 def _fake_project(
@@ -79,10 +87,16 @@ async def client(monkeypatch):
 
     # Reset cached system state to avoid 503 leaks between tests
     app.state._cached_system_state = "RUNNING"
+    app.state.controller = _fresh_test_controller()
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-API-Key": "test-mas-key"},
-    ) as ac:
-        yield ac
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+            headers={"X-API-Key": "test-mas-key"},
+        ) as ac:
+            yield ac
+    finally:
+        app.state.controller = None
+        app.state.storage = None
+        app.state._cached_system_state = "RUNNING"
