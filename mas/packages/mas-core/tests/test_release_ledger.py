@@ -125,6 +125,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert operator_pins["summary"]["pin_count"] == 16
     assert operator_pins["summary"]["locked_count"] == 9
     assert operator_pins["summary"]["unavailable_count"] == 7
+    release_environment = next(
+        row for row in report["checks"] if row["id"] == "release_environment"
+    )
+    assert release_environment["status"] == "pass"
     assert "live profile was not included" in report["decision_reasons"]
     assert "NO-RELEASE" in result.stdout
 
@@ -152,6 +156,42 @@ def test_release_ledger_redacts_secret_shaped_diagnostics() -> None:
     assert "also-secret" not in rendered
     assert "container_count" in summary["live"]
     assert module._status_for(0, {"status": "pass", "live": {"status": "blocked"}}, live=True) == "blocked"
+
+    native_summary = module._safe_summary(
+        {
+            "status": "blocked",
+            "native_release": {
+                "status": "blocked",
+                "platform": {
+                    "system": "Linux",
+                    "kernel": "6.8.0-native",
+                    "native_linux": True,
+                    "description": "not retained",
+                },
+                "docker": {
+                    "engine_available": True,
+                    "compose_v2_available": True,
+                    "runtimes_metadata_available": True,
+                    "runsc_registered": False,
+                },
+                "image_refs": [
+                    {
+                        "name": "AIAT_IMAGE_REF",
+                        "configured": True,
+                        "digest_pinned": True,
+                        "value": "registry.example/secret@sha256:abc",
+                    }
+                ],
+                "blockers": ["gVisor runsc runtime is not registered"],
+            },
+        },
+        "",
+        "",
+    )
+    assert native_summary["native_release"]["status"] == "blocked"
+    assert native_summary["native_release"]["docker"]["runsc_registered"] is False
+    assert "registry.example/secret" not in json.dumps(native_summary)
+    assert "value" not in json.dumps(native_summary)
 
     catalogue_summary = module._safe_summary(
         {
@@ -185,6 +225,20 @@ def test_trace_evidence_live_check_uses_a_bounded_retained_trace_id() -> None:
         "--trace-id",
         "aiat-live-trace-20260811-phase",
     )
+
+
+def test_release_environment_live_check_requires_native_release_prerequisites() -> None:
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    spec = spec_from_file_location("check_release_ledger_native_preflight", SCRIPT)
+    assert spec and spec.loader
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    _inventory, checks = module._load_inventory()
+    release_environment = next(row for row in checks if row.check_id == "release_environment")
+    assert release_environment.live_args == ("--require-native-linux", "--json")
 
 
 def test_live_release_ledger_bounds_timed_out_checker(monkeypatch) -> None:

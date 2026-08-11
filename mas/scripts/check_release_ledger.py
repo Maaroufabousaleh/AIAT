@@ -21,7 +21,6 @@ no worker evidence is pending, and the worktree is clean.
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import platform
@@ -29,6 +28,7 @@ import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -212,6 +212,48 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
     summary = {key: payload[key] for key in allowed if key in payload}
     if isinstance(payload.get("findings"), list):
         summary["finding_count"] = len(payload["findings"])
+    native_release = payload.get("native_release")
+    if isinstance(native_release, dict):
+        native_blockers = native_release.get("blockers")
+        native_summary: dict[str, Any] = {
+            "status": native_release.get("status"),
+            "blockers": [
+                str(blocker)[:300]
+                for blocker in (native_blockers[:20] if isinstance(native_blockers, list) else [])
+                if isinstance(blocker, str)
+            ],
+        }
+        native_platform = native_release.get("platform")
+        if isinstance(native_platform, dict):
+            native_summary["platform"] = {
+                key: native_platform[key]
+                for key in ("system", "kernel", "native_linux")
+                if key in native_platform
+            }
+        native_docker = native_release.get("docker")
+        if isinstance(native_docker, dict):
+            native_summary["docker"] = {
+                key: native_docker[key]
+                for key in (
+                    "engine_available",
+                    "compose_v2_available",
+                    "runtimes_metadata_available",
+                    "runsc_registered",
+                )
+                if key in native_docker
+            }
+        native_refs = native_release.get("image_refs")
+        if isinstance(native_refs, list):
+            native_summary["image_refs"] = [
+                {
+                    key: item[key]
+                    for key in ("name", "configured", "digest_pinned")
+                    if key in item
+                }
+                for item in native_refs[:20]
+                if isinstance(item, dict)
+            ]
+        summary["native_release"] = native_summary
     live = payload.get("live")
     if isinstance(live, dict):
         summary["live"] = {

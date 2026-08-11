@@ -25,6 +25,7 @@ checks:
     category: release
     script: scripts/check_release_environment.py
     args: [--json]
+    live_args: [--require-native-linux, --json]
   - id: api_contract
     category: contract
     script: scripts/check_api_contract.py
