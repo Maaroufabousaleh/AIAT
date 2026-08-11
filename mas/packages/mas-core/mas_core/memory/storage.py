@@ -2575,9 +2575,18 @@ class AgentStorage:
         *,
         expected_revision: int | None = None,
         exclude_connection_id: UUID | None = None,
+        evidence_records: list[dict[str, Any]] | None = None,
+        projection_evidence: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """CAS-update an issue and enqueue its projections in one transaction."""
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        """CAS-update an issue, projections, and optional command evidence atomically.
+
+        ACTIVE inbound commands pass sanitized actor/command evidence here.
+        Evidence-write failure raises inside the same transaction, rolling back
+        the canonical CAS and any projection intents together.
+        """
+        atomic_evidence = list(evidence_records or [])
+        transaction_id = uuid4() if atomic_evidence or projection_evidence else None
         async with self.engine.begin() as conn:
             current = (
                 await conn.execute(
@@ -2603,6 +2612,70 @@ class AgentStorage:
                 refreshed_dict,
                 exclude_connection_id=exclude_connection_id,
             )
+            if projection_evidence is not None:
+                atomic_evidence.append(
+                    {
+                        "evidence_type": "active_inbound_projection",
+                        "connection_id": projection_evidence["connection_id"],
+                        "external_id": str(projection_evidence.get("external_id") or ""),
+                        "project_id": refreshed_dict.get("project_id"),
+                        "binding_id": projection_evidence.get("binding_id"),
+                        "payload": {
+                            **projection_evidence,
+                            "transaction_id": str(transaction_id),
+                            "queued_outbox_ids": [str(item.get("id")) for item in queued],
+                            "queued_count": len(queued),
+                            "disposition": (
+                                "projected_to_other_connections_and_origin_suppressed"
+                                if queued
+                                else "originating_connection_suppressed"
+                            ),
+                        },
+                        "idempotency_key": f"active-projection:{projection_evidence['command_key']}",
+                    }
+                )
+            evidence_ids: dict[str, Any] = {}
+            if atomic_evidence:
+                for record in atomic_evidence:
+                    evidence_id = uuid4()
+                    values = {
+                        "id": evidence_id,
+                        "connection_id": record["connection_id"],
+                        "binding_id": record.get("binding_id"),
+                        "project_id": record.get("project_id") or refreshed_dict.get("project_id"),
+                        "evidence_type": record["evidence_type"],
+                        "external_id": record.get("external_id"),
+                        "repository": record.get("repository"),
+                        "payload": self._pm_json_safe({
+                            **(record.get("payload") or {}),
+                            "transaction_id": str(transaction_id),
+                        }),
+                        "idempotency_key": record["idempotency_key"],
+                        "created_at": datetime.now(tz=UTC),
+                    }
+                    stmt = (
+                        pg_insert(t.integration_evidence_records)
+                        .values(**values)
+                        .on_conflict_do_update(
+                            constraint="uq_integration_evidence_idempotency",
+                            set_={
+                                "payload": values["payload"],
+                                "external_id": values["external_id"],
+                                "binding_id": values["binding_id"],
+                                "project_id": values["project_id"],
+                            },
+                        )
+                        .returning(t.integration_evidence_records.c.id)
+                    )
+                    row = await self._mapping_first(await conn.execute(stmt))
+                    if row is None:
+                        raise RuntimeError("integration evidence write returned no row")
+                    evidence_ids[record["evidence_type"]] = str(row["id"])
+        if atomic_evidence:
+            return refreshed_dict, queued, {
+                "transaction_id": str(transaction_id),
+                "evidence_ids": evidence_ids,
+            }
         return refreshed_dict, queued
 
     async def create_work_item_comment_with_pm_projections(
@@ -2936,6 +3009,28 @@ class AgentStorage:
 
     async def get_pm_external_actor_mapping_by_id(self, mapping_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.pm_external_actor_mappings, t.pm_external_actor_mappings.c.id, mapping_id)
+
+    async def list_pm_external_actor_mappings(
+        self, *, connection_id: UUID, status: str | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """List durable actor mappings for lifecycle policy snapshots.
+
+        Lifecycle plans must record the exact trusted actor scope that will be
+        exposed by an ACTIVE binding.  Keep this read path bounded and expose
+        only persisted mapping rows; callers remain responsible for redacting
+        sensitive actor snapshots from evidence.
+        """
+        query = (
+            t.pm_external_actor_mappings.select()
+            .where(t.pm_external_actor_mappings.c.connection_id == connection_id)
+            .order_by(t.pm_external_actor_mappings.c.created_at)
+            .limit(limit)
+        )
+        if status is not None:
+            query = query.where(t.pm_external_actor_mappings.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     async def count_trusted_pm_external_actor_mappings(self, connection_id: UUID) -> int:
         async with self.engine.connect() as conn:
@@ -4286,6 +4381,97 @@ class AgentStorage:
                     .values(status="EXPIRED", error="lifecycle plan expired before approval", updated_at=now)
                 )
                 raise LifecyclePlanError("expired_plan", "lifecycle plan has expired")
+
+            binding = None
+            if current.get("binding_id") is not None:
+                binding = (
+                    await conn.execute(
+                        t.pm_project_bindings.select()
+                        .where(t.pm_project_bindings.c.id == current["binding_id"])
+                    )
+                ).mappings().first()
+
+            # Approval is itself an immutable governed transition.  Keep the
+            # evidence and lifecycle history in this transaction with the
+            # APPROVED state so an evidence write failure cannot authorize a
+            # plan without a durable approval record.
+            transaction_id = str(uuid4())
+            approval_evidence_id = uuid4()
+            approval_evidence = {
+                "id": approval_evidence_id,
+                "connection_id": current["connection_id"],
+                "binding_id": current.get("binding_id"),
+                "project_id": binding.get("project_id") if binding is not None else None,
+                "evidence_type": "pm_lifecycle_approval",
+                "external_id": str(plan_id),
+                "repository": None,
+                "payload": self._pm_json_safe(
+                    {
+                        "plan_id": str(plan_id),
+                        "digest": digest,
+                        "plan_kind": current.get("plan_kind"),
+                        "target_type": current.get("target_type"),
+                        "target_id": str(current.get("target_id")),
+                        "expected_connection_status": current.get("expected_connection_status"),
+                        "expected_binding_status": current.get("expected_binding_status"),
+                        "desired_connection_status": current.get("desired_connection_status"),
+                        "desired_binding_status": current.get("desired_binding_status"),
+                        "actor": actor,
+                        "reason": reason,
+                    }
+                ),
+                "idempotency_key": f"pm-lifecycle:approval:{plan_id}:{digest}",
+                "created_at": now,
+            }
+            evidence_stmt = (
+                pg_insert(t.integration_evidence_records)
+                .values(**approval_evidence)
+                .on_conflict_do_nothing(constraint="uq_integration_evidence_idempotency")
+                .returning(t.integration_evidence_records)
+            )
+            evidence_row = await self._mapping_first(await conn.execute(evidence_stmt))
+            if evidence_row is None:
+                evidence_row = (
+                    await conn.execute(
+                        t.integration_evidence_records.select().where(
+                            t.integration_evidence_records.c.idempotency_key
+                            == approval_evidence["idempotency_key"]
+                        )
+                    )
+                ).mappings().first()
+            if evidence_row is None:
+                raise LifecyclePlanError("approval_evidence_failed", "could not persist lifecycle approval evidence")
+
+            before_state = {
+                "plan_status": "PLANNED",
+                "connection_status": current.get("expected_connection_status"),
+                "binding_status": current.get("expected_binding_status"),
+            }
+            after_state = {**before_state, "plan_status": "APPROVED"}
+            await conn.execute(
+                t.pm_lifecycle_audits.insert().values(
+                    id=uuid4(),
+                    plan_id=plan_id,
+                    connection_id=current["connection_id"],
+                    binding_id=current.get("binding_id"),
+                    action="APPROVE",
+                    before_state=self._pm_json_safe(before_state),
+                    after_state=self._pm_json_safe(after_state),
+                    actor=actor,
+                    approval_reference=self._pm_json_safe(
+                        {
+                            "plan_id": str(plan_id),
+                            "digest": digest,
+                            "approval_actor": actor,
+                            "approval_reason": reason,
+                        }
+                    ),
+                    evidence_refs={"approval_evidence_id": str(evidence_row["id"])},
+                    transaction_id=transaction_id,
+                    rollback_operations=self._pm_json_safe(current.get("rollback_operations") or []),
+                    occurred_at=now,
+                )
+            )
             await conn.execute(
                 t.pm_lifecycle_plans.update()
                 .where(t.pm_lifecycle_plans.c.id == plan_id)
@@ -4451,6 +4637,14 @@ class AgentStorage:
                         "invalid_plan",
                         "binding lifecycle plan is missing its expected or desired state",
                     )
+                if str(plan.get("desired_binding_status") or "").upper() == "ACTIVE":
+                    try:
+                        self._assert_pm_binding_activation_ready(
+                            {**dict(binding), "status": "ACTIVE"},
+                            connection,
+                        )
+                    except ValueError as exc:
+                        raise LifecyclePlanError("activation_not_ready", str(exc)) from exc
                 binding_update = await conn.execute(
                     t.pm_project_bindings.update()
                     .where(t.pm_project_bindings.c.id == binding["id"])

@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from unittest.mock import ANY, AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -1195,6 +1195,23 @@ def test_active_binding_requires_webhook_projection_and_reconciliation_evidence(
         )
 
 
+def test_active_binding_requires_active_connection():
+    from mas_core.memory.storage import AgentStorage
+
+    with pytest.raises(ValueError, match="active integration connection"):
+        AgentStorage._assert_pm_binding_activation_ready(
+            {
+                "external_project_id": "0-1",
+                "activation_blockers": [],
+                "webhook_events": ["issue", "comment"],
+                "webhook_verified_at": "2026-07-30T00:00:00Z",
+                "projection_verified_at": "2026-07-30T00:00:00Z",
+                "reconciliation_verified_at": "2026-07-30T00:00:00Z",
+            },
+            {"status": "SHADOW"},
+        )
+
+
 def test_active_umbrella_binding_accepts_repository_selector():
     from mas_core.memory.storage import AgentStorage
 
@@ -1248,7 +1265,9 @@ async def test_lifecycle_plan_generation_persists_immutable_payload(client, monk
     storage.list_pm_reconciliation_runs = AsyncMock(return_value=[{
         "id": uuid4(),
         "status": "COMPLETED",
-        "counts": {"seen": 1, "mapped": 1, "drift": 0, "conflicts": 0, "scope_conflicts": 0, "version_mismatches": 0, "hash_mismatches": 0},
+        # One provider observation is evidence-only and intentionally has no
+        # canonical mapping; it must not block a clean lifecycle plan.
+        "counts": {"seen": 2, "mapped": 1, "drift": 0, "conflicts": 0, "scope_conflicts": 0, "version_mismatches": 0, "hash_mismatches": 0},
     }])
     storage.list_pm_conflicts = AsyncMock(return_value=[])
     storage.list_pm_outbox = AsyncMock(return_value=[])
@@ -1306,6 +1325,94 @@ async def test_lifecycle_plan_generation_persists_immutable_payload(client, monk
     assert body["digest_valid"] is True
     assert body["plan"]["operations"] == [{"operation": "set_binding_status", "binding_id": str(binding_id), "from": "SHADOW", "to": "READ_ONLY"}]
     storage.create_pm_lifecycle_plan.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_active_binding_plan_snapshots_actor_scope_policy_and_blast_radius(client, monkeypatch):
+    from datetime import UTC, datetime
+    from orchestrator_api import main
+
+    connection_id = uuid4()
+    binding_id = uuid4()
+    project_id = uuid4()
+    connection = {
+        "id": connection_id,
+        "provider_kind": "fake",
+        "display_name": "fake",
+        "base_url": "https://fake.example",
+        "credential_ref": "fake-ref",
+        "capability_profile": "pm",
+        "status": "ACTIVE",
+        "revision": 2,
+        "config": {},
+    }
+    binding = {
+        "id": binding_id,
+        "project_id": project_id,
+        "connection_id": connection_id,
+        "status": "READ_ONLY",
+        "revision": 6,
+        "direction": "both",
+        "external_project_id": "0-1",
+        "mapping_profile": "dedicated_project",
+        "activation_blockers": [],
+        "webhook_events": ["issue", "comment"],
+        "webhook_verified_at": "2026-07-30T00:00:00Z",
+        "projection_verified_at": "2026-07-30T00:00:00Z",
+        "reconciliation_verified_at": "2026-07-30T00:00:00Z",
+    }
+    storage = MagicMock()
+    storage.get_pm_connection = AsyncMock(return_value=connection)
+    storage.list_pm_bindings = AsyncMock(return_value=[binding])
+    storage.list_pm_external_actor_mappings = AsyncMock(return_value=[{
+        "id": UUID("849fa0b8-84c0-4e9e-aeed-dfce71775470"),
+        "external_actor_id": "2-1",
+        "status": "TRUSTED",
+        "authorized_scopes": ["issue.priority"],
+    }])
+    storage.list_pm_reconciliation_runs = AsyncMock(return_value=[{
+        "id": uuid4(),
+        "status": "COMPLETED",
+        "counts": {"seen": 2, "mapped": 1, "drift": 0, "conflicts": 0, "scope_conflicts": 0, "version_mismatches": 0, "hash_mismatches": 0},
+    }])
+    storage.list_pm_conflicts = AsyncMock(return_value=[])
+    storage.list_pm_outbox = AsyncMock(return_value=[])
+
+    async def fake_doctor(_connection_id, _request):
+        return {"connection_id": str(connection_id), "ready": True, "blockers": [], "checks": []}
+
+    monkeypatch.setattr(main, "doctor_integration_connection", fake_doctor)
+
+    async def persist(plan, *, digest):
+        assert plan.digest() == digest
+        return {**plan.model_dump(mode="python"), "id": plan.plan_id, "digest": digest, "status": "PLANNED"}
+
+    storage.create_pm_lifecycle_plan = AsyncMock(side_effect=persist)
+    main.app.state.storage = storage
+    response = await client.post(
+        "/api/v1/integrations/lifecycle-plans",
+        json={
+            "target_type": "pm_binding",
+            "connection_id": str(connection_id),
+            "binding_id": str(binding_id),
+            "desired_binding_status": "ACTIVE",
+            "ttl_seconds": 14400,
+        },
+        headers={"X-API-Key": "test-operator-key"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    snapshot = body["plan"]["gate_results"]["active_binding_scope"]
+    assert snapshot["trusted_actor_mappings"] == [{
+        "mapping_id": "849fa0b8-84c0-4e9e-aeed-dfce71775470",
+        "external_actor_id": "2-1",
+        "status": "TRUSTED",
+        "authorized_scopes": ["issue.priority"],
+    }]
+    assert snapshot["direct_command_scope"] == ["issue.priority"]
+    assert snapshot["blast_radius"]["binding_id"] == str(binding_id)
+    assert snapshot["policy"]["unsupported_fields_default_deny"] is True
+    assert body["plan"]["expires_at"]
 
 
 @pytest.mark.anyio

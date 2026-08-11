@@ -64,7 +64,10 @@ from mas_core.integrations.contracts import (
     pm_binding_effective_policy,
     validate_credential_references,
 )
-from mas_core.integrations.providers.base import provider_ssl_context
+from mas_core.integrations.providers.base import (
+    provider_failure_is_permanent,
+    provider_ssl_context,
+)
 from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
     CompanyManifestError,
@@ -1487,6 +1490,13 @@ class PMInboundCanaryPlanActionRequest(BaseModel):
     digest: str = Field(min_length=64, max_length=64)
     confirm: bool = False
     reason: str | None = Field(default=None, max_length=500)
+
+
+class PMInboundCanaryReplayRequest(BaseModel):
+    digest: str = Field(min_length=64, max_length=64)
+    inbox_id: UUID
+    confirm: bool = False
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class PMOutboxDispositionRequest(BaseModel):
@@ -15989,18 +15999,14 @@ def _structured_comment_command(body: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else {"invalid": True}
 
 
-async def _record_active_actor_evidence(
-    storage: Any,
+def _active_actor_evidence_payload(
     *,
     command: Any,
     issue: dict[str, Any],
     inbox: dict[str, Any],
     resolution: dict[str, Any],
-) -> None:
-    recorder = getattr(storage, "record_integration_evidence", None)
-    if not callable(recorder):
-        return
-    payload = {
+) -> dict[str, Any]:
+    return {
         "provider_actor": {
             "id": resolution.get("provider_actor_id"),
             "role": resolution.get("provider_actor_role"),
@@ -16016,6 +16022,22 @@ async def _record_active_actor_evidence(
         "mapping_revision": issue.get("revision"),
         "payload_hash": inbox.get("payload_hash"),
     }
+
+
+async def _record_active_actor_evidence(
+    storage: Any,
+    *,
+    command: Any,
+    issue: dict[str, Any],
+    inbox: dict[str, Any],
+    resolution: dict[str, Any],
+) -> None:
+    recorder = getattr(storage, "record_integration_evidence", None)
+    if not callable(recorder):
+        return
+    payload = _active_actor_evidence_payload(
+        command=command, issue=issue, inbox=inbox, resolution=resolution
+    )
     saved = recorder(
         connection_id=command.connection_id,
         evidence_type="active_inbound_actor",
@@ -16345,6 +16367,7 @@ async def _apply_normalized_command(
     actor_id = getattr(command.actor, "actor_id", None)
     allowed_actors = set((connection_row.get("config") or {}).get("allowed_external_actors") or [])
     actor_resolution: dict[str, Any] | None = None
+    actor_evidence_payload: dict[str, Any] | None = None
     if inbound_mutation_allowed:
         actor_resolution = await _active_actor_resolution(storage, connection_row, command)
         if actor_resolution is None:
@@ -16364,8 +16387,8 @@ async def _apply_normalized_command(
             )
             await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="ACTIVE requires an authorized mapped human actor")
             return {"status": "conflict", "reason": "unauthorized_external_actor"}
-        await _record_active_actor_evidence(
-            storage, command=command, issue=issue, inbox=inbox, resolution=actor_resolution
+        actor_evidence_payload = _active_actor_evidence_payload(
+            command=command, issue=issue, inbox=inbox, resolution=actor_resolution
         )
     elif allowed_actors and (
         not actor_id or str(actor_id) not in {str(item) for item in allowed_actors}
@@ -16478,7 +16501,11 @@ async def _apply_normalized_command(
             str(canary_plan.get("connection_id")) == str(command.connection_id)
             and str(canary_plan.get("binding_id")) == str(binding["id"])
             and str(canary_plan.get("canonical_issue_id")) == str(issue["id"])
-            and str(canary_plan.get("external_issue_id")) == str(command.external_id)
+            # YouTrack Webhook Triggers commonly sends the readable key
+            # (AIAT-3), while the durable mapping and canary plan bind the
+            # stable provider ID (3-23).  Mapping resolution above has already
+            # proven that these refer to the same provider object.
+            and str(canary_plan.get("external_issue_id")) == str(mapped_external_id)
             and str(canary_plan.get("mapping_id")) == str(mapping.get("id"))
             and actor_resolution is not None
             and str(canary_plan.get("actor_mapping_id")) == str(actor_resolution.get("actor_mapping_id"))
@@ -16687,6 +16714,65 @@ async def _apply_normalized_command(
         return {"status": "noop", "issue_id": str(issue["id"])}
     values = changed_values
 
+    atomic_evidence_records: list[dict[str, Any]] | None = None
+    projection_evidence: dict[str, Any] | None = None
+    if isinstance(storage, AgentStorage) and actor_evidence_payload is not None and canary_plan is None:
+        command_key = str(command.idempotency_key)
+        command_evidence_payload = {
+            "inbox_id": str(inbox.get("id")),
+            "provider_delivery_id": inbox.get("provider_delivery_id"),
+            "event_type": inbox.get("event_type"),
+            "payload_hash": inbox.get("payload_hash"),
+            "external_issue_id": command.external_id,
+            "canonical_issue_id": str(issue["id"]),
+            "changed_fields": sorted(values),
+            "canonical_before": {
+                "priority": issue.get("priority"),
+                "revision": current_revision,
+            },
+            "canonical_after": {
+                "priority": values.get("priority", issue.get("priority")),
+                "revision": current_revision + 1,
+            },
+            "expected_canonical_revision": int(resolved_expected_revision),
+            "provider_version": command.expected_provider_version,
+            "provider_actor_id": actor_resolution.get("provider_actor_id"),
+            "actor_mapping_id": actor_resolution.get("actor_mapping_id"),
+            "correlation_id": command.correlation_id,
+            "causation_id": command.causation_id,
+        }
+        atomic_evidence_records = [
+            {
+                "connection_id": command.connection_id,
+                "binding_id": binding["id"],
+                "project_id": issue.get("project_id"),
+                "evidence_type": "active_inbound_actor",
+                "external_id": command.external_id,
+                "payload": actor_evidence_payload,
+                "idempotency_key": f"active-actor:{command_key}",
+            },
+            {
+                "connection_id": command.connection_id,
+                "binding_id": binding["id"],
+                "project_id": issue.get("project_id"),
+                "evidence_type": "active_inbound_command",
+                "external_id": command.external_id,
+                "payload": command_evidence_payload,
+                "idempotency_key": f"active-command:{command_key}",
+            },
+        ]
+        projection_evidence = {
+            "connection_id": command.connection_id,
+            "binding_id": binding["id"],
+            "external_id": command.external_id,
+            "command_key": command_key,
+            "inbox_id": str(inbox.get("id")),
+            "excluded_connection_id": str(command.connection_id),
+            "correlation_id": command.correlation_id,
+            "causation_id": command.causation_id,
+            "loop_prevention_policy": "originating_connection_suppressed",
+        }
+
     if canary_plan is not None:
         if set(values) != {"priority"}:
             await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="canary accepts priority only")
@@ -16715,14 +16801,21 @@ async def _apply_normalized_command(
             await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="armed canary has already accepted its single command")
             return {"status": "conflict", "reason": "canary_command_limit"}
 
+    atomic_result: dict[str, Any] | None = None
     try:
         if isinstance(storage, AgentStorage):
-            refreshed, queued = await storage.update_issue_with_pm_projections(
+            updated = await storage.update_issue_with_pm_projections(
                 issue["id"],
                 expected_revision=int(issue.get("revision") or 1),
                 exclude_connection_id=command.connection_id,
+                evidence_records=atomic_evidence_records,
+                projection_evidence=projection_evidence,
                 **values,
             )
+            if atomic_evidence_records:
+                refreshed, queued, atomic_result = updated
+            else:
+                refreshed, queued = updated
         else:
             await storage.update_issue(
                 issue["id"],
@@ -16765,7 +16858,19 @@ async def _apply_normalized_command(
             refreshed,
             exclude_connection_id=command.connection_id,
         )
-    await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+    inbox_result = {
+        "status": "applied",
+        "issue_id": str(issue["id"]),
+        "revision": refreshed.get("revision"),
+        "projections": len(queued),
+    }
+    if atomic_result:
+        inbox_result["atomic_transaction_id"] = atomic_result.get("transaction_id")
+        inbox_result["evidence_ids"] = atomic_result.get("evidence_ids")
+    if atomic_result:
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", result=inbox_result)
+    else:
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
     if canary_plan is not None:
         completer = getattr(storage, "complete_pm_inbound_canary_plan", None)
         if callable(completer):
@@ -16774,10 +16879,7 @@ async def _apply_normalized_command(
                 "canonical_revision": refreshed.get("revision"), "outbox_count": len(queued),
             })
     return {
-        "status": "applied",
-        "issue_id": str(issue["id"]),
-        "revision": refreshed.get("revision"),
-        "projections": len(queued),
+        **inbox_result,
     }
 
 
@@ -17150,6 +17252,7 @@ async def record_inbound_canary_audit_evidence(plan_id: UUID, req: PMInboundCana
                 evidence_type=f"pm_inbound_canary_{action}", external_id=str(plan_id),
                 payload={"plan_id": str(plan_id), "digest": req.digest, "actor": plan[actor_key], "occurred_at": plan[timestamp_key].isoformat()},
                 idempotency_key=f"pm-inbound-canary:{plan_id}:{action}:{req.digest}",
+                trace_id=current_trace_id(),
             )
             evidence[action] = str(row["id"])
     return {"plan_id": str(plan_id), "evidence": evidence}
@@ -17168,6 +17271,96 @@ async def disarm_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActi
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/replay-verified-event")
+async def replay_verified_inbound_canary_event(
+    plan_id: UUID, req: PMInboundCanaryReplayRequest, request: Request
+) -> dict[str, Any]:
+    """Replay one persisted, provider-verified event through the canary gate.
+
+    This is an operator-authenticated recovery boundary for a real delivery
+    that was durably verified but rejected before command application.  It
+    never accepts a caller-supplied webhook body and never calls the provider
+    write API.  The original inbox row and conflict remain forensic records.
+    """
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None or str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan is missing or digest-mismatched")
+    now = datetime.now(tz=UTC)
+    if (
+        str(plan.get("status")) != "ARMED"
+        or int(plan.get("accepted_command_count") or 0) != 0
+        or int(plan.get("max_command_count") or 0) != 1
+        or plan.get("expires_at") <= now
+    ):
+        raise HTTPException(409, "canary is not an unexpired, unused armed plan")
+    inbox = await storage.get_pm_inbox_event(req.inbox_id)
+    if inbox is None or inbox.get("connection_id") != plan.get("connection_id"):
+        raise HTTPException(404, "verified inbox event was not found for this canary connection")
+    if not bool(inbox.get("verified")) or str(inbox.get("status") or "") != "CONFLICT":
+        raise HTTPException(409, "only a verified terminal-conflict inbox event may be replayed")
+    armed_at = plan.get("armed_at")
+    if armed_at is not None and inbox.get("received_at") is not None and inbox["received_at"] < armed_at:
+        raise HTTPException(409, "inbox event predates canary arming")
+    if str(inbox.get("event_type") or "").lower() != "issueupdated":
+        raise HTTPException(409, "replay is limited to the persisted issueUpdated canary event")
+
+    connection = await storage.get_pm_connection(plan["connection_id"])
+    if connection is None:
+        raise HTTPException(409, "canary connection is unavailable")
+    provider = _provider_for(connection)
+    normalized = provider.normalize_webhook(
+        ExternalEvent(
+            connection_id=plan["connection_id"],
+            provider_delivery_id=str(inbox["provider_delivery_id"]),
+            event_type=str(inbox["event_type"]),
+            payload=dict(inbox.get("payload") or {}),
+            verified=True,
+        )
+    )
+    if normalized is None:
+        raise HTTPException(409, "persisted verified event does not normalize to a command")
+    replay_evidence = await storage.record_integration_evidence(
+        connection_id=plan["connection_id"],
+        binding_id=plan["binding_id"],
+        project_id=plan["project_id"],
+        evidence_type="pm_inbound_canary_replay",
+        external_id=str(inbox["id"]),
+        payload={
+            "plan_id": str(plan_id),
+            "inbox_id": str(inbox["id"]),
+            "provider_delivery_id": str(inbox["provider_delivery_id"]),
+            "payload_hash": str(inbox.get("payload_hash") or ""),
+            "original_status": str(inbox.get("status") or ""),
+            "original_result": dict(inbox.get("result") or {}),
+            "normalized_external_id": normalized.external_id,
+            "reason": req.reason,
+        },
+        idempotency_key=f"pm-inbound-canary:replay:{plan_id}:{inbox['id']}:{req.digest}",
+        trace_id=current_trace_id(),
+    )
+    applied = await _apply_normalized_command(storage, normalized, inbox)
+    final_status = "CONFLICT" if applied.get("status") == "conflict" else "PROCESSED"
+    applied_result = {**applied, "replay_evidence_id": str(replay_evidence["id"])}
+    await storage.mark_pm_inbox_event(
+        inbox["id"],
+        status=final_status,
+        normalized_type=str(getattr(normalized.object_type, "value", normalized.object_type)),
+        result=applied_result,
+        error=None if final_status == "PROCESSED" else str(applied.get("reason") or "replay conflict"),
+    )
+    return {
+        "status": "accepted" if final_status == "PROCESSED" else "conflict",
+        "plan_id": str(plan_id),
+        "inbox_id": str(inbox["id"]),
+        "replay_evidence_id": str(replay_evidence["id"]),
+        "result": applied_result,
+    }
 
 
 @app.get("/integrations/connections/{connection_id}/health")
@@ -17476,7 +17669,17 @@ async def _lifecycle_gate_snapshot(
         tls_verified = tls_context.verify_mode == ssl.CERT_REQUIRED and tls_context.check_hostname
     except Exception:
         tls_verified = False
-    mapping_complete = latest_run is not None and int(counts.get("mapped") or 0) == int(counts.get("seen") or 0)
+    # Reconciliation pages also contain provider observations that are
+    # intentionally evidence-only (for example comments).  They do not have
+    # canonical object mappings by design.  Require at least one mapped
+    # canonical object when the provider returned objects, while the existing
+    # conflict/drift gates continue to reject unresolved actionable
+    # observations.  Requiring mapped == seen falsely blocked this clean
+    # single-binding topology when a resolved evidence-only observation was
+    # present.
+    seen_count = int(counts.get("seen") or 0)
+    mapped_count = int(counts.get("mapped") or 0)
+    mapping_complete = latest_run is not None and (seen_count == 0 or mapped_count > 0)
     blockers: list[str] = []
     if not doctor.get("ready"):
         blockers.extend(str(item) for item in doctor.get("blockers") or ["doctor not ready"])
@@ -17525,6 +17728,74 @@ def _classify_pm_dead_letters(
     return [row for row in dead_letters if str(row.get("id")) not in dispositioned]
 
 
+def _active_policy_snapshot() -> dict[str, Any]:
+    """Return a JSON-safe, provider-neutral snapshot for ACTIVE plans."""
+    policy: dict[str, Any] = {}
+    for field, rule in ACTIVE_INBOUND_COMMAND_POLICY.items():
+        normalized: dict[str, Any] = {}
+        for key, value in rule.items():
+            if isinstance(value, set):
+                normalized[key] = sorted(str(item) for item in value)
+            else:
+                normalized[key] = value
+        policy[field] = normalized
+    return {
+        "direct_command_policy": policy,
+        "reserved_fields": sorted(ACTIVE_INBOUND_RESERVED_FIELDS),
+        "unsupported_fields_default_deny": True,
+        "ordinary_comments": "evidence_only",
+        "structured_comments": "approval_required",
+        "source_connection_projection": "suppressed",
+        "kill_switch": "governed binding ACTIVE to READ_ONLY or DRAINING transition",
+    }
+
+
+async def _active_binding_plan_scope(
+    storage: AgentStorage,
+    *,
+    connection_id: UUID,
+    binding: dict[str, Any],
+) -> dict[str, Any]:
+    """Snapshot the exact durable actor scope and binding blast radius."""
+    reader = getattr(storage, "list_pm_external_actor_mappings", None)
+    mappings: list[dict[str, Any]] = []
+    if callable(reader):
+        result = reader(connection_id=connection_id, status="TRUSTED", limit=1000)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, list):
+            mappings = result
+    trusted_actor_mappings = [
+        {
+            "mapping_id": str(row.get("id")),
+            "external_actor_id": str(row.get("external_actor_id")),
+            "status": str(row.get("status")),
+            "authorized_scopes": sorted(str(scope) for scope in (row.get("authorized_scopes") or [])),
+        }
+        for row in mappings
+    ]
+    return {
+        "trusted_actor_mappings": trusted_actor_mappings,
+        "direct_command_scope": sorted(
+            {
+                scope
+                for row in trusted_actor_mappings
+                for scope in row["authorized_scopes"]
+            }
+        ),
+        "blast_radius": {
+            "connection_id": str(connection_id),
+            "binding_id": str(binding.get("id")),
+            "project_id": str(binding.get("project_id")),
+            "external_project_id": binding.get("external_project_id"),
+            "mapping_profile": binding.get("mapping_profile"),
+            "direction": binding.get("direction"),
+            "object_types": ["issue"],
+        },
+        "policy": _active_policy_snapshot(),
+    }
+
+
 def _source_control_provider_for(row: dict[str, Any]) -> Any:
     try:
         return _integration_registry().source_control(str(row["provider_kind"]), str(row["id"]))
@@ -17534,13 +17805,7 @@ def _source_control_provider_for(row: dict[str, Any]) -> Any:
 
 def _provider_failure_is_permanent(exc: BaseException) -> bool:
     """Classify provider responses that cannot succeed through retries."""
-    status_code = getattr(exc, "status_code", None)
-    return isinstance(status_code, int) and 400 <= status_code < 500 and status_code not in {
-        408,
-        409,
-        425,
-        429,
-    }
+    return provider_failure_is_permanent(getattr(exc, "status_code", None))
 
 
 async def _require_source_control_capability(
@@ -18081,6 +18346,18 @@ async def create_pm_lifecycle_plan(
         "readiness_gate_blockers": list(gate_blockers),
         "readiness_gates_bypassed": safety_transition,
     }
+    active_scope_snapshot: dict[str, Any] | None = None
+    if (
+        req.target_type == "pm_binding"
+        and binding is not None
+        and str(req.desired_binding_status or "").upper() == "ACTIVE"
+    ):
+        active_scope_snapshot = await _active_binding_plan_scope(
+            storage,
+            connection_id=req.connection_id,
+            binding=binding,
+        )
+        gate_results = {**gate_results, "active_binding_scope": active_scope_snapshot}
     effective_gate_blockers = [] if safety_transition else gate_blockers
     transition_blockers: list[str] = []
     if req.target_type == "pm_binding":
@@ -18089,6 +18366,14 @@ async def create_pm_lifecycle_plan(
             transition_blockers.append("desired binding state is already current")
         if connection.get("status") == "DISABLED":
             transition_blockers.append("binding transition requires a non-disabled connection")
+        if str(req.desired_binding_status or "").upper() == "ACTIVE":
+            try:
+                AgentStorage._assert_pm_binding_activation_ready(
+                    {**binding, "status": "ACTIVE"},
+                    connection,
+                )
+            except ValueError as exc:
+                transition_blockers.append(str(exc))
         operations = [{
             "operation": "set_binding_status",
             "binding_id": str(req.binding_id),
@@ -18140,6 +18425,7 @@ async def create_pm_lifecycle_plan(
         evidence_refs={
             "doctor": {"connection_id": str(req.connection_id), "checked_at": created_at.isoformat()},
             "reconciliation_run_id": gate_results.get("reconciliation_run_id"),
+            "active_binding_scope": active_scope_snapshot,
         },
         blockers=blockers,
         rollback_operations=rollback_operations,
