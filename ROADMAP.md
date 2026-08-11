@@ -834,9 +834,11 @@ an explicit open gate.
    runtime status with explicit stale/retry recovery (`f445c17`); the Projects
    list retains its paired project/flow read state with explicit stale/retry
    recovery (`d3482ab`); the Tools catalogue retains its last known data with
-   explicit stale/retry recovery (`5f4b0eb`); broader stale/offline recovery
-   remains.
-6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, and Tools catalogue read-surface stale/recovery tests pass 1/1, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
+   explicit stale/retry recovery (`5f4b0eb`); the dead-letter queue retains its
+   last known messages (`823fa6d`), the credentials list retains redacted
+   metadata (`970f09c`), and Metrics retains successful series through partial
+   query failures (`85596b0`); broader stale/offline recovery remains.
+6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, Tools catalogue, dead-letter queue, credentials, and Metrics read-surface stale/recovery tests pass 1/1, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the 34/35 evidence count.
 
@@ -848,8 +850,9 @@ project workspace test and is included in the 34/35 evidence count.
    The prompt/tool reconciliation implementation is committed as `20f0499`.
 
 The local operator UX evidence now includes stale/retry handling for project
-detail in addition to identity, PM integrations, and system visualization;
-native-Linux and broader WCAG/mobile/visual evidence remain open.
+detail, identity, PM integrations, system visualization, governance, System
+Control, Projects, Tools, DLQ, credentials metadata, and Metrics; native-Linux
+and broader WCAG/mobile/visual evidence remain open.
 
 ### Later — R6 to R7/P2
 
