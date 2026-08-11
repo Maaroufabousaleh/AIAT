@@ -49,23 +49,28 @@ metadata-only markers without evaluating or blocking any resource by licence.
 
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
-startup reconciliation and `AgentConfig`/health propagation (`569231f`), and
-their separate documentation updates (`313683f`, `2134c01`). The static
-contract currently passes 11 team files and 39 exact agent-to-manifest
-bindings. These checks establish technical identity only; registration,
-activation, certification, and licence metadata remain separate.
+startup reconciliation and `AgentConfig`/health propagation (`569231f`),
+persisted model-profile bootstrap (`09bdd19`), flow schema/retry hardening
+(`234adfb`), company-timezone propagation (`ee1361f`), project-evidence
+typecheck repair (`fc4f0fa`), team-runner boundary hardening (`22fc21a`),
+dashboard operation-selector hardening (`e378f40`), metric reconciliation
+compatibility (`541d6e0`), and the isolated project-evidence router boundary
+(`33e0384`), each with separate documentation updates. The static contract
+currently passes 11 team files and 39 exact agent-to-manifest bindings. These
+checks establish technical identity only; registration, activation,
+certification, and licence metadata remain separate.
 
 ## Clean-checkout limitation
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the
 template, node-schema, portability, and migration tests, the generated-schema
-check, and the topology check. A detached clean checkout currently fails the
-docs-index command because the dirty source workspace still contains many
-implementation/provenance files referenced by the roadmap that have not yet
-been committed in their own bounded groups. This is an explicit release
-documentation gate, not a reason to weaken link checking or to treat missing
-files as a licence decision.
+check, and the topology check. A detached Git archive currently fails the
+docs-index command only because the generated `mas/uv.lock` is intentionally
+ignored and therefore absent from the archive; the working-tree checker passes.
+This is an explicit reproducibility/documentation gate, not a reason to weaken
+link checking or to treat missing files as a licence decision.
 
-The next documentation batches should commit those existing implementation and
-evidence groups, rerun the clean checker, and update the release ledger only
-when the clean result is reproducible.
+The next documentation batch should either provide the generated lock artifact
+in the clean release input or keep the runtime-packaging reference explicitly
+local, then rerun the clean checker and update the release ledger only when the
+clean result is reproducible.
