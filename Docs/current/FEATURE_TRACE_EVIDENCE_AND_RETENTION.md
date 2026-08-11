@@ -3,8 +3,8 @@
 **Baseline:** 2026-08-10  
 **Status:** the pure trace-context, native-span, and secret-safe trace-evidence
 contracts are reviewed and committed in `77d5494` with deterministic fixtures;
-the broader API/storage writer integration is present as a separate uncommitted
-review group. Direct model-usage, worker-artifact, integration-evidence,
+the tool-service HTTP and usage-writer integration is committed in `53d38fc`.
+Broader API/storage writer integration remains a separate review group. Direct model-usage, worker-artifact, integration-evidence,
 API-request correlation, native transport/model/tool/audit/integration span
 persistence, and a deterministic metadata-only retention planner are defined.
 The refreshed local orchestrator deployment is at migration
