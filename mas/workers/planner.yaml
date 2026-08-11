@@ -2,7 +2,7 @@ metadata:
   id: planner
   name: Planner
   version: "1.0"
-  description: Production planning worker using ccpm/GitHub Issues defaults instead of Plane/OpenProject.
+  description: Production planning worker using ccpm/GitHub Issues as the starting adapter profile, with Plane and OpenProject available as normal provider adapters.
   source_repo: local
   source_revision: working-tree
   tags: [worker, dept_production]
@@ -13,7 +13,7 @@ runtime:
   adapter_config:
     entrypoint: WorkerAgent
     default_planning_adapter: ccpm
-    optional_issue_adapter: github_issues
+    available_issue_adapters: [github_issues, plane, openproject]
 integration:
   adapter_entrypoint: WorkerAgent
   isolation_mode: langgraph

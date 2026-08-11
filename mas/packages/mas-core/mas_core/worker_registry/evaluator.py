@@ -23,11 +23,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EVALUATOR_VERSION = "1.1.0"
+EVALUATOR_VERSION = "1.2.0"
 
+# Source/version provenance is an operational gate.  Licence information is
+# deliberately collected as a diagnostic record only for AIAT's personal,
+# internal-use scope; it never participates in hiring, activation, rollout, or
+# the overall verdict.
 MANDATORY_GUARDED_CHECKS = (
     "provenance",
-    "licensing",
 )
 
 DEFAULT_GUARDED_CHECKS = [
@@ -45,7 +48,8 @@ DEFAULT_GUARDED_CHECKS = [
 VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
 
-COMPATIBLE_LICENSES = {
+# These are recognition hints for metadata extraction, not an allowlist.
+KNOWN_LICENSE_IDENTIFIERS = {
     "mit",
     "apache-2.0",
     "apache 2.0",
@@ -59,7 +63,7 @@ COMPATIBLE_LICENSES = {
 
 # Canonical license bodies often omit their SPDX identifier. Require multiple
 # stable phrases so ordinary prose does not accidentally satisfy the gate.
-COMPATIBLE_LICENSE_TEXT_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+KNOWN_LICENSE_TEXT_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "apache-2.0",
         (
@@ -78,7 +82,9 @@ COMPATIBLE_LICENSE_TEXT_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
-REJECTED_LICENSES = {
+# These identifiers are rendered as operator notices when detected; they are
+# deliberately not rejection criteria for this personal/internal programme.
+RESTRICTION_NOTICE_IDENTIFIERS = {
     "gpl-2.0",
     "gpl-3.0",
     "agpl-3.0",
@@ -315,12 +321,17 @@ async def evaluate_repository(
         "approval": _check_approval_policy,
     }
 
-    # License and source provenance are product gates, not optional scan
-    # selections.  Callers may add or narrow diagnostic checks, but cannot
-    # bypass either gate.  TruffleHog remains available only when explicitly
-    # requested because it is not part of AIAT's shipped default stack.
+    # Source provenance is a product gate.  Licence metadata remains in the
+    # default diagnostic set so reports retain the evidence, but it is never a
+    # gate and callers cannot turn it into one by selecting a check name.
     requested = list(
-        dict.fromkeys([*MANDATORY_GUARDED_CHECKS, *(checks or DEFAULT_GUARDED_CHECKS)])
+        dict.fromkeys(
+            [
+                *MANDATORY_GUARDED_CHECKS,
+                "licensing",
+                *(checks or DEFAULT_GUARDED_CHECKS),
+            ]
+        )
     )
     results: dict[str, dict] = {}
 
@@ -618,12 +629,26 @@ async def _check_licensing(
     source_repo: str,
     mirror_path: Path | None,
 ) -> dict:
-    """Check if the repository license is compatible."""
+    """Collect licence metadata without applying a licence policy gate.
+
+    This compatibility-named function is retained for API/report stability.
+    Its result is explicitly informational: the ``passed`` value is always
+    true for verdict purposes, while ``metadata_status`` and ``license`` (when
+    detected) preserve useful operator evidence.  Technical gates such as
+    source provenance, security, sandboxing, compatibility, and budget checks
+    remain independent.
+    """
+    base = {
+        "passed": True,
+        "metadata_only": True,
+        "gate": "informational",
+    }
     if mirror_path is None:
         return {
-            "passed": False,
+            **base,
             "score": 0.0,
-            "details": "No mirror path provided",
+            "metadata_status": "unavailable",
+            "details": "Licence metadata unavailable: no mirror path provided (operator notice)",
         }
 
     license_files = [
@@ -648,44 +673,48 @@ async def _check_licensing(
 
     if not license_text:
         return {
-            "passed": False,
+            **base,
             "score": 0.0,
-            "details": "No LICENSE file found",
+            "metadata_status": "missing",
+            "details": "Licence metadata missing (operator notice; non-blocking)",
         }
 
     detected = next(
         (
             license_id
-            for license_id, signature in COMPATIBLE_LICENSE_TEXT_SIGNATURES
+            for license_id, signature in KNOWN_LICENSE_TEXT_SIGNATURES
             if all(fragment in license_text for fragment in signature)
         ),
         None,
     )
-    for lic in COMPATIBLE_LICENSES:
+    for lic in KNOWN_LICENSE_IDENTIFIERS:
         if detected is None and lic in license_text:
             detected = lic
             break
 
     if detected is None:
-        for lic in REJECTED_LICENSES:
+        for lic in RESTRICTION_NOTICE_IDENTIFIERS:
             if lic in license_text:
                 return {
-                    "passed": False,
+                    **base,
                     "score": 0.0,
-                    "details": f"Rejected license detected: {lic}",
+                    "metadata_status": "restriction-noted",
+                    "details": f"Licence metadata recorded; stated restriction or licence family: {lic} (operator notice; non-blocking)",
                     "license": lic,
                 }
 
         return {
-            "passed": False,
+            **base,
             "score": 20.0,
-            "details": "License detected but not in recognized compatible list",
+            "metadata_status": "unclassified",
+            "details": "Licence text detected but not classified (operator notice; non-blocking)",
         }
 
     return {
-        "passed": True,
+        **base,
         "score": 100.0,
-        "details": f"Compatible license detected: {detected}",
+        "metadata_status": "detected",
+        "details": f"Licence metadata detected: {detected} (non-blocking)",
         "license": detected,
     }
 
@@ -968,7 +997,10 @@ def _compute_overall_score(results: dict[str, dict]) -> float:
         "semgrep": 0.15,
         "architecture": 0.20,
         "maintenance": 0.15,
-        "licensing": 0.25,
+        # Licence metadata is intentionally excluded from the operational
+        # score.  The explicit zero weight keeps the diagnostic key present
+        # without allowing a missing/restricted notice to lower evaluation.
+        "licensing": 0.0,
         "security": 0.25,
         "compatibility": 0.15,
         "sandbox_profile": 0.10,
@@ -980,6 +1012,8 @@ def _compute_overall_score(results: dict[str, dict]) -> float:
     total_weight = 0.0
     for check_name, result in results.items():
         weight = weights.get(check_name, 0.1)
+        if weight <= 0:
+            continue
         score = result.get("score", 0.0)
         total += weight * score
         total_weight += weight
@@ -994,6 +1028,8 @@ def _blocked_reasons(results: dict[str, dict]) -> list[str]:
     """Return human-readable blockers for failed non-optional checks."""
     blockers: list[str] = []
     for check_name, result in results.items():
+        if check_name == "licensing" or result.get("metadata_only") is True:
+            continue
         if result.get("passed", False):
             continue
         details = result.get("details") or "check failed"
@@ -1003,7 +1039,7 @@ def _blocked_reasons(results: dict[str, dict]) -> list[str]:
 
 def _risk_tier(results: dict[str, dict], blocked_reasons: list[str]) -> str:
     """Classify adoption risk from failed checks and skipped executable scans."""
-    high_checks = {"licensing", "security", "trufflehog", "semgrep", "manifest_validation"}
+    high_checks = {"security", "trufflehog", "semgrep", "manifest_validation"}
     if any(name in reason for name in high_checks for reason in blocked_reasons):
         return "high"
     if blocked_reasons:
@@ -1030,11 +1066,11 @@ def _compute_verdict(
     requires_human_approval: bool = False,
 ) -> str:
     """Determine the overall verdict from check results and score."""
-    blocked_reasons = blocked_reasons or []
-    licensing = results.get("licensing")
-    if licensing is not None and licensing.get("score", 0) < 50:
-        return "REJECTED"
-
+    blocked_reasons = [
+        str(reason)
+        for reason in (blocked_reasons or [])
+        if not str(reason).lower().startswith(("license:", "licensing:", "licence:"))
+    ]
     security = results.get("security")
     if security is not None and security.get("score", 0) < 30:
         return "REJECTED"

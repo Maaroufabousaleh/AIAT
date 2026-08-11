@@ -8,7 +8,14 @@ import yaml
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.worker_manifest import WorkerManifest
-from mas_core.worker_registry.evaluator import DEFAULT_GUARDED_CHECKS, MANDATORY_GUARDED_CHECKS
+from mas_core.worker_registry.evaluator import (
+    DEFAULT_GUARDED_CHECKS,
+    MANDATORY_GUARDED_CHECKS,
+    _blocked_reasons,
+    _compute_overall_score,
+    _compute_verdict,
+    _check_licensing,
+)
 from mas_tools_sdk.manifest import TOOL_MANIFEST
 
 EXPECTED_DEFAULT_AGENTS = {
@@ -76,7 +83,7 @@ TEAM_ROLE_BY_AGENT_ROLE = {
     "worker": AgentRole.WORKER,
 }
 
-BANNED_DEFAULT_COMPONENTS = {
+OPTIONAL_ADAPTER_COMPONENTS_NOT_IN_BASE_MANIFESTS = {
     "trufflehog",
     "plane",
     "openproject",
@@ -86,7 +93,7 @@ BANNED_DEFAULT_COMPONENTS = {
     "neo4j",
 }
 
-OPTIONAL_EXTERNAL_ONLY_COMPONENTS = {"ansible"}
+PENDING_SECURITY_SCAN_AGENTS = {"coding_worker", "tester"}
 
 
 def _workers_dir() -> Path:
@@ -123,7 +130,7 @@ def _agent_role(agent_id: str) -> AgentRole:
 def _component_names(value):
     if isinstance(value, dict):
         for key, child in value.items():
-            if str(key).startswith("excluded_"):
+            if str(key).startswith(("excluded_", "available_")):
                 continue
             yield str(key).lower()
             yield from _component_names(child)
@@ -144,7 +151,7 @@ def test_default_shipped_agent_manifests_are_complete_and_team_tagged():
     } == EXPECTED_DEFAULT_AGENTS
 
 
-def test_default_security_evaluator_excludes_trufflehog():
+def test_default_security_evaluator_keeps_trufflehog_available_without_license_exclusion():
     manifest = WorkerManifest.model_validate(
         yaml.safe_load((_workers_dir() / "security_evaluator.yaml").read_text())
     )
@@ -152,13 +159,45 @@ def test_default_security_evaluator_excludes_trufflehog():
     config = manifest.runtime.adapter_config
     assert "semgrep" in config["default_tools"]
     assert "skillspector" in config["default_tools"]
-    assert "trufflehog" in config["excluded_default_tools"]
+    assert "trufflehog" in config["available_tools"]
+    assert "trufflehog" in config["tool_options"]["security.scan"]["available_scanners"]
+    assert "excluded_default_tools" not in config
 
 
-def test_hiring_defaults_make_license_and_provenance_mandatory_without_trufflehog():
-    assert set(MANDATORY_GUARDED_CHECKS) == {"licensing", "provenance"}
+def test_license_provenance_worker_is_metadata_collector():
+    manifest = WorkerManifest.model_validate(
+        yaml.safe_load((_workers_dir() / "license_provenance_evaluator.yaml").read_text())
+    )
+
+    description = manifest.metadata.description.lower()
+    capability_description = manifest.capabilities[0].description.lower()
+    assert "non-blocking" in description
+    assert "without making license a hiring or activation gate" in capability_description
+
+
+def test_hiring_defaults_keep_provenance_mandatory_and_license_metadata_only():
+    assert set(MANDATORY_GUARDED_CHECKS) == {"provenance"}
     assert set(MANDATORY_GUARDED_CHECKS) <= set(DEFAULT_GUARDED_CHECKS)
+    assert "licensing" in DEFAULT_GUARDED_CHECKS
     assert "trufflehog" not in DEFAULT_GUARDED_CHECKS
+
+
+@pytest.mark.anyio
+async def test_restricted_license_is_recorded_without_affecting_evaluator_verdict(tmp_path):
+    (tmp_path / "LICENSE").write_text("AGPL-3.0\n", encoding="utf-8")
+
+    licensing = await _check_licensing("https://example.test/worker", tmp_path)
+    results = {
+        "provenance": {"passed": True, "score": 100.0},
+        "licensing": licensing,
+    }
+
+    assert licensing["metadata_only"] is True
+    assert licensing["metadata_status"] == "restriction-noted"
+    assert licensing["passed"] is True
+    assert _blocked_reasons(results) == []
+    assert _compute_overall_score(results) == 100.0
+    assert _compute_verdict(results, 100.0) == "APPROVED"
 
 
 @pytest.mark.anyio
@@ -193,7 +232,10 @@ async def test_custom_hiring_evaluation_cannot_bypass_mandatory_gates(tmp_path, 
 
 def test_default_manifest_metadata_runtime_and_tools_are_production_ready():
     for agent_id, manifest in _load_manifests().items():
-        assert manifest.metadata.evaluation_status == "approved", agent_id
+        expected_evaluation_status = (
+            "pending" if agent_id in PENDING_SECURITY_SCAN_AGENTS else "approved"
+        )
+        assert manifest.metadata.evaluation_status == expected_evaluation_status, agent_id
         assert manifest.metadata.description, agent_id
         assert "Auto-generated baseline manifest" not in manifest.metadata.description
         assert manifest.runtime.adapter_config.get("entrypoint") == manifest.integration.adapter_entrypoint
@@ -219,19 +261,15 @@ def test_default_manifest_metadata_runtime_and_tools_are_production_ready():
                 ) is True, (agent_id, role.value, team, tool_name)
 
 
-def test_default_manifests_do_not_ship_license_risky_components_by_default():
+def test_default_manifests_keep_optional_adapters_explicit():
     for agent_id, manifest in _load_manifests().items():
         components = set(_component_names(manifest.runtime.adapter_config))
 
-        assert components.isdisjoint(BANNED_DEFAULT_COMPONENTS), agent_id
-        for optional in OPTIONAL_EXTERNAL_ONLY_COMPONENTS:
-            if optional in components:
-                assert optional in {
-                    item.lower()
-                    for item in manifest.runtime.adapter_config.get(
-                        "optional_external_adapters", []
-                    )
-                }, agent_id
+        # These integrations remain selectable through adapter configuration;
+        # the base image choice is a technical packaging decision, never a
+        # licence-derived prohibition.
+        assert components.isdisjoint(OPTIONAL_ADAPTER_COMPONENTS_NOT_IN_BASE_MANIFESTS), agent_id
+        assert "excluded_default_tools" not in manifest.runtime.adapter_config, agent_id
 
 
 def test_default_team_rosters_match_manifest_inventory_and_policy():

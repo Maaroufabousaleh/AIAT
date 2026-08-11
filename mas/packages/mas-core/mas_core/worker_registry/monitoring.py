@@ -13,8 +13,9 @@ import hashlib
 import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -172,13 +173,13 @@ async def _create_discovered_candidate(
         "activation_prohibited": True,
         "required_next_stages": [
             "SOURCE_REVIEW",
-            "LICENSE_REVIEW",
             "SECURITY_REVIEW",
             "INTERFACE_RESEARCH",
             "CERTIFYING",
             "APPROVED",
             "CANARY",
         ],
+        "optional_metadata_stages": ["LICENSE_REVIEW"],
     }
     bundle_hash = hashlib.sha256(
         json.dumps(bundle_payload, sort_keys=True, separators=(",", ":")).encode()

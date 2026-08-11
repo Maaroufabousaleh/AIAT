@@ -8,7 +8,9 @@ metadata:
   version_pin: "1.17.13"
   tags: [worker, dept_qa]
   update_policy: manual
-  evaluation_status: approved
+  # Interface evidence is approved, but the current release ledger has not
+  # recorded a passing security scan yet.  Keep activation fail-closed.
+  evaluation_status: pending
 runtime:
   transport: opencode
   adapter_config:
@@ -26,7 +28,7 @@ integration:
 runtime_tier: external
 model_mode: aiat_gateway
 model_profile_id: opencode-phase0b-coding
-certification_status: approved
+certification_status: pending
 permission_grants: [repository.read, repository.write, tests.execute]
 tool_grants: [opencode.workspace_read, opencode.workspace_write, opencode.workspace_pytest]
 source_provenance:
@@ -35,7 +37,8 @@ source_provenance:
   transport_type: opencode
   license_id: MIT
   redistribution_status: approved
-  security_scan_status: pending
+  security_scan_status: findings_review_required
+  security_scan_evidence_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10
 capabilities:
   - name: qa.code_implement
     description: Perform bounded coding work using approved OSS coding-worker adapters.
