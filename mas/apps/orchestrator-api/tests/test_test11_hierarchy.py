@@ -116,7 +116,6 @@ async def test_get_teams_roles_match_policy(client):
     This test verifies policy role assignment for teams that appear in the state machine.
     """
     from mas_core.policy.rules import TEAM_TIERS
-    from mas_core.protocols.enums import AgentRole
 
     r = await client.get("/teams")
     assert r.status_code == 200
@@ -400,26 +399,25 @@ class TestToolHierarchy:
 
 
 # ---------------------------------------------------------------------------
-# 6. TODO: Playwright e2e for hierarchy graph UI
+# 6. Live Playwright evidence for hierarchy graph UI
 # ---------------------------------------------------------------------------
 
 
-def test_todo_hierarchy_graph_ui_not_verified():
+def test_hierarchy_graph_ui_live_evidence_pending():
     """
-    TODO (production gap): The mas-dashboard has a hierarchy graph UI page.
-    This UI requires:
+    The mas-dashboard hierarchy graph and communication-policy overlay are
+    implemented. Live verification still requires:
       - A live Next.js server at http://127.0.0.1:3000
       - The orchestrator-api at http://localhost:8000
-    The Playwright spec for this is at:
-      mas/apps/mas-dashboard/e2e/flow-builder.spec.ts (partial coverage)
-    Full hierarchy graph UI verification remains unverified in automated tests.
+    The source-built Playwright spec is at:
+      mas/apps/mas-dashboard/e2e/app-operations.spec.ts
+    The focused interaction is checked in but remains unverified against a
+    current deployed image in this API-only suite.
     Steps that would be covered:
-      1. Navigate to /hierarchy page
+      1. Navigate to /system-viz
       2. Verify all 11 team nodes visible
       3. Click CEO node → verify details panel
       4. Toggle comm permissions overlay
       5. Select project → verify workflow route highlighted
     """
-    pytest.skip(
-        "TODO: Hierarchy graph UI e2e not run — requires live Next.js + orchestrator servers."
-    )
+    pytest.skip("Live hierarchy graph evidence requires current Next.js and orchestrator servers.")

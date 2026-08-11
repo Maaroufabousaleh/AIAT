@@ -468,13 +468,15 @@ def test_router_policy_enforces_role_message_types():
     ) is True
 
 
-def test_todo_hierarchy_graph_shows_denied_paths():
+def test_hierarchy_graph_policy_overlay_live_evidence_pending():
     """
-    TODO (production gap): The hierarchy graph UI overlay for comm permissions.
-    Steps:
+    The hierarchy graph communication-policy overlay is implemented in
+    ``HierarchyViz`` and covered by the source-built dashboard spec.
+    Live evidence still requires a current dashboard image and Playwright:
+      Steps:
       1. Navigate to hierarchy page in Next.js dashboard
       2. Toggle communication permissions overlay
       3. Verify denied paths are shown in red, allowed in green
     Requires live dashboard at http://127.0.0.1:3000.
     """
-    pytest.skip("TODO: Requires live dashboard and Playwright")
+    pytest.skip("Live dashboard image and Playwright evidence are pending")
