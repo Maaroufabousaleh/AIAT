@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -66,6 +67,23 @@ TOOL_COMMANDS: dict[str, tuple[str, ...]] = {
     "npm": ("npm", "--version"),
     "runsc": ("runsc", "--version"),
 }
+
+# Production Compose keeps application image values out of the checked-in
+# file.  The native release preflight verifies that every deployment-supplied
+# value is present and digest-pinned, without ever returning the value.
+PRODUCTION_IMAGE_ENV_INPUTS = (
+    "AIAT_TEAM_RUNNER_IMAGE_REF",
+    "AIAT_REDIS_ACL_INIT_IMAGE_REF",
+    "AIAT_MESSAGE_ROUTER_IMAGE_REF",
+    "AIAT_TOOL_SERVICE_IMAGE_REF",
+    "AIAT_OPENCODE_RUNTIME_IMAGE_REF",
+    "AIAT_ORCHESTRATOR_IMAGE_REF",
+    "AIAT_PM_GATEWAY_IMAGE_REF",
+    "AIAT_DASHBOARD_IMAGE_REF",
+    "OMNIROUTE_IMAGE_REF",
+    "LITELLM_IMAGE_REF",
+)
+DIGEST_REF_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}$")
 
 
 def _run(command: tuple[str, ...], *, timeout: float = 5.0) -> tuple[int, str]:
@@ -171,12 +189,134 @@ def _environment_presence() -> list[dict[str, Any]]:
     ]
 
 
+def _docker_probe(command: tuple[str, ...]) -> tuple[bool, str | None]:
+    """Run a bounded Docker metadata probe without retaining command output."""
+
+    if shutil.which("docker") is None:
+        return False, "docker CLI is unavailable"
+    try:
+        result = subprocess.run(
+            list(command),
+            cwd=MAS_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, "docker metadata probe failed"
+    if result.returncode != 0:
+        return False, "docker metadata probe failed"
+    return True, None
+
+
+def build_native_release_report(*, git: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Check prerequisites that must be true on the frozen native release host.
+
+    This is a preflight, not a release certificate.  It deliberately reports
+    unavailable host/deployment state as ``blocked`` and never downgrades the
+    separate image, SBOM, scan, network, or recovery evidence requirements.
+    """
+
+    release_git = git or _git_metadata()[0]
+    release_platform = platform.platform(aliased=True)
+    release_system = platform.system()
+    release_kernel = platform.release()
+    kernel_lower = release_kernel.lower()
+    native_linux = release_system == "Linux" and not any(
+        marker in kernel_lower for marker in ("microsoft", "wsl")
+    )
+
+    docker_engine, docker_error = _docker_probe(("docker", "info", "--format", "{{.ServerVersion}}"))
+    compose_v2, compose_error = _docker_probe(("docker", "compose", "version", "--short"))
+    runtimes_available = False
+    runsc_registered = False
+    runtime_error: str | None = None
+    if docker_engine:
+        try:
+            result = subprocess.run(
+                ["docker", "info", "--format", "{{json .Runtimes}}"],
+                cwd=MAS_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode == 0:
+                runtimes = json.loads(result.stdout.strip())
+                if isinstance(runtimes, dict):
+                    runtimes_available = True
+                    runsc_registered = "runsc" in runtimes
+                else:
+                    runtime_error = "docker returned an invalid runtime map"
+            else:
+                runtime_error = "docker runtime metadata is unavailable"
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            runtime_error = "docker runtime metadata is unavailable"
+    else:
+        runtime_error = docker_error or "docker engine is unavailable"
+
+    image_refs: list[dict[str, Any]] = []
+    for name in PRODUCTION_IMAGE_ENV_INPUTS:
+        value = os.environ.get(name, "").strip()
+        image_refs.append(
+            {
+                "name": name,
+                "configured": bool(value),
+                "digest_pinned": bool(DIGEST_REF_RE.search(value)) if value else False,
+            }
+        )
+
+    blockers: list[str] = []
+    if not native_linux:
+        blockers.append("host is not a native Linux release host")
+    if not docker_engine:
+        blockers.append(docker_error or "Docker Engine is unavailable")
+    if not compose_v2:
+        blockers.append(compose_error or "Docker Compose v2 is unavailable")
+    if not runsc_registered:
+        blockers.append(runtime_error or "gVisor runsc runtime is not registered")
+    if not release_git.get("working_tree_clean"):
+        blockers.append("working tree is dirty")
+    missing_refs = [row["name"] for row in image_refs if not row["configured"]]
+    mutable_refs = [row["name"] for row in image_refs if row["configured"] and not row["digest_pinned"]]
+    if missing_refs:
+        blockers.append(f"missing immutable image refs: {', '.join(missing_refs)}")
+    if mutable_refs:
+        blockers.append(f"non-digest image refs: {', '.join(mutable_refs)}")
+
+    return {
+        "schema_version": "aiat.native-release-preflight.v1",
+        "status": "pass" if not blockers else "blocked",
+        "platform": {
+            "system": release_system,
+            "kernel": release_kernel,
+            "native_linux": native_linux,
+            "description": release_platform,
+        },
+        "git": {
+            "working_tree_clean": bool(release_git.get("working_tree_clean")),
+            "revision": release_git.get("revision"),
+        },
+        "docker": {
+            "engine_available": docker_engine,
+            "compose_v2_available": compose_v2,
+            "runtimes_metadata_available": runtimes_available,
+            "runsc_registered": runsc_registered,
+        },
+        "image_refs": image_refs,
+        "blockers": blockers,
+        "scope": "native release-host prerequisite preflight; no deployment mutation or release decision",
+        "licence_metadata_is_gate": False,
+    }
+
+
 def _digest(payload: dict[str, Any]) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
-def build_report(*, require_clean: bool = False) -> dict[str, Any]:
+def build_report(*, require_clean: bool = False, require_native_linux: bool = False) -> dict[str, Any]:
     git, git_errors = _git_metadata()
     files, file_errors = _tracked_file_inventory()
     errors = [*git_errors, *file_errors]
@@ -198,7 +338,7 @@ def build_report(*, require_clean: bool = False) -> dict[str, Any]:
             "machine": platform.machine(),
         },
     }
-    return {
+    report = {
         **stable_payload,
         "manifest_digest": _digest(stable_payload),
         "tracked_input_count": len(files),
@@ -211,6 +351,12 @@ def build_report(*, require_clean: bool = False) -> dict[str, Any]:
         "errors": errors,
         "scope": "secret-safe source/tool/environment identity; no deployment mutation or credential output",
     }
+    if require_native_linux:
+        native_release = build_native_release_report(git=git)
+        report["native_release"] = native_release
+        if native_release["status"] != "pass":
+            report["status"] = "blocked"
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,8 +367,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="fail when the git working tree is dirty",
     )
+    parser.add_argument(
+        "--require-native-linux",
+        action="store_true",
+        help="run the fail-closed native-Linux/Docker/runsc/image-ref preflight",
+    )
     args = parser.parse_args(argv)
-    report = build_report(require_clean=args.require_clean)
+    report = build_report(
+        require_clean=args.require_clean,
+        require_native_linux=args.require_native_linux,
+    )
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
     else:
@@ -232,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         for error in report["errors"]:
             print(f"  - {error}")
+        if args.require_native_linux:
+            for blocker in report["native_release"]["blockers"]:
+                print(f"  - native-release: {blocker}")
+    if report["status"] == "blocked" and args.require_native_linux:
+        return 2
     return 0 if report["status"] == "pass" else 1
 
 
