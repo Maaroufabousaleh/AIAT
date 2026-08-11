@@ -286,7 +286,10 @@ export default function ProjectDetailPage() {
   const [allowedTransitions, setAllowedTransitions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectStale, setProjectStale] = useState(false);
-  const [projectRefreshError, setProjectRefreshError] = useState<string | null>(null);
+  const [projectRefreshError, setProjectRefreshError] = useState<string | null>(
+    null,
+  );
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const hasProjectRef = useRef(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
@@ -356,9 +359,27 @@ export default function ProjectDetailPage() {
     setProjectRefreshError(null);
     try {
       const [proj, hist, dec, trans] = await Promise.allSettled([
-        fetch(`/api/projects/${id}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null),
+        fetch(`/api/projects/${id}`).then(async (r) => {
+          const payload = await r.json().catch(() => null);
+          if (!r.ok) {
+            const detail =
+              payload && typeof payload === "object"
+                ? ((payload as { detail?: unknown; error?: unknown }).detail ??
+                  (payload as { detail?: unknown; error?: unknown }).error)
+                : null;
+            if (r.status === 404) {
+              throw new Error(
+                "Project was not found. It may have been deleted, archived, or this link may be stale.",
+              );
+            }
+            throw new Error(
+              typeof detail === "string" && detail.trim()
+                ? `Project request failed: ${detail}`
+                : `Project request failed (HTTP ${r.status})`,
+            );
+          }
+          return payload;
+        }),
         fetch(`/api/projects/${id}/state-history`)
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
@@ -374,9 +395,21 @@ export default function ProjectDetailPage() {
         hasProjectRef.current = true;
         setProjectStale(false);
         setProjectRefreshError(null);
-      } else if (hasProjectRef.current) {
-        setProjectStale(true);
-        setProjectRefreshError("The latest project refresh failed; this page may be out of date.");
+        setProjectLoadError(null);
+      } else {
+        const failure =
+          proj.status === "rejected" && proj.reason instanceof Error
+            ? proj.reason.message
+            : "The project could not be loaded from the control plane.";
+        if (hasProjectRef.current) {
+          setProjectStale(true);
+          setProjectRefreshError(
+            failure ||
+              "The latest project refresh failed; this page may be out of date.",
+          );
+        } else {
+          setProjectLoadError(failure);
+        }
       }
       if (hist.status === "fulfilled")
         setHistory(
@@ -395,7 +428,11 @@ export default function ProjectDetailPage() {
     } catch (cause) {
       if (hasProjectRef.current) {
         setProjectStale(true);
-        setProjectRefreshError(cause instanceof Error ? cause.message : "The latest project refresh failed; this page may be out of date.");
+        setProjectRefreshError(
+          cause instanceof Error
+            ? cause.message
+            : "The latest project refresh failed; this page may be out of date.",
+        );
       }
     } finally {
       setLoading(false);
@@ -924,7 +961,7 @@ export default function ProjectDetailPage() {
     }
   }
 
-  if (loading) {
+  if (loading && !project) {
     return (
       <div className="dashboard-page flex items-center justify-center h-full">
         <div className="text-slate-500 text-sm">Loading project…</div>
@@ -935,9 +972,28 @@ export default function ProjectDetailPage() {
   if (!project) {
     return (
       <div className="dashboard-page">
-        <ErrorBanner tone="error" title="Project not found">
-          We could not locate this project. It may have been deleted, archived,
-          or you may be following a stale link.
+        <ErrorBanner
+          tone="error"
+          title="Project unavailable"
+          action={
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-busy={loading}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 transition-colors hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw
+                size={14}
+                className={loading ? "animate-spin" : ""}
+                aria-hidden="true"
+              />
+              Retry
+            </button>
+          }
+        >
+          {projectLoadError ??
+            "The project could not be loaded from the control plane. Retry to try again."}
         </ErrorBanner>
         <Link
           href="/projects"
@@ -955,19 +1011,24 @@ export default function ProjectDetailPage() {
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
   const handleRefresh = () => {
-    const surfaceRefresh = activeTab === "flow"
-      ? loadFlowData()
-      : activeTab === "workspace"
-        ? loadWorkspace()
-        : activeTab === "context"
-          ? loadContextData()
-          : activeTab === "evidence"
-            ? loadEvidence()
-            : Promise.resolve();
+    const surfaceRefresh =
+      activeTab === "flow"
+        ? loadFlowData()
+        : activeTab === "workspace"
+          ? loadWorkspace()
+          : activeTab === "context"
+            ? loadContextData()
+            : activeTab === "evidence"
+              ? loadEvidence()
+              : Promise.resolve();
     return Promise.all([load(), surfaceRefresh]);
   };
   const isRefreshing =
-    loading || flowLoading || workspaceLoading || contextLoading || evidenceLoading;
+    loading ||
+    flowLoading ||
+    workspaceLoading ||
+    contextLoading ||
+    evidenceLoading;
 
   return (
     <div className="dashboard-page">
@@ -1023,7 +1084,7 @@ export default function ProjectDetailPage() {
         <ErrorBanner
           tone="warning"
           title="Showing last known project state"
-          action={(
+          action={
             <button
               type="button"
               onClick={() => void handleRefresh()}
@@ -1031,10 +1092,14 @@ export default function ProjectDetailPage() {
               aria-busy={isRefreshing}
               className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
             >
-              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} aria-hidden="true" />
+              <RefreshCw
+                size={14}
+                className={isRefreshing ? "animate-spin" : ""}
+                aria-hidden="true"
+              />
               Retry
             </button>
-          )}
+          }
         >
           {projectRefreshError} The project controls remain visible, but the
           canonical state may have changed.
@@ -1143,12 +1208,14 @@ export default function ProjectDetailPage() {
         >
           Evidence
           {evidence && (
-            <span className={clsx(
-              "px-1.5 py-0.5 rounded text-xxs",
-              evidence.status === "complete"
-                ? "bg-emerald-950/60 text-emerald-300"
-                : "bg-amber-950/60 text-amber-300",
-            )}>
+            <span
+              className={clsx(
+                "px-1.5 py-0.5 rounded text-xxs",
+                evidence.status === "complete"
+                  ? "bg-emerald-950/60 text-emerald-300"
+                  : "bg-amber-950/60 text-amber-300",
+              )}
+            >
               {Math.round(evidence.completeness_score * 100)}%
             </span>
           )}
@@ -1396,7 +1463,8 @@ export default function ProjectDetailPage() {
                       Git Workspace
                     </h2>
                     <p className="text-xs text-slate-500 mt-1">
-                      Source code lives in the project-scoped tool workspace and is managed through the Git adapter.
+                      Source code lives in the project-scoped tool workspace and
+                      is managed through the Git adapter.
                     </p>
                   </div>
                   {workspace?.repository && (
@@ -1411,7 +1479,9 @@ export default function ProjectDetailPage() {
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-300 border border-blue-700/60 bg-blue-500/10 rounded-lg hover:bg-blue-500/20 disabled:opacity-50"
                     >
                       <RefreshCw size={12} />
-                      {actionLoading === "repository-sync" ? "Syncing…" : "Sync"}
+                      {actionLoading === "repository-sync"
+                        ? "Syncing…"
+                        : "Sync"}
                     </button>
                   )}
                 </div>
@@ -1429,27 +1499,34 @@ export default function ProjectDetailPage() {
                     <div>
                       <div className="text-slate-500">Location</div>
                       <div className="text-slate-200 mt-1 break-all">
-                        {workspace.repository.workspace_path || workspace.repository.workspace_relative_path || "pending"}
+                        {workspace.repository.workspace_path ||
+                          workspace.repository.workspace_relative_path ||
+                          "pending"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Status</div>
                       <div className="text-slate-200 mt-1">
                         {workspace.repository.status || "unknown"}
-                        {workspace.repository.clean === false && " · uncommitted changes"}
+                        {workspace.repository.clean === false &&
+                          " · uncommitted changes"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Remote</div>
                       <div className="text-slate-200 mt-1 break-all">
-                        {workspace.repository.remote || workspace.repository.repository_url || "local repository"}
+                        {workspace.repository.remote ||
+                          workspace.repository.repository_url ||
+                          "local repository"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Branch / commit</div>
                       <div className="text-slate-200 mt-1 break-all">
                         {workspace.repository.branch || "unknown"}
-                        {workspace.repository.head ? ` · ${workspace.repository.head.slice(0, 12)}` : ""}
+                        {workspace.repository.head
+                          ? ` · ${workspace.repository.head.slice(0, 12)}`
+                          : ""}
                       </div>
                     </div>
                   </div>
@@ -1621,37 +1698,52 @@ export default function ProjectDetailPage() {
           )}
           {!evidenceLoading && evidence === null && (
             <ErrorBanner tone="error" title="Evidence data unavailable">
-              The evidence service did not return a project-scoped policy result.
+              The evidence service did not return a project-scoped policy
+              result.
             </ErrorBanner>
           )}
           {evidence && (
             <>
               <div className="dashboard-surface p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-medium text-white">Completion Evidence</h2>
+                  <h2 className="text-sm font-medium text-white">
+                    Completion Evidence
+                  </h2>
                   <p className="mt-1 text-xs text-slate-500">
-                    Policy {evidence.policy_id} v{evidence.policy_version} · {Math.round(evidence.completeness_score * 100)}% complete
+                    Policy {evidence.policy_id} v{evidence.policy_version} ·{" "}
+                    {Math.round(evidence.completeness_score * 100)}% complete
                   </p>
                 </div>
-                <span className={clsx(
-                  "rounded-full border px-3 py-1 text-xs font-medium",
-                  evidence.status === "complete"
-                    ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
-                    : "border-amber-700/70 bg-amber-950/40 text-amber-200",
-                )}>
+                <span
+                  className={clsx(
+                    "rounded-full border px-3 py-1 text-xs font-medium",
+                    evidence.status === "complete"
+                      ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
+                      : "border-amber-700/70 bg-amber-950/40 text-amber-200",
+                  )}
+                >
                   {evidence.status}
                 </span>
               </div>
               <div className="space-y-2">
                 {evidence.checks.map((check) => (
-                  <div key={check.name} className={clsx(
-                    "dashboard-surface flex items-start gap-3 p-4",
-                    check.required && !check.passed && "border-amber-800/70",
-                  )}>
+                  <div
+                    key={check.name}
+                    className={clsx(
+                      "dashboard-surface flex items-start gap-3 p-4",
+                      check.required && !check.passed && "border-amber-800/70",
+                    )}
+                  >
                     {check.passed ? (
-                      <CheckCircle size={18} className="mt-0.5 shrink-0 text-emerald-400" />
+                      <CheckCircle
+                        size={18}
+                        className="mt-0.5 shrink-0 text-emerald-400"
+                      />
                     ) : (
-                      <XCircle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                      <XCircle
+                        size={18}
+                        className="mt-0.5 shrink-0 text-amber-400"
+                      />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-100">
@@ -1660,7 +1752,11 @@ export default function ProjectDetailPage() {
                           {check.required ? "required" : "optional"}
                         </span>
                       </div>
-                      {check.reason && <p className="mt-1 text-xs text-amber-200">{check.reason}</p>}
+                      {check.reason && (
+                        <p className="mt-1 text-xs text-amber-200">
+                          {check.reason}
+                        </p>
+                      )}
                       {check.evidence_refs.length > 0 && (
                         <p className="mt-2 break-all text-xxs text-slate-500">
                           Evidence: {check.evidence_refs.join(", ")}
@@ -1671,52 +1767,72 @@ export default function ProjectDetailPage() {
                 ))}
               </div>
               {evidencePackage && (
-                <section className="dashboard-surface p-4" aria-labelledby="evidence-package-heading">
+                <section
+                  className="dashboard-surface p-4"
+                  aria-labelledby="evidence-package-heading"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h3 id="evidence-package-heading" className="text-sm font-medium text-white">
+                      <h3
+                        id="evidence-package-heading"
+                        className="text-sm font-medium text-white"
+                      >
                         Evidence package coverage
                       </h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        {evidencePackage.schema_version} · grouped read-only views over canonical project records
+                        {evidencePackage.schema_version} · grouped read-only
+                        views over canonical project records
                       </p>
                     </div>
                     <span className="text-xs text-slate-400">
-                      {evidencePackage.categories.filter((category) => category.status === "present").length}/
-                      {evidencePackage.categories.length} categories present
+                      {
+                        evidencePackage.categories.filter(
+                          (category) => category.status === "present",
+                        ).length
+                      }
+                      /{evidencePackage.categories.length} categories present
                     </span>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {evidencePackage.categories.map((category) => (
-                      <div key={category.category} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <div
+                        key={category.category}
+                        className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
+                      >
                         <div className="flex items-center justify-between gap-2 text-xs">
                           <span className="font-medium capitalize text-slate-200">
                             {category.category}
                           </span>
-                          <span className={clsx(
-                            "rounded-full px-2 py-0.5",
-                            category.status === "present"
-                              ? "bg-emerald-950/50 text-emerald-300"
-                              : category.status === "missing"
-                                ? "bg-amber-950/50 text-amber-200"
-                                : "bg-slate-800 text-slate-400",
-                          )}>
+                          <span
+                            className={clsx(
+                              "rounded-full px-2 py-0.5",
+                              category.status === "present"
+                                ? "bg-emerald-950/50 text-emerald-300"
+                                : category.status === "missing"
+                                  ? "bg-amber-950/50 text-amber-200"
+                                  : "bg-slate-800 text-slate-400",
+                            )}
+                          >
                             {category.status}
                           </span>
                         </div>
                         <p className="mt-1 text-xxs text-slate-500">
-                          {category.item_count} item{category.item_count === 1 ? "" : "s"}
+                          {category.item_count} item
+                          {category.item_count === 1 ? "" : "s"}
                           {category.required ? " · required" : " · optional"}
                         </p>
                         {category.reason && (
-                          <p className="mt-1 text-xxs text-amber-200">{category.reason}</p>
+                          <p className="mt-1 text-xxs text-amber-200">
+                            {category.reason}
+                          </p>
                         )}
                       </div>
                     ))}
                   </div>
                   {evidencePackage.notices.length > 0 && (
                     <p className="mt-3 text-xxs text-slate-500">
-                      Resource licence/restriction values are retained as metadata notices only and do not change package status.
+                      Resource licence/restriction values are retained as
+                      metadata notices only and do not change package status.
                     </p>
                   )}
                 </section>
@@ -2655,13 +2771,16 @@ export default function ProjectDetailPage() {
               {contextItems.map((item) => {
                 const isSelected = contextSelection.selected.has(item.id);
                 const itemType = String(item.item_type || "TEXT").toUpperCase();
-                const isGeneratedDocument = Boolean(item.read_only || item.source === "document");
+                const isGeneratedDocument = Boolean(
+                  item.read_only || item.source === "document",
+                );
                 return (
                   <div
                     key={item.id}
                     className={clsx(
                       "bg-slate-900 border rounded-xl p-4 transition-colors",
-                      isGeneratedDocument && "border-indigo-800/80 bg-indigo-950/10",
+                      isGeneratedDocument &&
+                        "border-indigo-800/80 bg-indigo-950/10",
                       isSelected
                         ? "border-blue-500/60 bg-blue-950/30"
                         : !isGeneratedDocument && "border-slate-800",
@@ -2691,10 +2810,10 @@ export default function ProjectDetailPage() {
                           itemType === "DOCUMENT"
                             ? "bg-indigo-900/30 text-indigo-300"
                             : itemType === "FILE"
-                            ? "bg-blue-900/30 text-blue-400"
-                            : itemType === "URL"
-                              ? "bg-purple-900/30 text-purple-400"
-                              : "bg-amber-900/30 text-amber-400",
+                              ? "bg-blue-900/30 text-blue-400"
+                              : itemType === "URL"
+                                ? "bg-purple-900/30 text-purple-400"
+                                : "bg-amber-900/30 text-amber-400",
                         )}
                       >
                         {itemType === "URL" ? (
@@ -2737,7 +2856,10 @@ export default function ProjectDetailPage() {
                           </div>
                         )}
                         {isGeneratedDocument && item.blob_key && (
-                          <div className="mt-2 truncate text-xxs text-indigo-300/70" title={item.blob_key}>
+                          <div
+                            className="mt-2 truncate text-xxs text-indigo-300/70"
+                            title={item.blob_key}
+                          >
                             {item.blob_key}
                           </div>
                         )}
