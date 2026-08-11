@@ -4,7 +4,7 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-10):** in progress. The licence metadata boundary,
+**Current status (2026-08-11):** in progress. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -169,6 +169,36 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - Reuse valid historical fixtures, but rerun every P0 and changed-boundary test.
 - Label static, contract, integration, live API, live UI, recovery, security, and externally blocked evidence precisely.
 - Carry forward unresolved defects with owner, severity, evidence, and next action.
+
+## Workstream 6 — secret-safe operational diagnostics
+
+### Deliverables
+
+- [x] Add the read-only `GET /system/diagnostics` control-plane route. It
+  checks the database with `SELECT 1`, consumes router and tool-service health
+  endpoints, and performs a non-mutating object-store `head_bucket` probe when
+  configured. The response retains only bounded status, latency, connection
+  flags, and exception type; it never returns credentials, URLs, dependency
+  payloads, or raw error text (`2860838`).
+- [x] Keep dependency failure observable without turning diagnostics into a
+  mutating or release-authority path: the route returns HTTP 200 with an
+  aggregate `degraded` status for dependency failures, `not_configured` for an
+  absent optional object store, and HTTP 503 when control-plane storage itself
+  is unavailable.
+- [x] Cover healthy, degraded, unconfigured, unavailable-storage, and
+  payload-redaction behavior in the operational API suite; generated OpenAPI,
+  dashboard TypeScript, Python SDK, and contract provenance are regenerated
+  together (236 paths, 269 operations).
+
+### Evidence
+
+- `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q`
+  passes the system and diagnostics API suites with only the two pre-existing
+  TODO skips for a standalone bootstrap CLI and per-service restart endpoint.
+- `uv run --isolated pytest packages/mas-api-sdk/tests -q` passes the generated
+  SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
+  236 OpenAPI paths, 130 models, and 269 operations with matching generated
+  TypeScript/Python hashes.
 
 ### Exit gate
 

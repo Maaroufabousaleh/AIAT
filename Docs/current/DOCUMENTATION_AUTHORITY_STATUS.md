@@ -69,8 +69,9 @@ partial/stale/retry recovery (`85596b0`), and Flows list stale/retry recovery
 Logs stale/retry recovery (`280d363`), Agent Streams reconnect/history
 recovery (`3e8a0ea`), Hiring Board stale/retry recovery (`7541b84`), CEO
 Live Feed reconnect/history recovery (`1761429`), and CEO Command Center chat
-stream/history recovery (`beabb95`), each with separate
-documentation updates. The storage safety group `93bf755` now rejects
+stream/history recovery (`beabb95`), and the secret-safe system diagnostics
+route/API contract group (`2860838`), each with separate documentation
+updates. The storage safety group `93bf755` now rejects
 non-empty restore prefixes before copy and records clean-target verification;
 the static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. These checks establish technical identity
