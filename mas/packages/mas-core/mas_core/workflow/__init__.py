@@ -43,6 +43,17 @@ from mas_core.workflow.worker_binding import (
     clear_worker_run_binding,
     normalize_worker_run_state,
 )
+from mas_core.workflow.node_schema import (
+    LEGACY_TASK_ALIAS_FIELDS,
+    NODE_SCHEMA_VERSION,
+    SUPPORTED_NODE_SCHEMA_VERSIONS,
+    audit_legacy_task_aliases,
+    migrate_legacy_task_aliases,
+    node_schema_catalog,
+    schema_for_node_type,
+    validate_node_config_schema,
+    validate_node_schema_version,
+)
 from mas_core.workflow.evidence import (
     DEFAULT_EVIDENCE_POLICIES,
     EVIDENCE_PACKAGE_SCHEMA,
@@ -103,6 +114,15 @@ __all__ = [
     "classify_worker_run_state",
     "clear_worker_run_binding",
     "normalize_worker_run_state",
+    "NODE_SCHEMA_VERSION",
+    "SUPPORTED_NODE_SCHEMA_VERSIONS",
+    "LEGACY_TASK_ALIAS_FIELDS",
+    "audit_legacy_task_aliases",
+    "migrate_legacy_task_aliases",
+    "node_schema_catalog",
+    "schema_for_node_type",
+    "validate_node_config_schema",
+    "validate_node_schema_version",
     "EvidencePolicy",
     "EvidenceCheck",
     "EvidenceCompleteness",
