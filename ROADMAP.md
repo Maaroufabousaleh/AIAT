@@ -445,6 +445,11 @@ secret-safe result is retained at
 Native-Linux accessibility/mobile/visual certification and operator-owned
 provider/mail paths remain open. The existing project workspace test also
 retains project-detail state on refresh failure and exposes stale/retry copy.
+The implementation group for transient gateway status classification,
+model/provider cooldown persistence and fallback filtering, deterministic model
+catalogue reconciliation, the conflict-preserving default profile bootstrap,
+and the internal LiteLLM alias is committed as `288996e`; provider-specific
+live recovery remains open.
 
 Required outcomes:
 
@@ -698,6 +703,9 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
 The trace-evidence/native-span core is now reviewed and committed as `77d5494`;
 API/storage writer wiring, native deployment read-back, model/mail coverage, and
 retention enforcement remain separate R1/P2 evidence gates.
+The bounded model-routing/profile group is committed as `288996e`; its static
+and unit evidence passes while provider-specific live outage/recovery remains
+an explicit open gate.
 
 ### Next — R2 to R5/P1
 

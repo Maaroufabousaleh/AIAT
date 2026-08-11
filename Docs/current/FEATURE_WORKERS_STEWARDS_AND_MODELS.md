@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** universal foundation and metadata-only licence boundary implemented; LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, and read-only persisted default-worker reconciliation (39/39) pass; worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented; governed model-profile/cooldown/catalogue/bootstrap group `288996e`, LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, and read-only persisted default-worker reconciliation (39/39) pass; worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -15,7 +15,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, and run APIs.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
-- Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints.
+- Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
 - The LLM gateway uses one explicit transient-status vocabulary (`408`, `409`,
   `412`, `425`, `429`, `500`, `502`, `503`, `504`) across normal, streaming,
   and fallback dispatch; permanent client/credential `4xx` responses are not
