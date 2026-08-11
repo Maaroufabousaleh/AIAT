@@ -3,10 +3,11 @@
 The default fixture uses three deterministic in-memory adapters: source,
 backup, and restore.  ``--live`` requires three explicitly configured
 S3-compatible endpoints and performs a project-scoped source inventory,
-checksum manifest, backup copy, and clean-target restore verification.  It
-never deletes source objects or performs a provider cutover.  Missing
-configuration, an empty inventory, or an unavailable provider returns exit
-code 2 with a bounded ``blocked`` report.
+checksum manifest, backup copy, an empty-target preflight, and clean-target
+restore verification.  It never deletes source objects or performs a provider
+cutover.  Missing configuration, an empty inventory, a non-empty restore
+prefix, or an unavailable provider returns exit code 2 with a bounded
+``blocked`` report.
 """
 
 from __future__ import annotations
@@ -114,6 +115,7 @@ async def _run_fixture() -> dict[str, Any]:
         project_id=project_id,
         source_bucket="backup",
         target_bucket="restore",
+        require_clean_target=True,
     )
     return {
         "schema_version": BACKUP_SCHEMA,
@@ -196,6 +198,7 @@ async def _run_live(args: argparse.Namespace) -> dict[str, Any]:
             project_id=project_id,
             source_bucket=str(args.backup_bucket),
             target_bucket=str(args.restore_bucket),
+            require_clean_target=True,
         )
         return {
             "schema_version": BACKUP_SCHEMA,

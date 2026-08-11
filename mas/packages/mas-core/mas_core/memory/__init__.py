@@ -22,6 +22,17 @@ metadata        SQLAlchemy MetaData with all table definitions.
 from mas_core.memory.blob import BlobClient, BlobRef
 from mas_core.memory.checkpoints import CheckpointStore
 from mas_core.memory.models import metadata
+from mas_core.memory.object_store_backup import (
+    OBJECT_STORE_BACKUP_SCHEMA,
+    OBJECT_STORE_RESTORE_SCHEMA,
+    BackupManifest,
+    BackupObject,
+    RestoreVerification,
+    assert_clean_restore_target,
+    build_backup_manifest,
+    copy_manifest_objects,
+    verify_restored_manifest,
+)
 from mas_core.memory.object_store_conformance import (
     OBJECT_STORE_CONFORMANCE_SCHEMA,
     InMemoryObjectStore,
@@ -35,16 +46,6 @@ from mas_core.memory.object_store_migration import (
     ObjectStoreCopyCase,
     ObjectStoreCopyReport,
     verify_and_copy_blobs,
-)
-from mas_core.memory.object_store_backup import (
-    OBJECT_STORE_BACKUP_SCHEMA,
-    OBJECT_STORE_RESTORE_SCHEMA,
-    BackupManifest,
-    BackupObject,
-    RestoreVerification,
-    build_backup_manifest,
-    copy_manifest_objects,
-    verify_restored_manifest,
 )
 from mas_core.memory.object_store_rollout import (
     OBJECT_STORE_MIGRATION_SCHEMA,
@@ -77,6 +78,7 @@ __all__ = [
     "BackupManifest",
     "BackupObject",
     "RestoreVerification",
+    "assert_clean_restore_target",
     "build_backup_manifest",
     "copy_manifest_objects",
     "verify_restored_manifest",

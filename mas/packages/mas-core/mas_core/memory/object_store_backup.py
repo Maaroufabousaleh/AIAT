@@ -3,9 +3,10 @@
 The helpers in this module are deliberately provider-neutral.  A backup is a
 stable manifest of project-scoped object keys, checksums, sizes, and content
 types.  Copying is delegated to :mod:`object_store_migration`, while restore
-verification requires an exact key set and a checksum/read-back match for every
-manifest entry.  No helper deletes source data, cuts over a provider, or claims
-that a live backup target is encrypted or durable without provider evidence.
+verification requires an empty-target preflight, an exact key set, and a
+checksum/read-back match for every manifest entry.  No helper deletes source
+data, cuts over a provider, or claims that a live backup target is encrypted or
+durable without provider evidence.
 """
 
 from __future__ import annotations
@@ -128,6 +129,7 @@ class RestoreVerification:
     target_bucket: str
     object_count: int
     checked_object_count: int
+    clean_target_verified: bool
     status: str
 
     def as_dict(self) -> dict[str, Any]:
@@ -137,8 +139,35 @@ class RestoreVerification:
             "target_bucket": self.target_bucket,
             "object_count": self.object_count,
             "checked_object_count": self.checked_object_count,
+            "clean_target_verified": self.clean_target_verified,
             "status": self.status,
         }
+
+
+async def assert_clean_restore_target(
+    store: ObjectStoreAdapter,
+    *,
+    project_id: str,
+    target_bucket: str,
+) -> None:
+    """Fail closed before writing into a restore prefix that is not empty.
+
+    A checksum comparison after copying is not sufficient for disaster
+    recovery: a stale object can remain alongside a valid manifest and the
+    target may already have been mutated before the mismatch is observed.
+    Restore callers therefore opt into this preflight and get a non-mutating
+    error while the target is still untouched.
+    """
+
+    rows = await store.list_objects(project_id, bucket=target_bucket)
+    if rows:
+        keys = sorted(str(row.get("key")) for row in rows)
+        preview = ", ".join(keys[:5])
+        suffix = "…" if len(keys) > 5 else ""
+        raise ValueError(
+            "restore target must be empty before copy; "
+            f"found {len(keys)} existing object(s): {preview}{suffix}"
+        )
 
 
 async def build_backup_manifest(
@@ -184,6 +213,7 @@ async def verify_restored_manifest(
     *,
     project_id: str,
     target_bucket: str,
+    clean_target_verified: bool = False,
 ) -> RestoreVerification:
     """Require exact project keys and checksum/read-back parity."""
 
@@ -214,6 +244,7 @@ async def verify_restored_manifest(
         target_bucket=target_bucket,
         object_count=len(manifest.objects),
         checked_object_count=len(manifest.objects),
+        clean_target_verified=clean_target_verified,
         status="pass",
     )
 
@@ -226,12 +257,19 @@ async def copy_manifest_objects(
     project_id: str,
     source_bucket: str,
     target_bucket: str,
+    require_clean_target: bool = False,
 ) -> tuple[ObjectStoreCopyReport, RestoreVerification]:
     """Copy a manifest from one provider and verify the target read-back."""
 
     manifest.verify_digest()
     if manifest.project_id != project_id:
         raise ValueError("copy project does not match the backup manifest")
+    if require_clean_target:
+        await assert_clean_restore_target(
+            target,
+            project_id=project_id,
+            target_bucket=target_bucket,
+        )
     refs = tuple(
         BlobRef(
             bucket=source_bucket,
@@ -256,6 +294,7 @@ async def copy_manifest_objects(
         manifest,
         project_id=project_id,
         target_bucket=target_bucket,
+        clean_target_verified=require_clean_target,
     )
     return copy_report, verification
 
@@ -266,6 +305,7 @@ __all__ = [
     "BackupManifest",
     "BackupObject",
     "RestoreVerification",
+    "assert_clean_restore_target",
     "build_backup_manifest",
     "copy_manifest_objects",
     "verify_restored_manifest",

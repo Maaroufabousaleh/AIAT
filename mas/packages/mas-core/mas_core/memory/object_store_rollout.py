@@ -189,6 +189,7 @@ class ObjectStoreMigrationWorkflow:
             project_id=self.project_id,
             source_bucket=self.source_bucket,
             target_bucket=self.target_bucket,
+            require_clean_target=True,
         )
         self.copy_report = copy_report
         self.restore_verification = verification

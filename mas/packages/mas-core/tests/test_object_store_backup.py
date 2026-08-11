@@ -51,12 +51,39 @@ async def test_manifest_backup_and_clean_restore_round_trip() -> None:
         project_id=project_id,
         source_bucket="backup",
         target_bucket="restore",
+        require_clean_target=True,
     )
 
     assert backup_copy.passed is True
     assert restore_copy.passed is True
     assert backup_check.checked_object_count == 2
     assert restore_check.checked_object_count == 2
+    assert restore_check.clean_target_verified is True
+
+
+@pytest.mark.asyncio
+async def test_restore_refuses_non_empty_target_before_copy() -> None:
+    source = InMemoryObjectStore(bucket="source")
+    target = InMemoryObjectStore(bucket="restore")
+    project_id = "backup-project"
+    ref = await source.upload(project_id, "artifact.bin", b"payload")
+    manifest = await build_backup_manifest(source, [ref], project_id=project_id)
+    stale = await target.upload(project_id, "stale.bin", b"old")
+
+    with pytest.raises(ValueError, match="restore target must be empty"):
+        await copy_manifest_objects(
+            source,
+            target,
+            manifest,
+            project_id=project_id,
+            source_bucket="source",
+            target_bucket="restore",
+            require_clean_target=True,
+        )
+
+    assert await target.exists(project_id, "stale.bin", bucket="restore") is True
+    assert await target.exists(project_id, "artifact.bin", bucket="restore") is False
+    assert stale.key == f"{project_id}/stale.bin"
 
 
 @pytest.mark.asyncio
