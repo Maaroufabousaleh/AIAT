@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { clsx } from "clsx";
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -13,6 +13,7 @@ import { RefreshCw, AlertCircle } from "lucide-react";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 const RANGES = [
   { label: "15m", minutes: 15, step: 30 },
@@ -36,16 +37,16 @@ async function fetchMetric(
   step: number
 ): Promise<PrometheusResult[]> {
   const url = `/api/metrics?type=range&query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${step}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const { results } = await res.json();
   return results ?? [];
 }
 
 async function fetchInstant(query: string): Promise<PrometheusResult[]> {
   const url = `/api/metrics?query=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const { results } = await res.json();
   return results ?? [];
 }
@@ -133,6 +134,9 @@ export default function MetricsPage() {
   const [mounted, setMounted] = useState(false);
   const [rangeIdx, setRangeIdx] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const hasLoadedRef = useRef(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [llmData, setLlmData] = useState<DataPoint[]>([]);
   const [llmKeys, setLlmKeys] = useState<string[]>([]);
@@ -163,36 +167,60 @@ export default function MetricsPage() {
       ]);
 
       if (llm.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setLlmKeys(seriesKeys(llm.value));
         setLlmData(toTimeSeries(llm.value));
       }
       if (tools.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setToolKeys(seriesKeys(tools.value, "tool_name"));
         setToolData(toTimeSeries(tools.value, "tool_name"));
       }
       if (msgs.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setMsgKeys(seriesKeys(msgs.value, "direction"));
         setMsgData(toTimeSeries(msgs.value, "direction"));
       }
       if (dlq.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setDlqData(dlq.value.map((r) => ({
           stream: r.metric.stream ?? "unknown",
           depth: parseFloat(r.value?.[1] ?? "0"),
         })));
       }
       if (budget.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setBudgetData(budget.value
           .map((r) => ({ agent: r.metric.agent_id ?? "?", exhaustions: parseFloat(r.value?.[1] ?? "0") }))
           .filter((d) => d.exhaustions > 0)
         );
       }
       if (circuits.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setCircuitData(circuits.value.map((r) => ({
           tool: r.metric.tool_name ?? "?",
           state: parseFloat(r.value?.[1] ?? "0"),
         })).filter((d) => d.state > 0));
       }
-      setLastUpdated(Date.now());
+      const metricResults: Array<[string, PromiseSettledResult<PrometheusResult[]>]> = [
+        ["LLM calls", llm],
+        ["tool calls", tools],
+        ["messages", msgs],
+        ["DLQ depth", dlq],
+        ["budget alerts", budget],
+        ["circuit breakers", circuits],
+      ];
+      const failures = metricResults
+        .filter(([, result]) => result.status === "rejected")
+        .map(([name]) => name);
+      if (failures.length > 0) {
+        setError(`Metrics refresh failed for ${failures.join(", ")}.`);
+        setStale(hasLoadedRef.current);
+      } else {
+        setError(null);
+        setStale(false);
+        setLastUpdated(Date.now());
+      }
     } finally {
       setLoading(false);
     }
@@ -204,6 +232,11 @@ export default function MetricsPage() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
+
+  const requestRefresh = () => {
+    if (loading) return;
+    void load();
+  };
 
   const totalDlqDepth = dlqData.reduce((sum, d) => sum + d.depth, 0);
 
@@ -225,7 +258,7 @@ export default function MetricsPage() {
             Prometheus · refreshes every 30s
             {lastUpdated && (
               <span className="ml-2 text-slate-500">
-                · last updated{" "}
+                · last successful refresh{" "}
                 <time
                   dateTime={new Date(lastUpdated).toISOString()}
                   className="text-slate-400 font-mono"
@@ -266,7 +299,7 @@ export default function MetricsPage() {
               ))}
             </div>
             <button
-              onClick={load}
+              onClick={requestRefresh}
               disabled={loading}
               aria-label="Refresh metrics"
               title="Refresh"
@@ -277,6 +310,20 @@ export default function MetricsPage() {
           </>
         }
       />
+
+      {error && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known metrics" : "Metrics unavailable"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${error} Retained series remain visible while the metrics source recovers.` : error}
+        </ErrorBanner>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
@@ -317,7 +364,7 @@ export default function MetricsPage() {
           description={`The Prometheus query returned no data for the ${range.label} window. The metrics endpoint may be down, or the operator has not reported any series yet.`}
           action={
             <button
-              onClick={load}
+            onClick={requestRefresh}
               disabled={loading}
               className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
             >
