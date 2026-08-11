@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), and selected steward certification readiness (`adc7b26`) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, executive API/dashboard integration `d1b8839`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), and selected steward certification readiness (`adc7b26`) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose

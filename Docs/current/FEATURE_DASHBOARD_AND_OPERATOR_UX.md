@@ -1,7 +1,7 @@
 # Dashboard and Operator UX Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, and the local Compose E2E matrix implemented; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
+**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, executive reconciliation/action surfaces (`d1b8839`), and the local Compose E2E matrix implemented; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
