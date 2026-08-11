@@ -39,7 +39,6 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
   await expect(row.getByText(/approved|conditional|rejected/i)).toBeVisible({
     timeout: 90_000,
   });
-  await row.click();
   await expect(page.getByText("Latest Evaluation")).toBeVisible({
     timeout: 90_000,
   });
