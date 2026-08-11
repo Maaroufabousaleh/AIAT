@@ -27,7 +27,7 @@ Usage
         data=b'{"sections": [...]}',
         content_type="application/json",
     )
-    data = await blob.download(ref)
+    data = await blob.download(ref)  # verifies SHA-256 and declared size
     await blob.delete(ref)
     await blob.close()
 """
@@ -80,6 +80,23 @@ class BlobRef:
         )
 
 
+def verify_blob_readback(ref: BlobRef, data: bytes) -> bytes:
+    """Verify both checksum and byte count for a provider read-back."""
+
+    actual_sha = hashlib.sha256(data).hexdigest()
+    if actual_sha != ref.sha256:
+        raise ValueError(
+            f"SHA-256 mismatch for {ref.bucket}/{ref.key}: "
+            f"expected {ref.sha256}, got {actual_sha}"
+        )
+    if len(data) != ref.size_bytes:
+        raise ValueError(
+            f"size mismatch for {ref.bucket}/{ref.key}: "
+            f"expected {ref.size_bytes}, got {len(data)}"
+        )
+    return data
+
+
 class BlobClient:
     """Async S3-compatible blob storage client.
 
@@ -96,6 +113,11 @@ class BlobClient:
     region : str
         AWS region (ignored by MinIO but required by boto3).
     """
+
+    # These stable labels let the provider-neutral conformance report identify
+    # a real S3-compatible adapter without exposing endpoint credentials.
+    adapter_type = "s3-compatible"
+    adapter_version = "aioboto3"
 
     def __init__(
         self,
@@ -217,19 +239,12 @@ class BlobClient:
         Raises
         ------
         ValueError
-            If SHA-256 mismatch (integrity check).
+            If SHA-256 or declared byte-count mismatch (integrity check).
         """
         resp = await self.client.get_object(Bucket=ref.bucket, Key=ref.key)
         data = await resp["Body"].read()
 
-        # Integrity check
-        actual_sha = hashlib.sha256(data).hexdigest()
-        if actual_sha != ref.sha256:
-            raise ValueError(
-                f"SHA-256 mismatch for {ref.bucket}/{ref.key}: "
-                f"expected {ref.sha256}, got {actual_sha}"
-            )
-        return data
+        return verify_blob_readback(ref, data)
 
     async def download_by_key(
         self,
