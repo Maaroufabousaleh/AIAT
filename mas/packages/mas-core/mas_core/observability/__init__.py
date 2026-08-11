@@ -1,5 +1,20 @@
 """MAS observability: Prometheus metrics, structured logging, trace-id propagation."""
 
+from mas_core.observability.native_spans import (
+    NATIVE_TRACE_SPAN_SCHEMA,
+    NATIVE_TRACE_SPAN_SOURCE_KINDS,
+    NativeTraceSpan,
+    build_native_trace_span,
+)
+from mas_core.observability.trace_evidence import (
+    TRACE_EVIDENCE_SCHEMA,
+    TRACE_RETENTION_SCHEMA,
+    TraceEvidence,
+    TraceEvidenceItem,
+    TraceRetentionPolicy,
+    build_trace_evidence,
+    trace_retention_from_manifest,
+)
 from mas_core.observability.logging import configure_logging
 from mas_core.observability.metrics import (
     MAS_AGENT_CORRECTION_FACTOR,
