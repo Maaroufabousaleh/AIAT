@@ -33,7 +33,13 @@ import prometheus_client
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, Response
 
-from mas_core.observability import configure_logging
+from mas_core.observability import (
+    bind_trace_id,
+    clear_trace_context,
+    configure_logging,
+    current_trace_id,
+    resolve_trace_id,
+)
 from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_TOTAL
 
 from .cache import ToolCache
@@ -41,8 +47,8 @@ from .config import Settings, get_settings
 from .opencode_mcp import create_opencode_mcp_app
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
-from .tool_grants import ToolGrantStore
 from .routes import router
+from .tool_grants import ToolGrantStore
 from .tools.all_tools import get_all_tools
 
 logger = logging.getLogger(__name__)
@@ -252,6 +258,24 @@ app = FastAPI(
     version="0.6.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def propagate_trace_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Bind and return one bounded trace ID for every tool HTTP request."""
+
+    trace_id = resolve_trace_id(
+        request.headers.get("x-aiat-trace-id"),
+        request.headers.get("traceparent"),
+    )
+    bind_trace_id(trace_id)
+    request.state.aiat_trace_id = trace_id
+    try:
+        response = await call_next(request)
+        response.headers["X-AIAT-Trace-ID"] = current_trace_id() or trace_id
+        return response
+    finally:
+        clear_trace_context()
 
 app.include_router(router)
 _opencode_mcp_app = create_opencode_mcp_app(app)

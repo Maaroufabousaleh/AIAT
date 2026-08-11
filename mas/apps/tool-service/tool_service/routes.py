@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
+from mas_core.observability import current_trace_id
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 
 from .caller_auth import verify_signed_caller
@@ -129,6 +130,8 @@ async def execute_tool(
     Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
     """
     _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
+    if body.trace_id is None and current_trace_id() is not None:
+        body = body.model_copy(update={"trace_id": current_trace_id()})
     return await _execute_via_registry(request, body)
 
 
@@ -153,7 +156,11 @@ async def run_tool(
     _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
 
     effective_body = ToolRequest.model_validate(
-        body.model_dump(mode="json", by_alias=True) | {"tool_name": tool_name}
+        body.model_dump(mode="json", by_alias=True)
+        | {
+            "tool_name": tool_name,
+            "trace_id": body.trace_id or current_trace_id(),
+        }
     )
     return await _execute_via_registry(request, effective_body)
 
