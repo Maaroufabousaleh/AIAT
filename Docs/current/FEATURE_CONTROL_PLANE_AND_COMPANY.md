@@ -26,6 +26,10 @@ The control plane turns AIAT from a collection of agents into one governed compa
   behind the secret-safe `aiat.executive-action.v1` envelope: CFO model-override
   requests are durable pending records, CTO worker dispatch uses the governed
   run controller, and CEO privileged actions use the audited approval gate.
+- The pure `aiat.executive-reconciliation.v1` and `aiat.executive-views.v1`
+  read models are committed in `be030ac`; they aggregate bounded durable
+  project, usage, worker-run, budget, reservation, and model evidence without
+  becoming a second authority. API/dashboard route wiring remains separate.
 - Canonical `REVIEW_RESPONSE` publication for `review.submit` and
   `review.submit_veto`, including domain findings and CSO veto evidence; the
   CEO-only `privileged_ops.request` tool routes to the audited
