@@ -2058,6 +2058,18 @@ class FlowMigrationRequest(BaseModel):
     active_node_mapping: dict[str, str] = Field(default_factory=dict)
 
 
+class FlowLegacyTaskMigrationRequest(BaseModel):
+    """Migrate compatibility task aliases into an immutable worker-bound version."""
+
+    worker_bindings: dict[str, UUID] = Field(default_factory=dict)
+    model_profile_bindings: dict[str, str] = Field(default_factory=dict)
+    actor_id: str = Field(default="human_operator", min_length=1, max_length=256)
+    dry_run: bool = False
+    is_active: bool = False
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = None
+
+
 class FlowDryRunRequest(BaseModel):
     """Non-mutating validation of a typed flow definition and its assignments."""
 
@@ -10642,11 +10654,54 @@ async def import_flow(req: FlowImportRequest) -> dict[str, Any]:
     return {"status": "imported", "flow": created}
 
 
+def _flow_definition_hash(definition_json: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(definition_json, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _flow_definition_diff(
+    from_definition: dict[str, Any], to_definition: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a deterministic node/edge/metadata diff for operator review."""
+
+    def keyed(items: Any, key: str) -> dict[str, Any]:
+        if not isinstance(items, list):
+            return {}
+        return {
+            str(item.get(key)): item
+            for item in items
+            if isinstance(item, dict) and item.get(key) is not None
+        }
+
+    def diff_items(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+        before_keys = set(before)
+        after_keys = set(after)
+        changed = [
+            {"id": key, "before": before[key], "after": after[key]}
+            for key in sorted(before_keys & after_keys)
+            if before[key] != after[key]
+        ]
+        return {
+            "added": [after[key] for key in sorted(after_keys - before_keys)],
+            "removed": [before[key] for key in sorted(before_keys - after_keys)],
+            "changed": changed,
+        }
+
+    return {
+        "schema_version": {
+            "from": from_definition.get("schema_version", "1.0"),
+            "to": to_definition.get("schema_version", "1.0"),
+        },
+        "nodes": diff_items(keyed(from_definition.get("nodes"), "id"), keyed(to_definition.get("nodes"), "id")),
+        "edges": diff_items(keyed(from_definition.get("edges"), "id"), keyed(to_definition.get("edges"), "id")),
+        "metadata_changed": (from_definition.get("metadata") or {}) != (to_definition.get("metadata") or {}),
+    }
+
+
 @app.post("/flows/diff")
 async def diff_flows(req: FlowDiffRequest) -> dict[str, Any]:
     """Compare two immutable flow definitions without mutating either one."""
-
-    from mas_core.workflow.definition_tools import flow_definition_diff, flow_definition_hash
 
     storage = _storage()
     from_flow = await storage.get_flow(req.from_flow_id)
@@ -10661,14 +10716,113 @@ async def diff_flows(req: FlowDiffRequest) -> dict[str, Any]:
         "from": {
             "flow_id": str(req.from_flow_id),
             "version": from_flow.get("version"),
-            "definition_sha256": flow_definition_hash(from_definition),
+            "definition_sha256": _flow_definition_hash(from_definition),
         },
         "to": {
             "flow_id": str(req.to_flow_id),
             "version": to_flow.get("version"),
-            "definition_sha256": flow_definition_hash(to_definition),
+            "definition_sha256": _flow_definition_hash(to_definition),
         },
-        "changes": flow_definition_diff(from_definition, to_definition),
+        "changes": _flow_definition_diff(from_definition, to_definition),
+    }
+
+
+@app.post("/flows/{flow_id}/migrate-legacy-tasks")
+async def migrate_legacy_flow_tasks(
+    flow_id: UUID,
+    req: FlowLegacyTaskMigrationRequest,
+) -> dict[str, Any]:
+    """Preview or version a saved flow with explicit Worker Run bindings.
+
+    The source flow is immutable.  A non-dry-run request creates a new
+    version through the ordinary flow-version path; it never updates the
+    existing definition in place and never infers a worker from ``team_id``.
+    """
+    from mas_core.workflow import migrate_legacy_task_aliases
+
+    storage = _storage()
+    source_flow = await storage.get_flow(flow_id)
+    if source_flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+
+    source_definition = dict(source_flow.get("definition_json") or {})
+    migration = migrate_legacy_task_aliases(
+        source_definition,
+        worker_bindings=req.worker_bindings,
+        model_profile_bindings=req.model_profile_bindings,
+    )
+    migration_record = {
+        "schema": "aiat.flow-legacy-task-migration.v1",
+        "actor_id": req.actor_id,
+        "source_flow_id": str(source_flow["id"]),
+        "source_flow_version": int(source_flow.get("version") or 1),
+        "migrated_node_ids": migration["migrated_node_ids"],
+        "worker_bindings": {
+            key: str(value) for key, value in sorted(req.worker_bindings.items())
+        },
+        "model_profile_bindings": {
+            key: value for key, value in sorted(req.model_profile_bindings.items())
+        },
+        "removed_alias_findings": migration["findings_before"],
+        "remaining_alias_findings": migration["findings_after"],
+    }
+    preview = {
+        "source_flow_id": str(source_flow["id"]),
+        "source_flow_version": int(source_flow.get("version") or 1),
+        "valid": not migration["errors"],
+        "changed": migration["changed"],
+        "definition_json": migration["definition_json"],
+        "migrated_node_ids": migration["migrated_node_ids"],
+        "missing_worker_bindings": migration["missing_worker_bindings"],
+        "unknown_worker_bindings": migration["unknown_worker_bindings"],
+        "unknown_model_profile_bindings": migration["unknown_model_profile_bindings"],
+        "errors": migration["errors"],
+        "findings_before": migration["findings_before"],
+        "findings_after": migration["findings_after"],
+        "migration": migration_record,
+    }
+    if req.dry_run:
+        return {"status": "dry_run", **preview}
+    if migration["errors"]:
+        raise HTTPException(
+            409,
+            {
+                "code": "LEGACY_TASK_MIGRATION_REQUIRES_REVIEW",
+                "message": "Flow cannot be versioned until every migration finding is resolved",
+                **preview,
+            },
+        )
+    if not migration["changed"]:
+        raise HTTPException(
+            409,
+            {
+                "code": "LEGACY_TASK_MIGRATION_NOOP",
+                "message": "Flow has no legacy task aliases or explicit worker bindings to migrate",
+                **preview,
+            },
+        )
+
+    definition_payload = dict(migration["definition_json"])
+    metadata = dict(definition_payload.get("metadata") or {})
+    metadata["legacy_task_migration"] = migration_record
+    definition_payload["metadata"] = metadata
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name or str(source_flow.get("name") or "Migrated flow"),
+            description=req.description
+            if req.description is not None
+            else source_flow.get("description"),
+            definition_json=definition_payload,
+            created_by=req.actor_id,
+            is_active=req.is_active,
+            version_from_flow_id=flow_id,
+        )
+    )
+    return {
+        "status": "migrated",
+        "source_flow_id": str(flow_id),
+        "migration": migration_record,
+        "flow": created,
     }
 
 
@@ -10685,6 +10839,7 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
     from mas_core.workflow import (
         FlowNodeType,
         FlowValidationError,
+        audit_legacy_task_aliases,
         parse_flow_definition,
         validate_flow,
     )
@@ -10701,11 +10856,13 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
             "errors": [{"code": "INVALID_FLOW_DEFINITION", "message": str(exc)}],
             "warnings": warnings,
             "nodes": node_checks,
+            "compatibility_aliases": [],
         }
     for message in validate_flow(definition):
         errors.append({"code": "FLOW_VALIDATION_FAILED", "message": message})
 
     storage = _storage()
+    compatibility_aliases = audit_legacy_task_aliases(definition)
     if req.project_id is not None:
         project = await storage.get_project(req.project_id)
         if project is None:
@@ -10717,6 +10874,12 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
         if node.type != FlowNodeType.TASK:
             continue
         check: dict[str, Any] = {"node_id": node.id, "ready": True, "checks": {}}
+        alias_finding = next(
+            (item for item in compatibility_aliases if item["node_id"] == node.id),
+            None,
+        )
+        if alias_finding is not None:
+            check["compatibility_aliases"] = alias_finding
         node_checks.append(check)
         try:
             policy = TaskNodePolicy.model_validate(node.config)
@@ -10858,9 +11021,11 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
 
     return {
         "valid": not errors and all(check["ready"] for check in node_checks),
+        "schema_version": definition.schema_version,
         "errors": errors,
         "warnings": warnings,
         "nodes": node_checks,
+        "compatibility_aliases": compatibility_aliases,
     }
 
 

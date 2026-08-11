@@ -101,6 +101,42 @@ async def test_flow_dry_run_rejects_inactive_worker(client) -> None:
     assert any(error["code"] == "WORKER_NOT_ACTIVE" for error in body["errors"])
 
 
+@pytest.mark.anyio
+async def test_flow_dry_run_surfaces_legacy_task_alias_migration_guidance(client) -> None:
+    _patch_storage(_DryRunStorage())
+    definition = {
+        "nodes": [
+            {"id": "start", "type": "start", "config": {}},
+            {
+                "id": "legacy-task",
+                "type": "task",
+                "config": {"team_id": "dept_qa", "action": "test.run"},
+            },
+            {"id": "end", "type": "end", "config": {}},
+        ],
+        "edges": [
+            {"id": "start-task", "source": "start", "target": "legacy-task"},
+            {"id": "task-end", "source": "legacy-task", "target": "end"},
+        ],
+    }
+
+    response = await client.post("/flows/dry-run", json={"definition_json": definition})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["compatibility_aliases"] == [
+        {
+            "node_id": "legacy-task",
+            "deprecated_fields": ["action", "team_id"],
+            "has_worker_id": False,
+            "disposition": "manual_worker_binding_required",
+            "recommendation": "bind a concrete worker_id before activation; team_id/action cannot dispatch a Worker Run",
+        }
+    ]
+    assert body["nodes"][0]["compatibility_aliases"]["disposition"] == "manual_worker_binding_required"
+
+
 def test_model_less_task_rejects_a_model_profile() -> None:
     from mas_core.workflow import parse_flow_definition, validate_flow
 

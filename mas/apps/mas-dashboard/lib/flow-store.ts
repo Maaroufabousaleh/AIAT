@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Flow, FlowDefinition, FlowInstance, FlowNodeExecution } from "./flow-types";
+import type { Flow, FlowDefinition, FlowInstance, FlowNodeExecution, FlowTemplate } from "./flow-types";
 
 interface FlowState {
   flows: Flow[];
@@ -19,10 +19,20 @@ interface FlowState {
   setError: (error: string | null) => void;
   
   fetchFlows: () => Promise<void>;
+  fetchFlowTemplates: () => Promise<FlowTemplate[]>;
   fetchFlow: (id: string) => Promise<Flow | null>;
   createFlow: (data: { name: string; description?: string; definition_json: FlowDefinition; is_active?: boolean; version_from_flow_id?: string }) => Promise<Flow | null>;
   updateFlow: (id: string, data: Partial<Flow>) => Promise<Flow | null>;
   deleteFlow: (id: string) => Promise<boolean>;
+  migrateLegacyTasks: (id: string, data: {
+    worker_bindings: Record<string, string>;
+    model_profile_bindings?: Record<string, string>;
+    actor_id?: string;
+    dry_run?: boolean;
+    is_active?: boolean;
+    name?: string;
+    description?: string;
+  }) => Promise<Record<string, unknown> | null>;
   
   fetchFlowInstance: (id: string) => Promise<FlowInstance | null>;
   fetchProjectFlowInstance: (projectId: string) => Promise<FlowInstance | null>;
@@ -31,6 +41,7 @@ interface FlowState {
   executeNodeAction: (instanceId: string, nodeId: string, action: string, data?: { output?: Record<string, unknown>; error?: string; approved?: boolean }) => Promise<FlowInstance | null>;
   fetchNodeExecutions: (instanceId: string) => Promise<FlowNodeExecution[]>;
   switchFlowInstance: (instanceId: string, newFlowId: string, preserveContext?: boolean) => Promise<FlowInstance | null>;
+  migrateFlowInstance: (instanceId: string, newFlowId: string, preserveContext?: boolean, actorId?: string) => Promise<FlowInstance | null>;
   updateInstanceContext: (instanceId: string, context: Record<string, unknown>) => Promise<FlowInstance | null>;
   escalateFlowInstance: (instanceId: string, escalateTo: string, reason?: string) => Promise<FlowInstance | null>;
   retryFlowInstance: (instanceId: string) => Promise<FlowInstance | null>;
@@ -63,6 +74,18 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       set({ flows: Array.isArray(data) ? data : [], loading: false });
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
+    }
+  },
+
+  fetchFlowTemplates: async () => {
+    try {
+      const res = await fetch("/api/flow-templates");
+      if (!res.ok) throw new Error("Failed to fetch flow templates");
+      const data = await res.json();
+      return Array.isArray(data?.templates) ? data.templates : [];
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
     }
   },
 
@@ -137,6 +160,37 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     } catch (e) {
       set({ error: (e as Error).message, loading: false });
       return false;
+    }
+  },
+
+  migrateLegacyTasks: async (id, data) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/${id}/migrate-legacy-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          payload.error || payload.detail?.message || payload.detail || "Failed to migrate legacy tasks",
+        );
+      }
+      const nextFlow = payload.flow;
+      if (nextFlow && typeof nextFlow.id === "string") {
+        set((state) => ({
+          flows: [nextFlow, ...state.flows.filter((flow) => flow.id !== nextFlow.id)],
+          currentFlow: nextFlow,
+          loading: false,
+        }));
+      } else {
+        set({ loading: false });
+      }
+      return payload as Record<string, unknown>;
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Failed to migrate legacy tasks", loading: false });
+      return null;
     }
   },
 
@@ -252,6 +306,27 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         body: JSON.stringify({ flow_id: newFlowId, preserve_context: preserveContext }),
       });
       if (!res.ok) throw new Error("Failed to switch flow");
+      const data = await res.json();
+      set({ currentInstance: data, loading: false });
+      return data;
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+      return null;
+    }
+  },
+
+  migrateFlowInstance: async (instanceId, newFlowId, preserveContext = true, actorId = "human_operator") => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetch(`/api/flows/instances/${instanceId}/migrate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: newFlowId, preserve_context: preserveContext, actor_id: actorId }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.error || detail.detail?.message || detail.detail || "Failed to migrate flow instance");
+      }
       const data = await res.json();
       set({ currentInstance: data, loading: false });
       return data;
