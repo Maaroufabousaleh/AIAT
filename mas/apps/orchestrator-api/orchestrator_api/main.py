@@ -146,6 +146,7 @@ from mas_core.workflow.states import ProjectState
 
 VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
+WorkerUpdatePolicy = Literal["manual", "auto-patch", "auto-minor", "auto-all"]
 
 logger = logging.getLogger(__name__)
 
@@ -1750,7 +1751,7 @@ class RegisterWorkerRequest(BaseModel):
     team_id: str | None = None
     source_repo: str | None = None
     version_pin: str | None = None
-    update_policy: str = "manual"
+    update_policy: WorkerUpdatePolicy = "manual"
     model_mode: str = "none"
     model_profile_id: str | None = None
     identity_mailbox_class: str = "permanent"
@@ -1764,7 +1765,7 @@ class UpdateWorkerRequest(BaseModel):
     team_id: str | None = None
     version: str | None = None
     version_pin: str | None = None
-    update_policy: str | None = None
+    update_policy: WorkerUpdatePolicy | None = None
     adapter_entrypoint: str | None = None
     adapter_module: str | None = None
     wrapper_config: dict[str, Any] | None = None
@@ -8114,6 +8115,26 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
     existing = await storage.get_worker(worker_id)
     if existing is None:
         raise HTTPException(404, f"Worker {worker_id} not found")
+
+    # Capability IDs and their team context are authority-bearing fields.  A
+    # worker update must apply the same persisted-capability grant policy as
+    # registration, otherwise an operator could attach a forbidden tool after
+    # the initial registration checks have completed.
+    if req.capability_ids is not None or req.team_id is not None:
+        existing_adapter_config = dict(existing.get("adapter_config") or {})
+        role_value = existing.get("role") or existing_adapter_config.get("role")
+        team_value = req.team_id if req.team_id is not None else existing.get("team_id")
+        capability_ids = (
+            req.capability_ids
+            if req.capability_ids is not None
+            else list(existing.get("capability_ids") or [])
+        )
+        await _validate_persisted_capability_tool_grants(
+            storage,
+            capability_ids,
+            role_value=role_value,
+            team_id=team_value,
+        )
 
     update_kwargs: dict[str, Any] = {}
     if req.adapter_type is not None:
