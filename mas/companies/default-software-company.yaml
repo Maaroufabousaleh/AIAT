@@ -3,6 +3,37 @@ slug: aiat-default
 name: AIAT Default Software Company
 description: Default governed software-company manifest for a fresh AIAT installation.
 ceo_worker_id: ceo
+timezone: UTC
+retention:
+  project_days: 3650
+  evidence_days: 3650
+  artifact_days: 365
+  audit_days: 3650
+  trace_days: 3650
+  trace_sample_rate: 1.0
+  terminal_mode: archive
+privacy:
+  default_class: internal
+  external_worker_allowed_classes: [public, internal]
+  require_residency_match: false
+evidence_policy:
+  required_for_completion: [documents, artifacts, approvals, audit]
+  require_checksums: true
+  require_approval_records: true
+  default_policy:
+    policy_id: software_delivery
+    version: "1.0"
+    requirements: {}
+model_policy:
+  allowed_profile_ids: []
+  default_profile_id: null
+  require_exact_profile: true
+  allow_gateway_failover: true
+deployment:
+  profile: local
+  sandbox_profile: gvisor
+  require_immutable_images: true
+  allowed_regions: []
 departments:
   - id: exec_ceo
     name: CEO Office
