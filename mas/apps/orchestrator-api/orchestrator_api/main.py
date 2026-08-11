@@ -1814,6 +1814,22 @@ class FlowFromTemplateRequest(BaseModel):
     is_active: bool = False
 
 
+class FlowImportRequest(BaseModel):
+    """Import a validated flow envelope, optionally as a new immutable version."""
+
+    name: str
+    description: str | None = None
+    definition_json: dict[str, Any]
+    created_by: str = "import"
+    is_active: bool = False
+    version_from_flow_id: UUID | None = None
+
+
+class FlowDiffRequest(BaseModel):
+    from_flow_id: UUID
+    to_flow_id: UUID
+
+
 class FlowDryRunRequest(BaseModel):
     """Non-mutating validation of a typed flow definition and its assignments."""
 
@@ -9139,6 +9155,53 @@ async def create_flow_from_template(req: FlowFromTemplateRequest) -> dict[str, A
     return {"status": "created_from_template", "template_id": req.template_id, "flow": created}
 
 
+@app.post("/flows/import", status_code=201)
+async def import_flow(req: FlowImportRequest) -> dict[str, Any]:
+    """Import a flow through the same validation/versioning path as creation."""
+
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name,
+            description=req.description,
+            definition_json=req.definition_json,
+            created_by=req.created_by,
+            is_active=req.is_active,
+            version_from_flow_id=req.version_from_flow_id,
+        )
+    )
+    return {"status": "imported", "flow": created}
+
+
+@app.post("/flows/diff")
+async def diff_flows(req: FlowDiffRequest) -> dict[str, Any]:
+    """Compare two immutable flow definitions without mutating either one."""
+
+    from mas_core.workflow.definition_tools import flow_definition_diff, flow_definition_hash
+
+    storage = _storage()
+    from_flow = await storage.get_flow(req.from_flow_id)
+    to_flow = await storage.get_flow(req.to_flow_id)
+    if from_flow is None:
+        raise HTTPException(404, f"Flow {req.from_flow_id} not found")
+    if to_flow is None:
+        raise HTTPException(404, f"Flow {req.to_flow_id} not found")
+    from_definition = dict(from_flow.get("definition_json") or {})
+    to_definition = dict(to_flow.get("definition_json") or {})
+    return {
+        "from": {
+            "flow_id": str(req.from_flow_id),
+            "version": from_flow.get("version"),
+            "definition_sha256": flow_definition_hash(from_definition),
+        },
+        "to": {
+            "flow_id": str(req.to_flow_id),
+            "version": to_flow.get("version"),
+            "definition_sha256": flow_definition_hash(to_definition),
+        },
+        "changes": flow_definition_diff(from_definition, to_definition),
+    }
+
+
 @app.post("/flows/dry-run")
 async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
     """Validate topology and every typed task assignment without creating a flow.
@@ -9423,6 +9486,58 @@ async def get_flow(flow_id: UUID) -> dict[str, Any]:
     if flow is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
     return _serialize(flow)
+
+
+@app.get("/flows/{flow_id}/export")
+async def export_flow(flow_id: UUID) -> dict[str, Any]:
+    """Return a portable, hashed flow envelope for backup or review."""
+
+    from mas_core.workflow.definition_tools import flow_definition_hash
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    definition_json = dict(flow.get("definition_json") or {})
+    return {
+        "format": "aiat.flow-export.v1",
+        "flow": {
+            "name": flow.get("name"),
+            "description": flow.get("description"),
+            "version": flow.get("version"),
+            "created_by": flow.get("created_by"),
+            "definition_json": definition_json,
+        },
+        "definition_sha256": flow_definition_hash(definition_json),
+    }
+
+
+@app.post("/flows/{flow_id}/publish")
+async def publish_flow(flow_id: UUID) -> dict[str, Any]:
+    """Publish a validated definition as the active selectable flow."""
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    published = await storage.update_flow(flow_id, is_active=True)
+    if published is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(published)
+
+
+@app.post("/flows/{flow_id}/deprecate")
+async def deprecate_flow(flow_id: UUID) -> dict[str, Any]:
+    """Deprecate a definition without deleting its immutable history."""
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    deprecated = await storage.update_flow(flow_id, is_active=False)
+    if deprecated is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(deprecated)
 
 
 @app.put("/flows/{flow_id}")
