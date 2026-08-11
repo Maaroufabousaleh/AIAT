@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -50,6 +51,124 @@ async def publish_message(envelope: dict[str, Any]) -> dict[str, Any]:
         resp = await client.post("/messages/publish", json=envelope, headers=_router_auth_headers())
         resp.raise_for_status()
         return resp.json()
+
+
+def _review_context(kwargs: dict[str, Any], *, default_team: str = "office_c_suite") -> dict[str, str]:
+    """Resolve identity and correlation fields for a review response.
+
+    The tool gateway supplies ``_aiat_context`` for every call.  Keeping the
+    identity resolution here prevents a model from forging the sender while
+    still allowing direct unit tests and local development fixtures to provide
+    explicit values.
+    """
+    context = kwargs.get("_aiat_context") or {}
+    project_id = str(kwargs.get("project_id") or context.get("project_id") or "").strip()
+    session_id = str(kwargs.get("session_id") or "").strip()
+    if not project_id:
+        raise ValueError("project_id is required for a review response")
+    if not session_id:
+        raise ValueError("session_id is required for a review response")
+    return {
+        "project_id": project_id,
+        "session_id": session_id,
+        "sender_id": str(
+            kwargs.get("reviewer_id")
+            or context.get("caller_id")
+            or kwargs.get("actor_id")
+            or "reviewer"
+        ),
+        "sender_role": str(context.get("caller_role") or AgentRole.C_SUITE.value),
+        "sender_team": str(context.get("caller_team") or default_team),
+    }
+
+
+def _normalise_verdict(value: Any) -> str:
+    """Map prompt-friendly review decisions to the protocol enum."""
+    raw = str(value or "APPROVED").strip().upper().replace("-", "_")
+    return {
+        "APPROVE": "APPROVED",
+        "APPROVED": "APPROVED",
+        "APPROVED_WITH_COMMENTS": "APPROVED_WITH_COMMENTS",
+        "BLOCKER": "REJECTED",
+        "REJECT": "REJECTED",
+        "REJECTED": "REJECTED",
+        "NEEDS_REVISION": "NEEDS_REVISION",
+    }.get(raw, raw)
+
+
+def _review_comments(kwargs: dict[str, Any], *, default_severity: str | None = None) -> list[dict[str, Any]]:
+    """Build protocol comments without dropping domain-specific review detail."""
+    comments: list[dict[str, Any]] = []
+    raw_comments = kwargs.get("comments", [])
+    if isinstance(raw_comments, dict):
+        raw_comments = [raw_comments]
+    if isinstance(raw_comments, str):
+        raw_comments = [{"body": raw_comments}]
+    if isinstance(raw_comments, list):
+        for item in raw_comments:
+            comment = dict(item) if isinstance(item, dict) else {"body": str(item)}
+            comment.setdefault("severity", default_severity or "INFO")
+            comment.setdefault("body", "")
+            comments.append(comment)
+
+    def add_section(section: str, value: Any, *, suggested_change: bool = False) -> None:
+        if value is None or value == "" or value == []:
+            return
+        values = value if isinstance(value, list) else [value]
+        for entry in values:
+            comment: dict[str, Any] = {
+                "section": section,
+                "severity": default_severity or "INFO",
+                "body": str(entry),
+            }
+            if suggested_change:
+                comment["suggested_change"] = str(entry)
+            comments.append(comment)
+
+    # These optional fields are retained as structured review comments instead
+    # of being silently ignored by the transport adapter.
+    add_section("summary", kwargs.get("summary"))
+    add_section("finding", kwargs.get("findings"))
+    add_section("recommendation", kwargs.get("recommendations"), suggested_change=True)
+    for field in (
+        "financial_score",
+        "tech_risk_level",
+        "resource_coverage_percent",
+        "identified_gaps",
+        "remediation_required",
+        "compliance_gaps",
+        "risk_score",
+    ):
+        add_section(field, kwargs.get(field))
+    return comments
+
+
+def _review_response_envelope(
+    kwargs: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    default_team: str = "office_c_suite",
+) -> dict[str, Any]:
+    context = _review_context(kwargs, default_team=default_team)
+    correlation_id: str | None = None
+    with suppress(ValueError):
+        correlation_id = str(UUID(context["session_id"]))
+    # The router still receives the durable session in the payload; omit the
+    # optional UUID correlation when a local fixture uses a label.
+    envelope: dict[str, Any] = {
+        "message_id": str(uuid4()),
+        "msg_type": "REVIEW_RESPONSE",
+        "sender_id": context["sender_id"],
+        "sender_role": context["sender_role"],
+        "sender_team": context["sender_team"],
+        "recipient_team": "exec_coo",
+        "project_id": context["project_id"],
+        "payload": {**payload, "session_id": context["session_id"]},
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+    }
+    if correlation_id is not None:
+        envelope["correlation_id"] = correlation_id
+    return envelope
 
 
 # ── Project ────────────────────────────────────────────────────────────────
@@ -183,6 +302,46 @@ async def _git_status(*, workspace: Path, project_id: str, remote_name: str) -> 
     }
 
 
+def _initialise_git_workspace(*, workspace: Path, branch: str, remote_name: str, repository_url: str | None) -> None:
+    """Create the small Git layout needed by managed project workspaces.
+
+    ``git init`` rewrites ``.git/config`` and, on Docker Desktop/WSL bind
+    mounts, may fail while chmod-ing its temporary ``config.lock``.  The
+    managed adapter only needs a normal non-bare repository, so write the
+    equivalent deterministic files directly and leave all subsequent object,
+    index, and commit work to Git itself.
+    """
+    git_dir = workspace / ".git"
+    git_dir.mkdir(parents=True, exist_ok=False)
+    for relative in ("objects", "refs/heads", "refs/tags", "info", "hooks"):
+        (git_dir / relative).mkdir(parents=True, exist_ok=True)
+    (git_dir / "config").write_text(
+        "[core]\n"
+        "\trepositoryformatversion = 0\n"
+        "\tfilemode = false\n"
+        "\tbare = false\n"
+        "\tlogallrefupdates = true\n",
+        encoding="utf-8",
+    )
+    (git_dir / "HEAD").write_text(f"ref: refs/heads/{branch}\n", encoding="utf-8")
+    (git_dir / "description").write_text(
+        "AIAT managed project workspace\n", encoding="utf-8"
+    )
+    if repository_url:
+        (git_dir / "config").write_text(
+            "[core]\n"
+            "\trepositoryformatversion = 0\n"
+            "\tfilemode = false\n"
+            "\tbare = false\n"
+            "\tlogallrefupdates = true\n"
+            f"[remote \"{remote_name}\"]\n"
+            f"\turl = {repository_url}\n"
+            "\tfetch = +refs/heads/*:refs/remotes/"
+            f"{remote_name}/*\n",
+            encoding="utf-8",
+        )
+
+
 class ProjectRepositoryTool(BaseTool):
     name = "project.repository"
     group = ToolGroup.WORKFLOW
@@ -248,11 +407,20 @@ class ProjectRepositoryTool(BaseTool):
             if workspace.exists() and any(workspace.iterdir()):
                 raise ValueError("project workspace is not empty and is not a Git repository")
             workspace.mkdir(parents=True, exist_ok=True)
-            await _git_command(["init", "-b", branch], cwd=workspace)
-            await _git_command(["config", "user.name", "AIAT"], cwd=workspace)
-            await _git_command(["config", "user.email", "aiat@local.invalid"], cwd=workspace)
-            if repository_url:
-                await _git_command(["remote", "add", remote_name, repository_url], cwd=workspace)
+            _initialise_git_workspace(
+                workspace=workspace,
+                branch=branch,
+                remote_name=remote_name,
+                repository_url=repository_url,
+            )
+            # Do not persist user identity with ``git config`` here.  The
+            # default local stack bind-mounts the operator workspace into a
+            # non-root container user; Docker Desktop/WSL mounts can create
+            # Git lock files but reject the chmod that ``git config`` performs
+            # while replacing ``.git/config``.  Supplying the bounded identity
+            # for the initialization commit keeps the workspace portable and
+            # avoids turning a harmless mount capability difference into a
+            # failed project creation.
             manifest = workspace / ".aiat" / "project.json"
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text(
@@ -269,7 +437,18 @@ class ProjectRepositoryTool(BaseTool):
                 encoding="utf-8",
             )
             await _git_command(["add", ".aiat/project.json"], cwd=workspace)
-            await _git_command(["commit", "-m", "Initialize AIAT project workspace"], cwd=workspace)
+            await _git_command(
+                [
+                    "-c",
+                    "user.name=AIAT",
+                    "-c",
+                    "user.email=aiat@local.invalid",
+                    "commit",
+                    "-m",
+                    "Initialize AIAT project workspace",
+                ],
+                cwd=workspace,
+            )
 
         elif operation == "sync":
             if not (workspace / ".git").exists():
@@ -688,18 +867,21 @@ class ReviewSubmitResponseTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "payload": {
-                "action": "SUBMIT_REVIEW",
-                "session_id": kwargs.get("session_id", ""),
-                "verdict": kwargs.get("verdict", "APPROVED"),
-                "comments": kwargs.get("comments", []),
-                "severity": kwargs.get("severity"),
-                "reviewer_id": kwargs.get("reviewer_id", ""),
-            },
+        context = _review_context(kwargs)
+        payload = {
+            "document_id": str(kwargs["document_id"]) if kwargs.get("document_id") else None,
+            "reviewer_role": str(kwargs.get("reviewer_role") or context["sender_team"]),
+            "verdict": _normalise_verdict(kwargs.get("verdict", kwargs.get("decision"))),
+            "veto": bool(kwargs.get("veto", False)),
+            "comments": _review_comments(
+                kwargs,
+                default_severity=str(kwargs.get("severity") or "INFO").upper(),
+            ),
         }
-        return await orch_post("/tasks", body)
+        # The COO consumes REVIEW_RESPONSE directly.  Publishing the
+        # canonical envelope avoids queueing a generic ADMIN_TASK that the COO
+        # would treat as an unrelated reasoning request.
+        return await publish_message(_review_response_envelope(kwargs, payload=payload))
 
 
 class ReviewSubmitVetoTool(BaseTool):
@@ -711,17 +893,73 @@ class ReviewSubmitVetoTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        _review_context(kwargs, default_team="office_cso")
+        reason = str(kwargs.get("reason") or "").strip()
+        if not reason:
+            raise ValueError("reason is required for a CSO veto")
+        evidence = kwargs.get("evidence") or []
+        if isinstance(evidence, str):
+            evidence = [evidence]
+        evidence_lines = [str(item) for item in evidence]
+        resolution_path = str(kwargs.get("resolution_path") or "").strip()
+        body = reason
+        if evidence_lines:
+            body += " Evidence: " + "; ".join(evidence_lines)
+        if resolution_path:
+            body += " Resolution: " + resolution_path
+        payload = {
+            "document_id": str(kwargs["document_id"]) if kwargs.get("document_id") else None,
+            "reviewer_role": "CSO",
+            "verdict": "REJECTED",
+            "veto": True,
+            "comments": [
+                {
+                    "section": "security",
+                    "severity": "BLOCKER",
+                    "body": body,
+                    "veto": True,
+                }
+            ],
+        }
+        return await publish_message(
+            _review_response_envelope(kwargs, payload=payload, default_team="office_cso")
+        )
+
+
+class PrivilegedOpsRequestTool(BaseTool):
+    """Submit a CEO Layer-2 action to the audited control-plane gate."""
+
+    name = "privileged_ops.request"
+    group = ToolGroup.WORKFLOW
+    description = "Request a Layer-2 privileged action through the audited CEO gate."
+    allowed_roles = [AgentRole.ORCHESTRATOR]
+    cache_ttl_seconds = 0
+    idempotent = False
+
+    async def execute(self, **kwargs: Any) -> Any:
+        context = kwargs.get("_aiat_context") or {}
+        action = str(kwargs.get("action") or "").strip()
+        if not action:
+            raise ValueError("action is required for a privileged operation request")
+        payload = kwargs.get("payload") or {}
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+        justification = str(kwargs.get("justification") or "").strip()
+        if justification:
+            payload = {**payload, "justification": justification}
         return await orch_post(
-            f"/projects/{project_id}/transition",
+            "/ceo/privileged-action",
             {
-                "event": "cso_veto",
-                "actor_id": kwargs.get("actor_id", "cso"),
-                "context": {
-                    "reason": kwargs.get("reason", "Security concern"),
-                    "session_id": kwargs.get("session_id"),
-                },
+                "action": action,
+                "actor_id": str(
+                    kwargs.get("actor_id") or context.get("caller_id") or "ceo"
+                ),
+                "actor_role": str(
+                    kwargs.get("actor_role") or context.get("caller_role") or "orchestrator"
+                ),
+                "payload": payload,
             },
+            context=context,
         )
 
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 from tool_service.code_review_runner import review
 from tool_service.config import Settings
 from tool_service.devops_adapter import monitoring
@@ -13,6 +14,7 @@ from tool_service.rate_limiter import RateLimiterPool
 from tool_service.registry import ToolRegistry
 from tool_service.sandbox_runner import execute as execute_sandbox
 from tool_service.tools.all_tools import get_all_tools
+from tool_service.tools.adapters import CodeReviewTool
 
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest
@@ -90,6 +92,30 @@ def test_code_review_reports_structured_findings_without_secret_text(tmp_path):
     assert "do-not-leak" not in json.dumps(result)
 
 
+@pytest.mark.anyio
+async def test_code_review_tool_uses_local_reviewer_when_external_command_is_unset(
+    tmp_path, monkeypatch
+):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "audit@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "AIAT Audit"], cwd=tmp_path, check=True)
+    source = tmp_path / "app.py"
+    source.write_text("safe = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    source.write_text('safe = True\napi_key = "local-review-fixture"\n', encoding="utf-8")
+    monkeypatch.delenv("TOOL_CODE_REVIEW_COMMAND", raising=False)
+    monkeypatch.setattr("tool_service.tools.adapters._workspace_root", lambda: tmp_path)
+
+    result = await CodeReviewTool().execute(cwd=".")
+
+    assert result["available"] is True
+    assert result["backend"] == "aiat_deterministic_diff_review"
+    assert result["external_adapter_configured"] is False
+    assert result["findings_count"] == 1
+    assert "local-review-fixture" not in json.dumps(result)
+
+
 def test_monitoring_adapter_writes_prometheus_and_synthetic_configs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
@@ -104,6 +130,43 @@ def test_monitoring_adapter_writes_prometheus_and_synthetic_configs(tmp_path, mo
         "message-router",
         "tool-service",
     }
+
+
+def test_monitoring_adapter_writes_litellm_omniroute_analytics_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    result = monitoring(
+        {
+            "config": {
+                "target": "litellm_omniroute",
+                "output_dir": "analytics",
+                "litellm_url": "http://litellm:4000",
+                "omniroute_url": "http://omniroute:20128",
+            }
+        }
+    )
+
+    assert result["target"] == "litellm_omniroute"
+    assert result["network_probe_performed"] is False
+    analytics = json.loads((tmp_path / "analytics" / "aiat-analytics.json").read_text())
+    assert analytics["schema_version"] == "aiat.monitoring-analytics-plan.v1"
+    assert analytics["surfaces"]["litellm"]["health_url"].endswith("/health/liveliness")
+    checks = yaml.safe_load((tmp_path / "analytics" / "synthetic_checks.yml").read_text())
+    assert {check["name"] for check in checks["checks"]} >= {"litellm", "omniroute"}
+
+
+def test_monitoring_adapter_rejects_credentials_in_analytics_endpoint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        monitoring(
+            {
+                "config": {
+                    "target": "analytics",
+                    "litellm_url": "https://user:password@litellm:4000",
+                }
+            }
+        )
 
 
 def test_settings_parse_reviewed_mcp_server_registry():

@@ -30,11 +30,11 @@ def _mock_orchestrator_http(monkeypatch):
     """
     from uuid import uuid4
 
-    async def fake_orch_get(path, params=None):
+    async def fake_orch_get(path, params=None, *, context=None):
         """Return plausible stub data for GET requests."""
         return {"id": str(uuid4()), "status": "ok", "state": "INTAKE", "items": []}
 
-    async def fake_orch_post(path, body=None):
+    async def fake_orch_post(path, body=None, *, context=None, principal="service"):
         """Return plausible stub data for POST requests."""
         return {
             "id": str(uuid4()),

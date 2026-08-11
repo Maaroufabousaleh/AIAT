@@ -26,6 +26,7 @@ DOCUMENTED_DEFAULT_TOOLS = {
     "review.submit",
     "review.aggregate",
     "review.submit_veto",
+    "privileged_ops.request",
     "sprint.create",
     "sprint.activate",
     "issue.create",
@@ -112,7 +113,9 @@ def test_manifest_reports_unconfigured_adapters_as_unavailable(make_registry, mo
 
     assert manifest["security.scan"]["available"] is False
     assert manifest["security.scan"]["configured"] is False
-    assert manifest["code.review"]["available"] is False
+    assert manifest["code.review"]["available"] is True
+    assert manifest["code.review"]["backend"] == "aiat_deterministic_diff_review"
+    assert manifest["code.review"]["configured"] is False
     assert manifest["document.ingest"]["available"] is True
 
 
@@ -127,6 +130,7 @@ async def test_tools_endpoint_exposes_documented_defaults(client):
 def test_oss_compatibility_aliases_resolve_to_guarded_wrappers():
     assert resolve_tool_name("semgrep") == "security.scan"
     assert resolve_tool_name("skillspector") == "security.scan"
+    assert resolve_tool_name("trufflehog") == "security.scan"
     assert resolve_tool_name("docling") == "document.ingest"
     assert resolve_tool_name("playwright.test") == "test.run"
     assert resolve_tool_name("opentofu.plan") == "iac.plan"
@@ -355,6 +359,72 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
 
 
 @pytest.mark.anyio
+async def test_trufflehog_alias_delegates_to_the_shared_bounded_adapter(
+    make_registry, tmp_path, monkeypatch
+):
+    captured = {}
+
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return {"available": True, "returncode": 0, "stdout": '{"path":"secret"}\n'}
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="trufflehog",
+            kwargs={"path": "."},
+        )
+    )
+
+    assert response.success is True
+    assert "trufflehog filesystem --json ." in captured["argv"][2]
+    assert response.result["backend"] == "trufflehog"
+    assert response.result["scanner"] == "trufflehog"
+    assert response.result["findings_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_skillspector_alias_delegates_to_the_shared_bounded_adapter(
+    make_registry, tmp_path, monkeypatch
+):
+    captured = {}
+
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return {"available": True, "returncode": 0, "stdout": '{"findings": [{"rule": "fixture"}]}' }
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SKILLSPECTOR_COMMAND", "skillspector scan --json .")
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="skillspector",
+            kwargs={"path": "."},
+        )
+    )
+
+    assert response.success is True
+    assert captured["argv"] == ["skillspector", "scan", "--json", "."]
+    assert response.result["backend"] == "skillspector"
+    assert response.result["scanner"] == "skillspector"
+    assert response.result["findings_count"] == 1
+    assert response.result["command_configured"] is True
+
+
+@pytest.mark.anyio
 async def test_configured_infra_adapter_bounds_output_while_streaming(monkeypatch):
     from tool_service.tools.infra import _run_configured_adapter
 
@@ -391,8 +461,11 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
     )
 
     assert response.success is True
-    assert response.result["available"] is False
-    assert response.result["backend"] == "docling"
+    assert response.result["available"] is True
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["backend"] == "plain_text_fallback"
+    assert response.result["reason"] == "docling_binary_not_found"
     assert "Body" in response.result["text"]
 
 

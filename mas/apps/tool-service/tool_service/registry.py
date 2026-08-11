@@ -448,6 +448,11 @@ class ToolRegistry:
         # storage (for example ``blob.download``) without changing the caller
         # contract.  An explicit tool argument remains authoritative.
         kwargs = dict(request.tool_kwargs)
+        # Scanner aliases resolve to the shared bounded security adapter. Keep
+        # the requested alias visible to that adapter so each scanner uses its
+        # own executable instead of silently falling back to Semgrep.
+        if tool_name in {"skillspector", "trufflehog"} and "scanner" not in kwargs:
+            kwargs["scanner"] = tool_name
         # Caller identity comes from the protocol request after gateway auth;
         # overwrite any user-supplied reserved context so a worker cannot forge
         # another worker's identity inside governed identity tools.

@@ -385,9 +385,11 @@ class DocumentIngestTool(BaseTool):
                 result["document"] = json.loads(result["stdout"])
             return result
         return {
-            "available": False,
-            "backend": "docling",
-            "reason": "binary_not_found",
+            "available": True,
+            "configured": True,
+            "degraded": True,
+            "backend": "plain_text_fallback",
+            "reason": "docling_binary_not_found",
             "path": path,
             "size_bytes": safe_path.stat().st_size,
             "text": safe_path.read_text(encoding="utf-8", errors="replace")[:50_000],
@@ -397,7 +399,7 @@ class DocumentIngestTool(BaseTool):
 class SecurityScanTool(BaseTool):
     name = "security.scan"
     group = ToolGroup.KPI_UTILITY
-    description = "Run Semgrep/SkillSpector-style static checks through a process adapter."
+    description = "Run configured Semgrep/SkillSpector/TruffleHog checks through a bounded process adapter."
     allowed_roles = _WORKER
     cache_ttl_seconds = 0
     idempotent = False
@@ -406,6 +408,81 @@ class SecurityScanTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         cwd = _workspace_cwd(project_id, kwargs.get("path", "."))
+        scanner = str(kwargs.get("scanner") or "semgrep").strip().lower()
+        if scanner not in {"semgrep", "skillspector", "trufflehog"}:
+            return {
+                "available": False,
+                "configured": False,
+                "scanner": scanner,
+                "reason": "unsupported_scanner",
+            }
+        if scanner == "skillspector":
+            # SkillSpector is an optional scanner selected through the same
+            # hardened sandbox boundary as the other security tools.  The
+            # command is operator-configurable because the upstream CLI
+            # surface varies by installation; its absence is an honest
+            # availability result, never a licence or provenance decision.
+            raw_command = os.getenv("TOOL_SKILLSPECTOR_COMMAND", "").strip()
+            argv = shlex.split(raw_command) if raw_command else ["skillspector", "scan", "--json", "."]
+            if not argv:
+                return {
+                    "available": False,
+                    "configured": False,
+                    "scanner": scanner,
+                    "reason": "TOOL_SKILLSPECTOR_COMMAND_empty",
+                }
+            result = await _run_sandboxed_process(
+                argv,
+                cwd=cwd,
+                timeout=float(kwargs.get("timeout_seconds", 90)),
+                max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+            )
+            findings_count: int | None = None
+            raw_output = str(result.get("stdout") or "")
+            if raw_output:
+                try:
+                    parsed = json.loads(raw_output)
+                except json.JSONDecodeError:
+                    findings_count = len([line for line in raw_output.splitlines() if line.strip()])
+                else:
+                    if isinstance(parsed, dict):
+                        findings = parsed.get("findings")
+                        findings_count = len(findings) if isinstance(findings, list) else 0
+                    elif isinstance(parsed, list):
+                        findings_count = len(parsed)
+                    else:
+                        findings_count = 0
+            result["backend"] = "skillspector"
+            result["scanner"] = scanner
+            result["findings_count"] = findings_count
+            result["command_configured"] = bool(raw_command)
+            return result
+        if scanner == "trufflehog":
+            argv = [
+                "sh",
+                "-lc",
+                (
+                    "set -e; "
+                    "rm -rf /tmp/aiat-trufflehog-src; "
+                    "mkdir -p /tmp/aiat-trufflehog-src; "
+                    "cp -R . /tmp/aiat-trufflehog-src/; "
+                    "cd /tmp/aiat-trufflehog-src; "
+                    "trufflehog filesystem --json ."
+                ),
+            ]
+            result = await _run_sandboxed_process(
+                argv,
+                cwd=cwd,
+                timeout=float(kwargs.get("timeout_seconds", 90)),
+                max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+            )
+            findings = [
+                line for line in str(result.get("stdout") or "").splitlines() if line.strip()
+            ]
+            result["backend"] = "trufflehog"
+            result["scanner"] = scanner
+            result["findings_count"] = len(findings) if result.get("available") else None
+            return result
         config = kwargs.get("config", "auto")
         if config in ("", "auto"):
             config = "/workspace/mas/apps/tool-service/tool_service/semgrep-default.yml"
@@ -449,6 +526,7 @@ class SecurityScanTool(BaseTool):
             except json.JSONDecodeError:
                 result["findings_count"] = None
         result["backend"] = "semgrep"
+        result["scanner"] = scanner
         return result
 
 
@@ -482,7 +560,7 @@ class TestRunTool(BaseTool):
 class CodeReviewTool(BaseTool):
     name = "code.review"
     group = ToolGroup.KPI_UTILITY
-    description = "Run a pinned external code-review adapter command when configured."
+    description = "Run the bounded local diff reviewer or a pinned external adapter."
     allowed_roles = _WORKER
     cache_ttl_seconds = 0
     idempotent = False
@@ -490,8 +568,6 @@ class CodeReviewTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         raw = os.getenv("TOOL_CODE_REVIEW_COMMAND", "").strip()
-        if not raw:
-            return {"available": False, "reason": "TOOL_CODE_REVIEW_COMMAND_not_configured"}
         cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
         payload = {
             "mode": str(kwargs.get("mode") or "diff"),
@@ -499,6 +575,23 @@ class CodeReviewTool(BaseTool):
             "head": str(kwargs.get("head") or "HEAD"),
             "severity_threshold": str(kwargs.get("severity_threshold") or "medium"),
         }
+        if not raw:
+            # The local deterministic reviewer is the default adapter.  An
+            # external command remains an optional, explicitly configured
+            # extension and never becomes an implicit network/provider call.
+            from ..code_review_runner import review
+
+            try:
+                result = review(cwd, payload)
+            except Exception as exc:
+                return {
+                    "available": False,
+                    "backend": "aiat_deterministic_diff_review",
+                    "reason": type(exc).__name__,
+                }
+            result["backend"] = "aiat_deterministic_diff_review"
+            result["external_adapter_configured"] = False
+            return result
         result = await _run_process(
             shlex.split(raw),
             cwd=cwd,

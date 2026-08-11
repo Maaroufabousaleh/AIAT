@@ -36,6 +36,14 @@ def tool_readiness(tool_name: str, settings: Settings) -> dict[str, Any]:
     env_name = _ENV_ADAPTERS.get(tool_name)
     if env_name:
         configured = bool(os.getenv(env_name, "").strip())
+        if tool_name == "code.review":
+            return {
+                "available": True,
+                "configured": configured,
+                "backend": "external_command" if configured else "aiat_deterministic_diff_review",
+                "degraded": False,
+                "unavailable_reason": None,
+            }
         return {
             "available": configured,
             "configured": configured,
