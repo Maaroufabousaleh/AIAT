@@ -15,7 +15,7 @@
   tests enforce compatibility.
 - External client-language SDKs remain optional follow-up work.
 - [x] Extend the company manifest with typed timezone, retention, privacy, evidence, model, and deployment policies; legacy manifests remain valid.
-- [x] Propagate the manifest timezone through runner prompt timestamps, the
+- [x] Propagate the manifest timezone through runner prompt timestamps (`c955ac8`), the
   `time_now` tool, orchestrator scheduler defaults, dashboard display helpers,
   and Compose/development defaults; no shipped prompt hardcodes a regional
   timezone.

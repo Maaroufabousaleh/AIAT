@@ -1,7 +1,7 @@
 # Control Plane and Company Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implemented foundation; prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
+**Status:** implemented foundation; company-timezone runner propagation committed as `c955ac8`, prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -78,7 +78,8 @@ The control plane turns AIAT from a collection of agents into one governed compa
 - [x] Apply the manifest timezone through runner prompt headers, the `time_now`
   tool, orchestrator scheduler defaults, dashboard display helpers, and
   Compose deployment defaults; unit and type checks cover the configurable
-  path.
+  path. Runner prompt rendering and invalid-zone UTC fallback are covered by
+  `c955ac8`.
 - [x] Reconcile all 11 authority/manager prompts with the canonical tool
   manifest, concrete registrations, role/team grants, canonical review
   payloads, and the CEO privileged-action route using
