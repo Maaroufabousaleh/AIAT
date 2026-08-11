@@ -35,6 +35,14 @@ from mas_core.workflow.watchdog import (
     should_watchdog_fire,
     watchdog_elapsed_seconds,
 )
+from mas_core.workflow.worker_binding import (
+    WORKER_RUN_NONTERMINAL_STATES,
+    WORKER_RUN_TERMINAL_STATES,
+    bind_pending_worker_run,
+    classify_worker_run_state,
+    clear_worker_run_binding,
+    normalize_worker_run_state,
+)
 from mas_core.workflow.evidence import (
     DEFAULT_EVIDENCE_POLICIES,
     EVIDENCE_PACKAGE_SCHEMA,
@@ -89,6 +97,12 @@ __all__ = [
     "should_watchdog_fire",
     "validate_flow",
     "watchdog_elapsed_seconds",
+    "WORKER_RUN_NONTERMINAL_STATES",
+    "WORKER_RUN_TERMINAL_STATES",
+    "bind_pending_worker_run",
+    "classify_worker_run_state",
+    "clear_worker_run_binding",
+    "normalize_worker_run_state",
     "EvidencePolicy",
     "EvidenceCheck",
     "EvidenceCompleteness",
