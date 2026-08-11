@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
-RUN pip install --no-cache-dir uv==0.4.*
+RUN pip install --no-cache-dir uv==0.4.30
 
 COPY packages/mas-core/ /tmp/mas-core/
 COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
@@ -51,6 +51,7 @@ COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
 COPY workers/ /app/workers/
 COPY companies/ /app/companies/
+COPY scripts/check_runtime_adapter_conformance.py /app/scripts/check_runtime_adapter_conformance.py
 COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 
 WORKDIR /app
