@@ -1830,6 +1830,20 @@ class FlowDiffRequest(BaseModel):
     to_flow_id: UUID
 
 
+class FlowMigrationRequest(BaseModel):
+    """Request a compatible or explicitly mapped graph migration.
+
+    Graph rewrites are intentionally opt-in.  A mapping only remaps active
+    nodes; historical executions remain attached to their original node IDs.
+    """
+
+    flow_id: UUID
+    preserve_context: bool = True
+    actor_id: str = "human_operator"
+    allow_graph_rewrite: bool = False
+    active_node_mapping: dict[str, str] = Field(default_factory=dict)
+
+
 class FlowDryRunRequest(BaseModel):
     """Non-mutating validation of a typed flow definition and its assignments."""
 
@@ -10294,6 +10308,168 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
             },
         )
 
+    return _serialize(updated)
+
+
+@app.post("/flows/instances/{instance_id}/migrate")
+async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) -> dict[str, Any]:
+    """Apply a compatible or explicitly mapped flow version.
+
+    The default path only accepts unchanged active node IDs and node types.
+    A graph rewrite requires ``allow_graph_rewrite`` plus a one-to-one mapping
+    for every active node whose ID changes.  The mapping is recorded in the
+    instance context and project history; node execution history is never
+    rewritten or deleted.
+    """
+
+    storage = _storage()
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
+
+    old_flow = await storage.get_flow(instance["flow_id"])
+    new_flow = await storage.get_flow(req.flow_id)
+    if old_flow is None or new_flow is None:
+        raise HTTPException(404, "Source or target flow definition not found")
+
+    from mas_core.workflow import parse_flow_definition
+
+    try:
+        old_definition = parse_flow_definition(old_flow["definition_json"])
+        new_definition = parse_flow_definition(new_flow["definition_json"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(409, f"Flow migration definitions are invalid: {exc}") from exc
+
+    if old_definition.schema_version != new_definition.schema_version:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_SCHEMA_MIGRATION_REQUIRED",
+                "message": "Compatible migration requires matching node-schema versions",
+                "from": old_definition.schema_version,
+                "to": new_definition.schema_version,
+            },
+        )
+
+    old_nodes = {node.id: node for node in old_definition.nodes}
+    new_nodes = {node.id: node for node in new_definition.nodes}
+    active_node_ids = sorted(str(node_id) for node_id in (instance.get("active_node_ids") or []))
+    mapping = {
+        str(source): str(target)
+        for source, target in (req.active_node_mapping or {}).items()
+    }
+    if mapping and not req.allow_graph_rewrite:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_GRAPH_REWRITE_NOT_ENABLED",
+                "message": "active_node_mapping requires allow_graph_rewrite=true",
+            },
+        )
+    if req.allow_graph_rewrite and not mapping:
+        raise HTTPException(
+            400,
+            {
+                "code": "FLOW_GRAPH_REWRITE_MAPPING_REQUIRED",
+                "message": "allow_graph_rewrite requires an explicit active_node_mapping",
+            },
+        )
+    if mapping and any(source not in active_node_ids for source in mapping):
+        unknown_sources = sorted(set(mapping) - set(active_node_ids))
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_GRAPH_REWRITE_SOURCE_NOT_ACTIVE",
+                "message": "graph rewrite mappings may only address active nodes",
+                "sources": unknown_sources,
+            },
+        )
+    incompatibilities: list[dict[str, Any]] = []
+    mapped_active_node_ids: list[str] = []
+    for node_id in active_node_ids:
+        old_node = old_nodes.get(node_id)
+        target_id = mapping.get(node_id, node_id)
+        new_node = new_nodes.get(target_id)
+        if new_node is None:
+            incompatibilities.append(
+                {
+                    "node_id": node_id,
+                    "target_node_id": target_id,
+                    "reason": "active node is absent from target flow",
+                }
+            )
+        elif old_node is not None and old_node.type != new_node.type:
+            incompatibilities.append(
+                {
+                    "node_id": node_id,
+                    "reason": "active node type changed",
+                    "from": old_node.type.value,
+                    "to": new_node.type.value,
+                }
+            )
+        else:
+            mapped_active_node_ids.append(target_id)
+    if len(set(mapped_active_node_ids)) != len(mapped_active_node_ids):
+        incompatibilities.append(
+            {
+                "node_ids": active_node_ids,
+                "reason": "active graph rewrite mappings must be one-to-one",
+            }
+        )
+    if mapping and set(mapping) != set(active_node_ids):
+        missing_sources = sorted(set(active_node_ids) - set(mapping))
+        if missing_sources:
+            incompatibilities.append(
+                {
+                    "node_ids": missing_sources,
+                    "reason": "graph rewrite must map every active node explicitly",
+                }
+            )
+    if incompatibilities:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_MIGRATION_INCOMPATIBLE",
+                "message": "Active nodes cannot be mapped without resetting the instance",
+                "incompatibilities": incompatibilities,
+            },
+        )
+
+    migrate = getattr(storage, "migrate_flow_instance", None)
+    if not inspect.iscoroutinefunction(migrate):
+        raise HTTPException(501, "Storage does not support evidence-preserving flow migration")
+    migration_record = {
+        "from_flow_id": str(old_flow["id"]),
+        "from_flow_version": old_flow.get("version"),
+        "to_flow_id": str(new_flow["id"]),
+        "to_flow_version": new_flow.get("version"),
+        "preserved_active_node_ids": active_node_ids,
+        "mapped_active_node_ids": mapped_active_node_ids,
+        "active_node_mapping": mapping,
+        "graph_rewrite": bool(mapping),
+        "actor_id": req.actor_id,
+    }
+    updated = await migrate(
+        instance_id,
+        req.flow_id,
+        active_node_ids=mapped_active_node_ids,
+        preserve_context=req.preserve_context,
+        migration_record=migration_record,
+    )
+    if updated is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    project = await storage.get_project(instance["project_id"])
+    if project is not None:
+        await storage.transition_project(
+            instance["project_id"],
+            new_state=project["state"],
+            event="flow_migrated",
+            triggered_by=req.actor_id,
+            payload=migration_record,
+        )
     return _serialize(updated)
 
 

@@ -6766,6 +6766,48 @@ class AgentStorage:
         )
         return await self.get_flow_instance(instance_id)
 
+    async def migrate_flow_instance(
+        self,
+        instance_id: UUID,
+        new_flow_id: UUID,
+        *,
+        active_node_ids: list[str],
+        preserve_context: bool = True,
+        migration_record: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Migrate a running instance while retaining compatible executions.
+
+        The caller performs compatibility validation against both definitions.
+        This storage operation only changes the pinned flow/version and records
+        a bounded migration marker in context; unlike ``switch_flow_instance``
+        it never deletes historical node executions.
+        """
+
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+        new_flow = await self.get_flow(new_flow_id)
+        if new_flow is None:
+            return None
+
+        context_json = dict(instance.get("context_json") or {}) if preserve_context else {}
+        if migration_record:
+            context_json["last_flow_migration"] = migration_record
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(
+                    flow_id=new_flow_id,
+                    flow_version=new_flow["version"],
+                    active_node_ids=active_node_ids,
+                    context_json=context_json,
+                    updated_at=now,
+                )
+            )
+        return await self.get_flow_instance(instance_id)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Universal worker contract, steward, model, and durable run records
     # ═══════════════════════════════════════════════════════════════════════════
