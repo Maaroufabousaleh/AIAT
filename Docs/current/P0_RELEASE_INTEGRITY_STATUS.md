@@ -165,11 +165,11 @@ single frozen commit before production claims are made.
   `0036_native_trace_spans`; a bounded live `/health` request and operator
   trace read observe one API-request row plus one native transport span,
   retained at [`mas/docs/provenance/trace_observability_live.json`](../../mas/docs/provenance/trace_observability_live.json)
-  and reproducible through [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py).
+  and reproducible through [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py) (`eac83ae`).
   The rebuilt tool-service usage writer also passes a bounded `time_now` probe:
   one project-usage row plus one `tool_service` native span are retained at
   [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json)
-  and reproducible through [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py).
+  and reproducible through [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py) (`eac83ae`).
   The host-side checker now resolves the Compose-only `tool-service:8002`
   alias to the published loopback port only when the orchestrator is local;
   the aggregate live ledger therefore records both trace children as passing.

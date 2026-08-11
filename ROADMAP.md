@@ -538,7 +538,9 @@ The rebuilt tool-service usage writer also passes a bounded pure `time_now` run:
 one project-usage row plus one `tool_service` native span are retained at
 [`mas/docs/provenance/tool_trace_live.json`](mas/docs/provenance/tool_trace_live.json)
 and reproducible through
-[`mas/scripts/check_live_tool_trace.py`](mas/scripts/check_live_tool_trace.py).
+[`mas/scripts/check_live_tool_trace.py`](mas/scripts/check_live_tool_trace.py)
+(`eac83ae`). Both trace probes are fail-closed and never emit payloads or
+credentials.
 The host-side checker resolves the Compose-only `tool-service:8002` alias to
 the published loopback port only for a loopback orchestrator, so the corrected
 aggregate live profile now passes both trace children without rewriting remote

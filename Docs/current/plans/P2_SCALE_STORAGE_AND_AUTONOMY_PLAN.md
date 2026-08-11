@@ -171,7 +171,7 @@
   operator trace read-back observes one `project_usage_events` row and one
   `tool_service` native tool span; secret-safe evidence is retained in
   [`mas/docs/provenance/tool_trace_live.json`](../../../mas/docs/provenance/tool_trace_live.json)
-  and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py).
+  and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py) (`eac83ae`); the host-side probe is fail-closed and creates only bounded telemetry rows.
   The probe creates only normal telemetry rows and does not claim worker/model
   execution or provider evidence.
 - [ ] Connect native model/audit/worker/integration observations to a live
