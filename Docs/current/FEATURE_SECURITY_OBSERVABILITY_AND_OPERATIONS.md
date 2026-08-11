@@ -88,7 +88,12 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   (template coverage regression committed as `1d373ee`),
   `mas/docs/provenance/production_images.yaml`, and
   `mas/infra/docker/image-budgets.yaml`; `mas.sh` keeps local `:dev` defaults
-  isolated from direct production Compose usage.
+  isolated from direct production Compose usage. Local runtime/release wrapper
+  hardening is committed as `fd41874`: `mas.sh validate` passes with distinct
+  CEO/worker development principals, the company IANA timezone is propagated
+  to runner/tool/dashboard containers, and the wrapper's `uv` bootstrap pins
+  align with the operator-pin contract. These conveniences do not weaken
+  direct production image-ref or credential requirements.
 - Technical operator pins are maintained separately in
   [`mas/docs/provenance/operator_pins.yaml`](../../mas/docs/provenance/operator_pins.yaml)
   and checked by [`check_operator_pins.py`](../../mas/scripts/check_operator_pins.py).

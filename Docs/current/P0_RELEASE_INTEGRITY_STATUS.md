@@ -304,7 +304,11 @@ single frozen commit before production claims are made.
   inputs without inventing local OCI digests; its complete Compose-variable
   coverage regression is committed as `1d373ee`; `b9a77e9` keeps development-only
   `:dev` defaults in the wrapper instead of weakening direct production
-  Compose.
+  Compose. Runtime-wrapper hardening is committed as `fd41874`: local
+  validation requires distinct CEO/worker principals, propagates the company
+  timezone to runner/tool/dashboard environments, pins wrapper `uv` bootstrap
+  versions, and documents the identity migration head without supplying
+  production image identities or release credentials.
 - `Dockerfile.tool-service` now builds a lightweight `core` profile. Browser,
   Docling, Semgrep, and Mermaid/Node payloads are installed only by the
   `extensions` profile; `infra/docker/image-budgets.yaml` defines the live
