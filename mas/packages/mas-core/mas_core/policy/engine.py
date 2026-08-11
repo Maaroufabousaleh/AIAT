@@ -106,6 +106,27 @@ class CommunicationPolicy:
         if sender_role == AgentRole.ORCHESTRATOR:
             return True
 
+        # The envelope carries both a declared role and a team.  Never let a
+        # worker (or any other non-CEO principal) choose a higher-trust team in
+        # order to make an otherwise intra-team message look authorised.  A
+        # sub-agent inherits its parent's team tier, so it only needs a known
+        # team rather than an exact tier match.
+        declared_tier = TEAM_TIERS.get(sender_team)
+        if sender_role == AgentRole.SUB_AGENT:
+            if declared_tier is None:
+                return f"Unknown sender team: {sender_team!r}"
+        elif sender_role == AgentRole.WORKER:
+            if declared_tier not in (AgentRole.C_SUITE, AgentRole.ADMIN):
+                return (
+                    f"sender role {sender_role.value!r} does not own sender team "
+                    f"{sender_team!r}"
+                )
+        elif declared_tier != sender_role:
+            return (
+                f"sender role {sender_role.value!r} does not own sender team "
+                f"{sender_team!r}"
+            )
+
         # ── 1. Resolve effective recipient tier ─────────────────────────────
         # None recipient_team → intra-team (always allowed with correct type)
         is_own_team = (recipient_team is None) or (recipient_team == sender_team)

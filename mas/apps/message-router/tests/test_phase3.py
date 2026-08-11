@@ -232,6 +232,25 @@ class TestPublishRoute:
             )
         assert resp.status_code == 403
 
+    def test_publish_rejects_sender_role_team_spoof(self):
+        """A worker cannot place a direct message in the CEO stream by spoofing its team."""
+        mock_redis = self._make_mock_redis()
+        app = _make_test_app(mock_redis)
+        with TestClient(app) as client:
+            env = make_envelope(
+                sender_role=AgentRole.WORKER,
+                sender_team="exec_ceo",
+                recipient_team=None,
+                recipient_id="ceo_agent",
+            )
+            resp = client.post(
+                "/messages/publish",
+                content=env.model_dump_json(),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 403
+        assert "sender team" in resp.json()["detail"]
+
     def test_publish_unknown_team(self):
         """Publishing to an unknown team_id returns 400."""
         mock_redis = self._make_mock_redis()

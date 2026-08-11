@@ -343,6 +343,28 @@ class TestWorkerRouting:
         assert result is not True
         assert "worker" in str(result).lower()
 
+    def test_worker_cannot_impersonate_ceo_team_for_direct_message(self):
+        result = policy.can(
+            AgentRole.WORKER,
+            ORCHESTRATOR_TEAM,
+            "ceo_agent",
+            None,
+            MessageType.TASK,
+        )
+        assert result is not True
+        assert "sender team" in str(result).lower()
+
+    def test_admin_cannot_impersonate_c_suite_team(self):
+        result = policy.can(
+            AgentRole.ADMIN,
+            "office_cfo",
+            None,
+            "office_cfo",
+            MessageType.TASK,
+        )
+        assert result is not True
+        assert "sender team" in str(result).lower()
+
 
 # ===========================================================================
 # Sub-agent — parent-team only
