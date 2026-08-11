@@ -117,4 +117,26 @@ test.describe("CEO evidence detail", () => {
     await expect(page.getByTestId("ceo-evidence-detail")).toContainText("ACTIVE");
     await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("configuration");
   });
+
+  test("preserves citation identity when detail is temporarily unavailable", async ({ page }) => {
+    await page.route("**/api/evidence/model/model-down", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "evidence detail is temporarily unavailable",
+          detail_supported: true,
+        }),
+      });
+    });
+
+    await authenticate(page, "/evidence/model/model-down");
+
+    await expect(page.getByTestId("ceo-evidence-record")).toContainText("model-down");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("temporarily unavailable");
+    await expect(page.getByTestId("ceo-evidence-canonical-link")).toHaveAttribute(
+      "href",
+      "/governance?evidence_kind=model&evidence_id=model-down",
+    );
+  });
 });
