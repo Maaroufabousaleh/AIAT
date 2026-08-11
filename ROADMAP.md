@@ -147,7 +147,8 @@ The codebase already includes:
   result otherwise; missing Docling is not treated as a tool or licence gate.
 - typed company policy values are projected into runner prompt timestamps,
   schedule defaults, clock-tool responses, dashboard display, and Compose
-  environment defaults; durable records remain UTC.
+  environment defaults; scheduler/display fallback hardening is committed as
+  `ee1361f` and durable records remain UTC.
 - the generated dashboard and Python SDK contract surfaces both contain 130
   models and 266 operation records tied to the same OpenAPI/provenance hash;
   the three role-scoped executive action routes are included in that export.

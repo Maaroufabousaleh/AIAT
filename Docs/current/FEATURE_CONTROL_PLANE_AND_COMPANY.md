@@ -1,7 +1,7 @@
 # Control Plane and Company Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implemented foundation; typed company policy manifest fields committed as `e0f0aee`, company-timezone runner propagation committed as `c955ac8`, prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
+**Status:** implemented foundation; typed company policy manifest fields committed as `e0f0aee`, company-timezone runner propagation committed as `c955ac8`, scheduler/dashboard company-timezone propagation and UTC fallback committed as `ee1361f`, prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
