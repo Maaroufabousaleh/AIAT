@@ -77,7 +77,7 @@ The core database migration graph has a single current head at `0036_native_trac
 | Capability | Baseline state | Programme interpretation |
 | --- | --- | --- |
 | Custom orchestrator and project control plane | **Implemented** | Rich API exists for projects, transitions, documents, reviews, evidence, tasks, shutdown, companies, workers, flows, integrations, and governance. It must be decomposed from the oversized API module without changing authority. |
-| Message routing and recovery | **Implemented** | Redis Streams routing, authenticated publish/subscribe, ACK/NACK, reclaim, retry, TTL, DLQ, and replay paths exist. |
+| Message routing and recovery | **Implemented** | Redis Streams routing, authenticated publish/subscribe, ACK/NACK, reclaim, retry, TTL, DLQ, and replay paths exist. Message publication now validates declared sender role/team coherence before dedupe/enqueue; workers cannot claim a CEO/C-suite trust team, and sub-agents require a known parent team (`fb39128`). |
 | Tool service | **Implemented foundation** | Central registry, explicit worker grants, policy checks, rate limits, concurrency limits, circuit breakers, audit, cache, usage, MCP bridge, browser identity, and adapter tools exist. The general image now has a lightweight core profile; browser/Docling/Semgrep/Mermaid extensions are separately budgeted. |
 | Company control plane | **Implemented** | Versioned company manifests, departments, assignments, budgets, apply/rollback, org graph, and default seed exist. |
 | Default company activation | **Partial by design** | The default manifest activates the 11 authority/manager shells. Specialist workers exist in the registry but are hired and activated through governance rather than silently enabled. |
@@ -96,6 +96,7 @@ The core database migration graph has a single current head at `0036_native_trac
 | LLM/routing analytics | **Implemented foundation** | LiteLLM and OmniRoute services and dashboard surfaces exist. The target-specific monitoring adapter emits a non-networking `aiat.monitoring-analytics-plan.v1` for their health/dashboard surfaces; AIAT metrics and optional Prometheus-compatible scraping remain complementary. Grafana is not part of the target. |
 | Trace evidence and retention | **Bounded query, core native spans, and local transport read-back implemented; model/tool/provider evidence pending** | Request/message/tool/agent propagation and operator-only `aiat.trace-evidence.v1` joins over payload-free API request observations, task logs, project usage, worker-run transitions, direct trace-correlated model-usage/worker-artifact/integration-evidence metadata, PM inbound correlations, native transport/model/tool/audit/worker/integration spans, and optional identity delivery-attempt spans exist with secret-safe fields and company trace sampling/retention metadata. The refreshed local orchestrator is at migration `0036_native_trace_spans`; a bounded `/health` transport span and API-request read-back pass and are retained in [`mas/docs/provenance/trace_observability_live.json`](mas/docs/provenance/trace_observability_live.json). The non-mutating `aiat.trace-retention-plan.v1` classifies bounded span metadata as retain/archive/delete/invalid without deleting data. Live model/tool/audit/worker/integration coverage, provider mail-edge spans, live retention application, and incident views remain P2/live work. |
 | SLO and capacity operations | **Descriptive contracts and local API read-back implemented; native model/tool/mail evidence pending** | Versioned `aiat.slo-policy.v1`, `aiat.slo-report.v1`, and `aiat.capacity-forecast.v1` models, operator-only routes, durable usage aggregates, the payload-free `aiat.api-observation.v1` request ledger, optional signed identity-service outbound delivery-attempt projection, confidence/headroom fields, and deterministic fixture/live checkers exist. The refreshed local API returns a bounded report (`9` targets, `6` observed services, SLO `attention`, capacity `clear` with `high` confidence), retained at [`mas/docs/provenance/slo_capacity_live.json`](mas/docs/provenance/slo_capacity_live.json). Existing API, PM/SCM delivery, worker-recovery, and optional mail-attempt rows are projected; missing native model/tool/mail-edge/complete-span sources remain explicit `no_data`, and load/soak/chaos/DR evidence remains P2 work. |
+| Operational diagnostics and control CLI | **Implemented; live service lifecycle remains separate** | Read-only `GET /system/diagnostics` probes database, router, tool-service, and optional object storage with bounded secret-safe results (`2860838`). `scripts/mas-ctl` provides authenticated `status`, `diagnostics`, fail-closed `bootstrap`, and explicit `resume`/`shutdown` API commands (`380daf5`, executable mode `f8df50e`); container/service restart remains the Compose/systemd operator boundary. |
 | Production deployment hardening | **Partial** | Compose, Windows/Linux wrappers, systemd helpers, health checks, resource caps, Redis ACLs, distinct CEO/worker principals, persisted dashboard section ACLs, and optional tunnel/mail profiles exist. Fixed infrastructure refs and Dockerfile bases are digest-pinned; application/gateway refs require deployment-supplied immutable `*_IMAGE_REF` values, SBOMs, and live pull/build evidence. |
 | Long-term memory/workflow infrastructure | **Partial** | Postgres/pgvector context and checkpoint storage are real. Letta, Qdrant, and Temporal are approved target adapters/services, not proven default runtime dependencies in the current stack. |
 | Object storage | **Contract/copy/backup/migration fixture implemented; local MinIO conformance and same-provider backup/restore retained; external live work pending** | MinIO is the current S3-compatible artifact backend. The provider-neutral `aiat.object-store-conformance.v1` fixture, real-`BlobClient` `--live` conformance runner, checked-in private-network MinIO probe, bounded aggregate `--compose-local` release child, `aiat.object-store-copy.v1` verified-copy/parity helper, live source-inventory/target-parity runner, deterministic `aiat.object-store-backup.v1` manifest, clean-target `aiat.object-store-restore.v1` verifier, three-provider backup/restore runner, and `aiat.object-store-migration.v1` inventory/dual-write/cutover/rollback workflow fixture are implemented. The deployed local MinIO service has retained secret-safe 8/8 conformance and same-provider backup/restore reports at [`mas/docs/provenance/object_store_live_conformance.json`](mas/docs/provenance/object_store_live_conformance.json) and [`mas/docs/provenance/object_store_backup_restore_live.json`](mas/docs/provenance/object_store_backup_restore_live.json). SeaweedFS comparison, provider-pair migration, encryption, routing cutover, benchmark, clean-environment restore, and disaster-recovery evidence remain open. |
@@ -889,7 +890,7 @@ Configuration changes are versioned, diffable, validated, and reversible. Produc
 
 ### 15.5 Release operations
 
-Release tooling must provide validate, build, migrate, seed, start, stop, restart, status, health, logs, diagnostics, backup, restore-test, drain, upgrade, rollback, and clean. Destructive cleanup requires exact scope and confirmation. Windows wrappers and Linux/systemd helpers must execute the same supported Compose profiles and migration head.
+Release tooling must provide validate, build, migrate, seed, start, stop, restart, status, health, logs, diagnostics, backup, restore-test, drain, upgrade, rollback, and clean. The API-facing `scripts/mas-ctl` surface is intentionally limited to secret-safe status/diagnostics/bootstrap and explicit resume/shutdown calls; Compose and systemd wrappers own container/service restart because the control plane has no host Docker authority. Destructive cleanup requires exact scope and confirmation. Windows wrappers and Linux/systemd helpers must execute the same supported Compose profiles and migration head.
 
 ---
 
@@ -1042,6 +1043,18 @@ The programme is organised around completing and hardening the existing architec
 - [ ] Run many-project native metric evidence and publish the scrape output.
 - Pin every production image by digest and reconcile it with the provenance catalogue/SBOM; use `scripts/check_image_provenance.py --live --json` as the fail-closed local identity boundary before native build/scan evidence.
 - [x] Add `scripts/check_executive_reconciliation.py --live --json` as the secret-safe, read-only executive coverage/finding boundary; live API/DB population remains environment work.
+- [x] Add the read-only `GET /system/diagnostics` dependency summary with
+  bounded status/latency/connection facts, degraded aggregation, payload
+  redaction, and a 503 boundary when control-plane storage is unavailable
+  (`2860838`).
+- [x] Add the authenticated `scripts/mas-ctl` status/diagnostics/bootstrap
+  wrapper plus explicit resume/shutdown calls (`380daf5`, executable mode
+  `f8df50e`); it never exposes upstream error bodies or invokes host lifecycle
+  operations.
+- [x] Enforce sender role/team coherence before message-router dedupe/enqueue
+  (`fb39128`); spoofed worker-to-CEO/admin paths are covered by static and
+  mocked-router tests, while live external-router and hierarchy UI evidence
+  remain separate.
 - Split heavyweight tool images and enforce resource budgets.
 - Prove gVisor on supported hosts with the sandbox readiness probe and a
   digest-pinned smoke/network run; certify Firecracker separately.
@@ -1138,8 +1151,9 @@ The programme is organised around completing and hardening the existing architec
 7. **Implemented contract:** split the general tool image from browser/Docling/Semgrep/Mermaid extensions and add image/resource budgets; measure both profiles.
 8. **Implemented progress ledger:** `mas/docs/AIAT_CURRENT_RELEASE_LEDGER.md` replaces the July snapshot for current static/API evidence; do not call it release certification until native/live gates are closed.
 9. **Implemented static/live reconciliation:** `scripts/check_worker_reconciliation.py` checks all 39 worker manifests against the shared runtime catalogue, company manifest, Compose/OpenCode service, provenance inventory, and metadata-only notices; its read-only `--live` mode compares the same defaults with persisted `/capabilities/workers` adapter, sandbox, model, source-pin, capability, and active immutable-record bindings. `scripts/generate_worker_certification_matrix.py` records the exact declaration/evidence state for every row; the universal conformance suite exercises the native/LangGraph/CrewAI bridge contract. Coding/tester manifests now link to exact-source Semgrep findings evidence and remain non-passing until triage; live runtime certification remains open.
-10. **Implemented preparatory contract export:** commits `66b8690`, `f2b0961`, and `fd61456` plus the bounded artifact/usage evidence-read group `2ca5f3d` keep `schemas/http/orchestrator.openapi.json`, the checked-in `aiat.v1` protocol schema, deterministic dashboard TypeScript, and internal Python SDK models/operation metadata aligned through `scripts/check_api_contract.py`; the current export contains 235 paths, 130 schemas, and 268 operations. External-language SDKs and broader modular router extraction remain P1 work after the P0 exit.
+10. **Implemented preparatory contract export:** commits `66b8690`, `f2b0961`, and `fd61456` plus the bounded artifact/usage evidence-read group `2ca5f3d` keep `schemas/http/orchestrator.openapi.json`, the checked-in `aiat.v1` protocol schema, deterministic dashboard TypeScript, and internal Python SDK models/operation metadata aligned through `scripts/check_api_contract.py`; the current export contains 236 paths, 130 schemas, and 269 operations after the diagnostics route (`2860838`). External-language SDKs and broader modular router extraction remain P1 work after the P0 exit.
 11. **Implemented technical pin contract:** `mas/docs/provenance/operator_pins.yaml` and `scripts/check_operator_pins.py` require exact production runtime/CLI declarations and explicit unavailable reasons for host-, optional-, and deployment-supplied capabilities; this check is independent of licence/restriction metadata.
+12. **Implemented communication-policy identity boundary (`fb39128`):** policy and message-router tests reject non-CEO envelopes whose declared sender role/team pair is incoherent, including direct worker-to-CEO/admin spoof paths, before Redis dedupe/enqueue. Live external-router and dashboard hierarchy evidence remain separate.
 
 ### P1 — complete the default programme promise
 
@@ -1358,6 +1372,18 @@ All project documentation available in the reviewed workspace was read and used 
   separate.
 - `mas/scripts/check_prompt_tool_reconciliation.py` — authority-prompt,
   concrete-tool, and role/team grant parity check.
+- `mas/apps/orchestrator-api/orchestrator_api/main.py` and
+  `mas/apps/orchestrator-api/tests/test_test10_ops_scripts.py` — read-only
+  `/system/diagnostics` dependency probes, bounded degraded/no-storage
+  behaviour, and payload-redaction coverage.
+- `mas/scripts/mas_ctl.py`, `mas/scripts/mas-ctl`, and
+  `mas/scripts/tests/test_mas_ctl.py` — secret-safe authenticated operator
+  status/diagnostics/bootstrap/resume/shutdown transport and deterministic
+  failure-mode tests; host container restart remains in Compose/systemd.
+- `mas/packages/mas-core/mas_core/policy/engine.py`,
+  `mas/apps/message-router/message_router/routes_publish.py`, and the policy
+  and router tests — sender role/team coherence before dedupe/enqueue,
+  including direct worker-to-CEO spoof rejection.
 - `mas/docs/provenance/production_images.yaml`,
   `mas/infra/compose/production-image-lock.example.env`, and
   `mas/scripts/check_image_provenance.py` — production image identity,
