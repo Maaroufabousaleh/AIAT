@@ -2,8 +2,17 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Fragment, useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
+
+type EvidenceDetail = {
+  schema_version: string;
+  kind: string;
+  id: string;
+  source: string;
+  record: Record<string, string | number | boolean | null>;
+};
 
 const SUPPORTED_KINDS = new Set([
   "company",
@@ -22,6 +31,17 @@ const SUPPORTED_KINDS = new Set([
   "usage",
   "worker_run",
   "trace",
+]);
+
+const DETAIL_KINDS = new Set([
+  "project",
+  "flow",
+  "flow_instance",
+  "worker",
+  "worker_run",
+  "credential",
+  "dead_letter",
+  "runtime",
 ]);
 
 function canonicalEvidenceHref(kind: string, id: string): string | null {
@@ -65,6 +85,37 @@ export default function EvidenceRecordPage() {
   const id = typeof params.id === "string" ? params.id : "";
   const canonicalHref = canonicalEvidenceHref(kind, id);
   const supported = Boolean(id) && SUPPORTED_KINDS.has(kind) && Boolean(canonicalHref);
+  const detailSupported = supported && DETAIL_KINDS.has(kind);
+  const [detail, setDetail] = useState<EvidenceDetail | null>(null);
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
+
+  useEffect(() => {
+    if (!detailSupported) {
+      setDetail(null);
+      setDetailState("idle");
+      return;
+    }
+    let active = true;
+    setDetailState("loading");
+    void fetch(`/api/evidence/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("evidence detail unavailable");
+        return response.json() as Promise<EvidenceDetail>;
+      })
+      .then((value) => {
+        if (!active) return;
+        setDetail(value);
+        setDetailState("loaded");
+      })
+      .catch(() => {
+        if (!active) return;
+        setDetail(null);
+        setDetailState("unavailable");
+      });
+    return () => {
+      active = false;
+    };
+  }, [detailSupported, id, kind]);
 
   return (
     <div className="min-h-full p-6 lg:p-8">
@@ -92,6 +143,26 @@ export default function EvidenceRecordPage() {
             <p className="mt-5 text-sm leading-6 text-slate-400">
               This page preserves the evidence identity while you move between the CEO transcript and the owning dashboard section. It never displays secret values or arbitrary model payloads.
             </p>
+            {detailSupported && (
+              <div className="mt-5 border-t border-slate-800 pt-5" data-testid="ceo-evidence-detail">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bounded record detail</h2>
+                  <span className="font-mono text-[11px] text-slate-500">aiat.evidence-detail.v1</span>
+                </div>
+                {detailState === "loading" && <p className="mt-3 text-xs text-slate-500" role="status" aria-live="polite">Loading safe record fields…</p>}
+                {detailState === "unavailable" && <p className="mt-3 text-xs text-amber-300" role="status" aria-live="polite">Safe detail is temporarily unavailable; the citation identity remains valid.</p>}
+                {detailState === "loaded" && detail && (
+                  <dl className="mt-3 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-[9rem_1fr]">
+                    {Object.entries(detail.record).map(([key, value]) => (
+                      <Fragment key={key}>
+                        <dt className="text-slate-500">{key.replaceAll("_", " ")}</dt>
+                        <dd className="break-all font-mono text-slate-300">{String(value ?? "—")}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                )}
+              </div>
+            )}
             <Link href={canonicalHref!} className="mt-5 inline-flex items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-400/20" data-testid="ceo-evidence-canonical-link">
               Open owning section <ExternalLink size={14} />
             </Link>
