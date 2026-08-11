@@ -110,6 +110,11 @@ external client-language SDK compatibility yet.
   state, a pending technical scan, and no candidate. The checker never
   generates or certifies a candidate, approves, activates, rolls out, or
   dispatches, and licence metadata remains non-gating.
+- [x] Bind all 39 team-runner agent declarations to exact checked-in worker
+  manifests and add `check_team_worker_manifest_refs.py` (`d9b1262`). The
+  static contract passes 11 team files/39 agents without inferring missing
+  references or registering/activating workers; runtime registration and live
+  certification remain separate.
 - [x] Persist the compatibility matrix produced by certification through the
   canonical storage owner, retaining runtime/adapter/contract versions,
   fixtures, capability/model context, and pass/fail status with the

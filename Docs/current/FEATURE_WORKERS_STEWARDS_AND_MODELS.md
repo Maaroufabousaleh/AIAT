@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), selected worker-run readiness (`5553b19`), and selected steward certification readiness (`adc7b26`) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`), selected worker-run readiness (`5553b19`), and selected steward certification readiness (`adc7b26`) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -78,6 +78,12 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   evidence blocks and the check never replaces the underlying ledger.
 - Central tool registry with explicit grants, aliases, policy, rate/concurrency limits, circuit breakers, audit, cache, and usage records.
 - 39 non-placeholder worker manifests and two non-seeded placeholders.
+- All 39 team-runner agent declarations now carry an explicit
+  `worker_manifest_ref` equal to their checked-in worker ID. The read-only
+  `aiat.team-worker-manifest-reconciliation.v1` checker verifies all 11 team
+  files and 39 agent bindings without inferring missing references or
+  registering/activating workers; runtime registration remains a separate
+  integration step.
 - OpenCode 1.17.13 live-interface evidence and an approved Phase 0B report.
 - `scripts/check_worker_reconciliation.py` statically reconciles all 39 worker
   manifests with the runtime catalogue, company manifest, Compose/OpenCode
@@ -240,6 +246,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Protocol model: [`mas/packages/mas-core/mas_core/protocols/worker_contract.py`](../../mas/packages/mas-core/mas_core/protocols/worker_contract.py)
 - Worker registry/stewards: [`mas/packages/mas-core/mas_core/worker_registry/`](../../mas/packages/mas-core/mas_core/worker_registry/)
 - Runtime catalogue: [`mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py)
+- Team-runner manifest binding contract (`d9b1262`): [`mas/scripts/check_team_worker_manifest_refs.py`](../../mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](../../mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), and [`test_team_worker_manifest_refs.py`](../../mas/packages/mas-core/tests/test_team_worker_manifest_refs.py). Static mode reconciles 11 team files/39 agent declarations to exact manifest IDs; it is read-only and does not register or activate workers.
 - Static and read-only live reconciliation: [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py) and [`worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). The default mode validates all 39 declarations; the authenticated local `--live` run matches 39/39 persisted defaults with zero missing rows or binding mismatches. It compares exact adapter, sandbox, model, source-pin, capability, and active immutable-record bindings and reports missing API/configuration as blocked.
 - Default worker implementation binding matrix (`4c5fd68`): [`mas/scripts/check_default_worker_bindings.py`](../../mas/scripts/check_default_worker_bindings.py) and [`test_default_worker_bindings.py`](../../mas/packages/mas-core/tests/test_default_worker_bindings.py). The static contract covers all 15 documented default slots, verifies each declared transport/isolation pair against `RUNTIME_CATALOG`, and requires matching runtime/integration adapter entrypoints; `--live` remains an explicit operator/environment boundary and never mutates runtime state.
 - Worker-run lifecycle fixture (`fe6fb8d`): [`mas/scripts/check_worker_run_lifecycle.py`](../../mas/scripts/check_worker_run_lifecycle.py) and [`test_worker_run_lifecycle.py`](../../mas/packages/mas-core/tests/test_worker_run_lifecycle.py). The static fixture checks real controller ordering, failure normalization, and recovery invariants; `--live` reports the explicit operator/database boundary.
@@ -271,7 +278,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 
 ## Target worker lifecycle
 
-1. Register a stable shell with role, department, permissions, tools, budget, sandbox, and model requirements.
+1. Register a stable shell with role, department, permissions, tools, budget, sandbox, model requirements, and an explicit `worker_manifest_ref`.
 2. Assign exactly one steward for each external worker.
 3. Capture canonical source, exact version/digest, documentation snapshot, SBOM/lock, and scans; record licence/notices as non-blocking metadata when known.
 4. Generate an immutable adapter and skill-bundle candidate.
@@ -366,6 +373,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   is blocked by `PROVISIONING` steward state, a pending security scan, and no
   candidate. It never generates, certifies, approves, activates, rolls out, or
   dispatches, and licence metadata remains non-gating.
+- [x] Bind all 39 team-runner agent declarations to exact checked-in worker
+  manifests and add `check_team_worker_manifest_refs.py` (`d9b1262`). The
+  declaration check passes 11 team files/39 agents; control-plane registration,
+  worker activation, and live run certification remain separate gates.
 - [x] Reconcile worker manifests, runtime catalogue, Compose/OpenCode links, provenance, and notices in CI; the read-only live binding checker compares persisted default-worker rows without treating licence metadata as a gate; installed-package availability, image digests/SBOMs, and live worker-run certification remain separate gates.
 - [x] Reconcile the 15 documented default worker slots with their implementation
   declarations (department, runtime, transport, isolation, capability,
