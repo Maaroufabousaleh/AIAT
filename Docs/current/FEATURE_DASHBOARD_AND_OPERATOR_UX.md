@@ -1,7 +1,7 @@
 # Dashboard and Operator UX Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, and the local Compose E2E matrix implemented; native-Linux accessibility/mobile/visual certification remains
+**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, and the local Compose E2E matrix implemented; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -13,6 +13,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Next.js 16.2.10, React 19.2.0, TypeScript, Tailwind, React Flow, Recharts, authenticated API proxy routes, and Playwright tests.
 - Home, projects, detailed project workspace, flow list/create/editor, workers, governance, integrations, tools, credentials, identity/mail/external accounts, CEO cockpit/chat, LiteLLM/OmniRoute analytics, metrics, logs, streams, DLQ, system, and system-visualisation pages.
 - Visual flow authoring, organisation/permission/orchestration visualisations, project graph/workspace views, charts, responsive shell, and destructive-action dialogs.
+- The dashboard shell provides a semantic header/navigation/main landmark structure, a keyboard-visible skip link, a focusable 44px mobile menu control, focus transfer into the opened navigation, Escape-to-close, focus restoration to the trigger, and an exposed interactive backdrop close control. The focused regression is [`dashboard-shell-accessibility.spec.ts`](../../mas/apps/mas-dashboard/e2e/dashboard-shell-accessibility.spec.ts); this is a shell baseline, not a complete WCAG audit.
 - Flow editors render the generated node-schema contract and editable form (version, descriptions, required-any rules, field types, defaults, enums, CSV/JSON fields, governed workers, and approved Model Profiles). Deprecated `team_id`/`action` assignments are identified in the contract and remain editable only in the collapsed compatibility controls, which also preserve adapter extension keys.
 - New-flow starter cards consume the canonical `/flow-templates` catalogue through the dashboard proxy, preserve template configs/evidence metadata, remap branch references, and retain a blank-canvas fallback for catalogue outages.
 - System Overview now consumes the read-only `aiat.executive-reconciliation.v1`
@@ -68,6 +69,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Generated flow contract/form: [`mas/apps/mas-dashboard/components/flows/NodeSchemaContractSummary.tsx`](../../mas/apps/mas-dashboard/components/flows/NodeSchemaContractSummary.tsx), [`mas/apps/mas-dashboard/components/flows/NodeSchemaForm.tsx`](../../mas/apps/mas-dashboard/components/flows/NodeSchemaForm.tsx)
 - Project workspace: [`mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>)
 - System visualisation: [`mas/apps/mas-dashboard/components/system-viz/`](../../mas/apps/mas-dashboard/components/system-viz/)
+- Dashboard shell accessibility: [`DashboardShell.tsx`](../../mas/apps/mas-dashboard/components/DashboardShell.tsx), [`Sidebar.tsx`](../../mas/apps/mas-dashboard/components/Sidebar.tsx), [`dashboard-shell-accessibility.spec.ts`](../../mas/apps/mas-dashboard/e2e/dashboard-shell-accessibility.spec.ts)
 - Identity resource state handling: [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx), [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts)
 - PM integration conflict/stale state: [`integrations/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/integrations/page.tsx>), [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts)
 - Project-detail stale/retry state: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>), [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts)
@@ -120,7 +122,7 @@ The CEO cockpit summarises portfolio, company health, spend, risk, approvals, in
 - Generate typed forms/clients from backend schemas for the remaining governance actions; the CFO/CTO/CEO action panel is implemented, while broader governance action forms remain.
 - Consolidate legacy flow compatibility aliases into an explicit extension editor after migration coverage is complete.
 - Complete light/dark/system themes and responsive/mobile parity.
-- Complete accessibility audit and automated checks.
+- Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.
 - Improve stale/conflict/rollback and partial-evidence experiences; system
   visualization, identity tables, PM integrations, and project detail now have
   explicit stale/partial/conflict and first-load/offline retry states, while broader
