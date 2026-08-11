@@ -306,7 +306,8 @@ plain text with an explicit degraded/backend reason when it is absent. This is
 not external Docling certification; installation and live adapter evidence
 remain part of the open R2 work.
 The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
-`trufflehog` compatibility aliases;
+`trufflehog` compatibility aliases; the SDK/manifest forwarding group is
+`965ba38`.
 provider-specific PM/DevOps adapters still need their own conformance evidence.
 
 Required outcomes:

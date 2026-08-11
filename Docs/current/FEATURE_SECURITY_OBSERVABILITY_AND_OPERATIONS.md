@@ -83,6 +83,10 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   is deliberately scoped to local identity; SBOM, scan, build, and clean-room
   evidence remain separate release artifacts.
 - The general tool-service profile no longer installs browser/Docling/Semgrep/Mermaid extension payloads; those dependencies are isolated behind the separately budgeted `extensions` build profile.
+- The tools SDK forwards an active bounded trace ID on tool calls and keeps the
+  `semgrep`, `skillspector`, and `trufflehog` names as aliases of the canonical
+  `security.scan` contract (`965ba38`). Scanner execution remains sandboxed and
+  governed by the existing grants, audit, rate, and approval controls.
 - The deployment image lock template, provenance inventory, and image budgets
   are checked in under `mas/infra/compose/production-image-lock.example.env`
   (template coverage regression committed as `1d373ee`),

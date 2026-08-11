@@ -38,7 +38,8 @@ single frozen commit before production claims are made.
   planner exposes Plane/OpenProject provider adapters, and DevOps exposes
   Ansible through its normal CLI adapter. Small starting profiles remain
   technical packaging choices, not resource bans.
-- The tool service now routes the `semgrep`, `skillspector`, and `trufflehog`
+- The tools SDK/manifest group `965ba38` now routes the `semgrep`,
+  `skillspector`, and `trufflehog`
   compatibility aliases through `security.scan`; each executes only via the
   configured sandbox adapter with bounded output and the existing audit, grant,
   rate, and approval boundaries. SkillSpector may be supplied through
