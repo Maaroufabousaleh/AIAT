@@ -25,6 +25,10 @@ The current dashboard increment also hardens the Projects list table with a
 caption, scoped headers, explicit description disclosure, responsive overflow,
 and 44px selection/filter/sort/link/action targets (`7828b48`).
 
+The Flows list now has the same focused table/accessibility baseline: an
+accessible name/caption, scoped headers, responsive overflow, and 44px
+refresh/create/search/filter/selection/link/delete targets (`6b0413b`).
+
 ## 1. How to use this documentation
 
 | Need | Read |
@@ -590,6 +594,9 @@ through a failed refresh and exposes a source-built Retry path (`bc80ad5`).
 The Projects list now separately proves its semantic table/accessibility
 baseline and 44px control targets in the source-built stale/retry test
 (`7828b48`).
+The Flows list now separately proves its accessible table name/caption, scoped
+headers, responsive wrapper, and 44px interaction targets in the same style of
+source-built stale/retry test (`6b0413b`).
 The shared identity-resource dashboard loader now aborts obsolete refreshes and
 proves stale-to-recovered retry without rendering sensitive fields (`46eccee`).
 Its table captions, column scopes, explicit action names, and 44px targets are
@@ -949,7 +956,7 @@ an explicit open gate.
    keyboard-visible retry (`beabb95`), and the Project evidence package page
    retains its last successful package through a failed refresh and recovers
    through Retry (`bc80ad5`); broader stale/offline recovery remains.
-6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 58/59 with one explicit safe-fixture skip, including hierarchy communication-policy/path tracing and retained hiring evaluation details. Focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, identity-resource, Metrics, Flows, flow editor, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat read-surface stale/recovery tests pass 1/1, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
+6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 58/59 with one explicit safe-fixture skip, including hierarchy communication-policy/path tracing and retained hiring evaluation details. Focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, identity-resource, Metrics, Flows, flow editor, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat read-surface stale/recovery tests pass 1/1; Projects and Flows list focused table/accessibility baselines also pass 1/1 (`7828b48`, `6b0413b`), and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the current 58/59 evidence count.
 The source-built project-detail state test additionally covers a failed first
