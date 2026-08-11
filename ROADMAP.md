@@ -136,6 +136,9 @@ The codebase already includes:
 - certification persistence now records steward-owned compatibility matrices
   alongside the candidate/certification evidence; the domain fixture covers
   both externally sourced default workers without claiming live certification.
+  The steward fixture now also blocks a regressing replacement and preserves
+  the active immutable pointers when rollback happens before activation; its
+  report is [`worker_steward_contract.json`](mas/docs/provenance/worker_steward_contract.json).
 - `scripts/check_release_ledger.py --json` now aggregates the checked-in
   static/contract/recovery verifiers into `aiat.release-ledger.v1`; its live
   profile preserves current network failures and externally blocked evidence,
@@ -159,8 +162,9 @@ The codebase already includes:
   reproducibility check and does not inspect or gate OSS licence metadata.
 - `scripts/check_worker_steward_contract.py --json` runs the actual steward
   domain through immutable candidate, compatibility-matrix, staged-rollout,
-  and rollback transitions for every externally sourced default worker; its
-  domain fixture does not claim persisted database or live worker evidence.
+  regression blocking, and pre-activation rollback transitions for every
+  externally sourced default worker; its domain fixture does not claim
+  persisted database or live worker evidence.
 - bounded HTTP trace propagation is implemented in the orchestrator API,
   message router, and tool service with safe incoming-header handling,
   orchestrator/SDK/RouterClient forwarding, response correlation, agent
@@ -294,7 +298,9 @@ Required outcomes:
   external candidate source/revision/version evidence remains open;
 - OpenCode coding/testing fully coherent; OpenHands core remains optional;
 - document, planning, research, review, security, DevOps, and SRE adapters certified;
-- each external worker has a dedicated steward, immutable candidate, compatibility matrix, canary, and rollback;
+- each external worker has a dedicated steward, immutable candidate,
+  compatibility matrix, deterministic canary/regression-block/rollback domain
+  evidence, and a separate open live-certification gate;
 - [x] deterministic controller fixture covers pause/cancel/checkpoint/lease/artifact ordering; live worker-run, database, sandbox, canary, and rollback semantics remain open.
 - [x] deterministic default-worker binding matrix reconciles all 15 documented
   worker slots with implementation declarations and runtime/integration

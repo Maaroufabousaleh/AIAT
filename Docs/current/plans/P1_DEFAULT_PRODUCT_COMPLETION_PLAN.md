@@ -81,7 +81,9 @@ external client-language SDK compatibility yet.
 - [x] Add `scripts/check_worker_steward_contract.py` to run the actual steward
   domain through dedicated-steward, immutable-candidate, compatibility-matrix,
   staged-rollout, and rollback transitions for every externally sourced
-  default worker; database persistence and live certification remain separate.
+  default worker; its regression gate and pre-activation rollback path preserve
+  the previously active immutable pointers. Database persistence and live
+  certification remain separate.
 - [x] Add `scripts/check_worker_run_lifecycle.py` and focused regression tests
   that drive the real `WorkerRunController`/`NativeWorkerAdapter` through
   checkpoint persistence, pause/resume with checkpoint reference, cold
@@ -121,6 +123,10 @@ external client-language SDK compatibility yet.
   returns an explicit degraded `plain_text_fallback` result otherwise. Full
   Docling/Spec Kit/Mermaid adapter certification remains a separate item.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
+- [x] Exercise deterministic shadow, read-only canary, promotion, regression
+  blocking, and pre-activation rollback for every externally sourced default
+  worker through the real steward domain; live canary, project execution, and
+  database persistence evidence remain open.
 - Exercise shadow, read-only canary, live canary, promotion, regression block, and rollback.
 
 **Done when:** every default worker table entry can execute one representative project-scoped task with exact versions, evidence, budgets, and rollback.

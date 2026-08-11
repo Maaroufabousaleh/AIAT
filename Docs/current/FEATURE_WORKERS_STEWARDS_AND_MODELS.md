@@ -151,10 +151,14 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   sandbox, canary, live-run, and rollback certification remain separate.
 - `scripts/check_worker_steward_contract.py --json` runs the real steward
   domain through dedicated-steward creation, immutable candidate generation,
-  compatibility-matrix recording, certification, approval, staged rollout,
-  and rollback for each externally sourced default worker. It is deterministic
-  domain evidence only; database persistence, security, sandbox, live canary,
-  and worker-run evidence remain separate.
+  compatibility-matrix recording, certification, approval, shadow/read-only
+  canary promotion, regression blocking, and pre-activation rollback for each
+  externally sourced default worker. The rollback assertion preserves the
+  previously active immutable pointers when a replacement is rejected before
+  activation. The retained report is
+  [`worker_steward_contract.json`](../../mas/docs/provenance/worker_steward_contract.json).
+  It is deterministic domain evidence only; database persistence, security,
+  sandbox, live canary, and worker-run evidence remain separate.
 - Certification now persists a compatibility-matrix row through
   `AgentStorage.create_compatibility_matrix`, linking runtime, adapter, and
   contract versions plus fixtures, capability/model context, and pass/fail
@@ -286,7 +290,8 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   security, sandbox, canary, and live-run evidence remain separate gates.
 - [x] Exercise the actual steward domain for every externally sourced default
   worker, including immutable candidate, compatibility matrix, staged rollout,
-  and rollback transitions; database/live certification remains open.
+  regression blocking, and pre-activation rollback transitions; database/live
+  certification remains open.
 - [x] Keep the normal Semgrep, SkillSpector, and TruffleHog scanner paths
   available through the shared bounded `security.scan` adapter; scanner
   availability and findings remain technical evidence, while provider-specific

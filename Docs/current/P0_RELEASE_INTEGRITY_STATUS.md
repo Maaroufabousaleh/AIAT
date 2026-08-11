@@ -87,9 +87,12 @@ single frozen commit before production claims are made.
   complete.
 - `scripts/check_worker_steward_contract.py` runs the actual steward domain for
   each externally sourced default worker through immutable candidate,
-  compatibility-matrix, staged rollout, and rollback transitions. It is
-  deterministic domain evidence only and does not turn synthetic security or
-  canary observations into live certification.
+  compatibility-matrix, shadow/read-only-canary promotion, regression blocking,
+  and pre-activation rollback transitions. The rollback fixture proves that a
+  rejected replacement preserves the previously active immutable pointers. It
+  is deterministic domain evidence only and does not turn synthetic security
+  or canary observations into live certification; the retained report is
+  [`worker_steward_contract.json`](../../mas/docs/provenance/worker_steward_contract.json).
 - The certification route now writes the compatibility matrix through the
   canonical storage owner and links its ID into certification/candidate
   evidence; production database reconciliation and live canary evidence are
@@ -294,7 +297,7 @@ single frozen commit before production claims are made.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Worker/steward/evaluator regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_default_shipped_agents.py apps/orchestrator-api/tests/test_workers_test5_lifecycle.py -q` |
+| Worker/steward/evaluator regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_default_shipped_agents.py apps/orchestrator-api/tests/test_workers_test5_lifecycle.py -q`; the steward fixture also passes `uv run --isolated python scripts/check_worker_steward_contract.py --json`, including regression blocking and pre-activation pointer preservation |
 | Document ingest fallback contract | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; Docling execution and explicit degraded plain-text fallback are covered without claiming the optional binary is installed |
 | Backend and team-runner regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests -q` |
 | Broader worker/observability regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_*.py packages/mas-core/tests/test_observability.py apps/orchestrator-api/tests/test_metrics.py -q` |
