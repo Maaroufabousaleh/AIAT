@@ -1,0 +1,194 @@
+# P2 Scale, Storage, and Guarded Autonomy Plan
+
+**Priority:** P2 after default-programme completion  
+**Outcome:** AIAT scales its data and workers and can improve itself without weakening authority  
+**Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
+
+## Workstream 1 — storage abstraction and migration
+
+- [x] Formalise an S3-compatible object-store contract and deterministic
+  provider-neutral conformance suite (`aiat.object-store-conformance.v1`).
+- [x] Add an explicit `--live` runner that points the same suite at a
+  configured S3-compatible endpoint and returns exit code 2 with a
+  machine-readable `blocked` result when credentials or the provider are
+  unavailable; external provider evidence is still evaluated separately.
+- [x] Run the same suite against the deployed local MinIO adapter and retain
+  secret-safe 8/8 evidence in
+  [`mas/docs/provenance/object_store_live_conformance.json`](../../../mas/docs/provenance/object_store_live_conformance.json);
+  the run is reproducible with
+  [`mas/infra/compose/scripts/check-minio-conformance.sh`](../../../mas/infra/compose/scripts/check-minio-conformance.sh);
+  provider-pair, large-object, benchmark, encryption, and disaster-recovery
+  evidence remain open.
+- [x] Make the aggregate live release child use the checked-in private-network
+  MinIO probe via `check_object_store_conformance.py --compose-local`; the
+  8/8 local result is now bounded and no longer times out on the host-only
+  `minio:9000` alias. Provider-diverse evidence remains separate.
+- Benchmark current MinIO against SeaweedFS for reliability, resource use, concurrency, large objects, multipart, metadata, outage, and recovery.
+- [x] Implement the deterministic checksum-verified copy/parity helper
+  (`aiat.object-store-copy.v1`) over explicit `BlobRef` inputs.
+- [x] Add an explicit `--live` copy/parity runner that inventories
+  checksum-bearing source refs, verifies target read-back parity, preserves
+  source data, and fails closed on missing providers or an empty inventory;
+  dual-write, cutover, and rollback remain separate operator workflows.
+- [x] Add a deterministic `aiat.object-store-backup.v1` checksum manifest and
+  `aiat.object-store-restore.v1` clean-target verifier. The fixture runner
+  proves source → backup → restore parity; `--live` requires three provider
+  endpoints and blocks until provider, encryption, retention, and clean
+  environment evidence is available.
+- [x] Run a disposable same-provider backup → restore rehearsal against local
+  MinIO with two objects, exact manifest/read-back parity, and scoped cleanup;
+  retain secret-safe evidence in
+  [`mas/docs/provenance/object_store_backup_restore_live.json`](../../../mas/docs/provenance/object_store_backup_restore_live.json)
+  using [`mas/infra/compose/scripts/check-minio-backup-restore.sh`](../../../mas/infra/compose/scripts/check-minio-backup-restore.sh).
+- [x] Add the provider-neutral `aiat.object-store-migration.v1` workflow and
+  deterministic fixture for checksum inventory, verified copy, optional dual
+  write, and explicit human-confirmed cutover/rollback; provider-certified
+  routing, retention, and live rollback evidence remain open.
+- Add encrypted backup/replication to Garage, R2, B2, or another approved backend.
+- Automate clean-environment restore verification.
+
+**Decision gate:** SeaweedFS becomes primary only if measured results, operational complexity, source/version provenance, migration safety, and restore evidence beat the current profile. Licence remains metadata and does not decide the result.
+
+## Workstream 2 — optional memory and workflow services
+
+- Evaluate Letta for governed long-memory use cases.
+- Evaluate Qdrant where it materially improves retrieval beyond pgvector.
+- Evaluate Temporal for durable execution where it complements rather than replaces AIAT controllers.
+- For each, create an external worker/service steward, exact provenance, data-boundary review, conformance, cost, outage, backup, and removal plan.
+
+**Decision gate:** optional services remain disabled unless they provide measurable value without duplicating canonical authority.
+
+## Workstream 3 — multi-host and high-risk execution
+
+- Separate control/tool/data hosts from worker pools.
+- Add authenticated worker registration, leases, placement constraints, capacity, and health.
+- Certify gVisor across supported hosts.
+- Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
+- Prove host loss, split-brain avoidance, queue recovery, and exact run-version pinning.
+
+## Workstream 4 — guarded self-improvement
+
+- Detect improvement candidates from defects, metrics, upstream updates, cost, and operator goals.
+- [x] Add bounded `aiat.self-improvement-candidate-detection.v1` signal
+  normalization for defect, metric, upstream-update, cost, and operator-goal
+  observations. Exact duplicate IDs collapse, conflicting reuse fails closed,
+  risk/budget mapping is deterministic, and the detector cannot create a
+  project, reserve budget, grant credentials, or change a deployment; licence
+  metadata remains provenance only.
+- [x] Define `aiat.self-improvement.v1` opportunity metadata and a canonical
+  project request with owner, risk, budget, evidence policy, and source; the
+  authenticated `POST /projects/self-improvement` path and durable storage
+  persistence now delegate through the canonical project writer; a revisioned
+  lifecycle snapshot, project-history record, and authenticated canonical
+  reference-link API cover the durable project boundary; live issue/worker,
+  provider, and database execution remains work.
+- Use isolated branches/workspaces and certified coding/test/review/security workers.
+- [x] Define independent coding, testing, review, security, migration, and
+  rollback gate records plus a separate human approval gate; licence metadata
+  is explicitly outside the predicate.
+- [x] Prove a deterministic shadow/canary → human approval → promotion fixture
+  and an exact prior-version rollback exercise; live worker/deployment evidence
+  remains open.
+- [x] Persist lifecycle revisions and typed links to canonical issue, worker,
+  artifact, budget, branch/SBOM, deployment, repository, and evidence records
+  without introducing a second project store; live record generation and
+  reconciliation remain open.
+- [x] Persist bounded terminal outcome records with cost, incident count,
+  rollback state, KPI learning, evidence references, and actor attribution in
+  the revisioned lifecycle snapshot; identical outcome IDs are idempotent and
+  conflicting retries fail closed. Live worker/provider reconciliation remains
+  open.
+- [x] Define and persist a frozen `aiat.self-improvement-artifacts.v1` manifest
+  containing one checksum-bearing change, provenance, SBOM, migration, and
+  rollback reference, linked through the canonical artifact map; incomplete,
+  mutable, and conflicting manifests fail closed.
+- [x] Convert normalized worker-result records into the five-kind manifest,
+  preserve canonical artifact-row IDs, and persist SHA-256/size read-back
+  evidence without copying bytes or executing migrations; deterministic
+  worker-record and object-store fixtures cover parity and tamper rejection.
+- Generate those immutable artifacts from live certified workers and verify
+  read-back against a configured external provider; the current contract is
+  ready, but live worker/provider evidence remains open.
+
+**Prohibited:** self-granted credentials/policy, self-approval of mandatory gates, audit deletion, mutable production deployment, budget bypass, legal acceptance, or removal of the human kill switch.
+
+## Workstream 5 — operational scale and analytics
+
+- [x] Add request-level trace propagation and context cleanup in the
+  orchestrator API, message router, and tool service; forward the bound trace
+  on router/SDK publication and carry envelope/tool correlation IDs into
+  message/worker records; bind the same IDs for agent message-handler
+  lifetimes. Durable cross-service spans remain a live/scale evidence gate.
+- [x] Add the bounded `aiat.trace-evidence.v1` operator query over task logs,
+  project-usage events, worker-run transition correlations, direct
+  trace-correlated model-usage/worker-artifact/integration-evidence rows (with
+  legacy run fallback), API observations, and PM inbound metadata; project
+  `trace_days`/`trace_sample_rate` from the company manifest, redact raw
+  payloads, and expose a deterministic fixture plus fail-closed live checker.
+- [x] Persist bounded native transport/model/tool/audit/worker/integration
+  spans in `native_trace_spans`, with scalar allow-listed attributes and trace
+  projection; live deployment coverage, identity-service mail-edge spans,
+  incident views, and retention enforcement remain open.
+- [x] Define versioned descriptive SLO targets for API, queue age, worker
+  startup/run, tool latency, model routing, PM/SCM sync, mail delivery, and
+  recovery; expose observed/attention/no-data statuses through the operator
+  API and deterministic `scripts/check_slo_capacity.py` fixture. Native
+  first-class sources remain open where the report honestly returns `no_data`;
+  the refreshed local deployment now returns a bounded live report (`9` SLO
+  targets, `6` observed services, capacity `clear`, SLO `attention`) retained
+  at [`mas/docs/provenance/slo_capacity_live.json`](../../../mas/docs/provenance/slo_capacity_live.json).
+- [x] Add bounded capacity planning and budget forecasts using durable
+  `project_usage_events` aggregates, including confidence, cost/token demand,
+  configured budget headroom, and explicit insufficient-data notices.
+- [x] Project existing PM/SCM inbox/outbox delivery and worker-recovery
+  transition records into bounded SLO observations without raw payloads.
+- [x] Persist the bounded `aiat.api-observation.v1` orchestrator request
+  ledger (normalized route/method/status/outcome/duration and safe trace/
+  principal metadata only), feed it into the platform SLO and trace evidence,
+  and verify the payload-free fixture with `scripts/check_api_observability.py`.
+- [x] Project existing signed identity-service outbound delivery-attempt rows
+  into bounded `mail_delivery` SLO observations, dropping mail content,
+  recipients, subjects, provider IDs, correlation IDs, and relay reasons;
+  persist/filter safe delivery `trace_id`/`span_id` metadata for the trace
+  evidence join.
+- [x] Add the non-mutating `aiat.trace-retention-plan.v1` planner and
+  deterministic fixture. It classifies bounded native-span metadata using
+  explicit `retention_until` or the company retention period, keeps invalid
+  rows out of deletion candidates, and makes archive/delete mode explicit;
+  applying deletion, archival, project narrowing, and backup parity remains
+  a separate operator/live storage action.
+- [x] Connect the native transport/API observation writer to the refreshed local
+  orchestrator deployment, run the operator trace query after applying the
+  current migrations, and retain secret-safe evidence in
+  [`mas/docs/provenance/trace_observability_live.json`](../../../mas/docs/provenance/trace_observability_live.json)
+  using [`scripts/check_live_trace_observability.py`](../../../mas/scripts/check_live_trace_observability.py).
+  The probe observes one bounded `/health` transport span and its API request
+  ledger row without creating project, worker, provider, credential, or
+  deployment state.
+- [x] Connect the tool-service usage writer to the same native-span contract and
+  run a bounded local `time_now` call with an existing project context. The
+  operator trace read-back observes one `project_usage_events` row and one
+  `tool_service` native tool span; secret-safe evidence is retained in
+  [`mas/docs/provenance/tool_trace_live.json`](../../../mas/docs/provenance/tool_trace_live.json)
+  and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py).
+  The probe creates only normal telemetry rows and does not claim worker/model
+  execution or provider evidence.
+- [ ] Connect native model/audit/worker/integration observations to a live
+  representative model-backed worker run and persist provider/webhook-level
+  identity-service mail-edge/bounce observations so the remaining SLO targets
+  have deployment evidence; direct model/artifact/integration spans and
+  delivery-attempt correlation are durable and queryable, but their live source
+  coverage remains open.
+- Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
+- Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
+
+## Exit gate
+
+- Storage migration, if selected, is checksum-complete, reversible, and restore-tested.
+- Optional memory/workflow services have clear measurable benefit and clean disable/removal paths.
+- Multi-host worker loss does not duplicate or lose canonical work.
+- Firecracker high-risk execution is independently certified.
+- One AIAT self-improvement completes issue-to-canary-to-promotion and a separate exercise proves exact rollback.
+- SLO policy/report and capacity forecast contracts are implemented and
+  deterministic; production-like/native evidence, load/soak/chaos, and
+  disaster-recovery cadence remain release work.
