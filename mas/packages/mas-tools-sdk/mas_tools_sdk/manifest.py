@@ -318,6 +318,14 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="privileged_ops.request",
+        group=ToolGroup.WORKFLOW,
+        description="Request a Layer-2 privileged action through the audited CEO gate.",
+        allowed_roles=_ORCH,
+        cache_ttl=0,
+        idempotent=False,
+    ),
 )
 
 # --- Sprint / Issue ---
@@ -742,7 +750,7 @@ _register(
     _entry(
         name="security.scan",
         group=ToolGroup.KPI_UTILITY,
-        description="Run Semgrep/SkillSpector-style static checks through a safe adapter.",
+        description="Run configured Semgrep/SkillSpector/TruffleHog checks through a safe adapter.",
         allowed_roles=_WORKER,
         cache_ttl=0,
         idempotent=False,
@@ -880,6 +888,7 @@ TOOL_ALIASES: dict[str, str] = {
     "risk_assess": "security.scan",
     "semgrep": "security.scan",
     "skillspector": "security.scan",
+    "trufflehog": "security.scan",
     "docling": "document.ingest",
     "docling.parse": "document.ingest",
     "mermaid": "diagram.render",

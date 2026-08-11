@@ -15,6 +15,7 @@ from uuid import UUID
 
 import httpx
 
+from mas_core.observability import current_trace_id
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 
@@ -82,6 +83,7 @@ class ToolServiceClient:
         ToolResponse
             Always returns a ToolResponse — errors are encoded inside it.
         """
+        effective_trace_id = trace_id or current_trace_id()
         request = ToolRequest(
             caller_id=caller_id,
             caller_role=caller_role,
@@ -90,7 +92,7 @@ class ToolServiceClient:
             tool_name=tool_name,
             tool_kwargs=kwargs or {},
             idempotency_key=idempotency_key,
-            trace_id=trace_id,
+            trace_id=effective_trace_id,
             span_id=span_id,
         )
 
@@ -99,10 +101,23 @@ class ToolServiceClient:
 
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = await self._client.post(f"/tools/{tool_name}/run", json=payload)
+                request_headers = (
+                    {"X-AIAT-Trace-ID": effective_trace_id}
+                    if effective_trace_id
+                    else None
+                )
+                resp = await self._client.post(
+                    f"/tools/{tool_name}/run",
+                    json=payload,
+                    headers=request_headers,
+                )
 
                 if resp.status_code == 404:
-                    resp = await self._client.post("/tools/execute", json=payload)
+                    resp = await self._client.post(
+                        "/tools/execute",
+                        json=payload,
+                        headers=request_headers,
+                    )
 
                 if resp.status_code == 429:
                     # Rate limited — back off and retry
@@ -131,7 +146,7 @@ class ToolServiceClient:
                     success=False,
                     error=f"HTTP {exc.response.status_code}: {exc.response.text[:500]}",
                     error_code="TOOL_ERROR",
-                    trace_id=trace_id,
+                    trace_id=effective_trace_id,
                     span_id=span_id,
                 )
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -155,7 +170,7 @@ class ToolServiceClient:
             success=False,
             error=f"Tool service unreachable after {_MAX_RETRIES} attempts: {last_exc}",
             error_code="TOOL_ERROR",
-            trace_id=trace_id,
+            trace_id=effective_trace_id,
             span_id=span_id,
         )
 
