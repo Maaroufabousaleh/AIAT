@@ -533,7 +533,7 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
         "status_when_missing": "blocked",
         "required_gates": [
             "adapter contract",
-            "license/provenance approval",
+            "source/version provenance record",
             "gVisor sandbox profile",
             "artifact reference output contract",
         ],
@@ -567,7 +567,7 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
         "required_gates": [
             "skipped-tool reporting",
             "sandboxed execution",
-            "license/provenance approval",
+            "source/version provenance record",
         ],
         "blocked_reason": None,
     },
@@ -8076,8 +8076,11 @@ async def _worker_activation_blockers(
         ):
             if await storage.get_steward_by_worker(worker["id"]) is None:
                 blockers.append("external worker requires a dedicated Steward Agent")
-            if await storage.get_external_provenance_by_worker(worker["id"]) is None:
+            external_provenance = await storage.get_external_provenance_by_worker(worker["id"])
+            if external_provenance is None:
                 blockers.append("external worker requires immutable provenance")
+            elif str(external_provenance.get("security_scan_status") or "").lower() != "passed":
+                blockers.append("external worker requires a passed security scan")
 
     return blockers
 
@@ -9177,22 +9180,29 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
     if worker is None:
         raise HTTPException(404, "Worker not found")
     provenance = steward.provenance
-    server_checks = {
-        "provenance_pin": bool(
-            provenance.exact_release
-            or provenance.commit_sha
-            or provenance.package_version
-            or provenance.oci_image_digest
-        ),
-        "license": bool(provenance.license_id)
-        and provenance.redistribution_status == "approved",
-        "security": provenance.security_scan_status == "passed",
-        "documentation": bool(steward.documentation_snapshots),
-        "capability_snapshot": bool(steward.capability_snapshots),
-    }
+    # Licence/redistribution fields are retained on provenance for metadata
+    # and operator notices, but personal internal-use policy never makes them
+    # a certification predicate.
+    server_checks = operational_promotion_checks(
+        provenance,
+        documentation=bool(steward.documentation_snapshots),
+        capability_snapshot=bool(steward.capability_snapshots),
+    )
     # Supplemental checks may only make certification stricter; a request
     # cannot manufacture a passing core gate.
-    checks = {**server_checks, **{f"attested:{name}": bool(value) for name, value in req.checks.items()}}
+    # Preserve caller attestations for the audit record, except licence and
+    # redistribution values, which are metadata-only in personal/internal
+    # scope and must never become a certification blocker through a prefixed
+    # request key.
+    checks = {
+        **server_checks,
+        **{
+            f"attested:{name}": bool(value)
+            for name, value in req.checks.items()
+            if str(name).strip().lower().replace("-", "_")
+            not in {"license", "licensing", "license_id", "redistribution", "redistribution_status"}
+        },
+    }
     from mas_core.worker_contract import AdapterContext, ConformanceRunner, WorkerCapabilities
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
@@ -9475,7 +9485,26 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
         raise HTTPException(404, "Persisted rollout not found")
     from mas_core.worker_registry.steward import RolloutStatus
     try:
-        rollout = steward.advance_rollout(rollout_id, RolloutStatus(req.target_status), sample_count=req.sample_count, metrics=req.comparison_metrics)
+        target_status = RolloutStatus(req.target_status)
+    except ValueError as exc:
+        raise HTTPException(409, f"invalid rollout status: {req.target_status}") from exc
+    if target_status is RolloutStatus.ACTIVE:
+        candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
+        if candidate is None:
+            raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
+        promotion_checks = operational_promotion_checks(candidate.source_provenance)
+        failed_checks = [name for name, passed in promotion_checks.items() if not passed]
+        if failed_checks:
+            raise HTTPException(
+                409,
+                {
+                    "code": "ROLLOUT_PROMOTION_GOVERNANCE_BLOCKED",
+                    "message": "Rollout promotion requires current operational evidence",
+                    "blockers": failed_checks,
+                },
+            )
+    try:
+        rollout = steward.advance_rollout(rollout_id, target_status, sample_count=req.sample_count, metrics=req.comparison_metrics)
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
     if rollout.status.value == "ACTIVE":

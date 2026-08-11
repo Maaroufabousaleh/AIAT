@@ -957,7 +957,9 @@ function IntegrationReadinessPanel() {
     ["Docling document ingestion", "Adapter certification"],
     ["GitHub REST metadata and task API", "Repository intake"],
     ["server-side named credentials", "Credential boundary"],
-    ["trufflehog", "Excluded default"],
+    ["trufflehog", "Available scanner adapter"],
+    ["plane / openproject", "Available PM adapters"],
+    ["ansible", "Available CLI adapter"],
   ];
   return (
     <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
