@@ -98,8 +98,10 @@ function highlightMatches(text: string, query: string): React.ReactNode {
 
 export default function ToolsPage() {
   const [data, setData] = useState<ToolsResponse | null>(null);
+  const dataRef = useRef<ToolsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
@@ -109,11 +111,13 @@ export default function ToolsPage() {
 
   const fetchTools = useCallback(async () => {
     try {
-      const res = await fetch('/api/tools');
+      const res = await fetch('/api/tools', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: ToolsResponse = await res.json();
+      dataRef.current = json;
       setData(json);
       setError(null);
+      setStale(false);
       // Default: expand all groups on first load
       const groups = Object.keys(groupTools((json.tools ?? []).filter((t) => !t.deprecated_alias_of)));
       setExpandedGroups(prev => {
@@ -122,6 +126,7 @@ export default function ToolsPage() {
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch tools');
+      setStale(dataRef.current !== null);
     } finally {
       setLoading(false);
     }
@@ -163,7 +168,12 @@ export default function ToolsPage() {
     !!data &&
     expandedGroups.size ===
       Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of))).length &&
-    expandedGroups.size > 0;
+      expandedGroups.size > 0;
+
+  const requestRefresh = () => {
+    if (dataRef.current === null) setLoading(true);
+    void fetchTools();
+  };
 
   /** Copy a tool's fully qualified name to the clipboard with brief feedback. */
   const copyToolName = async (name: string) => {
@@ -235,16 +245,28 @@ export default function ToolsPage() {
           </>
         }
         actions={
-          <button
-            type="button"
-            onClick={() => setAllGroups(!allExpanded)}
-            disabled={visibleTools.length === 0}
-            aria-label={allExpanded ? 'Collapse all groups' : 'Expand all groups'}
-            className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {allExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            {allExpanded ? 'Collapse all' : 'Expand all'}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={requestRefresh}
+              disabled={loading}
+              aria-label="Refresh tools"
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={clsx('w-4 h-4', loading && 'animate-spin')} />
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={() => setAllGroups(!allExpanded)}
+              disabled={visibleTools.length === 0}
+              aria-label={allExpanded ? 'Collapse all groups' : 'Expand all groups'}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {allExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              {allExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
+          </>
         }
       />
 
@@ -274,17 +296,18 @@ export default function ToolsPage() {
       </div>
 
       {error && (
-        <ErrorBanner tone="warning" title="Could not load tools" action={
+        <ErrorBanner tone="warning" title={stale ? "Showing last known tool catalogue" : "Could not load tools"} action={
           <button
             type="button"
-            onClick={() => { setLoading(true); fetchTools(); }}
+            onClick={requestRefresh}
+            disabled={loading}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 text-xs font-medium transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
             Retry
           </button>
         }>
-          {error}
+          {stale ? `${error}. The latest tools refresh failed; retained catalogue data remains visible.` : error}
         </ErrorBanner>
       )}
 
