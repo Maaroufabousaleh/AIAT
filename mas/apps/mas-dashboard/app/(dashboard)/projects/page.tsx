@@ -78,6 +78,8 @@ export default function ProjectsPage() {
   const [newTags, setNewTags] = useState("");
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadStale, setLoadStale] = useState(false);
   const [bulkArchiving, setBulkArchiving] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
   const [bulkError, setBulkError] = useState("");
@@ -100,23 +102,24 @@ export default function ProjectsPage() {
   };
 
   async function load() {
-    setLoading(true);
+    const hadData = projects.length > 0 || flows.length > 0;
+    if (!hadData) setLoading(true);
+    setLoadError("");
     try {
       const [projRes, flowRes] = await Promise.all([
         fetch("/api/projects?limit=1000", { cache: "no-store" }),
         fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
       ]);
-      if (projRes.ok) {
-        const projData = await projRes.json();
-        setProjects(Array.isArray(projData) ? projData : projData.projects ?? []);
+      if (!projRes.ok || !flowRes.ok) {
+        throw new Error("Project and flow data are unavailable from the control plane");
       }
-      if (flowRes.ok) {
-        const flowData = await flowRes.json();
-        setFlows(Array.isArray(flowData) ? flowData : []);
-      }
-    } catch {
-      setProjects([]);
-      setFlows([]);
+      const [projData, flowData] = await Promise.all([projRes.json(), flowRes.json()]);
+      setProjects(Array.isArray(projData) ? projData : projData.projects ?? []);
+      setFlows(Array.isArray(flowData) ? flowData : []);
+      setLoadStale(false);
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : String(cause));
+      setLoadStale(hadData);
     } finally {
       setLoading(false);
     }
@@ -316,8 +319,9 @@ export default function ProjectsPage() {
         actions={
           <>
             <button
-              onClick={load}
+              onClick={() => void load()}
               disabled={loading}
+              aria-label="Refresh projects"
               title="Refresh"
               className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors"
             >
@@ -333,6 +337,20 @@ export default function ProjectsPage() {
           </>
         }
       />
+
+      {loadError && (
+        <ErrorBanner
+          tone={loadStale ? "warning" : "error"}
+          title={loadStale ? "Showing last known project list" : "Project list unavailable"}
+          action={(
+            <button type="button" onClick={() => void load()} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {loadStale ? `${loadError}. The latest project refresh failed; retained projects remain visible.` : loadError}
+        </ErrorBanner>
+      )}
 
       {/* Filter + sort toolbar */}
       {projects.length > 0 && (
