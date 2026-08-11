@@ -1,6 +1,6 @@
 {
   "schema_version": "aiat.runtime-benchmark-live-evidence.v1",
-  "observed_at": "2026-08-11T00:44:43Z",
+  "observed_at": "2026-08-11T20:41:13Z",
   "status": "pass",
   "mode": "live",
   "scope": "orchestrator dependency-backed dry-run only",
@@ -12,7 +12,7 @@
       "catalogue_status": "available",
       "status": "dry_run_completed",
       "sandbox_required": "gvisor",
-      "elapsed_ms": 1.45,
+      "elapsed_ms": 0.26,
       "tasks_run": 1,
       "tasks_passed": 1
     },
@@ -21,7 +21,7 @@
       "catalogue_status": "available",
       "status": "dry_run_completed",
       "sandbox_required": "gvisor",
-      "elapsed_ms": 2832.35,
+      "elapsed_ms": 0.27,
       "tasks_run": 1,
       "tasks_passed": 1
     }
