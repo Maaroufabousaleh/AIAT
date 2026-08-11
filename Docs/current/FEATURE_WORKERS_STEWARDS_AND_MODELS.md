@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** universal foundation and metadata-only licence boundary implemented; governed model-profile/cooldown/catalogue/bootstrap group `288996e`, LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, and read-only persisted default-worker reconciliation (39/39) pass; worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, and read-only persisted default-worker reconciliation (39/39) pass; worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -227,6 +227,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Security adapter aliases/fixture (`fc528a8`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py)
 - Document ingestion/fallback: [`DocumentIngestTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_document_ingest_falls_back_to_text_when_docling_missing`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `document.ingest` readiness probe
 - Steward lifecycle contract (`c80e339`, fixture coverage `fe6fb8d`): [`mas/scripts/check_worker_steward_contract.py`](../../mas/scripts/check_worker_steward_contract.py) and [`test_worker_steward_contract.py`](../../mas/packages/mas-core/tests/test_worker_steward_contract.py). The deterministic domain exercise covers candidate immutability, compatibility evidence, promotion regression blocking, and rollback without claiming database or live-worker certification.
+- Metadata-only provenance/evaluator group (`cbdcfa6`): [`mas/scripts/check_provenance.py`](../../mas/scripts/check_provenance.py), [`worker_registry/evaluator.py`](../../mas/packages/mas-core/mas_core/worker_registry/evaluator.py), and the default-manifest regression tests. Source/version/provenance remains an operational gate; detected, missing, unclassified, or restricted licence values are retained as operator notices only. The same group records the current coding/tester security findings state and keeps both manifests pending until technical triage passes.
 - Executive reconciliation verifier: [`mas/scripts/check_executive_reconciliation.py`](../../mas/scripts/check_executive_reconciliation.py)
 - Model profiles/resolver: [`mas/packages/mas-core/mas_core/llm_gateway/`](../../mas/packages/mas-core/mas_core/llm_gateway/)
 - Model health/cooldown state: [`mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py`](../../mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py)

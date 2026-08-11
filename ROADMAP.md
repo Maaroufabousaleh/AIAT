@@ -235,7 +235,8 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 ### R1 — release integrity
 
 **Plan:** [P0 Release Integrity](Docs/current/plans/P0_RELEASE_INTEGRITY_PLAN.md)  
-**Status:** in progress — metadata-only policy, shared certification checks,
+**Status:** in progress — metadata-only policy and worker evaluator/manifest
+group (`cbdcfa6`), shared certification checks,
 scan-state/findings reconciliation, static worker/runtime/provenance
 reconciliation, bounded metric label inventory, persisted CEO/service section
 ACLs, immutable image-input contract, fail-closed local image identity probe,
@@ -251,7 +252,7 @@ The deterministic evidence-package core/resolver/fixtures are reviewed and commi
 
 Required outcomes:
 
-- [x] licence and redistribution fields are metadata-only in code and cannot block discovery, installation, hiring, activation, rollout, updating, or execution;
+- [x] licence and redistribution fields are metadata-only in code and cannot block discovery, installation, hiring, activation, rollout, updating, or execution; evaluator diagnostics retain operator notices without score weight or rejection power (`cbdcfa6`);
 - [x] the historical `LICENSE_REVIEW` label is optional metadata capture; the normal source-review path can continue directly to technical security review;
 - [x] worker certification/provenance records use a shared operational predicate;
 - [x] coding/tester scan-state contradiction is closed; exact-source Semgrep

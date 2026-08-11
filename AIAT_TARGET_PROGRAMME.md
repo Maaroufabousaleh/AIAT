@@ -1128,7 +1128,7 @@ The programme is organised around completing and hardening the existing architec
 
 ### P0 — release blockers and truth gaps
 
-1. **Implemented:** remove licence/redistribution from worker activation, certification, hiring, rollout, and provenance-script failure predicates; preserve the fields as non-blocking metadata and operator notices.
+1. **Implemented (`cbdcfa6`):** remove licence/redistribution from worker activation, certification, hiring, rollout, evaluator scoring, and provenance-script failure predicates; preserve the fields as non-blocking metadata and operator notices. The evaluator still emits a diagnostic record for detected, missing, unclassified, or restricted values, but it cannot create a blocker or rejection.
 2. **Implemented:** reconcile the prior coding/tester `approved` status with security evidence: the exact OpenCode source scan is recorded as `findings_review_required`, both manifests remain pending/non-activatable, and activation fails closed until findings are triaged and a passing scan is recorded.
 3. Live-retest the corrected worker-network boundary and close the old critical Redis exposure only with negative evidence.
 4. **Implemented contract:** remove unbounded `project_id` Prometheus labels and enforce static metric-series budgets. **Open evidence:** run the many-project native scrape.
