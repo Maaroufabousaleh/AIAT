@@ -348,6 +348,7 @@ function CopyButton({ value }: { value: string }) {
 export default function CredentialsPage() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const credentialsRef = useRef<Credential[] | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -396,6 +397,7 @@ export default function CredentialsPage() {
       if (!Array.isArray(next)) throw new Error("Invalid credentials response");
       credentialsRef.current = next;
       setCredentials(next);
+      setHasLoaded(true);
       setLoadStale(false);
     } catch (e: unknown) {
       setLoadError(e instanceof Error ? e.message : "Failed to load credentials");
@@ -537,10 +539,16 @@ export default function CredentialsPage() {
             </tr>
           </thead>
           <tbody>
-            {loading && credentialsRef.current === null ? (
+            {loading && !hasLoaded ? (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                   Loading…
+                </td>
+              </tr>
+            ) : loadError && !hasLoaded ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  Unable to load credentials. Use Retry to try again.
                 </td>
               </tr>
             ) : credentials.length === 0 ? (
