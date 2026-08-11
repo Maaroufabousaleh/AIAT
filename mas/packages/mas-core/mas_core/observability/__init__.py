@@ -1,22 +1,15 @@
-"""MAS observability: Prometheus metrics, structured logging, trace-id propagation."""
+"""MAS observability: metrics, structured logs, bounded evidence, and SLOs."""
 
-from mas_core.observability.native_spans import (
-    NATIVE_TRACE_SPAN_SCHEMA,
-    NATIVE_TRACE_SPAN_SOURCE_KINDS,
-    NativeTraceSpan,
-    build_native_trace_span,
-)
-from mas_core.observability.trace_evidence import (
-    TRACE_EVIDENCE_SCHEMA,
-    TRACE_RETENTION_SCHEMA,
-    TraceEvidence,
-    TraceEvidenceItem,
-    TraceRetentionPolicy,
-    build_trace_evidence,
-    trace_retention_from_manifest,
+from mas_core.observability.api_observations import (
+    API_OBSERVATION_SCHEMA,
+    API_OBSERVATION_SOURCE,
+    APIObservation,
+    build_api_observation,
+    normalize_api_route,
 )
 from mas_core.observability.logging import configure_logging
 from mas_core.observability.metrics import (
+    AIAT_METRIC_COLLECTORS,
     MAS_AGENT_CORRECTION_FACTOR,
     MAS_BUDGET_EXHAUSTED_TOTAL,
     MAS_DLQ_DEPTH,
@@ -27,11 +20,57 @@ from mas_core.observability.metrics import (
     MAS_REVIEW_CIRCUIT_OPEN,
     MAS_TOOL_CALLS_TOTAL,
     MAS_TOOL_CIRCUIT_STATE,
+    METRIC_LABEL_POLICIES,
+    PROJECT_STATE_LABELS,
+    assert_metric_series_budget,
+    metric_declared_label_inventory,
+    metric_label_inventory,
+    metric_label_policy_inventory,
+    metric_series_budget_status,
+    observe_project_state,
+    reconcile_project_state_metrics,
+    record_project_state_transition,
     set_tool_circuit_state,
 )
-from mas_core.observability.tracing import bind_trace_id, clear_trace_context, new_trace_id
+from mas_core.observability.native_spans import (
+    NATIVE_TRACE_SPAN_SCHEMA,
+    NATIVE_TRACE_SPAN_SOURCE_KINDS,
+    NativeTraceSpan,
+    build_native_trace_span,
+)
+from mas_core.observability.retention import (
+    TRACE_RETENTION_PLAN_SCHEMA,
+    TraceRetentionCandidate,
+    TraceRetentionPlan,
+    plan_native_span_retention,
+)
+from mas_core.observability.trace_evidence import (
+    TRACE_EVIDENCE_SCHEMA,
+    TRACE_RETENTION_SCHEMA,
+    TraceEvidence,
+    TraceEvidenceItem,
+    TraceRetentionPolicy,
+    build_trace_evidence,
+    trace_retention_from_manifest,
+)
+from mas_core.observability.tracing import (
+    bind_trace_id,
+    clear_trace_context,
+    current_span_id,
+    current_trace_id,
+    is_safe_span_id,
+    is_safe_trace_id,
+    new_span_id,
+    new_trace_id,
+    resolve_trace_id,
+)
 
 __all__ = [
+    "API_OBSERVATION_SCHEMA",
+    "API_OBSERVATION_SOURCE",
+    "APIObservation",
+    "build_api_observation",
+    "normalize_api_route",
     # Prometheus metrics
     "MAS_MESSAGES_TOTAL",
     "MAS_TOOL_CALLS_TOTAL",
@@ -43,11 +82,43 @@ __all__ = [
     "MAS_INFRA_LEAD_TIME",
     "MAS_AGENT_CORRECTION_FACTOR",
     "MAS_TOOL_CIRCUIT_STATE",
+    "metric_series_budget_status",
+    "metric_label_inventory",
+    "metric_declared_label_inventory",
+    "metric_label_policy_inventory",
+    "METRIC_LABEL_POLICIES",
+    "AIAT_METRIC_COLLECTORS",
+    "assert_metric_series_budget",
+    "PROJECT_STATE_LABELS",
+    "observe_project_state",
+    "record_project_state_transition",
+    "reconcile_project_state_metrics",
     "set_tool_circuit_state",
+    "NATIVE_TRACE_SPAN_SCHEMA",
+    "NATIVE_TRACE_SPAN_SOURCE_KINDS",
+    "NativeTraceSpan",
+    "build_native_trace_span",
+    "TRACE_RETENTION_PLAN_SCHEMA",
+    "TraceRetentionCandidate",
+    "TraceRetentionPlan",
+    "plan_native_span_retention",
     # Logging
     "configure_logging",
+    "TRACE_EVIDENCE_SCHEMA",
+    "TRACE_RETENTION_SCHEMA",
+    "TraceEvidence",
+    "TraceEvidenceItem",
+    "TraceRetentionPolicy",
+    "build_trace_evidence",
+    "trace_retention_from_manifest",
     # Tracing
     "bind_trace_id",
     "clear_trace_context",
+    "current_span_id",
+    "current_trace_id",
+    "is_safe_span_id",
+    "is_safe_trace_id",
+    "new_span_id",
     "new_trace_id",
+    "resolve_trace_id",
 ]
