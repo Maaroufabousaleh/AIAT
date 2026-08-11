@@ -103,8 +103,8 @@ export default function ProjectsPage() {
     setLoading(true);
     try {
       const [projRes, flowRes] = await Promise.all([
-        fetch("/api/projects?limit=1000"),
-        fetch("/api/flows?is_active=true&limit=1000"),
+        fetch("/api/projects?limit=1000", { cache: "no-store" }),
+        fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
       ]);
       if (projRes.ok) {
         const projData = await projRes.json();
