@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 readme = "README.md"
 dependencies = [
     "mas-core",
+    "mas-api-sdk",
     "mas-tools-sdk",
     "message-router",
     "tool-service",
@@ -22,6 +23,7 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "packages/mas-core",
+    "packages/mas-api-sdk",
     "packages/mas-tools-sdk",
     "apps/orchestrator-api",
     "apps/team-runner",
@@ -41,6 +43,7 @@ dev = [
     "fastapi>=0.115",
     "pyyaml>=6.0",
     "httpx>=0.27",          # async test client
+    "playwright>=1.42",     # browser adapter tests; production core image excludes it
     "fakeredis>=2.25",      # in-memory Redis for unit tests
     "respx>=0.21",          # mock httpx calls
     "ruff>=0.6",
@@ -51,6 +54,7 @@ dev = [
 
 [tool.uv.sources]
 mas-core = { workspace = true }
+mas-api-sdk = { workspace = true }
 mas-tools-sdk = { workspace = true }
 message-router = { workspace = true }
 tool-service = { workspace = true }
@@ -81,6 +85,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = [
     "packages/mas-core/tests",
+    "packages/mas-api-sdk/tests",
     "packages/mas-tools-sdk/tests",
     "apps/message-router/tests",
     "apps/orchestrator-api/tests",

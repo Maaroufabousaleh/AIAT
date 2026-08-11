@@ -25,7 +25,40 @@ jobs:
       - run: uv sync --locked --dev
       - run: uv run python -m compileall -q packages apps
       - run: uv run python scripts/check_provenance.py
-      - run: uv run pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests
+      - run: uv run python scripts/check_docs_index.py --json
+      - run: uv run python scripts/check_api_contract.py --json
+      - run: uv run python scripts/check_api_observability.py --json
+      - run: uv run python scripts/check_trace_evidence.py --json
+      - run: uv run python scripts/check_native_trace_spans.py --json
+      - run: uv run python scripts/check_slo_capacity.py --json
+      - run: uv run python scripts/generate_typescript_api.py --check
+      - run: uv run python scripts/generate_python_api.py --check
+      - run: uv run python scripts/check_prompt_tool_reconciliation.py --json
+      - run: uv run python scripts/check_worker_reconciliation.py --json
+      - run: uv run python scripts/check_runtime_install_profile.py --json
+      - run: uv run python scripts/check_worker_steward_contract.py --json
+      - run: uv run python scripts/generate_worker_certification_matrix.py --check
+      - run: uv run python scripts/generate_flow_node_schemas.py --check
+      - run: uv run python scripts/check_network_boundary.py --json
+      - run: uv run python scripts/check_image_provenance.py
+      - run: uv run python scripts/check_image_budgets.py
+      - run: uv run python scripts/check_release_ledger.py --json
+      - run: uv run pytest packages/mas-core/tests packages/mas-api-sdk/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests
+      - run: PYTHONPATH=apps/identity-service uv run pytest apps/identity-service/tests/test_identity_service.py
+  dashboard-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mas/apps/mas-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mas/apps/mas-dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
   migration-and-compose:
     runs-on: ubuntu-latest
     steps:
