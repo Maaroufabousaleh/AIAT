@@ -29,9 +29,9 @@ test.describe("CEO evidence detail", () => {
   });
 
   test("keeps unsupported kinds as identity-only citations", async ({ page }) => {
-    await authenticate(page, "/evidence/tool/tool-123");
+    await authenticate(page, "/evidence/artifact/artifact-123");
 
-    await expect(page.getByTestId("ceo-evidence-record")).toContainText("tool-123");
+    await expect(page.getByTestId("ceo-evidence-record")).toContainText("artifact-123");
     await expect(page.getByTestId("ceo-evidence-detail")).toHaveCount(0);
     await expect(page.getByTestId("ceo-evidence-canonical-link")).toBeVisible();
   });
@@ -138,5 +138,34 @@ test.describe("CEO evidence detail", () => {
       "href",
       "/governance?evidence_kind=model&evidence_id=model-down",
     );
+  });
+
+  test("renders tool catalogue scalars without schemas or credential requirements", async ({ page }) => {
+    await page.route("**/api/evidence/tool/tool-001", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema_version: "aiat.evidence-detail.v1",
+          kind: "tool",
+          id: "tool-001",
+          source: "control-plane",
+          record: {
+            tool_name: "time_now",
+            tool_group: "system",
+            schema_status: "declared",
+            risk_tier: "low",
+            available: true,
+          },
+        }),
+      });
+    });
+
+    await authenticate(page, "/evidence/tool/tool-001");
+
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("time_now");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("declared");
+    await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("credential requirements");
+    await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("input schema");
   });
 });

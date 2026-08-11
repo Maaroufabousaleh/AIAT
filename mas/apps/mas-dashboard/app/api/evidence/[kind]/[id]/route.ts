@@ -32,6 +32,22 @@ const SAFE_SCALAR_KEYS = new Set([
   "provider_kind",
   "capability_profile",
   "display_name",
+  "tool_name",
+  "tool_group",
+  "schema_status",
+  "risk_tier",
+  "approval_policy",
+  "transport",
+  "cache_ttl_seconds",
+  "idempotent",
+  "side_effect",
+  "available",
+  "configured",
+  "backend",
+  "degraded",
+  "canonical_tool_name",
+  "alias",
+  "deprecated_alias_of",
   "profile_id",
   "task_type",
   "revision",
@@ -53,6 +69,7 @@ const SAFE_STRING_LIMIT = 256;
 const DETAIL_PATHS: Record<string, (id: string) => string> = {
   integration: () => "/integrations/connections",
   model: () => "/model-profiles/catalogue",
+  tool: () => "/tools",
   project: (id) => `/projects/${encodeURIComponent(id)}`,
   flow: (id) => `/flows/${encodeURIComponent(id)}`,
   flow_instance: (id) => `/flows/instances/${encodeURIComponent(id)}`,
@@ -107,6 +124,18 @@ function selectModel(raw: unknown, id: string): unknown {
   return raw.entries.find((entry) => isRecord(entry) && entry.model_id === id) ?? null;
 }
 
+function selectTool(raw: unknown, id: string): unknown {
+  const tools = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.tools)
+      ? raw.tools
+      : [];
+  return tools.find((tool) => {
+    if (!isRecord(tool)) return false;
+    return tool.tool_name === id || tool.name === id || tool.id === id;
+  }) ?? null;
+}
+
 export async function GET(
   _request: NextRequest,
   props: { params: Promise<{ kind: string; id: string }> },
@@ -121,14 +150,24 @@ export async function GET(
   }
 
   try {
-    const raw = await orchestratorFetch(pathFactory(id));
+    const raw = kind === "tool"
+      ? await fetch(`${process.env.TOOL_SERVICE_URL ?? "http://localhost:8002"}/tools`, {
+          headers: { Authorization: `Bearer ${process.env.TOOL_SECRET ?? ""}` },
+          cache: "no-store",
+        }).then(async (response) => {
+          if (!response.ok) throw new Error(`tool service returned ${response.status}`);
+          return response.json() as Promise<unknown>;
+        })
+      : await orchestratorFetch(pathFactory(id));
     const record = kind === "runtime"
       ? selectRuntime(raw, id)
       : kind === "integration"
         ? selectListRecord(raw, id)
         : kind === "model"
           ? selectModel(raw, id)
-          : raw;
+          : kind === "tool"
+            ? selectTool(raw, id)
+            : raw;
     if (!record) {
       return NextResponse.json({ error: "evidence record was not found" }, { status: 404 });
     }

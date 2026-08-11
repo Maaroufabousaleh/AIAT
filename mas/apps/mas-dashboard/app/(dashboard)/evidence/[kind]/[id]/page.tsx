@@ -36,6 +36,7 @@ const SUPPORTED_KINDS = new Set([
 const DETAIL_KINDS = new Set([
   "integration",
   "model",
+  "tool",
   "project",
   "flow",
   "flow_instance",
