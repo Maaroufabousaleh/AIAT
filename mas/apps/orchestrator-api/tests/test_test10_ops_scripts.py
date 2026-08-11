@@ -6,6 +6,7 @@ Type: API / integration / security
 The AIAT MAS operational control is built into the orchestrator-api routes:
   GET  /health
   GET  /system/status
+  GET  /system/diagnostics
   POST /system/shutdown
   POST /system/resume
   GET  /system/logs/{container}
@@ -424,7 +425,7 @@ async def test_system_status_diagnostic_fields(client):
 
 
 # ---------------------------------------------------------------------------
-# 10. Production gaps documented as TODO tests
+# 10. Remaining production gaps documented as TODO tests
 # ---------------------------------------------------------------------------
 
 
@@ -453,13 +454,139 @@ def test_todo_no_service_restart_endpoint():
     )
 
 
-def test_todo_no_diagnostics_endpoint():
-    """
-    TODO (production gap): No /system/diagnostics endpoint with DB/Redis/MinIO
-    connection health. The /system/status only reports system_state and project counts.
-    A /system/diagnostics endpoint should check and report all service dependencies.
-    """
-    pytest.skip(
-        "TODO: No /system/diagnostics endpoint. "
-        "/system/status does not check DB/Redis/MinIO connectivity."
+@pytest.mark.anyio
+async def test_system_diagnostics_reports_dependency_health(client, monkeypatch):
+    """Diagnostics reports safe health facts without exposing dependency payloads."""
+    from orchestrator_api import main
+
+    storage = _base_storage("RUNNING")
+    _patch(storage)
+    monkeypatch.setattr(
+        main,
+        "_probe_http_health",
+        AsyncMock(
+            side_effect=[
+                {"status": "ok", "http_status": 200, "redis_connected": True},
+                {
+                    "status": "ok",
+                    "http_status": 200,
+                    "cache_connected": True,
+                    "tools_registered": 24,
+                },
+            ]
+        ),
     )
+    monkeypatch.setattr(
+        main,
+        "_probe_object_store_health",
+        AsyncMock(return_value={"status": "ok", "configured": True}),
+    )
+
+    response = await client.get("/system/diagnostics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["state"] == "RUNNING"
+    assert set(body["dependencies"]) == {
+        "database",
+        "message_router",
+        "tool_service",
+        "object_store",
+    }
+    assert body["dependencies"]["database"]["status"] == "ok"
+    assert body["dependencies"]["message_router"]["redis_connected"] is True
+    assert body["dependencies"]["tool_service"]["tools_registered"] == 24
+    assert "error" not in body["dependencies"]["message_router"]
+
+
+@pytest.mark.anyio
+async def test_system_diagnostics_reports_degraded_dependency(client, monkeypatch):
+    """A failed dependency makes the aggregate degraded without raising 5xx."""
+    from orchestrator_api import main
+
+    storage = _base_storage("RUNNING")
+    _patch(storage)
+    monkeypatch.setattr(
+        main,
+        "_probe_http_health",
+        AsyncMock(
+            side_effect=[
+                {"status": "degraded", "http_status": 200, "reported_status": "degraded"},
+                {"status": "error", "error_type": "ConnectError"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_probe_object_store_health",
+        AsyncMock(return_value={"status": "not_configured", "configured": False}),
+    )
+
+    response = await client.get("/system/diagnostics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["message_router"]["reported_status"] == "degraded"
+    assert body["dependencies"]["tool_service"]["error_type"] == "ConnectError"
+    assert body["dependencies"]["object_store"]["status"] == "not_configured"
+
+
+@pytest.mark.anyio
+async def test_http_diagnostic_probe_redacts_dependency_payload(client, monkeypatch):
+    """HTTP probes retain safe flags, never raw dependency error text."""
+    from orchestrator_api import main
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _url):
+            import httpx
+
+            return httpx.Response(
+                200,
+                json={"status": "degraded", "redis": "error: redis-password=secret-value"},
+            )
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = await main._probe_http_health("http://router")
+
+    assert result["status"] == "degraded"
+    assert result["redis_connected"] is False
+    assert "error_type" not in result
+    assert "secret-value" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_object_store_diagnostic_probe_reports_unconfigured(client, monkeypatch):
+    """Absent object-store credentials are reported without attempting a call."""
+    from orchestrator_api import main
+
+    for name in (
+        "MINIO_ENDPOINT",
+        "BLOB_ENDPOINT_URL",
+        "MINIO_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "MINIO_SECRET_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = await main._probe_object_store_health()
+
+    assert result == {"status": "not_configured", "configured": False}
+
+
+@pytest.mark.anyio
+async def test_system_diagnostics_without_storage_returns_503(client):
+    """The route cannot report a database check without control-plane storage."""
+    from orchestrator_api.main import app
+
+    app.state.storage = None
+    response = await client.get("/system/diagnostics")
+    assert response.status_code == 503

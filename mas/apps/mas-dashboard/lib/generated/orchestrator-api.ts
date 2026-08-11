@@ -913,7 +913,7 @@ export type RegisterWorkerRequest = {
   sandbox_profile?: string;
   source_repo?: (string | null);
   team_id?: (string | null);
-  update_policy?: string;
+  update_policy?: ("manual" | "auto-patch" | "auto-minor" | "auto-all");
   version_pin?: (string | null);
 };
 
@@ -1172,7 +1172,7 @@ export type UpdateWorkerRequest = {
   sandbox_profile?: (string | null);
   source_repo?: (string | null);
   team_id?: (string | null);
-  update_policy?: (string | null);
+  update_policy?: (("manual" | "auto-patch" | "auto-minor" | "auto-all") | null);
   version?: (string | null);
   version_pin?: (string | null);
   wrapper_config?: ({
@@ -4378,6 +4378,15 @@ export type OrchestratorApiOperations = {
   "get_company_overview_system_company_get": {
     method: "GET";
     path: "/system/company";
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+    };
+  };
+  "system_diagnostics_system_diagnostics_get": {
+    method: "GET";
+    path: "/system/diagnostics";
     responses: {
       "200": {
   [key: string]: unknown;

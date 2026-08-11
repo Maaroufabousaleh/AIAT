@@ -5065,6 +5065,12 @@
           },
           "update_policy": {
             "default": "manual",
+            "enum": [
+              "manual",
+              "auto-patch",
+              "auto-minor",
+              "auto-all"
+            ],
             "title": "Update Policy",
             "type": "string"
           },
@@ -6793,6 +6799,12 @@
           "update_policy": {
             "anyOf": [
               {
+                "enum": [
+                  "manual",
+                  "auto-patch",
+                  "auto-minor",
+                  "auto-all"
+                ],
                 "type": "string"
               },
               {
@@ -19004,6 +19016,27 @@
           }
         },
         "summary": "Get Company Overview"
+      }
+    },
+    "/system/diagnostics": {
+      "get": {
+        "description": "Return secret-safe read-only health for control-plane dependencies.",
+        "operationId": "system_diagnostics_system_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response System Diagnostics System Diagnostics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Diagnostics"
       }
     },
     "/system/logs/{container}": {

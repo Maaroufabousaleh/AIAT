@@ -6684,6 +6684,131 @@ async def system_status() -> dict[str, Any]:
     }
 
 
+def _diagnostic_latency(started: float) -> float:
+    """Return a small, stable latency value for the diagnostics contract."""
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+async def _probe_database_health(storage: AgentStorage) -> dict[str, Any]:
+    """Run a read-only database probe without returning driver details."""
+    started = time.perf_counter()
+    try:
+        async with storage.engine.connect() as conn:
+            await conn.execute(sa.text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+    return {"status": "ok", "latency_ms": _diagnostic_latency(started)}
+
+
+async def _probe_http_health(url: str) -> dict[str, Any]:
+    """Probe a dependency health route while retaining only safe fields."""
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=2.0, follow_redirects=False) as client:
+            response = await client.get(f"{url.rstrip('/')}/health")
+        payload: dict[str, Any] = {}
+        try:
+            decoded = response.json()
+            if isinstance(decoded, dict):
+                payload = decoded
+        except (TypeError, ValueError):
+            payload = {}
+
+        reported_status = payload.get("status")
+        if response.status_code >= 500:
+            status = "error"
+        elif response.status_code >= 400 or reported_status not in (None, "ok"):
+            status = "degraded"
+        else:
+            status = "ok"
+
+        result: dict[str, Any] = {
+            "status": status,
+            "http_status": response.status_code,
+            "latency_ms": _diagnostic_latency(started),
+        }
+        if isinstance(reported_status, str):
+            result["reported_status"] = reported_status[:32]
+        if isinstance(payload.get("cache_connected"), bool):
+            result["cache_connected"] = payload["cache_connected"]
+        if isinstance(payload.get("tools_registered"), int):
+            result["tools_registered"] = max(0, payload["tools_registered"])
+        if "redis" in payload:
+            result["redis_connected"] = payload.get("redis") == "ok"
+        return result
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+
+
+async def _probe_object_store_health() -> dict[str, Any]:
+    """Perform a non-mutating S3-compatible bucket probe when configured."""
+    endpoint = os.getenv("MINIO_ENDPOINT") or os.getenv("BLOB_ENDPOINT_URL")
+    access_key = os.getenv("MINIO_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("MINIO_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = os.getenv("MINIO_BUCKET") or os.getenv("BLOB_BUCKET") or "mas-agents"
+    if not endpoint or not access_key or not secret_key:
+        return {"status": "not_configured", "configured": False}
+
+    started = time.perf_counter()
+    from mas_core.memory.blob import BlobClient
+
+    blob = BlobClient(endpoint, access_key=access_key, secret_key=secret_key, bucket=bucket)
+    try:
+        await blob.connect()
+        await blob.client.head_bucket(Bucket=bucket)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "configured": True,
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+    finally:
+        try:
+            await blob.close()
+        except Exception:  # noqa: BLE001 - cleanup cannot hide diagnostic result
+            logger.debug("object_store_diagnostics_close_failed", exc_info=True)
+    return {
+        "status": "ok",
+        "configured": True,
+        "latency_ms": _diagnostic_latency(started),
+    }
+
+
+@app.get("/system/diagnostics")
+async def system_diagnostics() -> dict[str, Any]:
+    """Return secret-safe read-only health for control-plane dependencies."""
+    storage = _storage()
+    state = await storage.get_config("system_state") or "UNKNOWN"
+    dependencies = {
+        "database": await _probe_database_health(storage),
+        "message_router": await _probe_http_health(os.getenv("ROUTER_URL", ROUTER_URL)),
+        "tool_service": await _probe_http_health(
+            os.getenv("TOOL_SERVICE_URL", "http://tool-service:8002")
+        ),
+        "object_store": await _probe_object_store_health(),
+    }
+    overall = (
+        "ok"
+        if all(item.get("status") == "ok" for item in dependencies.values())
+        else "degraded"
+    )
+    return {
+        "status": overall,
+        "state": state,
+        "checked_at": datetime.now(tz=UTC).isoformat(),
+        "dependencies": dependencies,
+    }
+
+
 async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, Any] | None:
     """Load and atomically apply the checked-in default company manifest."""
     import inspect

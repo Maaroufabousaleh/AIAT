@@ -24,7 +24,7 @@ def _operation(path: str, method: str) -> str:
 
 def test_generated_contract_counts_and_parameter_metadata() -> None:
     assert MODEL_COUNT == 130
-    assert OPERATION_COUNT == 266
+    assert OPERATION_COUNT == 269
     operation = OPERATIONS[_operation("/projects/{project_id}", "GET")]
     assert operation.path_params == ("project_id",)
     assert operation.method == "GET"

@@ -725,7 +725,7 @@ class RegisterWorkerRequest(TypedDict):
     sandbox_profile: NotRequired[str]
     source_repo: NotRequired[str | Any]
     team_id: NotRequired[str | Any]
-    update_policy: NotRequired[str]
+    update_policy: NotRequired[Literal['manual', 'auto-patch', 'auto-minor', 'auto-all']]
     version_pin: NotRequired[str | Any]
 
 class ResolveCredentialRequest(TypedDict):
@@ -935,7 +935,7 @@ class UpdateWorkerRequest(TypedDict):
     sandbox_profile: NotRequired[str | Any]
     source_repo: NotRequired[str | Any]
     team_id: NotRequired[str | Any]
-    update_policy: NotRequired[str | Any]
+    update_policy: NotRequired[Literal['manual', 'auto-patch', 'auto-minor', 'auto-all'] | Any]
     version: NotRequired[str | Any]
     version_pin: NotRequired[str | Any]
     wrapper_config: NotRequired[dict[str, Any] | Any]
@@ -3156,6 +3156,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=(),
     ),
+    'system_diagnostics_system_diagnostics_get': ApiOperation(
+        operation_id='system_diagnostics_system_diagnostics_get',
+        method='GET',
+        path='/system/diagnostics',
+        path_params=(),
+        query_params=(),
+        request_body_type=None,
+        response_types=(),
+    ),
     'stream_container_logs_system_logs__container__get': ApiOperation(
         operation_id='stream_container_logs_system_logs__container__get',
         method='GET',
@@ -3429,7 +3438,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 130
-OPERATION_COUNT = 268
+OPERATION_COUNT = 269
 
 __all__ = [
     "ApiOperation",
