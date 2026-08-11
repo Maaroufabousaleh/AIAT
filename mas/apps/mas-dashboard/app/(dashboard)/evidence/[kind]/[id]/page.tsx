@@ -41,6 +41,7 @@ const DETAIL_KINDS = new Set([
   "worker_run",
   "credential",
   "dead_letter",
+  "trace",
   "runtime",
 ]);
 

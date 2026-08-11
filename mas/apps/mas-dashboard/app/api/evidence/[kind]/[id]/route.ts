@@ -36,6 +36,10 @@ const SAFE_SCALAR_KEYS = new Set([
   "finished_at",
   "trace_id",
   "span_id",
+  "generated_at",
+  "item_count",
+  "first_observed_at",
+  "last_observed_at",
 ]);
 
 const DETAIL_PATHS: Record<string, (id: string) => string> = {
@@ -46,6 +50,7 @@ const DETAIL_PATHS: Record<string, (id: string) => string> = {
   worker_run: (id) => `/workers/runs/${encodeURIComponent(id)}`,
   credential: (id) => `/credentials/${encodeURIComponent(id)}`,
   dead_letter: (id) => `/dead-letters/${encodeURIComponent(id)}`,
+  trace: (id) => `/observability/traces/${encodeURIComponent(id)}`,
   runtime: () => "/runtimes",
 };
 
