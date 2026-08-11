@@ -6549,6 +6549,42 @@ class AgentStorage:
                 )
             )
 
+    async def supersede_flow_node_executions(
+        self,
+        instance_id: UUID,
+        *,
+        reason: str = "Superseded by explicit flow retry",
+    ) -> int:
+        """Retain prior node attempts while removing them from traversal authority.
+
+        Retry is an evidence-preserving operation.  Historical inputs,
+        outputs, errors, and timestamps remain queryable; only the status is
+        changed to ``SUPERSEDED`` so a newly created retry execution is the
+        sole active attempt for that node.  ``COALESCE`` preserves an
+        authoritative failure message when one already exists.
+        """
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.flow_node_executions.update()
+                .where(
+                    sa.and_(
+                        t.flow_node_executions.c.instance_id == instance_id,
+                        t.flow_node_executions.c.status != "SUPERSEDED",
+                    )
+                )
+                .values(
+                    status="SUPERSEDED",
+                    error=sa.func.coalesce(t.flow_node_executions.c.error, reason),
+                    completed_at=sa.func.coalesce(
+                        t.flow_node_executions.c.completed_at,
+                        now,
+                    ),
+                )
+            )
+        return int(result.rowcount or 0)
+
     async def update_flow_instance_context(
         self,
         instance_id: UUID,
@@ -6648,7 +6684,13 @@ class AgentStorage:
         self,
         instance_id: UUID,
     ) -> dict[str, Any] | None:
-        """Retry a failed flow instance by resetting to NOT_STARTED."""
+        """Retry a failed flow instance without deleting execution evidence.
+
+        The API's recorded-safe-node path creates a new active execution after
+        superseding the previous attempts.  The no-safe-node fallback must keep
+        the same evidence boundary: historical node rows remain queryable and
+        are removed from traversal authority by the ``SUPERSEDED`` status.
+        """
         instance = await self.get_flow_instance(instance_id)
         if instance is None:
             return None
@@ -6664,7 +6706,7 @@ class AgentStorage:
             started_at=None,
             completed_at=None,
         )
-        await self.clear_flow_node_executions(instance_id)
+        await self.supersede_flow_node_executions(instance_id)
 
         return await self.get_flow_instance(instance_id)
 
