@@ -98,8 +98,10 @@ const SEVERITY_STYLES: Record<Severity, { border: string; pill: string }> = {
 
 export default function DLQPage() {
   const [data, setData] = useState<DLQResponse | null>(null);
+  const dataRef = useRef<DLQResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [replaying, setReplaying] = useState<Set<string>>(new Set());
@@ -115,14 +117,17 @@ export default function DLQPage() {
 
   const fetchDLQ = useCallback(async () => {
     try {
-      const res = await fetch("/api/dlq");
+      const res = await fetch("/api/dlq", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: DLQResponse = await res.json();
+      dataRef.current = json;
       setData(json);
       setLastFetchedAt(Date.now());
       setError(null);
+      setStale(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch DLQ");
+      setStale(dataRef.current !== null);
     } finally {
       setLoading(false);
     }
@@ -243,6 +248,11 @@ export default function DLQPage() {
     selected.has(l.id),
   ).length;
 
+  const requestRefresh = () => {
+    if (dataRef.current === null) setLoading(true);
+    void fetchDLQ();
+  };
+
   return (
     <div className="dashboard-page">
       <PageHeader
@@ -264,10 +274,8 @@ export default function DLQPage() {
             )}
             <button
               type="button"
-              onClick={() => {
-                setLoading(true);
-                fetchDLQ();
-              }}
+              onClick={requestRefresh}
+              disabled={loading}
               aria-label="Refresh dead letter queue"
               className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-800/80 text-slate-200 rounded-lg text-sm transition-colors border border-slate-700/80 focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             >
@@ -404,9 +412,14 @@ export default function DLQPage() {
       {error && (
         <ErrorBanner
           tone="warning"
-          title="Could not reach the dead-letter queue"
+          title={stale ? "Showing last known dead-letter queue" : "Could not reach the dead-letter queue"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
         >
-          {error}
+          {stale ? `${error}. The latest dead-letter refresh failed; retained messages remain visible.` : error}
         </ErrorBanner>
       )}
 
@@ -496,7 +509,7 @@ export default function DLQPage() {
                     role="listitem"
                     aria-labelledby={`dlq-${letter.id}-title`}
                     className={clsx(
-                      "dashboard-surface overflow-hidden border-l-4 transition-colors",
+                      "dashboard-surface overflow-hidden border-l-2 transition-colors",
                       sevStyle.border,
                       isSelected && "ring-1 ring-blue-500/60",
                       "hover:border-slate-700",
@@ -605,7 +618,7 @@ export default function DLQPage() {
                             onClick={() => replayOne(letter.id)}
                             disabled={isReplaying}
                             aria-label={`Replay dead letter ${letter.id}`}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-blue-600 active:bg-blue-700 text-slate-200 hover:text-white border border-slate-700 hover:border-blue-500 rounded text-xs font-medium transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-blue-600 active:bg-blue-700 text-white border border-slate-700 hover:border-blue-500 rounded text-xs font-medium transition-colors disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                           >
                             {isReplaying ? (
                               <RefreshCw
