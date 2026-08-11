@@ -46,12 +46,19 @@
   retain secret-safe evidence in
   [`mas/docs/provenance/object_store_backup_restore_live.json`](../../../mas/docs/provenance/object_store_backup_restore_live.json)
   using [`mas/infra/compose/scripts/check-minio-backup-restore.sh`](../../../mas/infra/compose/scripts/check-minio-backup-restore.sh).
+- [x] Make restore copy fail closed before mutation when the target project
+  prefix is non-empty. `require_clean_target` performs the preflight and
+  `clean_target_verified` is retained in `aiat.object-store-restore.v1`
+  evidence; the fixture/live backup runner and governed migration workflow use
+  the guard (`93bf755`). Provider-diverse, encrypted, and clean-environment
+  disaster-recovery evidence remain open.
 - [x] Add the provider-neutral `aiat.object-store-migration.v1` workflow and
   deterministic fixture for checksum inventory, verified copy, optional dual
   write, and explicit human-confirmed cutover/rollback; provider-certified
   routing, retention, and live rollback evidence remain open.
 - Add encrypted backup/replication to Garage, R2, B2, or another approved backend.
-- Automate clean-environment restore verification.
+- Automate clean-environment restore verification beyond the bounded empty-target
+  preflight above.
 
 **Decision gate:** SeaweedFS becomes primary only if measured results, operational complexity, source/version provenance, migration safety, and restore evidence beat the current profile. Licence remains metadata and does not decide the result.
 

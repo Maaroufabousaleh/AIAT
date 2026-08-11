@@ -22,6 +22,9 @@ authority outside the helpers.
 - `73fcdd9` — bounded object-store benchmark contract
   (`aiat.object-store-benchmark.v1`) and fail-closed two-provider runner;
   fixture timings are evidence only and never select a provider.
+- `93bf755` — restore-copy safety hardening: the fixture/live runner and
+  governed migration workflow perform a non-mutating empty-target preflight,
+  and `clean_target_verified` is retained in restore evidence.
 
 The helpers never delete source objects, silently change deployment routing,
 copy credentials into reports, or treat licence/restriction metadata as a
@@ -48,6 +51,10 @@ uv run --isolated python scripts/check_object_store_migration.py --json
 uv run --isolated python scripts/check_object_store_benchmarks.py --json
 ```
 
+The backup/restore fixture now includes a regression proving that a stale
+object in the restore prefix is rejected before any manifest object is copied;
+the passing report records `clean_target_verified: true` for guarded restores.
+
 The deterministic reports pass with no live provider mutation. The local
 MinIO conformance and same-provider backup/restore rehearsals are retained in
 [`object_store_live_conformance.json`](../../mas/docs/provenance/object_store_live_conformance.json)
@@ -65,7 +72,9 @@ provider pair or disaster recovery.
   large-object/multipart, outage, and recovery comparison evidence. The
   deterministic fixture and fail-closed runner are implemented, but fixture
   timings do not justify a provider decision.
-- Add encrypted secondary backup and clean-environment restore verification.
+- Add encrypted secondary backup and clean-environment disaster-recovery
+  verification. The current empty-target preflight is a bounded safety check,
+  not proof of a clean host, provider durability, or regional recovery.
 - Measure large-object/multipart/concurrency/outage behavior and compare any
   optional backend before changing the MinIO default.
 - Prove Postgres/object-store consistency, lifecycle cleanup, orphan handling,

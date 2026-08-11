@@ -14,7 +14,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R0 — documentation authority | complete | Canonical target, eleven feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`. |
 | R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. Current configured live ledger: 55 pass, 0 fail, 9 blocked, 4 pending, `NO-RELEASE` across 64 checks; local runtime benchmark, model-profile, private-network object-store, container runtime-import, network-boundary, and authenticated 39/39 default-worker binding evidence are retained. Native-Linux, trace/tool endpoint configuration, deployment image digests/SBOM/scan artifacts, sandbox, provider/mail, clean-worktree, and selected live evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the local Compose dashboard suite now passes 34/35 tests (one explicit operator-fixture skip), including a focused 2/2 shell accessibility regression for skip-link and mobile focus recovery, the source-built 2/2 theme preference regression, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, Container Logs, Agent Streams, Hiring Board, and CEO Live Feed read-surface stale/recovery tests also pass 1/1 (`52de581`, `f445c17`, `d3482ab`, `5f4b0eb`, `823fa6d`, `970f09c`, `85596b0`, `a0faf5b`, `280d363`, `3e8a0ea`, `7541b84`, `1761429`). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
-| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
+| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
 ## 1. How to use this documentation
 
@@ -579,6 +579,10 @@ The local MinIO service also passes a disposable same-provider backup → clean
 restore rehearsal with two objects, manifest/read-back parity, and scoped
 cleanup; secret-safe evidence is retained at
 [`mas/docs/provenance/object_store_backup_restore_live.json`](mas/docs/provenance/object_store_backup_restore_live.json).
+Commit `93bf755` now makes the restore path fail closed before copying when the
+target project prefix is non-empty, and records `clean_target_verified` in the
+restore evidence. This protects the target from stale-prefix mutation but does
+not certify a clean host, encrypted provider backup, or disaster recovery.
 The bounded `aiat.object-store-benchmark.v1` contract now measures disposable
 checksum read-back timings for deterministic fixture mode and has a fail-closed
 `--live` runner requiring both named MinIO and SeaweedFS configurations. The
@@ -662,6 +666,9 @@ Required outcomes:
   MinIO with exact manifest/checksum/read-back parity and cleanup verification;
   provider-diverse, encrypted, retention, and disaster-recovery evidence
   remain separate;
+- [x] fail closed on a non-empty restore prefix before copy and retain the
+  `clean_target_verified` restore evidence (`93bf755`); clean-environment,
+  encrypted, provider-diverse, and disaster-recovery proof remain separate;
 - [x] governed inventory → verified-copy → optional-dual-write →
   human-confirmed-cutover → human-confirmed-rollback workflow and deterministic
   fixture; provider-specific routing, retention, and rollback evidence remain;
