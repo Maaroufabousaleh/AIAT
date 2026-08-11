@@ -1,7 +1,7 @@
 # PM and Source-Control Integrations Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** provider control plane implemented; YouTrack ACTIVE and GitHub production certification incomplete  
+**Status:** provider control plane and deterministic conformance group `7f6bfc5` implemented; YouTrack ACTIVE and GitHub production certification incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
