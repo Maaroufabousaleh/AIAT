@@ -19,6 +19,9 @@ authority outside the helpers.
   (`aiat.object-store-migration.v1`) covering checksum inventory, verified
   copy, optional dual-write parity, and explicit human-confirmed cutover and
   rollback.
+- `73fcdd9` — bounded object-store benchmark contract
+  (`aiat.object-store-benchmark.v1`) and fail-closed two-provider runner;
+  fixture timings are evidence only and never select a provider.
 
 The helpers never delete source objects, silently change deployment routing,
 copy credentials into reports, or treat licence/restriction metadata as a
@@ -36,11 +39,13 @@ uv run --isolated pytest \
   packages/mas-core/tests/test_object_store_backup.py \
   packages/mas-core/tests/test_object_store_migration.py \
   packages/mas-core/tests/test_object_store_migration_runner.py \
-  packages/mas-core/tests/test_object_store_rollout.py -q
+  packages/mas-core/tests/test_object_store_rollout.py \
+  packages/mas-core/tests/test_object_store_benchmarks.py -q
 uv run --isolated python scripts/check_object_store_conformance.py --json
 uv run --isolated python scripts/check_object_store_copy.py --json
 uv run --isolated python scripts/check_object_store_backup_restore.py --json
 uv run --isolated python scripts/check_object_store_migration.py --json
+uv run --isolated python scripts/check_object_store_benchmarks.py --json
 ```
 
 The deterministic reports pass with no live provider mutation. The local
@@ -55,6 +60,11 @@ provider pair or disaster recovery.
 
 - Run verified copy and the migration workflow against a provider-certified
   pair with retention, routing, and rollback evidence.
+- Run `check_object_store_benchmarks.py --live` with the current MinIO and
+  SeaweedFS endpoints and retain reliability/resource/concurrency,
+  large-object/multipart, outage, and recovery comparison evidence. The
+  deterministic fixture and fail-closed runner are implemented, but fixture
+  timings do not justify a provider decision.
 - Add encrypted secondary backup and clean-environment restore verification.
 - Measure large-object/multipart/concurrency/outage behavior and compare any
   optional backend before changing the MinIO default.

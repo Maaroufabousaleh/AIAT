@@ -32,7 +32,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Trace evidence, sampling metadata, retention, and bounded query contract | [Trace Evidence and Retention](Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md) |
 | Versioned SLOs, durable usage forecasts, and operational capacity evidence | [SLO, Capacity, and Operational Forecast](Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md) |
 | Postgres/pgvector/Redis/object storage, retention, and memory services | [Data, Storage, Memory, and Retention](Docs/current/FEATURE_DATA_STORAGE_AND_MEMORY.md) |
-| Object-store conformance, copy, backup/restore, and migration workflow | [`object_store_conformance.py`](mas/packages/mas-core/mas_core/memory/object_store_conformance.py), [`object_store_migration.py`](mas/packages/mas-core/mas_core/memory/object_store_migration.py), [`object_store_backup.py`](mas/packages/mas-core/mas_core/memory/object_store_backup.py), [`object_store_rollout.py`](mas/packages/mas-core/mas_core/memory/object_store_rollout.py), [`check_object_store_conformance.py`](mas/scripts/check_object_store_conformance.py), [`check_object_store_copy.py`](mas/scripts/check_object_store_copy.py), [`check_object_store_backup_restore.py`](mas/scripts/check_object_store_backup_restore.py), [`check_object_store_migration.py`](mas/scripts/check_object_store_migration.py), and the local MinIO probes [`check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh)/[`check-minio-backup-restore.sh`](mas/infra/compose/scripts/check-minio-backup-restore.sh) (`--live` paths included) |
+| Object-store conformance, copy, backup/restore, migration, and benchmark workflow | [`object_store_conformance.py`](mas/packages/mas-core/mas_core/memory/object_store_conformance.py), [`object_store_migration.py`](mas/packages/mas-core/mas_core/memory/object_store_migration.py), [`object_store_backup.py`](mas/packages/mas-core/mas_core/memory/object_store_backup.py), [`object_store_rollout.py`](mas/packages/mas-core/mas_core/memory/object_store_rollout.py), [`object_store_benchmark.py`](mas/packages/mas-core/mas_core/memory/object_store_benchmark.py), [`check_object_store_conformance.py`](mas/scripts/check_object_store_conformance.py), [`check_object_store_copy.py`](mas/scripts/check_object_store_copy.py), [`check_object_store_backup_restore.py`](mas/scripts/check_object_store_backup_restore.py), [`check_object_store_migration.py`](mas/scripts/check_object_store_migration.py), [`check_object_store_benchmarks.py`](mas/scripts/check_object_store_benchmarks.py), and the local MinIO probes [`check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh)/[`check-minio-backup-restore.sh`](mas/infra/compose/scripts/check-minio-backup-restore.sh) (`--live` paths included) |
 | Object-store migration review status | [Object-Store Migration Review Status](Docs/current/FEATURE_OBJECT_STORE_MIGRATION_STATUS.md) |
 | Dashboard information architecture, CEO UX, accessibility, and E2E | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); finite section ACL policy `d405ccb` |
 | Local dashboard E2E evidence | [`dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json) — 34/35 Playwright tests pass on the WSL2 Compose stack, including skip-link/mobile navigation focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage; native-Linux and provider-owned paths remain separate gates |
@@ -514,10 +514,14 @@ The local MinIO service also passes a disposable same-provider backup → clean
 restore rehearsal with two objects, manifest/read-back parity, and scoped
 cleanup; secret-safe evidence is retained at
 [`mas/docs/provenance/object_store_backup_restore_live.json`](mas/docs/provenance/object_store_backup_restore_live.json).
-SeaweedFS comparison, encrypted/provider backup, clean-environment restore in
-a separate environment, provider-pair migration, benchmark, and multi-host
-proof remain open. The retained MinIO runs are local deployment evidence, not
-a claim about another provider or disaster recovery.
+The bounded `aiat.object-store-benchmark.v1` contract now measures disposable
+checksum read-back timings for deterministic fixture mode and has a fail-closed
+`--live` runner requiring both named MinIO and SeaweedFS configurations. The
+fixture is contract evidence only; the provider comparison, reliability,
+large-object/multipart, outage/recovery, encrypted/provider backup,
+clean-environment restore, provider-pair migration, and multi-host proof remain
+open. The retained MinIO runs are local deployment evidence, not a claim about
+another provider or disaster recovery.
 The bounded `aiat.trace-evidence.v1` operator query and company trace
 sampling/retention metadata are implemented over payload-free API request,
 task, usage, worker-transition, direct model-usage/worker-artifact/
@@ -583,6 +587,9 @@ Required outcomes:
 - [x] governed inventory → verified-copy → optional-dual-write →
   human-confirmed-cutover → human-confirmed-rollback workflow and deterministic
   fixture; provider-specific routing, retention, and rollback evidence remain;
+- [x] bounded `aiat.object-store-benchmark.v1` fixture/live-boundary contract
+  measures upload/download checksum read-back and cleanup without selecting a
+  provider; actual MinIO-vs-SeaweedFS comparison and recovery evidence remain;
 - [x] bounded operator trace-evidence query and company trace sampling/
   retention metadata; task/usage/worker-transition rows plus direct
   model-usage/worker-artifact/integration-evidence, PM-inbound metadata, native
@@ -762,7 +769,8 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    and governed migration workflow fixtures; execute the scoped conformance
    against the current deployed local MinIO and retain its 8/8 evidence; run
    the disposable same-provider backup/restore rehearsal and retain its
-   parity/cleanup evidence. Benchmarking, provider-pair migration, and
+   parity/cleanup evidence. [x] Add the bounded benchmark contract and
+   fail-closed two-provider runner; provider comparison, migration, and
    optional routing changes remain separate follow-up work.
 2. Certify optional memory/workflow services only where justified.
 3. Add multi-host and Firecracker worker pools.

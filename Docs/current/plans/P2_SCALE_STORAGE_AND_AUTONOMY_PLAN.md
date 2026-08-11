@@ -23,7 +23,13 @@
   MinIO probe via `check_object_store_conformance.py --compose-local`; the
   8/8 local result is now bounded and no longer times out on the host-only
   `minio:9000` alias. Provider-diverse evidence remains separate.
-- Benchmark current MinIO against SeaweedFS for reliability, resource use, concurrency, large objects, multipart, metadata, outage, and recovery.
+- [x] Add the bounded `aiat.object-store-benchmark.v1` fixture and
+  fail-closed `scripts/check_object_store_benchmarks.py --live` runner. It
+  measures disposable upload/download checksum read-back and cleanup for
+  named MinIO and SeaweedFS configurations without printing credentials or
+  selecting a provider; the actual provider comparison still requires live
+  endpoints and reliability/resource/concurrency/large-object/multipart/
+  metadata/outage/recovery evidence.
 - [x] Implement the deterministic checksum-verified copy/parity helper
   (`aiat.object-store-copy.v1`) over explicit `BlobRef` inputs.
 - [x] Add an explicit `--live` copy/parity runner that inventories

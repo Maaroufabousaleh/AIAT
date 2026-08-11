@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, governed migration workflow fixture, deployed local MinIO conformance, and same-provider backup/restore rehearsal pass; provider-pair migration, encrypted backup, clean-environment restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, and same-provider backup/restore rehearsal pass; provider-pair comparison, encrypted backup, clean-environment restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -69,6 +69,12 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   logical keys, checksums, sizes, and content types. The fixture runner copies
   source objects to a backup adapter, restores them to a clean target, and
   requires exact key-set and read-back checksum parity.
+- Deterministic `aiat.object-store-benchmark.v1` measurements exercise bounded
+  upload/download checksum read-back and scoped cleanup. Fixture mode is
+  repeatable without a provider; `scripts/check_object_store_benchmarks.py
+  --live` requires both named MinIO and SeaweedFS endpoint/credential sets,
+  returns `blocked` when either side is unavailable, and never chooses a
+  primary provider or reads licence metadata as a gate.
 
 ## Code anchors
 
@@ -87,6 +93,8 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Backup manifest/restore boundary: [`mas/packages/mas-core/mas_core/memory/object_store_backup.py`](../../mas/packages/mas-core/mas_core/memory/object_store_backup.py)
 - Backup/restore fixture and live runner: [`mas/scripts/check_object_store_backup_restore.py`](../../mas/scripts/check_object_store_backup_restore.py) (`--live` requires source, backup, and restore provider configuration)
 - Migration workflow fixture and guarded live boundary: [`mas/scripts/check_object_store_migration.py`](../../mas/scripts/check_object_store_migration.py)
+- Benchmark contract: [`mas/packages/mas-core/mas_core/memory/object_store_benchmark.py`](../../mas/packages/mas-core/mas_core/memory/object_store_benchmark.py)
+- Benchmark fixture/live boundary: [`mas/scripts/check_object_store_benchmarks.py`](../../mas/scripts/check_object_store_benchmarks.py)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Database migrations: [`mas/migrations/versions/`](../../mas/migrations/versions/)
 - Blob tools: [`mas/apps/tool-service/tool_service/tools/infra.py`](../../mas/apps/tool-service/tool_service/tools/infra.py)
@@ -120,8 +128,8 @@ it is not a claim about a provider pair or disaster recovery. The same command
 can be run without Docker using the deterministic fixture or with `--live`
 against a disposable provider adapter.
 The live path reports unavailable configuration/service state as `blocked` and
-does not replace large-object, multipart, outage, benchmark, backup, or restore
-evidence.
+does not replace large-object, multipart, outage, benchmark comparison, backup,
+or restore evidence.
 
 The verified-copy helper (`aiat.object-store-copy.v1`) accepts explicit
 `BlobRef` inputs, preserves the project prefix, verifies source and target
@@ -166,10 +174,11 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 - Run verified-copy/parity against a disposable provider pair before any
   migration; the deterministic helper and live provider-pair runner are
   implemented, but provider evidence remains open.
-- Benchmark SeaweedFS and run the governed migration workflow against a
-  provider-certified pair; the deterministic inventory/copy/dual-write/
-  cutover/rollback record is implemented, while live routing and rollback
-  evidence remain open.
+- Run the bounded benchmark against current MinIO and SeaweedFS and run the
+  governed migration workflow against a provider-certified pair; the
+  deterministic benchmark and inventory/copy/dual-write/cutover/rollback
+  records are implemented, while live provider comparison, routing, and
+  rollback evidence remain open.
 - Add encrypted secondary backup profile and automated restore verification.
 - Run the backup/restore runner against a real provider pair and retain
   encrypted-at-rest, retention, clean-environment, and cross-store evidence;
