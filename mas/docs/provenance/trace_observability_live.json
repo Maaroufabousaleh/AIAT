@@ -1,0 +1,45 @@
+{
+  "schema_version": "aiat.live-trace-observability.v1",
+  "observed_at": "2026-08-10T20:03:23Z",
+  "mode": "local-live",
+  "service": "orchestrator-api",
+  "database_migration_head": "0036_native_trace_spans",
+  "trace_id": "aiat-live-trace-20260810-r2",
+  "request": {
+    "method": "GET",
+    "route": "/health",
+    "status_code": 200,
+    "trace_response_header_verified": true
+  },
+  "evidence_status": "observed",
+  "item_count": 2,
+  "source_counts": {
+    "api_requests": 1,
+    "native_spans": 1,
+    "task_log": 0,
+    "project_usage_events": 0,
+    "worker_run_transitions": 0,
+    "worker_usage_records": 0,
+    "worker_artifacts": 0,
+    "pm_inbox_events": 0,
+    "integration_evidence": 0
+  },
+  "native_span_count": 1,
+  "native_operations": [
+    "/health"
+  ],
+  "native_services": [
+    "orchestrator_api"
+  ],
+  "retention": {
+    "retention_days": 3650,
+    "sample_rate": 1.0,
+    "terminal_mode": "archive",
+    "source": "default"
+  },
+  "notice_codes": [
+    "PARTIAL_TRACE_SOURCES"
+  ],
+  "secret_values_printed": false,
+  "scope": "Local live transport/API observation only. Model/tool/audit/worker/integration writers, identity provider/webhook mail-edge or bounce, retention enforcement, and native multi-service/host coverage are not claimed by this probe. The single health request adds only its bounded telemetry rows; it does not create project, worker, provider, credential, or deployment state."
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": "aiat.model-profile-catalogue-live-evidence.v1",
+  "observed_at": "2026-08-10T20:54:01Z",
+  "mode": "local-live",
+  "status": "pass_with_profile_findings",
+  "source_command": "scripts/check_model_profile_catalogue.py --live --json --require-approved",
+  "endpoint": "/model-profiles/catalogue",
+  "registry_model_count": 93,
+  "persisted_profile_count": 94,
+  "persisted_profile_version_count": 94,
+  "approved_profile_entry_count": 92,
+  "covered_profile_version_count": 92,
+  "profile_pending_model_count": 1,
+  "profile_not_registered_count": 2,
+  "finding_count": 2,
+  "approval_gate": "passed: approved persisted profile coverage exists",
+  "coverage": "pending_persisted_profile_bindings",
+  "findings_policy": "operator-visible model/profile reconciliation findings; no licence or resource restriction gate",
+  "secret_policy": "credentials, provider keys, payloads, and raw profile records are omitted",
+  "scope": "read-only API catalogue reconciliation; no profile creation, approval, routing, or deployment mutation"
+}

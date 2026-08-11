@@ -1,0 +1,31 @@
+{
+  "schema_version": "aiat.metric-series-budget-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-10T18:18:23Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "orchestrator_url_configured": true,
+    "credentials_printed": false
+  },
+  "report": {
+    "status": "pass",
+    "total_series": 31,
+    "total_budget": 2000,
+    "family_counts": {
+      "mas_infra_lead_time": 12,
+      "mas_project_state": 18,
+      "mas_review_circuit_open": 1
+    },
+    "family_budgets": {
+      "mas_infra_lead_time": 20,
+      "mas_project_state": 32,
+      "mas_review_circuit_open": 4
+    },
+    "project_id_label_present": false,
+    "violations": []
+  },
+  "notices": [
+    "This is a bounded live scrape of the refreshed local orchestrator; native many-project production scrape evidence remains open.",
+    "No licence or resource metadata was evaluated as a gate."
+  ]
+}

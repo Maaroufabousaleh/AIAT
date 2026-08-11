@@ -1,0 +1,47 @@
+{
+  "schema_version": "aiat.live-tool-trace-evidence.v1",
+  "observed_at": "2026-08-10T20:21:01Z",
+  "mode": "local-live",
+  "status": "pass",
+  "scope": "one bounded time_now call with an existing project context and operator trace read-back; the host-side checker resolved the Compose tool-service alias to the published loopback port; only telemetry rows were created",
+  "trace_id_used": "aiat-tool-trace-20260810-r4",
+  "tool_name": "time_now",
+  "tool_http_status": 200,
+  "tool_success": true,
+  "evidence_status": "observed",
+  "item_count": 2,
+  "source_counts": {
+    "api_requests": 0,
+    "task_log": 0,
+    "project_usage_events": 1,
+    "worker_run_transitions": 0,
+    "worker_usage_records": 0,
+    "worker_artifacts": 0,
+    "pm_inbox_events": 0,
+    "integration_evidence": 0,
+    "native_spans": 1
+  },
+  "coverage": {
+    "api_requests": "empty",
+    "task_log": "empty",
+    "project_usage_events": "observed",
+    "worker_run_transitions": "empty",
+    "worker_usage_records": "empty",
+    "worker_artifacts": "empty",
+    "pm_inbox_events": "empty",
+    "integration_evidence": "empty",
+    "native_spans": "observed"
+  },
+  "native_tool_span_count": 1,
+  "tool_usage_event_count": 1,
+  "native_operations": [
+    "time_now"
+  ],
+  "native_services": [
+    "tool_service"
+  ],
+  "notice_codes": [
+    "PARTIAL_TRACE_SOURCES"
+  ],
+  "credentials_or_project_identifiers_emitted": false
+}

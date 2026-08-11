@@ -1,0 +1,51 @@
+{
+  "schema_version": "aiat.dashboard-acl-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-10T18:17:05Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "base_url": "http://127.0.0.1:8000",
+    "credentials_printed": false
+  },
+  "matrix": {
+    "status": "pass",
+    "principals": ["operator", "ceo", "service", "worker"],
+    "access_endpoint_status": {
+      "operator": 200,
+      "ceo": 200,
+      "service": 200,
+      "worker": 200
+    },
+    "section_status": {
+      "ceo": {
+        "operator": 200,
+        "ceo": 200,
+        "service": 403,
+        "worker": 403
+      },
+      "credentials": {
+        "operator": 200,
+        "ceo": 403,
+        "service": 403,
+        "worker": 403
+      },
+      "projects": {
+        "operator": 200,
+        "ceo": 200,
+        "service": 200,
+        "worker": 200
+      },
+      "workers": {
+        "operator": 200,
+        "ceo": 200,
+        "service": 200,
+        "worker": 200
+      }
+    }
+  },
+  "notices": [
+    "This is an authenticated local API matrix using the development stack's configured operator/CEO/worker/service identities; it is not native-Linux release certification.",
+    "Operator ACL mutation persistence and UI denial states remain separate evidence work.",
+    "No licence or resource metadata was evaluated as a gate."
+  ]
+}
