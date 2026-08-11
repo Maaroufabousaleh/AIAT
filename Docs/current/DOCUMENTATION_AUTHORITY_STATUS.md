@@ -58,7 +58,7 @@ compatibility (`541d6e0`), and the isolated project-evidence router boundary
 (`33e0384`), bounded artifact/usage evidence reads (`2ca5f3d`), stale
 evidence-detail refresh retention (`6c52552`), and governance read-surface
 stale/retry recovery (`52de581`), and System Control stale/retry recovery
-(`f445c17`), each with separate
+(`f445c17`), and Projects list stale/retry recovery (`d3482ab`), each with separate
 documentation updates. The static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain
