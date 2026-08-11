@@ -12773,12 +12773,250 @@ def _ceo_stream_instruction(instruction: str) -> str:
     return instruction
 
 
+CEO_EVIDENCE_SCHEMA = "aiat.ceo-evidence.v1"
+
+# Evidence is deliberately a small citation surface.  The response payloads
+# returned by CEO intent handlers can contain reports, graph nodes, runtime
+# diagnostics, or credential metadata; none of those arbitrary objects should
+# be copied into the operator chat stream.  Keep the allow-list here about
+# *record identity* rather than about licence/provenance policy: those notices
+# remain metadata-only elsewhere in AIAT.
+_CEO_EVIDENCE_REFERENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("company", "company"),
+    ("project", "project"),
+    ("worker", "worker"),
+    ("flow", "flow"),
+    ("instance", "flow_instance"),
+    ("flow_instance", "flow_instance"),
+    ("evaluation", "evaluation"),
+    ("credential", "credential"),
+    ("dead_letter", "dead_letter"),
+    ("artifact", "artifact"),
+    ("integration", "integration"),
+    ("model", "model"),
+    ("runtime", "runtime"),
+    ("tool", "tool"),
+    ("usage", "usage"),
+    ("worker_run", "worker_run"),
+    ("trace_record", "trace"),
+)
+_CEO_EVIDENCE_REFERENCE_LISTS: tuple[tuple[str, str], ...] = (
+    ("projects", "project"),
+    ("workers", "worker"),
+    ("flows", "flow"),
+    ("instances", "flow_instance"),
+    ("active_instances", "flow_instance"),
+    ("evaluations", "evaluation"),
+    ("credentials", "credential"),
+    ("dead_letters", "dead_letter"),
+    ("artifacts", "artifact"),
+    ("integrations", "integration"),
+    ("models", "model"),
+    ("runtimes", "runtime"),
+    ("tools", "tool"),
+    ("usages", "usage"),
+    ("worker_runs", "worker_run"),
+    ("trace_records", "trace"),
+)
+_CEO_EVIDENCE_MAX_REFS = 24
+
+
+def _ceo_action_evidence(action: dict[str, Any]) -> dict[str, Any]:
+    """Build a secret-safe evidence envelope for deterministic CEO actions.
+
+    Only stable record identifiers and the action's deterministic trace are
+    exposed.  Payloads, credential values, provider responses, and arbitrary
+    nested action data never enter the chat citation surface.
+    """
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    targets = (
+        ("company", "company"),
+        ("project", "project"),
+        ("worker", "worker"),
+        ("flow", "flow"),
+        ("instance", "flow_instance"),
+        ("evaluation", "evaluation"),
+        ("credential", "credential"),
+        ("dead_letter", "dead_letter"),
+        ("artifact", "artifact"),
+        ("integration", "integration"),
+        ("model", "model"),
+        ("runtime", "runtime"),
+        ("tool", "tool"),
+        ("usage", "usage"),
+        ("worker_run", "worker_run"),
+        ("trace_record", "trace"),
+    )
+
+    def stable_id(value: Any) -> str | None:
+        """Return only scalar identifiers; never stringify arbitrary payloads."""
+        if isinstance(value, (str, int, UUID)) and not isinstance(value, bool):
+            text = str(value).strip()
+            return text or None
+        return None
+
+    for field, kind in targets:
+        value = action.get(field)
+        if not isinstance(value, dict):
+            continue
+        record_id = stable_id(
+            value.get("id") or value.get("record_id") or value.get("report_id")
+        )
+        if record_id is None:
+            continue
+        key = (kind, record_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"kind": kind, "id": key[1]})
+    for field, kind in (
+        ("company_id", "company"),
+        ("project_id", "project"),
+        ("worker_id", "worker"),
+        ("flow_id", "flow"),
+        ("integration_id", "integration"),
+        ("model_id", "model"),
+        ("runtime_id", "runtime"),
+        ("tool_id", "tool"),
+        ("worker_run_id", "worker_run"),
+        ("artifact_id", "artifact"),
+        ("trace_id", "trace"),
+    ):
+        record_id = stable_id(action.get(field))
+        if record_id is None:
+            continue
+        key = (kind, record_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"kind": kind, "id": key[1]})
+    trace = action.get("trace")
+    return {
+        "schema_version": CEO_EVIDENCE_SCHEMA,
+        "authority": "aiat.orchestrator-api",
+        "refs": refs,
+        "trace": [str(item) for item in trace if isinstance(item, (str, int, UUID))]
+        if isinstance(trace, (list, tuple))
+        else [],
+    }
+
+
+def _ceo_response_evidence(result: dict[str, Any]) -> dict[str, Any]:
+    """Cite bounded record identities for any deterministic CEO response.
+
+    ``_ceo_action_evidence`` covers the common one-record action shape.  Read
+    intents often return bounded lists (for example a hiring board or active
+    flow instances), so this companion keeps only IDs from explicitly named
+    record fields and caps the resulting citation list.  It never serializes
+    an arbitrary response object, model output, secret, or provider payload.
+    """
+    evidence = _ceo_action_evidence(result)
+    refs = list(evidence["refs"])
+    seen = {(item["kind"], item["id"]) for item in refs}
+
+    def stable_id(value: Any) -> str | None:
+        if isinstance(value, (str, int, UUID)) and not isinstance(value, bool):
+            text = str(value).strip()
+            return text or None
+        return None
+
+    def add_ref(kind: str, value: Any) -> None:
+        if len(refs) >= _CEO_EVIDENCE_MAX_REFS or not isinstance(value, dict):
+            return
+        record_id = stable_id(value.get("id") or value.get("record_id") or value.get("report_id"))
+        if record_id is None:
+            return
+        key = (kind, record_id)
+        if key in seen:
+            return
+        seen.add(key)
+        refs.append({"kind": kind, "id": record_id})
+
+    for field, kind in _CEO_EVIDENCE_REFERENCE_FIELDS:
+        add_ref(kind, result.get(field))
+    for field, kind in _CEO_EVIDENCE_REFERENCE_LISTS:
+        values = result.get(field)
+        if not isinstance(values, (list, tuple)):
+            continue
+        for value in values:
+            add_ref(kind, value)
+            if len(refs) >= _CEO_EVIDENCE_MAX_REFS:
+                break
+        if len(refs) >= _CEO_EVIDENCE_MAX_REFS:
+            break
+    evidence["refs"] = refs
+    return evidence
+
+
+_CEO_FALLBACK_EVIDENCE_RE = re.compile(
+    r"(?im)^\s*(?:AIAT_EVIDENCE|AIAT-EVIDENCE)\s*:\s*"
+    r"(?P<kind>[a-z_]+)\s*=\s*(?P<id>[^\s,;]+)\s*$"
+)
+_CEO_FALLBACK_EVIDENCE_KINDS = {
+    "company",
+    "project",
+    "worker",
+    "flow",
+    "flow_instance",
+    "evaluation",
+    "credential",
+    "dead_letter",
+    "artifact",
+    "integration",
+    "model",
+    "runtime",
+    "tool",
+    "usage",
+    "worker_run",
+    "trace",
+}
+
+
+def _ceo_fallback_evidence(response_text: str) -> tuple[str, dict[str, Any]]:
+    """Extract opt-in, canonical citations from the legacy model fallback.
+
+    The fallback model has no authority to invent database facts.  It may emit
+    an explicit ``AIAT_EVIDENCE: kind=id`` line only when it was given a
+    canonical record identifier; the line is removed from operator-visible
+    prose and represented as an unverified citation envelope.  Malformed or
+    unsupported lines are ignored, and the result is bounded like all other
+    CEO evidence.
+    """
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def collect(match: re.Match[str]) -> str:
+        kind = match.group("kind").lower()
+        record_id = match.group("id").strip()
+        if (
+            kind in _CEO_FALLBACK_EVIDENCE_KINDS
+            and record_id
+            and len(record_id) <= 200
+            and (kind, record_id) not in seen
+            and len(refs) < _CEO_EVIDENCE_MAX_REFS
+        ):
+            seen.add((kind, record_id))
+            refs.append({"kind": kind, "id": record_id})
+        return ""
+
+    cleaned = _CEO_FALLBACK_EVIDENCE_RE.sub(collect, response_text).strip()
+    return cleaned, {
+        "schema_version": CEO_EVIDENCE_SCHEMA,
+        "authority": "aiat.ceo-fallback",
+        "status": "unverified",
+        "refs": refs,
+        "trace": ["legacy_model_fallback", "explicit_citations_only"],
+    }
+
+
 async def _publish_ceo_chat_response(
     *,
     response_text: str,
     correlation_id: str,
     parent_id: str,
     action: dict[str, Any] | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "response": response_text,
@@ -12797,6 +13035,9 @@ async def _publish_ceo_chat_response(
         if worker_id:
             context["worker_id"] = str(worker_id)
         payload["context"] = context
+        payload["evidence"] = evidence or _ceo_response_evidence(action)
+    elif evidence is not None:
+        payload["evidence"] = evidence
 
     envelope = {
         "message_id": str(uuid4()),
@@ -12891,7 +13132,10 @@ async def _publish_ceo_response(
                     "You are the AIAT CEO Executive Copilot speaking directly to the human "
                     "operator in the dashboard chat. Reply conversationally and helpfully. "
                     "Be concise, direct, and practical. If the operator asks for an action, "
-                    "state what you can do next and any required clarification."
+                    "state what you can do next and any required clarification. If the supplied "
+                    "context contains a canonical AIAT record ID that you cite, add one separate "
+                    "line in the exact form `AIAT_EVIDENCE: kind=id`; never invent IDs or include "
+                    "secret values in that line."
                 ),
                 task="general",
                 max_tokens=450,
@@ -12904,10 +13148,12 @@ async def _publish_ceo_response(
             "limited. Your request is queued with the CEO runtime."
         )
     response_text = _clean_ceo_chat_text(response_text)
+    response_text, evidence = _ceo_fallback_evidence(response_text)
     await _publish_ceo_chat_response(
         response_text=response_text.strip() or "I received your message.",
         correlation_id=correlation_id,
         parent_id=parent_id,
+        evidence=evidence,
     )
 
 
@@ -14844,6 +15090,7 @@ async def _process_ceo_operator_intent(
             correlation_id=message_id,
             parent_id=message_id,
             action=action,
+            evidence=_ceo_response_evidence(action),
         )
         if durable:
             await _transition_ceo_command(
@@ -14882,7 +15129,7 @@ async def operator_send_to_ceo(
 ) -> dict[str, Any]:
     """Operator sends a message directly to the CEO via the message-router."""
     _check_auth(x_api_key, authorization)
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
     message_id = str(req.request_id or uuid4())
     instruction = req.message.strip()
@@ -15027,8 +15274,14 @@ async def operator_send_to_ceo(
             correlation_id=message_id,
             parent_id=message_id,
             action=action,
+            evidence=_ceo_response_evidence(action),
         )
-        return {"ok": True, "entry_id": result.get("entry_id"), "action": action}
+        return {
+            "ok": True,
+            "entry_id": result.get("entry_id"),
+            "action": action,
+            "evidence": _ceo_response_evidence(action),
+        }
     background_tasks.add_task(
         _publish_ceo_response,
         instruction=instruction,

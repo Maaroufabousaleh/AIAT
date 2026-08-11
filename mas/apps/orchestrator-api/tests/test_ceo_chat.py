@@ -9,6 +9,9 @@ import pytest
 
 from orchestrator_api.main import (
     _ceo_operator_intent_is_api_owned,
+    _ceo_action_evidence,
+    _ceo_fallback_evidence,
+    _ceo_response_evidence,
     _department_for_hiring_text,
     _handle_ceo_confirmation_intent,
     _handle_ceo_credential_intent,
@@ -630,6 +633,8 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
     assert body["action"]["worker"]["id"] == str(worker_id)
     assert body["action"]["worker"]["status"] == "INACTIVE"
     assert body["action"]["worker"]["evaluation_status"] == "pending"
+    assert body["evidence"]["schema_version"] == "aiat.ceo-evidence.v1"
+    assert {"kind": "worker", "id": str(worker_id)} in body["evidence"]["refs"]
 
     storage.register_worker.assert_awaited_once()
     _, kwargs = storage.register_worker.await_args
@@ -656,6 +661,168 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
     assert published[1]["envelope"]["msg_type"] == "RESPONSE"
     assert "Hiring Board ticket" in published[1]["envelope"]["payload"]["response"]
     assert "Routing reason:" in published[1]["envelope"]["payload"]["response"]
+    streamed_evidence = published[1]["envelope"]["payload"]["evidence"]
+    assert streamed_evidence["schema_version"] == "aiat.ceo-evidence.v1"
+    assert {"kind": "worker", "id": str(worker_id)} in streamed_evidence["refs"]
+    assert "registered_inactive_candidate" in streamed_evidence["trace"]
+
+
+def test_ceo_action_evidence_is_scalar_and_secret_safe():
+    evidence = _ceo_action_evidence(
+        {
+            "company": {"id": "company-1", "credential_value": "do-not-show"},
+            "worker": {"id": "worker-1", "token": "secret-token"},
+            "credential": {"id": "credential-1", "value": "super-secret"},
+            "project_id": {"value": "not-an-id"},
+            "trace": ["registered", {"secret": "not-a-trace"}, 7],
+        }
+    )
+
+    assert evidence == {
+        "schema_version": "aiat.ceo-evidence.v1",
+        "authority": "aiat.orchestrator-api",
+        "refs": [
+            {"kind": "company", "id": "company-1"},
+            {"kind": "worker", "id": "worker-1"},
+            {"kind": "credential", "id": "credential-1"},
+        ],
+        "trace": ["registered", "7"],
+    }
+    assert "secret" not in str(evidence)
+
+
+def test_ceo_response_evidence_cites_bounded_lists_without_payload_leakage():
+    evidence = _ceo_response_evidence(
+        {
+            "workers": [
+                {"id": "worker-1", "token": "secret-token"},
+                {"id": "worker-2"},
+            ],
+            "active_instances": [{"id": "instance-1", "payload": {"secret": "nope"}}],
+            "credentials": [{"id": "credential-1", "value": "super-secret"}],
+            "trace": ["listed", {"secret": "not-a-trace"}],
+        }
+    )
+
+    assert evidence["refs"] == [
+        {"kind": "worker", "id": "worker-1"},
+        {"kind": "worker", "id": "worker-2"},
+        {"kind": "flow_instance", "id": "instance-1"},
+        {"kind": "credential", "id": "credential-1"},
+    ]
+    assert "secret" not in str(evidence)
+
+
+def test_ceo_response_evidence_cites_cross_surface_record_ids_without_payloads():
+    evidence = _ceo_response_evidence(
+        {
+            "integration": {"id": "integration-1", "provider_token": "secret"},
+            "model_id": "model-1",
+            "integrations": [{"id": "integration-2", "config": {"secret": "nope"}}],
+            "runtimes": [{"id": "runtime-1", "packages": ["langgraph"]}],
+            "tools": [{"id": "tool-1", "command": "do-not-copy"}],
+            "worker_runs": [{"id": "run-1", "task_input": "private"}],
+            "trace_id": "trace-1",
+        }
+    )
+
+    assert evidence["refs"] == [
+        {"kind": "integration", "id": "integration-1"},
+        {"kind": "model", "id": "model-1"},
+        {"kind": "trace", "id": "trace-1"},
+        {"kind": "integration", "id": "integration-2"},
+        {"kind": "runtime", "id": "runtime-1"},
+        {"kind": "tool", "id": "tool-1"},
+        {"kind": "worker_run", "id": "run-1"},
+    ]
+    assert "secret" not in str(evidence)
+    assert "private" not in str(evidence)
+
+
+def test_ceo_fallback_evidence_requires_explicit_bounded_markers():
+    cleaned, evidence = _ceo_fallback_evidence(
+        "Project is ready.\nAIAT_EVIDENCE: project=project-1\n"
+        "AIAT_EVIDENCE: credential=credential-1\n"
+        "AIAT_EVIDENCE: unsupported=not-cited\n"
+    )
+
+    assert cleaned == "Project is ready."
+    assert evidence["authority"] == "aiat.ceo-fallback"
+    assert evidence["status"] == "unverified"
+    assert evidence["refs"] == [
+        {"kind": "project", "id": "project-1"},
+        {"kind": "credential", "id": "credential-1"},
+    ]
+    assert "unsupported" not in str(evidence)
+
+
+def test_ceo_fallback_evidence_accepts_cross_surface_kinds():
+    cleaned, evidence = _ceo_fallback_evidence(
+        "Ready.\nAIAT_EVIDENCE: integration=integration-1\n"
+        "AIAT_EVIDENCE: trace=trace-1\nAIAT_EVIDENCE: payload=secret\n"
+    )
+
+    assert cleaned == "Ready."
+    assert evidence["refs"] == [
+        {"kind": "integration", "id": "integration-1"},
+        {"kind": "trace", "id": "trace-1"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_ceo_fallback_publishes_unverified_explicit_evidence(monkeypatch):
+    from orchestrator_api import main as orchestrator_main
+
+    published: list[dict[str, Any]] = []
+
+    class FakeLLM:
+        async def __aenter__(self) -> "FakeLLM":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def ask(self, *args: Any, **kwargs: Any) -> str:
+            return "The project is ready.\nAIAT_EVIDENCE: project=project-9"
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append(json)
+            return FakeResponse()
+
+    monkeypatch.setenv("ENABLE_CEO_FAKE_RESPONSE", "1")
+    monkeypatch.setattr(orchestrator_main, "LLMGatewayClient", FakeLLM)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    await orchestrator_main._publish_ceo_response(
+        instruction="summarize project status",
+        correlation_id="request-9",
+        parent_id="request-9",
+    )
+
+    payload = published[0]["payload"]
+    assert payload["response"] == "The project is ready."
+    assert payload["evidence"]["authority"] == "aiat.ceo-fallback"
+    assert payload["evidence"]["status"] == "unverified"
+    assert payload["evidence"]["refs"] == [{"kind": "project", "id": "project-9"}]
+    assert "AIAT_EVIDENCE" not in payload["response"]
 
 
 @pytest.mark.anyio
@@ -1796,6 +1963,7 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     assert body["action"]["type"] == "project_create"
     assert body["action"]["project"]["id"] == str(project_id)
     assert "created_project_record" in body["action"]["trace"]
+    assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
     storage.create_project.assert_awaited_once()
     assert len(published) == 3
     assert published[0]["envelope"]["msg_type"] == "TASK"
@@ -1803,6 +1971,7 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     assert published[1]["envelope"]["msg_type"] == "DIRECTIVE"
     assert published[1]["envelope"]["payload"]["action"] == "START_FEASIBILITY"
     assert published[2]["envelope"]["msg_type"] == "RESPONSE"
+    assert {"kind": "project", "id": str(project_id)} in published[2]["envelope"]["payload"]["evidence"]["refs"]
 
 
 @pytest.mark.anyio

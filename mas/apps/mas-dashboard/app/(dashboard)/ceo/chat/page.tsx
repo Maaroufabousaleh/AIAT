@@ -107,6 +107,70 @@ function safeOperatorDisplayText(text: string): string {
     : text;
 }
 
+type CeoEvidence = {
+  refs: Array<{ kind: string; id: string }>;
+  trace: string[];
+  status?: string;
+};
+
+function ceoEvidenceHref(ref: { kind: string; id: string }): string | null {
+  const id = encodeURIComponent(ref.id);
+  switch (ref.kind) {
+    case "project":
+      return `/projects/${id}`;
+    case "flow":
+      return `/flows/${id}`;
+    case "flow_instance":
+      return `/flows?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "artifact":
+    case "usage":
+      return `/projects?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "company":
+    case "evaluation":
+    case "model":
+    case "runtime":
+      return `/governance?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "integration":
+      return `/integrations?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "worker":
+    case "worker_run":
+      return `/workers?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "credential":
+      return `/credentials?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "tool":
+      return `/tools?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    case "trace":
+      return `/logs?trace_id=${id}`;
+    case "dead_letter":
+      return `/dlq?evidence_kind=${encodeURIComponent(ref.kind)}&evidence_id=${id}`;
+    default:
+      return null;
+  }
+}
+
+function ceoEvidenceRecordHref(ref: { kind: string; id: string }): string {
+  return `/evidence/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}`;
+}
+
+function parseCeoEvidence(value: unknown): CeoEvidence | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const refs = Array.isArray(record.refs)
+    ? record.refs.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const ref = item as Record<string, unknown>;
+        return typeof ref.kind === "string" && typeof ref.id === "string"
+          ? [{ kind: ref.kind, id: ref.id }]
+          : [];
+      })
+    : [];
+  const trace = Array.isArray(record.trace)
+    ? record.trace.filter((item): item is string => typeof item === "string")
+    : [];
+  const status = typeof record.status === "string" ? record.status : undefined;
+  return refs.length || trace.length ? { refs, trace, ...(status ? { status } : {}) } : null;
+}
+
 function entryKey(entry: FeedEntry, index: number): string {
   return messageId(entry) ?? `${entry.ts}-${index}-${entry.raw.slice(0, 32)}`;
 }
@@ -463,6 +527,7 @@ export default function CeoChatPage() {
                         const confirmationIsPending = needsConfirmation
                           && typeof entryConfirmationToken === "string"
                           && entryConfirmationToken === pendingConfirmationToken;
+                        const evidence = !user ? parseCeoEvidence(entry.parsed?.payload?.evidence) : null;
                         const failed = Boolean(messageId(entry) && failedRequestIds.has(messageId(entry)!));
                         return (
                           <article key={entryKey(entry, index)} className={clsx("flex items-start gap-3", user && "flex-row-reverse")}>
@@ -493,6 +558,46 @@ export default function CeoChatPage() {
                                           Cancel
                                         </button>
                                       </>
+                                    )}
+                                  </div>
+                                )}
+                                {evidence && (
+                                  <div className="mt-3 border-t border-slate-700/60 pt-2.5 text-[11px]" data-testid="ceo-evidence">
+                                    <div className="font-medium text-cyan-200" data-testid="ceo-evidence-status">
+                                      {evidence.status === "unverified" ? "Unverified citation" : "Canonical evidence"}
+                                    </div>
+                                    {evidence.refs.length > 0 && (
+                                      <div className="mt-1 flex flex-wrap gap-1.5">
+                                        {evidence.refs.map((ref) => (
+                                          <span key={`${ref.kind}:${ref.id}`} className="rounded bg-slate-950/70 px-1.5 py-0.5 text-slate-400">
+                                            {ceoEvidenceHref(ref) ? (
+                                              <>
+                                                <Link
+                                                  href={ceoEvidenceHref(ref)!}
+                                                  className="text-cyan-300 underline decoration-cyan-500/40 underline-offset-2 hover:text-cyan-200"
+                                                  data-testid="ceo-evidence-link"
+                                                  aria-label={`Open ${ref.kind} evidence ${ref.id}`}
+                                                >
+                                                  {ref.kind} `{ref.id}`
+                                                </Link>
+                                                <Link
+                                                  href={ceoEvidenceRecordHref(ref)}
+                                                  className="ml-1 text-slate-500 underline decoration-slate-600 underline-offset-2 hover:text-slate-300"
+                                                  data-testid="ceo-evidence-record-link"
+                                                  aria-label={`Open dedicated ${ref.kind} evidence record ${ref.id}`}
+                                                >
+                                                  (record)
+                                                </Link>
+                                              </>
+                                            ) : (
+                                              `${ref.kind} \`${ref.id}\``
+                                            )}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {evidence.trace.length > 0 && (
+                                      <div className="mt-1 text-slate-500">trace: {evidence.trace.join(" → ")}</div>
                                     )}
                                   </div>
                                 )}
