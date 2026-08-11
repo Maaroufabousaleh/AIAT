@@ -93,8 +93,12 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const res = await fetch(`/api/flows/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch flow");
-      const data = await res.json();
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const detail = payload && typeof payload.error === "string" ? payload.error : `HTTP ${res.status}`;
+        throw new Error(`Failed to fetch flow: ${detail}`);
+      }
+      const data = payload;
       set({ currentFlow: data, loading: false });
       return data;
     } catch (e) {

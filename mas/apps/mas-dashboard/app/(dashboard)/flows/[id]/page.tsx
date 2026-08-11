@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Save, Copy, X, AlertTriangle, Undo2, Redo2, GitBranch, CheckCircle2, Circle, History, Info } from "lucide-react";
+import { ArrowLeft, Save, Copy, X, AlertTriangle, Undo2, Redo2, GitBranch, CheckCircle2, Circle, History, Info, RefreshCw } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -86,6 +87,7 @@ const NODE_TYPES_OPTIONS: FlowNodeType[] = ["start", "task", "approval", "condit
 
 export default function FlowEditorPage() {
   const router = useRouter();
+  const { id } = useParams<{ id: string }>();
   const { currentFlow, fetchFlow, createFlow, updateFlow, loading } = useFlowStore();
   
   const [name, setName] = useState("");
@@ -112,8 +114,14 @@ export default function FlowEditorPage() {
   const [governanceLoading, setGovernanceLoading] = useState(true);
   const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
   const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
+  const [flowLoading, setFlowLoading] = useState(false);
+  const [flowLoaded, setFlowLoaded] = useState(id === "new");
+  const [flowLoadStale, setFlowLoadStale] = useState(false);
+  const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
+  const hasFlowRef = useRef(false);
+  const flowLoadGenerationRef = useRef(0);
 
-  const isNew = !currentFlow?.id;
+  const isNew = id === "new";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -144,36 +152,56 @@ export default function FlowEditorPage() {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    const flowId = window.location.pathname.split("/").pop();
-    if (flowId && flowId !== "new") {
-      fetchFlow(flowId).then((flow) => {
-        if (flow) {
-          setName(flow.name);
-          setDescription(flow.description || "");
-          setIsActive(flow.is_active);
-          setFlowMetadata(flow.definition_json?.metadata || {});
-          const { nodes: rawNodes, edges: rawEdges } = convertFlowToReactFlow(
-            flow.definition_json?.nodes || [],
-            flow.definition_json?.edges || []
-          );
-          const flowNodes = rawNodes.map((node) => ({
-            ...node,
-            markerEnd: { type: MarkerType.ArrowClosed },
-          }));
-          const flowEdges = rawEdges.map((edge) => ({
-            ...edge,
-            markerEnd: { type: MarkerType.ArrowClosed },
-            style: { stroke: "#6b7280" },
-          }));
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-          setSaveStatus("saved");
-          setLastSavedAt(new Date(flow.updated_at));
-        }
-      });
+  const loadFlow = useCallback(async (flowId: string) => {
+    const generation = flowLoadGenerationRef.current + 1;
+    flowLoadGenerationRef.current = generation;
+    setFlowLoading(true);
+    setFlowLoadError(null);
+    const flow = await fetchFlow(flowId);
+    if (generation !== flowLoadGenerationRef.current) return;
+    if (!flow) {
+      const message = useFlowStore.getState().error || "The flow could not be loaded from the canonical API.";
+      if (hasFlowRef.current) {
+        setFlowLoadStale(true);
+        setFlowLoadError(message);
+      } else {
+        setFlowLoadError(message);
+      }
+      setFlowLoading(false);
+      return;
     }
+
+    setName(flow.name);
+    setDescription(flow.description || "");
+    setIsActive(flow.is_active);
+    setFlowMetadata(flow.definition_json?.metadata || {});
+    const { nodes: rawNodes, edges: rawEdges } = convertFlowToReactFlow(
+      flow.definition_json?.nodes || [],
+      flow.definition_json?.edges || []
+    );
+    const flowNodes = rawNodes.map((node) => ({
+      ...node,
+      markerEnd: { type: MarkerType.ArrowClosed },
+    }));
+    const flowEdges = rawEdges.map((edge) => ({
+      ...edge,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: "#6b7280" },
+    }));
+    setNodes(flowNodes);
+    setEdges(flowEdges);
+    setSaveStatus("saved");
+    setLastSavedAt(new Date(flow.updated_at));
+    hasFlowRef.current = true;
+    setFlowLoaded(true);
+    setFlowLoadStale(false);
+    setFlowLoadError(null);
+    setFlowLoading(false);
   }, [fetchFlow, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!isNew && id) void loadFlow(id);
+  }, [id, isNew, loadFlow]);
 
   // Track canvas edits in the undo stack. We sample on a debounce so quick
   // drags (which fire many change events) don't fill the history. The version
@@ -473,6 +501,48 @@ export default function FlowEditorPage() {
     }
   };
 
+  if (!isNew && !flowLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">
+          <Link
+            href="/flows"
+            aria-label="Back to flows"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <h1 className="text-lg font-semibold">Flow unavailable</h1>
+        </header>
+        <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
+          {flowLoadError ? (
+            <ErrorBanner
+              tone="error"
+              title="Could not load flow"
+              action={(
+                <button
+                  type="button"
+                  onClick={() => void loadFlow(id)}
+                  disabled={flowLoading}
+                  aria-busy={flowLoading}
+                  data-testid="flow-load-retry"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+                  Retry
+                </button>
+              )}
+            >
+              {flowLoadError}
+            </ErrorBanner>
+          ) : (
+            <p role="status" className="text-sm text-slate-400">Loading flow…</p>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100">
       <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
@@ -507,6 +577,21 @@ export default function FlowEditorPage() {
           <SaveStatusBadge status={saveStatus} lastSavedAt={lastSavedAt} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {!isNew && (
+            <button
+              type="button"
+              onClick={() => void loadFlow(id)}
+              disabled={flowLoading || saving || !flowLoaded}
+              aria-busy={flowLoading}
+              aria-label="Refresh flow"
+              title="Refresh flow"
+              data-testid="flow-refresh-button"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            >
+              <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+              Refresh
+            </button>
+          )}
           {/* Undo / Redo buttons + keyboard shortcut hints */}
           <div className="flex items-center gap-1 mr-1">
             <button
@@ -549,7 +634,7 @@ export default function FlowEditorPage() {
             onClick={handleSave}
             disabled={saving || loading}
             data-testid="flow-save-button"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 disabled:text-slate-300 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           >
             <Save size={14} />
             {saving ? "Saving..." : "Save"}
@@ -626,6 +711,30 @@ export default function FlowEditorPage() {
         <div className="px-4 py-2 border-b border-slate-800">
           <ErrorBanner tone="error" title="Cannot save flow" icon={AlertTriangle}>
             {validationError}
+          </ErrorBanner>
+        </div>
+      )}
+
+      {flowLoadStale && flowLoadError && (
+        <div className="px-4 py-2 border-b border-slate-800" data-testid="flow-editor-stale">
+          <ErrorBanner
+            tone="warning"
+            title="Showing last known flow"
+            action={(
+              <button
+                type="button"
+                onClick={() => void loadFlow(id)}
+                disabled={flowLoading || saving}
+                aria-busy={flowLoading}
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+                Retry
+              </button>
+            )}
+          >
+            {flowLoadError} The last successful flow remains visible until a
+            retry succeeds.
           </ErrorBanner>
         </div>
       )}
