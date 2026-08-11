@@ -111,7 +111,7 @@ The codebase already includes:
 - canonical runtime catalogue plus CI reconciliation for all 39 worker manifests,
   default-company references, OpenCode Compose/version links, provenance, and
   metadata-only notices.
-- the authenticated local Compose worker reconciliation now matches all 39
+- the authenticated local Compose worker reconciliation (`80e0ca3`) now matches all 39
   persisted default-worker rows with zero missing rows or binding mismatches;
   the cleanup fixture no longer deletes the canonical `test_evaluation_worker`,
   and the container default-company manifest bootstrap now resolves both source

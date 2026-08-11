@@ -61,7 +61,8 @@ single frozen commit before production claims are made.
   recorded as `findings_review_required` (316 findings, 54 engine warnings).
   The scan summary is linked from both manifests; their OpenCode interface
   evidence is not treated as a passed security scan substitute.
-- `scripts/check_worker_reconciliation.py` validates all 39 manifests against
+- `scripts/check_worker_reconciliation.py` (runtime catalogue/checker group
+  `80e0ca3`) validates all 39 manifests against
   the shared runtime catalogue, transport/isolation contract, default company
   references, external source/version/provenance records, OpenCode Compose
   service/version, production image inventory, and the metadata-only notices
