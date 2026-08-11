@@ -1,0 +1,22 @@
+{
+  "schema_version": "aiat.object-store-backup-live.v1",
+  "observed_at": "2026-08-10T18:44:21Z",
+  "mode": "local-live",
+  "provider": "minio",
+  "adapter_type": "s3-compatible",
+  "project_prefix": "aiat-backup-live-reconciled",
+  "source_bucket": "mas-agents",
+  "backup_bucket": "mas-backup",
+  "restore_bucket": "mas-restore",
+  "object_count": 2,
+  "backup_copy_passed": true,
+  "restore_copy_passed": true,
+  "manifest_verified": true,
+  "cleanup_verified": true,
+  "secret_values_printed": false,
+  "notes": [
+    "Executed with mas/infra/compose/scripts/check-minio-backup-restore.sh inside mas-orchestrator-api-1.",
+    "The source, backup, and restore buckets are all the same local MinIO provider; the disposable project prefix was removed after parity verification."
+  ],
+  "scope": "Same-provider local MinIO backup/restore rehearsal only; this is not provider-diverse, encrypted-at-rest, retention, clean-environment disaster-recovery, or regional outage evidence."
+}
