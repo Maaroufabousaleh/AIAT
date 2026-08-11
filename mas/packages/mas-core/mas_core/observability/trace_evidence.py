@@ -188,6 +188,7 @@ def build_trace_evidence(
     """
 
     max_items = max(1, min(int(limit), 1_000))
+    native_rows = [row for row in native_span_rows if isinstance(row, Mapping)]
     items: list[TraceEvidenceItem] = []
 
     for row in api_rows:
@@ -341,9 +342,7 @@ def build_trace_evidence(
             )
         )
 
-    for row in native_span_rows:
-        if not isinstance(row, Mapping):
-            continue
+    for row in native_rows:
         items.append(
             TraceEvidenceItem(
                 id=_text(row.get("id")) or "unknown",
@@ -374,6 +373,13 @@ def build_trace_evidence(
             "native_spans",
         )
     }
+    native_source_counts = {
+        source_kind: sum(
+            str(row.get("source_kind") or "").strip().lower() == source_kind
+            for row in native_rows
+        )
+        for source_kind in ("transport", "model", "tool", "mail", "audit", "worker", "integration")
+    }
     source_order = {
         "api_requests": 0,
         "task_log": 1,
@@ -393,6 +399,12 @@ def build_trace_evidence(
     coverage = {
         source: "observed" if count else "empty" for source, count in raw_source_counts.items()
     }
+    coverage.update(
+        {
+            f"native_{source_kind}_spans": "observed" if count else "empty"
+            for source_kind, count in native_source_counts.items()
+        }
+    )
     notices = [
         {
             "code": "PARTIAL_TRACE_SOURCES",
