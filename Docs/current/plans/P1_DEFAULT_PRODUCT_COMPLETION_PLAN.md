@@ -103,6 +103,13 @@ external client-language SDK compatibility yet.
   assignment. It never activates, provisions identity, reserves budget,
   dispatches, or returns payloads; live worker, sandbox runtime, canary, and
   rollback certification remain open.
+- [x] Add the read-only `aiat.worker-steward-readiness.v1` evaluator and
+  `scripts/check_worker_steward_readiness.py` (`adc7b26`) for one explicitly
+  selected external worker/candidate. Fixture evidence passes; the current
+  authenticated coding-worker selection is blocked by `PROVISIONING` steward
+  state, a pending technical scan, and no candidate. The checker never
+  generates or certifies a candidate, approves, activates, rolls out, or
+  dispatches, and licence metadata remains non-gating.
 - [x] Persist the compatibility matrix produced by certification through the
   canonical storage owner, retaining runtime/adapter/contract versions,
   fixtures, capability/model context, and pass/fail status with the
