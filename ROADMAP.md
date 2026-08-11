@@ -14,7 +14,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R0 — documentation authority | in progress | Canonical target, eleven feature documents, three plans, root navigation, and the personal/internal metadata-only policy are present. The current dirty workspace passes `check_docs_index.py`; a clean detached checkout remains blocked by referenced implementation/provenance files that are still awaiting their own bounded commits. |
 | R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. Current configured live ledger: 55 pass, 0 fail, 9 blocked, 4 pending, `NO-RELEASE` across 64 checks; local runtime benchmark, model-profile, private-network object-store, container runtime-import, network-boundary, and authenticated 39/39 default-worker binding evidence are retained. Native-Linux, trace/tool endpoint configuration, deployment image digests/SBOM/scan artifacts, sandbox, provider/mail, clean-worktree, and selected live evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the local Compose dashboard suite now passes 34/35 tests (one explicit operator-fixture skip), including a focused 2/2 shell accessibility regression for skip-link and mobile focus recovery, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
-| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; provider-pair migration, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement lifecycle remain later work. |
+| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
 ## 1. How to use this documentation
 
@@ -693,9 +693,9 @@ migration/rollback gates are separate from human approval; the deterministic
 fixture completes shadow, canary, promotion, and an exact rollback to the prior
 immutable version. The authenticated `POST /projects/self-improvement` path
 and `AgentStorage.create_self_improvement_project` now delegate the request
-through the canonical project writer. The project config now stores a validated
-revisioned lifecycle snapshot with project-history entries, and authenticated
-read/reference endpoints can link issue, worker-run, artifact, budget,
+through the canonical project writer (`64218ab`). The project config now stores
+a validated revisioned lifecycle snapshot with project-history entries, and
+authenticated read/reference/action endpoints can link issue, worker-run, artifact, budget,
 branch/SBOM, deployment, repository, and evidence records without duplicating
 their authority; the authenticated action endpoint applies gate, shadow,
 observation, canary, promotion-request, human-approval, and rollback commands

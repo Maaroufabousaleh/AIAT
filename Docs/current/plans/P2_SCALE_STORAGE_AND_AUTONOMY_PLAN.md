@@ -86,8 +86,9 @@
   authenticated `POST /projects/self-improvement` path and durable storage
   persistence now delegate through the canonical project writer; a revisioned
   lifecycle snapshot, project-history record, and authenticated canonical
-  reference-link API cover the durable project boundary; live issue/worker,
-  provider, and database execution remains work.
+  reference-link/action APIs cover the durable project boundary (`64218ab`,
+  `test_self_improvement_api.py`, and storage lifecycle tests). Live
+  issue/worker, provider, and database execution remains work.
 - Use isolated branches/workspaces and certified coding/test/review/security workers.
 - [x] Define independent coding, testing, review, security, migration, and
   rollback gate records plus a separate human approval gate; licence metadata
