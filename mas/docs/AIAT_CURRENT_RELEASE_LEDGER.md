@@ -1,11 +1,11 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-11  
-**Base revision:** `c205617c2b7d48113c76b1cdda25d0e31a867d84` (aggregate static run revision)
+**Base revision:** `416c38b9b9be5eba89b4852ba2edfa07245c1848` (aggregate static run revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
-The latest static aggregation at this revision (2026-08-11T03:47:19Z) is
+The latest static aggregation at this revision (2026-08-11T20:52:39Z) is
 48/48 checks passing, with two pending technical evidence items and a dirty
 working tree; the conservative decision remains **NO-RELEASE**. The configured
 live profile is retained separately below and is not silently refreshed by a

@@ -329,7 +329,8 @@ single frozen commit before production claims are made.
   read back one API/native transport pair and one project-usage/native tool
   pair. The standalone local network matrix is green and retained separately.
   The profile retains four pending evidence items and still yields
-  `NO-RELEASE`; the refreshed summary (commit `8fc1502`) is retained at
+  `NO-RELEASE`; the latest aggregate summary (evidence timestamp refreshed in
+  `be6c836`, following aggregate run `1370f44`) is retained at
   [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json).
   The five blocked checks remain explicit operator/deployment boundaries:
   worker certification, immutable image identity, gVisor registration,
