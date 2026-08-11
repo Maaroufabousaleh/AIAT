@@ -185,15 +185,15 @@
   current migrations, and retain secret-safe evidence in
   [`mas/docs/provenance/trace_observability_live.json`](../../../mas/docs/provenance/trace_observability_live.json)
   using [`scripts/check_live_trace_observability.py`](../../../mas/scripts/check_live_trace_observability.py).
-  The probe observes one bounded `/health` transport span and its API request
-  ledger row without creating project, worker, provider, credential, or
-  deployment state.
+  The fresh 2026-08-11 probe observes one bounded `/health` transport span and
+  its API request ledger row without creating project, worker, provider,
+  credential, or deployment state.
 - [x] Connect the tool-service usage writer to the same native-span contract and
   run a bounded local `time_now` call with an existing project context. The
   operator trace read-back observes one `project_usage_events` row and one
   `tool_service` native tool span; secret-safe evidence is retained in
   [`mas/docs/provenance/tool_trace_live.json`](../../../mas/docs/provenance/tool_trace_live.json)
-  and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py) (`eac83ae`); the host-side probe is fail-closed and creates only bounded telemetry rows.
+  and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py) (`eac83ae`, refreshed 2026-08-11); the host-side probe is fail-closed and creates only bounded telemetry rows.
   The probe creates only normal telemetry rows and does not claim worker/model
   execution or provider evidence.
 - [ ] Run the new checker against a selected live representative model-backed

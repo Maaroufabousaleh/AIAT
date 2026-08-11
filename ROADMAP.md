@@ -12,7 +12,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
 | R0 — documentation authority | complete | Canonical target, eleven feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`. |
-| R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. Current configured live ledger: 55 pass, 0 fail, 9 blocked, 4 pending, `NO-RELEASE` across 64 checks; local runtime benchmark, model-profile, private-network object-store, container runtime-import, network-boundary, and authenticated 39/39 default-worker binding evidence are retained. Native-Linux, trace/tool endpoint configuration, deployment image digests/SBOM/scan artifacts, sandbox, provider/mail, clean-worktree, and selected live evidence remain open. |
+| R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. Current configured live ledger: 55 pass, 0 fail, 9 blocked, 4 pending, `NO-RELEASE` across 64 checks; local runtime benchmark, model-profile, private-network object-store, container runtime-import, network-boundary, authenticated 39/39 default-worker binding, and fresh local trace/tool read-back evidence are retained. Native-Linux, deployment-wide trace/tool endpoint configuration, deployment image digests/SBOM/scan artifacts, sandbox, provider/mail, clean-worktree, and selected live evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
@@ -652,7 +652,8 @@ metadata-only native-span rows as retain/archive/delete/invalid without
 mutating storage; live application, project narrowing, and restore parity
 remain open. The refreshed local orchestrator deployment is now at migration
 `0036_native_trace_spans`; a bounded `/health` request and operator trace read
-observed one API-request row and one native transport span, with secret-safe
+observed one API-request row and one native transport span in the fresh
+2026-08-11 local run, with secret-safe
 evidence retained at
 [`mas/docs/provenance/trace_observability_live.json`](mas/docs/provenance/trace_observability_live.json)
 and reproducible through
@@ -663,7 +664,7 @@ one project-usage row plus one `tool_service` native span are retained at
 and reproducible through
 [`mas/scripts/check_live_tool_trace.py`](mas/scripts/check_live_tool_trace.py)
 (`eac83ae`). Both trace probes are fail-closed and never emit payloads or
-credentials.
+credentials; deployment-wide model/worker/mail-edge sources remain open.
 The host-side checker resolves the Compose-only `tool-service:8002` alias to
 the published loopback port only for a loopback orchestrator, so the corrected
 aggregate live profile now passes both trace children without rewriting remote
