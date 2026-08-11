@@ -45,9 +45,8 @@ uv run --isolated pytest \
 The reproducibility test reads both checked-in artefacts and invokes the
 generator in check mode. The broader flow/schema regression group and
 API route test pass. Focused dashboard ESLint also passes. The full dashboard
-typecheck is currently blocked by an unrelated pre-existing `ErrorBanner`
-prop mismatch in `app/(dashboard)/projects/[id]/evidence/page.tsx`; it is not
-part of this schema group. The topology fixture reports no mutation, worker
+typecheck passes after the project-evidence error-state repair (`fc4f0fa`); it
+is not part of this schema group. The topology fixture reports no mutation, worker
 dispatch, or licence gate.
 
 ## Remaining gates

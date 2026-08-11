@@ -47,13 +47,12 @@ PYTHONPATH=packages/mas-api-sdk uv run --isolated pytest \
 
 The reviewed focused group passes 19 tests, the broader flow lifecycle subset
 passes, and `scripts/check_api_contract.py --json` remains green. Dashboard
-typecheck is currently stopped by the unrelated pre-existing `ErrorBanner`
-prop error in the project-evidence page; no migration route error is reported.
+typecheck passes after the project-evidence error-state repair (`fc4f0fa`); no
+migration route error is reported.
 
 ## Remaining gates
 
 - review and apply bindings to each existing legacy flow as an operator action;
 - publish the resulting immutable versions only after the normal flow checks;
 - prove live worker canary, rollback, and recovery behavior; and
-- add a browser-facing migration form once the dashboard-wide typecheck gate is
-  repaired.
+- add a browser-facing migration form and capture its live operator evidence.

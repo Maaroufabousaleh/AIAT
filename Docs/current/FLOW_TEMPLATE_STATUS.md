@@ -49,5 +49,5 @@ proxy.
 - verify persisted template-created definitions and immutable version history
   with live storage;
 - complete live execution/recovery evidence for template graphs; and
-- resolve the unrelated existing dashboard `ErrorBanner` prop mismatch before
-  claiming a full typecheck pass.
+- capture the live browser golden path after the project-evidence typecheck
+  repair (`fc4f0fa`).

@@ -45,9 +45,8 @@ engine integration. The topology report records
 
 ## Remaining gates
 
-- run dashboard typecheck/editor/browser evidence against the published
-  contract (the full typecheck currently has an unrelated pre-existing
-  `ErrorBanner` prop mismatch in the project evidence page);
+- run dashboard editor/browser evidence against the published contract; the
+  full dashboard typecheck now passes after `fc4f0fa`;
 - validate persisted definitions and migration paths against live storage; and
 - complete live fan-out/join/switch recovery, native-Linux, and provider-owned
   certification.
