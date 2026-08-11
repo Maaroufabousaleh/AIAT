@@ -180,6 +180,11 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   `runsc`, clean-tree state, and all ten digest-bearing deployment image refs
   without retaining values; the current WSL run is explicitly blocked and is
   retained at [`native_release_preflight.json`](../../../mas/docs/provenance/native_release_preflight.json).
+- [x] Include the native preflight as the `release_environment:live` child in
+  the aggregate ledger (`4d7a495`) and retain the current unconfigured 65-check
+  result at [`release_ledger_live_current.json`](../../../mas/docs/provenance/release_ledger_live_current.json);
+  the earlier configured loopback 64-check profile remains descriptive evidence
+  at [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
 - [x] Bound each child checker with a configurable, capped timeout; a timed-out
   live checker is recorded as `blocked` and never upgraded to pass.
 - [x] Run independent release-ledger child checks through a bounded concurrent

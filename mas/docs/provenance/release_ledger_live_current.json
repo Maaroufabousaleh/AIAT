@@ -1,0 +1,76 @@
+{
+  "schema_version": "aiat.release-ledger-live-current-summary.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-11T21:15:26Z",
+  "profile": "live-current-local",
+  "status": "blocked",
+  "release_decision": "NO-RELEASE",
+  "counts": {
+    "total": 65,
+    "pass": 51,
+    "fail": 0,
+    "blocked": 14
+  },
+  "pending_evidence_count": 4,
+  "decision_reasons": [
+    "14 check(s) are externally blocked",
+    "4 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "git": {
+    "revision": "4d7a495aebc2a44a05637f5115596047231d7e5e",
+    "working_tree_clean": false
+  },
+  "live_configuration": {
+    "orchestrator_url_configured": false,
+    "credentials_printed": false,
+    "scope": "bounded local evidence aggregation; no deployment mutation or credential output"
+  },
+  "native_release_preflight": {
+    "status": "blocked",
+    "native_linux": false,
+    "kernel": "6.6.87.2-microsoft-standard-WSL2",
+    "docker_engine_available": true,
+    "compose_v2_available": true,
+    "runsc_registered": false,
+    "configured_image_ref_count": 0,
+    "digest_pinned_image_ref_count": 0,
+    "required_image_ref_count": 10,
+    "blockers": [
+      "host is not a native Linux release host",
+      "gVisor runsc runtime is not registered",
+      "working tree is dirty",
+      "deployment-supplied immutable image refs are absent"
+    ]
+  },
+  "blocked_checks": [
+    "release_environment:live",
+    "trace_evidence:live",
+    "live_trace_observability:live",
+    "live_tool_trace:live",
+    "slo_capacity:live",
+    "worker_reconciliation:live",
+    "default_worker_bindings:live",
+    "image_provenance:live",
+    "metric_series_budget:live",
+    "sandbox_runtime_readiness:live",
+    "runtime_benchmarks:live",
+    "model_profile_catalogue:live",
+    "outbound_mail_lifecycle:live",
+    "self_improvement_candidate_detection:live"
+  ],
+  "pending_evidence": [
+    "coding_worker security scan findings require review in static and live reconciliation rows",
+    "tester security scan findings require review in static and live reconciliation rows"
+  ],
+  "historical_configured_profile": {
+    "ref": "release_ledger_live.json",
+    "total": 64,
+    "pass": 59,
+    "fail": 0,
+    "blocked": 5,
+    "note": "Retained configured loopback evidence; it predates the aggregate native-preflight child and remains descriptive rather than a release approval."
+  },
+  "licence_metadata_is_gate": false,
+  "secret_policy": "credentials, image values, URLs, and dependency payloads are never retained"
+}
