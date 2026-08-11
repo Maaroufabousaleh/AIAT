@@ -414,6 +414,89 @@ async def test_complete_analysis_activates_approval_gate_and_audit_record(client
 
 
 @pytest.mark.anyio
+async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
+    client, monkeypatch
+):
+    """Async dispatch must not be converted into an immediate flow failure."""
+
+    worker_id = uuid4()
+    runtime_flow = {
+        **_flow(),
+        "definition_json": {
+            "nodes": [
+                {"id": "start", "type": "start", "label": "Start", "config": {}},
+                {
+                    "id": "governed_task",
+                    "type": "task",
+                    "label": "Governed task",
+                    "config": {
+                        "worker_id": str(worker_id),
+                        "model_mode": "none",
+                        "task_type": "test_async_task",
+                    },
+                },
+            ],
+            "edges": [{"id": "e1", "source": "start", "target": "governed_task"}],
+        },
+    }
+    initial_instance = {
+        **_instance(active_node_ids=["governed_task"], status="RUNNING"),
+        "context_json": {},
+    }
+    refreshed_instance = {
+        **initial_instance,
+        "context_json": {
+            "active_worker_runs": {
+                "governed_task": {
+                    "run_id": str(uuid4()),
+                    "state": "QUEUED",
+                    "dispatch_mode": "queued",
+                }
+            }
+        },
+    }
+    run_id = UUID(refreshed_instance["context_json"]["active_worker_runs"]["governed_task"]["run_id"])
+
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(side_effect=[initial_instance, refreshed_instance])
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[{"id": 41, "node_id": "governed_task", "status": "RUNNING"}]
+    )
+    storage.update_flow_instance = AsyncMock(return_value=refreshed_instance)
+    _patch_state(storage)
+
+    from orchestrator_api import main
+
+    dispatch = AsyncMock(
+        return_value={
+            "run_id": str(run_id),
+            "state": "QUEUED",
+            "dispatch_mode": "queued",
+            "accepted": {"run_id": str(run_id)},
+        }
+    )
+    monkeypatch.setattr(main, "dispatch_worker_run", dispatch)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={"node_id": "governed_task", "action": "advance"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "RUNNING"
+    assert response.json()["active_node_ids"] == ["governed_task"]
+    assert response.json()["context_json"]["active_worker_runs"]["governed_task"]["run_id"] == str(run_id)
+    dispatch.assert_awaited_once()
+    storage.update_flow_instance.assert_awaited_once_with(
+        FLOW_INSTANCE_ID,
+        status="RUNNING",
+        active_node_ids=["governed_task"],
+        context_json=refreshed_instance["context_json"],
+    )
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("decision", "expected_node"),
     [("approved", "branch_a"), ("edit_requested", "branch_b")],
@@ -564,7 +647,7 @@ async def test_retry_failed_flow_restores_last_safe_node(client):
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(side_effect=[failed_instance, restored_instance])
     storage.get_flow = AsyncMock(return_value=runtime_flow)
-    storage.clear_flow_node_executions = AsyncMock(return_value=None)
+    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
     storage.update_flow_instance = AsyncMock(return_value=restored_instance)
     storage.create_flow_node_execution = AsyncMock(return_value={"id": 40})
     storage.create_approval_gate = AsyncMock(return_value={"id": uuid4()})
@@ -577,6 +660,93 @@ async def test_retry_failed_flow_restores_last_safe_node(client):
     _, kwargs = storage.update_flow_instance.await_args
     assert kwargs["status"] == "RUNNING"
     assert kwargs["active_node_ids"] == ["analysis"]
+
+
+@pytest.mark.anyio
+async def test_retry_failed_governed_task_reenters_worker_run_dispatch(client, monkeypatch):
+    """A governed safe-point retry must not fall back to manual completion."""
+
+    from orchestrator_api import main
+
+    worker_id = uuid4()
+    run_id = uuid4()
+    runtime_flow = {
+        **_flow(),
+        "definition_json": {
+            "nodes": [
+                {"id": "start", "type": "start", "label": "Start", "config": {}},
+                {
+                    "id": "governed_task",
+                    "type": "task",
+                    "label": "Governed task",
+                    "config": {
+                        "worker_id": str(worker_id),
+                        "model_mode": "none",
+                        "task_type": "retryable_task",
+                    },
+                },
+            ],
+            "edges": [{"id": "e1", "source": "start", "target": "governed_task"}],
+        },
+    }
+    failed_instance = {
+        **_instance(active_node_ids=[], status="FAILED"),
+        "retry_count": 2,
+        "context_json": {"last_safe_node_id": "governed_task"},
+    }
+    restarted_instance = {
+        **failed_instance,
+        "status": "RUNNING",
+        "active_node_ids": ["governed_task"],
+        "retry_count": 3,
+    }
+    refreshed_instance = {
+        **restarted_instance,
+        "context_json": {
+            "last_safe_node_id": "governed_task",
+            "active_worker_runs": {
+                "governed_task": {
+                    "run_id": str(run_id),
+                    "state": "QUEUED",
+                    "dispatch_mode": "queued",
+                }
+            },
+        },
+    }
+
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(
+        side_effect=[failed_instance, restarted_instance, refreshed_instance]
+    )
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
+    storage.update_flow_instance = AsyncMock(
+        side_effect=[restarted_instance, refreshed_instance]
+    )
+    storage.create_flow_node_execution = AsyncMock(return_value={"id": 77})
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[{"id": 77, "node_id": "governed_task", "status": "RUNNING"}]
+    )
+    _patch_state(storage)
+
+    dispatch = AsyncMock(
+        return_value={
+            "run_id": str(run_id),
+            "state": "QUEUED",
+            "dispatch_mode": "queued",
+            "accepted": {"run_id": str(run_id)},
+        }
+    )
+    monkeypatch.setattr(main, "dispatch_worker_run", dispatch)
+
+    response = await client.post(f"/flows/instances/{FLOW_INSTANCE_ID}/retry")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "RUNNING"
+    assert response.json()["active_node_ids"] == ["governed_task"]
+    assert response.json()["context_json"]["active_worker_runs"]["governed_task"]["run_id"] == str(run_id)
+    dispatch.assert_awaited_once()
+    storage.supersede_flow_node_executions.assert_awaited_once_with(FLOW_INSTANCE_ID)
 
 
 @pytest.mark.anyio

@@ -84,7 +84,11 @@ from mas_core.workflow import (
     WatchdogConfig,
     WorkflowController,
     WorkflowEvent,
+    bind_pending_worker_run,
+    classify_worker_run_state,
+    clear_worker_run_binding,
     is_terminal_state,
+    normalize_worker_run_state,
     resolve_transition,
     should_watchdog_fire,
 )
@@ -9670,7 +9674,9 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 )
             )
             result = dispatch.get("result") or {}
-            if dispatch["state"] == "SUCCEEDED":
+            dispatch_state = normalize_worker_run_state(dispatch.get("state"))
+            dispatch_class = classify_worker_run_state(dispatch_state)
+            if dispatch_class == "succeeded":
                 output = result.get("output")
                 normalized_output = output if isinstance(output, dict) else {"worker_output": output}
                 normalized_output["worker_run_id"] = dispatch["run_id"]
@@ -9683,12 +9689,38 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                         worker_run_id=UUID(dispatch["run_id"]),
                     ),
                 )
-            error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch['state']}"
+            if dispatch_class == "pending":
+                # Queued production dispatch is asynchronous.  Keep the task
+                # active and persist the authoritative run binding; treating
+                # QUEUED/CLAIMED/RUNNING as an immediate failure would leave
+                # the flow and Worker Run in contradictory states.  A later
+                # terminal callback/operator action must supply this run ID,
+                # and the terminal-state guard below remains authoritative.
+                pending_context = bind_pending_worker_run(
+                    current_context,
+                    node_id=node.id,
+                    run_id=str(dispatch["run_id"]),
+                    state=dispatch_state,
+                    dispatch_mode=dispatch.get("dispatch_mode"),
+                )
+                await storage.update_flow_instance(
+                    instance_id,
+                    status="RUNNING",
+                    active_node_ids=active_node_ids,
+                    context_json=pending_context,
+                )
+                return _serialize(await _get_refreshed_instance())
+            if dispatch_class == "unknown":
+                raise HTTPException(
+                    409,
+                    f"Worker Run returned unknown non-terminal state {dispatch_state or '<missing>'}; flow task remains unresolved",
+                )
+            error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch_state}"
             return await flow_node_action(
                 instance_id,
                 FlowNodeActionRequest(
                     node_id=req.node_id,
-                    action="timeout" if dispatch["state"] == "TIMED_OUT" else "fail",
+                    action="timeout" if dispatch_state == "TIMED_OUT" else "fail",
                     error=str(error),
                     worker_run_id=UUID(dispatch["run_id"]),
                 ),
@@ -9706,21 +9738,30 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             or worker_run.get("flow_node_execution_id") != execution["id"]
         ):
             raise HTTPException(409, "Worker Run is not bound to this active flow node execution")
-        expected_run_state = {
-            "complete": "SUCCEEDED",
-            "fail": "FAILED",
-            "timeout": "TIMED_OUT",
+        expected_run_states = {
+            "complete": frozenset({"SUCCEEDED"}),
+            # Cancellation is a terminal non-success outcome and therefore
+            # settles the task through the same failure path as FAILED.
+            "fail": frozenset({"FAILED", "CANCELLED"}),
+            "timeout": frozenset({"TIMED_OUT"}),
         }[req.action]
-        if worker_run.get("state") != expected_run_state:
+        observed_run_state = normalize_worker_run_state(worker_run.get("state"))
+        if observed_run_state not in expected_run_states:
             raise HTTPException(
                 409,
-                f"Task node action {req.action} requires Worker Run state {expected_run_state}",
+                f"Task node action {req.action} requires Worker Run state in {sorted(expected_run_states)}",
             )
 
     if req.action == "complete":
         updated_context = dict(current_context)
         if req.output:
             updated_context.update(req.output)
+
+        # A governed task's pending asynchronous binding is consumed only by
+        # its authoritative terminal Worker Run.  Remove that one node entry
+        # while preserving other parallel task bindings in the same context.
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            updated_context = clear_worker_run_binding(updated_context, node_id=node.id)
 
         if node.type == FlowNodeType.APPROVAL:
             decision = req.decision
@@ -9904,7 +9945,17 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 completed_at=now,
             )
 
-        await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
+        failure_context = dict(current_context)
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            failure_context = clear_worker_run_binding(failure_context, node_id=node.id)
+        if req.error:
+            failure_context["last_error"] = req.error
+        await storage.update_flow_instance(
+            instance_id,
+            status="FAILED",
+            active_node_ids=[],
+            context_json=failure_context,
+        )
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "timeout":
@@ -9923,6 +9974,8 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         timeout_context = dict(current_context)
         timeout_context["last_error"] = req.error or "Timed out"
         timeout_context["last_timed_out_node_id"] = req.node_id
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            timeout_context = clear_worker_run_binding(timeout_context, node_id=node.id)
 
         await storage.update_flow_instance(
             instance_id,
@@ -10153,7 +10206,9 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
         retry_count = int(instance.get("retry_count") or 0) + 1
         restored_node = definition.get_node(last_safe_node_id)
-        await storage.clear_flow_node_executions(instance_id)
+        # Retain prior attempts as evidence; only their traversal authority is
+        # removed before the restored node is dispatched again.
+        await storage.supersede_flow_node_executions(instance_id)
         await storage.update_flow_instance(
             instance_id,
             status="RUNNING",
@@ -10176,6 +10231,15 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
                     gate_type=restored_node.config.get("approver_role")
                     or restored_node.config.get("approver_user")
                     or restored_node.label,
+                )
+            if restored_node.type.value == "task" and restored_node.config.get("worker_id"):
+                # Safe retry of a governed task must re-enter the same
+                # authoritative Worker Run path as normal traversal.  Legacy
+                # team/action-only tasks intentionally keep their manual
+                # compatibility behavior until an operator migrates them.
+                return await flow_node_action(
+                    instance_id,
+                    FlowNodeActionRequest(node_id=restored_node.id, action="advance"),
                 )
         restored_instance = await storage.get_flow_instance(instance_id)
         if restored_instance is None:
