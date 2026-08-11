@@ -21,6 +21,10 @@ accessibility group: Activity/Resources/Cost now expose semantic tab/tabpanel
 relationships, roving Arrow/Home/End keyboard recovery, and 44px targets
 (`fcb0f4b`) in the existing source-built workspace recovery test.
 
+The current dashboard increment also hardens the Projects list table with a
+caption, scoped headers, explicit description disclosure, responsive overflow,
+and 44px selection/filter/sort/link/action targets (`7828b48`).
+
 ## 1. How to use this documentation
 
 | Need | Read |
@@ -583,6 +587,9 @@ roving keyboard focus, and Arrow/Home/End recovery with 44px targets
 (`fcb0f4b`).
 The project evidence package page now retains its last successful package
 through a failed refresh and exposes a source-built Retry path (`bc80ad5`).
+The Projects list now separately proves its semantic table/accessibility
+baseline and 44px control targets in the source-built stale/retry test
+(`7828b48`).
 The shared identity-resource dashboard loader now aborts obsolete refreshes and
 proves stale-to-recovered retry without rendering sensitive fields (`46eccee`).
 Its table captions, column scopes, explicit action names, and 44px targets are
@@ -952,6 +959,10 @@ The same source-built workspace test now also covers semantic nested
 Activity/Resources/Cost tab relationships and Arrow/Home/End keyboard recovery
 (`fcb0f4b`); this is a focused accessibility baseline, not the full WCAG or
 native-Linux gate.
+
+The source-built Projects list test also covers its table caption/scoped
+headers, description disclosure, responsive table wrapper, and 44px controls
+(`7828b48`); native-Linux and broader WCAG evidence remain open.
 
 7. [x] Project the typed company timezone through prompts, scheduler, clock
    tool, dashboard, and Compose defaults; reconcile prompt/tool-grant drift
