@@ -693,6 +693,7 @@ export default function SystemVisualizationPage() {
             <HierarchyViz
               key={`hierarchy-${refetchKey}`}
               hierarchy={hierarchy}
+              permissionData={permissionData}
               onNodeClick={(teamId) =>
                 setSelectedTeam(teamId === selectedTeam ? null : teamId)
               }

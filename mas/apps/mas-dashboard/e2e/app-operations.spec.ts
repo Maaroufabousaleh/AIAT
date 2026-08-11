@@ -117,6 +117,20 @@ test.describe("Operational UI smoke flows", () => {
       "graph TD",
     );
 
+    await page.getByRole("tab", { name: /team hierarchy/i }).click();
+    await page.getByRole("button", { name: /show communication policy/i }).click();
+    await expect(
+      page.getByRole("region", { name: "Communication policy overlay controls" }),
+    ).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Communication policy sender role" })
+      .selectOption("worker");
+    await expect(page.getByText("Allowed path").first()).toBeVisible();
+    await expect(page.getByText("Denied path").first()).toBeVisible();
+    await page
+      .getByRole("button", { name: /hide communication policy/i })
+      .click();
+
     await page.getByRole("tab", { name: /permissions/i }).click();
     await expect(page.getByText(/communication/i).first()).toBeVisible();
 
