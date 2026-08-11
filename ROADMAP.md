@@ -16,6 +16,11 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, and project-workspace stale/retry recovery is recorded in `cb1c665`. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
+The latest bounded dashboard increment is the project workspace nested-tab
+accessibility group: Activity/Resources/Cost now expose semantic tab/tabpanel
+relationships, roving Arrow/Home/End keyboard recovery, and 44px targets
+(`fcb0f4b`) in the existing source-built workspace recovery test.
+
 ## 1. How to use this documentation
 
 | Need | Read |
@@ -464,6 +469,9 @@ The project workspace sub-surface now retains activity, resources, cost, and the
 last repository snapshot through failed `/workspace` or `/repository` refreshes,
 labels the state as last known, and recovers through Retry (`cb1c665`). This is
 source-built dashboard evidence; live provider/worker generation remains open.
+Its nested Activity/Resources/Cost tabs now add semantic tab/tabpanel
+relationships, roving Arrow/Home/End keyboard navigation, and 44px targets
+(`fcb0f4b`).
 
 **Progress:** versioned node-schema validation/export, generated dashboard schema metadata and editable node forms, evidence-policy catalogue, required-artifact-kind checks, company/project/milestone/flow policy persistence and resolution, complete operator evidence dry-run inputs, the deterministic `resolve_evidence_policy_selection` precedence contract and `aiat.evidence-policy-resolution-check.v1` fixture, the consolidated `aiat.project-evidence-package.v1` repository/test/security/deployment/cost read model plus operator-only durable snapshot, deterministic flow lifecycle endpoints, evidence-preserving compatible instance migration, explicitly mapped active-node graph rewrites, six validated reusable templates, dashboard consumption of the canonical template catalogue, exactly-once terminal-issue-to-agent-profile learning, a durable `sprint_retrospective` KPI snapshot with source issue/profile lineage, deterministic dry-run auditing of legacy task aliases, operator-approved immutable saved-definition worker migration, static parallel/join/switch topology validation, deterministic real traversal semantics for fan-out/join/switch execution, asynchronous governed task binding, governed safe-retry re-dispatch, non-destructive retry evidence preservation in both recorded-safe-node and no-safe-node fallback paths, deterministic watchdog/recovery semantics, and a local Compose UI golden path are implemented. The project evidence package page now retains its last successful package through failed refreshes and exposes Retry with source-built `project-evidence-states.spec.ts` coverage 1/1 (`bc80ad5`); full project-page composition and live provider/worker generation remain open. The traversal engine now prevents duplicate join scheduling and completed-join reactivation; `aiat.flow-worker-binding.v1` keeps queued/running task nodes active until terminal Worker Run evidence and the retry endpoint re-enters the same path for restored governed tasks, while prior node executions are retained as `SUPERSEDED`; `aiat.workflow-watchdog-recovery.v1` covers boot grace, downtime-aware timeout, failure transition, safe retry, and terminal exclusion; `scripts/check_flow_instance_recovery.py` still provides read-only/explicit-confirmation instance action evidence. The current Playwright run passes 58/59 local tests, including hierarchy communication-policy/path tracing, retained hiring evaluation details, skip-link/mobile shell focus, identity stale-record/retry, PM integration conflict/stale retry, and system-visualization partial/offline retry coverage (the DLQ fixture is explicitly skipped); live worker recovery, native-Linux UI, and provider-owned golden paths remain open.
 
@@ -570,6 +578,9 @@ retains project-detail state on refresh failure and exposes stale/retry copy.
 The project workspace sub-surface now separately retains activity, resources,
 cost, and the last repository snapshot through failed workspace/repository
 refreshes and recovers through Retry (`cb1c665`).
+Its nested Activity/Resources/Cost tabs also provide semantic relationships,
+roving keyboard focus, and Arrow/Home/End recovery with 44px targets
+(`fcb0f4b`).
 The project evidence package page now retains its last successful package
 through a failed refresh and exposes a source-built Retry path (`bc80ad5`).
 The shared identity-resource dashboard loader now aborts obsolete refreshes and
@@ -853,7 +864,7 @@ flowchart LR
 
 ## 6. Now, next, later
 
-Project-detail stale/retry state is recorded in the dashboard evidence fixture; it extends the existing project workspace test and is included in the current 58/59 matrix count. A source-built project-detail first-load failure path is separately proven with explicit backend error detail and keyboard-visible Retry recovery (`f364763`). The project workspace sub-surface now separately retains canonical activity/resources/cost data and its repository snapshot through failed refreshes with Retry recovery (`cb1c665`).
+Project-detail stale/retry state is recorded in the dashboard evidence fixture; it extends the existing project workspace test and is included in the current 58/59 matrix count. A source-built project-detail first-load failure path is separately proven with explicit backend error detail and keyboard-visible Retry recovery (`f364763`). The project workspace sub-surface now separately retains canonical activity/resources/cost data and its repository snapshot through failed refreshes with Retry recovery (`cb1c665`), and its nested tabs have semantic relationships plus keyboard recovery (`fcb0f4b`).
 
 ### Now — R1/P0
 
@@ -920,7 +931,8 @@ an explicit open gate.
    failed refreshes (`a0faf5b`); the flow editor exposes explicit first-load
    unavailable and retained-canvas stale/retry recovery (`b5098e7`); the project
    workspace retains its last summary and repository snapshot through failed
-   refreshes with Retry (`cb1c665`); Container
+   refreshes with Retry (`cb1c665`) and its nested tabs expose semantic
+   keyboard recovery (`fcb0f4b`); Container
    Logs retains its last buffer through
    failed SSE reloads (`280d363`), Agent Streams retains history/messages
    through reconnect or history failures (`3e8a0ea`), the Hiring Board retains
@@ -935,6 +947,11 @@ The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the current 58/59 evidence count.
 The source-built project-detail state test additionally covers a failed first
 read, backend error detail, and recovery through Retry (`f364763`).
+
+The same source-built workspace test now also covers semantic nested
+Activity/Resources/Cost tab relationships and Arrow/Home/End keyboard recovery
+(`fcb0f4b`); this is a focused accessibility baseline, not the full WCAG or
+native-Linux gate.
 
 7. [x] Project the typed company timezone through prompts, scheduler, clock
    tool, dashboard, and Compose defaults; reconcile prompt/tool-grant drift
