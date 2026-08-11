@@ -1,9 +1,15 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-11  
-**Base revision:** `daf3fa993c30956b2928ab0200dc4efe50a671d5` (aggregate run revision)  
+**Base revision:** `63679fde7145a91e2266ffac17370447bc5dbd22` (latest grouped documentation/evidence revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
+
+The latest static aggregation at this revision (2026-08-11T02:47:35Z) is
+48/48 checks passing, with two pending technical evidence items and a dirty
+working tree; the conservative decision remains **NO-RELEASE**. The configured
+live profile is retained separately below and is not silently refreshed by a
+static-only run.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -18,7 +24,7 @@ live evidence explicit.
 | Bounded security scanner adapters | static/unit/tool-service | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; `uv run --isolated python scripts/check_security_adapters.py --json`; `security.scan` accepts `semgrep`, `skillspector`, and `trufflehog` compatibility aliases, routes each through the configured sandbox adapter with bounded output, and preserves the same audit/grant/rate/approval boundary |
 | Document ingest fallback | static/unit/tool-service | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; `document.ingest` invokes Docling when installed and otherwise returns usable source text with `available: true`, `configured: true`, `degraded: true`, and `backend: plain_text_fallback`; this does not claim Docling installation or external adapter certification |
 | Optional licence metadata stage | unit/regression | PASS | `test_license_metadata_stage_can_be_skipped` proves `SOURCE_REVIEW` can move directly to `SECURITY_REVIEW`; the compatibility `LICENSE_REVIEW` label is optional metadata and cannot block or delay normal internal use |
-| Release environment manifest | static/reproducibility | PASS | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with the current revision, thirteen release-input hashes covering operator pins, security evidence, worker manifests, and the prior inputs, tool identities, environment-presence flags, and deterministic digest `f220dee05c1442cd88b3ee9d74bc579cf87fab68b6553bce2aa1a88de8c6336b` without values or credentials; current WSL evidence records 389 changed paths, 5/6 tools available, and 0 configured optional inputs; dirty state remains a release decision reason |
+| Release environment manifest | static/reproducibility | PASS | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with the current revision, thirteen release-input hashes covering operator pins, security evidence, worker manifests, and the prior inputs, tool identities, environment-presence flags, and deterministic digest `97968b5391dd91e2b8fe83179bb1113571257942e5f6927bf5d0f59ccc4dfb8c` without values or credentials; current WSL evidence records 370 changed paths, 5/6 tools available, and 0 configured optional inputs; dirty state remains a release decision reason |
 | Operator runtime/CLI pin contract | static/source | PASS | `uv run --isolated python scripts/check_operator_pins.py --json` verifies nine exact production tool/dependency pins and records seven host/optional/deployment capabilities as explicitly unavailable until exact identities are supplied; this technical check is independent of licence metadata |
 | Backend and team-runner regression suite | unit/integration | PASS | `uv run --isolated pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests -q` |
 | Bounded metric labels and project-state metric | static/API integration + local live scrape | PASS (static + local scrape; many-project open) | `uv run --isolated pytest packages/mas-core/tests/test_metric_series_budget.py apps/orchestrator-api/tests/test_metrics.py -q`; `check_metric_series_budget.py --json` emits the complete AIAT label inventory, classifies every label as bounded by a protocol/registry/catalogue/bucket contract, rejects `project_id`, passes the synthetic 10,000-project/2,000-total fixture, and the live parser folds Prometheus' synthetic histogram `_created` sample into its declared family; the refreshed local scrape passes at 31 series with no `project_id` label and is retained at [`provenance/metric_series_live.json`](provenance/metric_series_live.json), while native many-project scrape remains open |
