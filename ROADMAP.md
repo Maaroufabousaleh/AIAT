@@ -41,7 +41,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Default runtime packaging contract | [`check_runtime_install_profile.py`](mas/scripts/check_runtime_install_profile.py), [`pyproject.toml`](mas/apps/orchestrator-api/pyproject.toml), [`uv.lock`](mas/uv.lock), [orchestrator Dockerfile](mas/infra/docker/Dockerfile.orchestrator-api) |
 | Optional Microsoft Agent Framework/MCP compatibility | [`runtime_compatibility.yaml`](mas/docs/provenance/runtime_compatibility.yaml), [`maf_compatibility.py`](mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`check_runtime_compatibility.py`](mas/scripts/check_runtime_compatibility.py) |
 | Default worker steward lifecycle contract | [`check_worker_steward_contract.py`](mas/scripts/check_worker_steward_contract.py), [`ExternalWorkerSteward`](mas/packages/mas-core/mas_core/worker_registry/steward.py), [worker matrix](mas/docs/provenance/worker_certification_matrix.yaml) |
-| Third-party and production-image metadata/evidence | [Third-party notices](THIRD_PARTY_NOTICES.md), [component provenance](mas/docs/provenance/third_party_components.yaml), [production images](mas/docs/provenance/production_images.yaml), [`check_image_provenance.py`](mas/scripts/check_image_provenance.py) |
+| Third-party and production-image metadata/evidence | [Third-party notices](THIRD_PARTY_NOTICES.md), [component provenance](mas/docs/provenance/third_party_components.yaml), [production images](mas/docs/provenance/production_images.yaml), [image budgets](mas/infra/docker/image-budgets.yaml), [`check_image_provenance.py`](mas/scripts/check_image_provenance.py), [`check_image_budgets.py`](mas/scripts/check_image_budgets.py) |
 | Deterministic API/protocol/dashboard/Python SDK contracts | [API contract artifact](mas/schemas/http/orchestrator.openapi.json), [dashboard types](mas/apps/mas-dashboard/lib/generated/orchestrator-api.ts), [Python SDK](mas/packages/mas-api-sdk/mas_api_sdk/generated.py), [contract provenance](mas/docs/provenance/api_contract.yaml), [`check_api_contract.py`](mas/scripts/check_api_contract.py), [`generate_typescript_api.py`](mas/scripts/generate_typescript_api.py), [`generate_python_api.py`](mas/scripts/generate_python_api.py) |
 | Executive model/budget reconciliation and role views | [`aiat.executive-reconciliation.v1` / `aiat.executive-views.v1`](mas/packages/mas-core/mas_core/observability/executive_reconciliation.py), [`/executive/reconciliation`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/views/{role}`](mas/apps/orchestrator-api/orchestrator_api/main.py), [System Overview](<mas/apps/mas-dashboard/app/(dashboard)/page.tsx>) |
 | Executive write actions | [`aiat.executive-action.v1`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/cfo/model-overrides`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/cto/worker-runs`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/ceo/privileged-actions`](mas/apps/orchestrator-api/orchestrator_api/main.py), [dashboard proxies](mas/apps/mas-dashboard/app/api/executive/actions/) |
@@ -72,7 +72,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Immediate release-truth and security work | [P0 Release Integrity Plan](Docs/current/plans/P0_RELEASE_INTEGRITY_PLAN.md) |
 | Current P0 implementation evidence and open gates | [P0 Release Integrity Status](Docs/current/P0_RELEASE_INTEGRITY_STATUS.md) |
 | Current implementation/release evidence ledger | [AIAT Current Release Ledger](mas/docs/AIAT_CURRENT_RELEASE_LEDGER.md) |
-| Machine-readable release evidence aggregation | [`check_release_ledger.py`](mas/scripts/check_release_ledger.py), [`check_release_environment.py`](mas/scripts/check_release_environment.py), [`check_operator_pins.py`](mas/scripts/check_operator_pins.py), [`check_metric_series_budget.py`](mas/scripts/check_metric_series_budget.py), [`check_docs_index.py`](mas/scripts/check_docs_index.py), [release-ledger inventory](mas/docs/provenance/release_ledger.yaml) |
+| Machine-readable release evidence aggregation | [`check_release_ledger.py`](mas/scripts/check_release_ledger.py), [`check_release_environment.py`](mas/scripts/check_release_environment.py), [`check_operator_pins.py`](mas/scripts/check_operator_pins.py), [`check_image_provenance.py`](mas/scripts/check_image_provenance.py), [`check_image_budgets.py`](mas/scripts/check_image_budgets.py), [`check_metric_series_budget.py`](mas/scripts/check_metric_series_budget.py), [`check_docs_index.py`](mas/scripts/check_docs_index.py), [release-ledger inventory](mas/docs/provenance/release_ledger.yaml) |
 | Guarded self-improvement candidate detection | [`aiat.self-improvement-candidate-detection.v1`](mas/packages/mas-core/mas_core/workflow/improvement_candidates.py), [`check_self_improvement_candidates.py`](mas/scripts/check_self_improvement_candidates.py), [`test_improvement_candidates.py`](mas/packages/mas-core/tests/test_improvement_candidates.py) |
 | Native-Linux P0 exit procedure | [P0 Native-Linux Exit Runbook](mas/docs/P0_NATIVE_LINUX_EXIT_RUNBOOK.md) |
 | Complete the default personal-instance experience | [P1 Default Programme Completion Plan](Docs/current/plans/P1_DEFAULT_PRODUCT_COMPLETION_PLAN.md) |
@@ -238,7 +238,7 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 scan-state/findings reconciliation, static worker/runtime/provenance
 reconciliation, bounded metric label inventory, persisted CEO/service section
 ACLs, immutable image-input contract, fail-closed local image identity probe,
-tool-service profile split, read-only persisted default-worker binding
+tool-service profile split, bounded image budgets (`b24ca0c`), read-only persisted default-worker binding
 reconciliation, the bounded metric contract (`90a7d82`) and lifecycle wiring
 (`cbeb9db`), and the secret-safe release-environment/provenance input group
 (`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
@@ -258,7 +258,7 @@ Required outcomes:
 - [x] CEO and human operator identities have tested API section separation; native-Linux network/UI evidence remains open;
 - [x] all checked-in worker manifests reconcile with the runtime catalogue, default company references, Compose/OpenCode link, provenance inventory, and metadata-only notices; authenticated local read-only `--live` reconciliation now matches 39/39 persisted `/capabilities/workers` defaults with zero missing rows or binding mismatches; live default-runtime certification remains open;
 - [x] deployed team runners use the authenticated control-plane storage API for checkpoints, usage, documents, and COO review persistence without PgBouncer/MinIO/shared-service credentials or private data-plane network membership; checkpoint access is team-scoped, OpenCode is off the runner network, and startup fails closed when storage health is unavailable; the refreshed local WSL2 matrix passes for all 11 runners and is retained at [`provenance/network_boundary_live.json`](mas/docs/provenance/network_boundary_live.json), while native denial/allow evidence remains open;
-- [x] production Compose fixed references and Dockerfile bases are digest-pinned or require deployment-supplied immutable `*_IMAGE_REF` values; the fail-closed `check_image_provenance.py --live --json` probe compares local `RepoDigests` when Docker/configuration is available; SBOM/clean-build/scan reconciliation remains open;
+- [x] production Compose fixed references and Dockerfile bases are digest-pinned or require deployment-supplied immutable `*_IMAGE_REF` values (`7d69fbd`); the fail-closed `check_image_provenance.py --live --json` probe compares local `RepoDigests` when Docker/configuration is available; development-only wrapper defaults are isolated in `b9a77e9`; SBOM/clean-build/scan reconciliation remains open;
 - team runners are live-proven unable to reach Redis/Postgres/object storage/provider endpoints directly on the refreshed local Linux engine; native-Linux release-host evidence remains open;
 - production images and runtimes are live-reconciled against their provenance/SBOM;
 - [x] raw project IDs are removed from metric labels and every AIAT label has a
@@ -266,7 +266,7 @@ Required outcomes:
   bounded series after histogram `_created` normalization; runtime lifecycle
   paths record bounded aggregate state and resume-time reconciliation restores
   persisted counts; native many-project scrape evidence remains open;
-- [x] heavyweight tool image is split or reduced within explicit budgets; [x] local Linux engine measurements pass for both profiles (core 267,957,904 bytes, 26,836 ms/112.3 MiB; extensions 4,155,668,123 bytes, 29,913 ms/137.7 MiB) with retained evidence; clean native-Linux build/pull, compressed archive, SBOM, and vulnerability measurements remain open;
+- [x] heavyweight tool image is split or reduced within explicit budgets (`b24ca0c`); [x] local Linux engine measurements pass for both profiles (core 267,957,904 bytes, 26,836 ms/112.3 MiB; extensions 4,155,668,123 bytes, 29,913 ms/137.7 MiB) with retained evidence; clean native-Linux build/pull, compressed archive, SBOM, and vulnerability measurements remain open;
 - [x] production runtime/CLI declarations are exact in the operator-pin
   manifest, while host-, optional-, and deployment-supplied capabilities are
   explicitly unavailable until identified; native/live certification remains
@@ -683,12 +683,12 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
 2. [x] Make the remaining operational certification gates consistent and executable in steward/API certification paths.
 3. [x] Reconcile OpenCode worker scan/certification records.
 4. [x] Reconcile all checked-in worker manifests with the runtime catalogue, company references, OpenCode Compose/version link, provenance, and metadata-only notices.
-5. [x] Add the fail-closed local image identity probe; resolve deployment image refs and generate matching source/version provenance/SBOM remain release work.
+5. [x] Add the fail-closed local image identity probe (`7d69fbd`); resolve deployment image refs and generate matching source/version provenance/SBOM remain release work.
 6. [x] Add CEO identity/section ACL contract and API matrix. [x] Exercise the authenticated local operator/CEO/service/worker matrix. [x] Exercise the local Compose dashboard/UI matrix (34/35, one explicit DLQ-fixture skip; evidence at [`provenance/dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json)), including shell focus, identity stale-record/retry state, PM integration conflict/stale retry, and system-visualization partial/offline retry states. [ ] Repeat the dashboard/UI matrix on native Linux.
 7. [x] Remove high-cardinality metric labels and classify every AIAT label's
    bounded cardinality basis; [x] reconcile the current local scrape (31
    bounded series, retained at [`provenance/metric_series_live.json`](mas/docs/provenance/metric_series_live.json)). [ ] Run the native many-project scrape.
-8. [x] Split the heavyweight tool image and define budgets. [x] Measure both profiles on the current local Linux engine. [ ] Repeat on a clean native-Linux release host with compressed archive/SBOM/scan evidence.
+8. [x] Split the heavyweight tool image and define budgets (`b24ca0c`). [x] Measure both profiles on the current local Linux engine. [ ] Repeat on a clean native-Linux release host with compressed archive/SBOM/scan evidence.
 9. [x] Codify the static/live network boundary verifier and remove the OpenCode runtime from the runner network. [x] Recreate the local stack and pass the 11-runner denial/allow matrix; [ ] repeat on a native-Linux release host.
 10. [ ] Run the live network/sandbox/recovery evidence on native Linux.
 11. [x] Publish a current progress ledger.
