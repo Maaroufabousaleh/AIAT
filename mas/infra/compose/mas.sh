@@ -41,6 +41,43 @@ elif [ -f ".env" ]; then
     load_env_file "$ENV_FILE"
 fi
 
+# The wrapper is the development entrypoint. Keep its convenience image names
+# separate from the production Compose contract: direct production invocations
+# must provide every immutable *_IMAGE_REF value, while a personal local
+# `mas.sh up --build` can build checked-in services without a registry digest.
+# A caller-supplied value always wins, including a digest-bearing image ref.
+set_development_image_defaults() {
+    local var value
+    local -a defaults=(
+        "AIAT_TEAM_RUNNER_IMAGE_REF=mas/team-runner:dev"
+        "AIAT_REDIS_ACL_INIT_IMAGE_REF=mas/redis-acl-init:dev"
+        "AIAT_MESSAGE_ROUTER_IMAGE_REF=mas/message-router:dev"
+        "AIAT_TOOL_SERVICE_IMAGE_REF=mas/tool-service:dev"
+        "AIAT_OPENCODE_RUNTIME_IMAGE_REF=mas/opencode-runtime:dev"
+        "AIAT_ORCHESTRATOR_IMAGE_REF=mas/orchestrator-api:dev"
+        "AIAT_PM_GATEWAY_IMAGE_REF=mas/pm-gateway:dev"
+        "AIAT_DASHBOARD_IMAGE_REF=mas/dashboard:dev"
+    )
+    for entry in "${defaults[@]}"; do
+        var="${entry%%=*}"
+        value="${entry#*=}"
+        if [ -z "${!var:-}" ]; then
+            export "$var=$value"
+        fi
+    done
+    # Existing local .env files may still use the old gateway aliases. They
+    # remain development-only compatibility inputs; production must set the
+    # *_IMAGE_REF counterparts explicitly.
+    if [ -z "${LITELLM_IMAGE_REF:-}" ]; then
+        export LITELLM_IMAGE_REF="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
+    fi
+    if [ -z "${OMNIROUTE_IMAGE_REF:-}" ]; then
+        export OMNIROUTE_IMAGE_REF="${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
+    fi
+}
+
+set_development_image_defaults
+
 # The wrapper loads .env itself so values containing "$" (bcrypt hashes, API
 # keys, etc.) are exported literally instead of parsed by Compose interpolation.
 export COMPOSE_DISABLE_ENV_FILE=1
