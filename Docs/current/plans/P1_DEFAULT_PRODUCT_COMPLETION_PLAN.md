@@ -309,6 +309,7 @@ external client-language SDK compatibility yet.
 - [x] Preserve identity-resource last-known records on refresh failure, label the stale state, and expose a retry action; `e2e/identity-states.spec.ts` passes the authenticated failure/retry path without rendering sensitive fields. Provider/live identity evidence remains separate.
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
 - [x] Make the project flow selector read the active catalogue with `cache: "no-store"` so newly created/versioned flows are selectable immediately; the one-test flow-builder golden path and the aggregate local dashboard matrix pass again.
+- [x] Add the dashboard theme preference foundation (`5e3cc13`): persisted `system`/`light`/`dark` selection, no-flash bootstrap, system media changes, light-palette migration tokens, compact mobile control, and reduced-motion defaults; source-built focused Playwright coverage passes 2/2 while full page parity remains open.
 - Finish light/dark/system themes and mobile parity.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
