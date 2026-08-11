@@ -51,16 +51,18 @@ export default function GovernancePage() {
   const [stewards, setStewards] = useState<Steward[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [stale, setStale] = useState(false);
 
   async function refresh() {
+    const hadData = profiles.length > 0 || catalogue !== null || runs.length > 0 || stewards.length > 0;
     setLoading(true);
     setError("");
     try {
       const [profileResponse, catalogueResponse, runResponse, stewardResponse] = await Promise.all([
-        fetch("/api/governance/model-profiles"),
-        fetch("/api/governance/model-profiles/catalogue"),
-        fetch("/api/governance/runs?limit=50"),
-        fetch("/api/governance/stewards"),
+        fetch("/api/governance/model-profiles", { cache: "no-store" }),
+        fetch("/api/governance/model-profiles/catalogue", { cache: "no-store" }),
+        fetch("/api/governance/runs?limit=50", { cache: "no-store" }),
+        fetch("/api/governance/stewards", { cache: "no-store" }),
       ]);
       if (!profileResponse.ok || !catalogueResponse.ok || !runResponse.ok || !stewardResponse.ok) {
         throw new Error("Governance data is unavailable from the control plane");
@@ -70,8 +72,10 @@ export default function GovernancePage() {
       setCatalogue(catalogueData && typeof catalogueData === "object" ? catalogueData as ModelCatalogue : null);
       setRuns(Array.isArray(runData) ? runData : []);
       setStewards(Array.isArray(stewardData) ? stewardData : []);
+      setStale(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      setStale(hadData);
     } finally {
       setLoading(false);
     }
@@ -90,7 +94,19 @@ export default function GovernancePage() {
           </button>
         )}
       />
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known governance state" : "Governance data unavailable"}
+          action={(
+            <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${error}. The latest refresh failed; retained governance data remains visible.` : error}
+        </ErrorBanner>
+      )}
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <ExecutiveActionPanel />
         <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
