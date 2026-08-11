@@ -20189,5 +20189,10 @@ async def list_canonical_issue_links(
         raise HTTPException(404, "issue not found for project")
     return [_serialize(row) for row in await storage.list_work_item_links(issue_id)]
 
+
+# Keep the project evidence package/policy surface isolated from this module's
+# large control-plane implementation.  The router owns the deterministic
+# projection and operator-only persistence boundary.
 from orchestrator_api.project_evidence_routes import router as project_evidence_router
+
 app.include_router(project_evidence_router)
