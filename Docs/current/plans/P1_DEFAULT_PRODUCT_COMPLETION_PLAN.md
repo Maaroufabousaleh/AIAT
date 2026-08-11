@@ -68,7 +68,8 @@ external client-language SDK compatibility yet.
   probe for orchestrator dependency-backed LangGraph/CrewAI benchmarks. It
   sends deterministic configs, bounds third-party imports off the event loop,
   treats missing/timeout/error evidence as blocked, and retains a local live
-  pass; it does not certify a worker canary or live project run.
+  pass; it does not certify a worker canary or live project run (checker/test
+  contract `ad31793`).
 - [x] Add `scripts/check_runtime_adapter_conformance.py --live --json` and
   retain [`runtime_adapter_conformance_live.json`](../../../mas/docs/provenance/runtime_adapter_conformance_live.json);
   it checks package availability plus actual adapter manifest/message
