@@ -31,6 +31,7 @@ from mas_core.memory.models import (
     agent_profiles,
     approval_gates,
     capabilities,
+    compatibility_matrices,
     dead_letters,
     documents,
     infra_events,
@@ -1585,21 +1586,88 @@ class TestMemoryInit:
 
     def test_public_exports(self):
         from mas_core.memory import (
+            OBJECT_STORE_BACKUP_SCHEMA,
+            OBJECT_STORE_CONFORMANCE_SCHEMA,
+            OBJECT_STORE_COPY_SCHEMA,
+            OBJECT_STORE_RESTORE_SCHEMA,
             AgentStorage,
+            BackupManifest,
+            BackupObject,
             BlobClient,
             BlobRef,
             CheckpointStore,
+            InMemoryObjectStore,
+            ObjectStoreAdapter,
+            ObjectStoreConformanceCase,
+            ObjectStoreConformanceReport,
+            ObjectStoreCopyCase,
+            ObjectStoreCopyReport,
+            RestoreVerification,
+            build_backup_manifest,
+            copy_manifest_objects,
             metadata,
+            run_object_store_conformance,
+            verify_and_copy_blobs,
+            verify_restored_manifest,
         )
 
         assert AgentStorage is not None
         assert BlobClient is not None
         assert BlobRef is not None
         assert CheckpointStore is not None
+        assert OBJECT_STORE_CONFORMANCE_SCHEMA
+        assert InMemoryObjectStore is not None
+        assert ObjectStoreAdapter is not None
+        assert ObjectStoreConformanceCase is not None
+        assert ObjectStoreConformanceReport is not None
+        assert run_object_store_conformance is not None
+        assert OBJECT_STORE_COPY_SCHEMA
+        assert ObjectStoreCopyCase is not None
+        assert ObjectStoreCopyReport is not None
+        assert verify_and_copy_blobs is not None
+        assert OBJECT_STORE_BACKUP_SCHEMA
+        assert OBJECT_STORE_RESTORE_SCHEMA
+        assert BackupManifest is not None
+        assert BackupObject is not None
+        assert RestoreVerification is not None
+        assert build_backup_manifest is not None
+        assert copy_manifest_objects is not None
+        assert verify_restored_manifest is not None
         assert metadata is not None
 
     def test_all_list(self):
         import mas_core.memory as mem
 
-        expected = {"AgentStorage", "BlobClient", "BlobRef", "CheckpointStore", "metadata"}
+        expected = {
+            "AgentStorage",
+            "BlobClient",
+            "BlobRef",
+            "CheckpointStore",
+            "OBJECT_STORE_CONFORMANCE_SCHEMA",
+            "InMemoryObjectStore",
+            "ObjectStoreAdapter",
+            "ObjectStoreConformanceCase",
+            "ObjectStoreConformanceReport",
+            "run_object_store_conformance",
+            "OBJECT_STORE_COPY_SCHEMA",
+            "ObjectStoreCopyCase",
+            "ObjectStoreCopyReport",
+            "verify_and_copy_blobs",
+            "OBJECT_STORE_BACKUP_SCHEMA",
+            "OBJECT_STORE_RESTORE_SCHEMA",
+            "BackupManifest",
+            "BackupObject",
+            "RestoreVerification",
+            "build_backup_manifest",
+            "copy_manifest_objects",
+            "verify_restored_manifest",
+            "OBJECT_STORE_MIGRATION_SCHEMA",
+            "DualWriteRecord",
+            "MigrationActorKind",
+            "MigrationStatus",
+            "MigrationTransition",
+            "ObjectStoreMigrationError",
+            "ObjectStoreMigrationWorkflow",
+            "metadata",
+        }
         assert set(mem.__all__) == expected
