@@ -24,6 +24,15 @@ async function renameNode(page: Page, label: string) {
   await page.getByTestId("node-label-input").fill(label);
 }
 
+async function openCompatibilityControls(page: Page): Promise<void> {
+  const details = page
+    .locator("details")
+    .filter({ hasText: "Compatibility controls (legacy aliases)" });
+  if ((await details.getAttribute("open")) === null) {
+    await details.locator("summary").click();
+  }
+}
+
 async function connectNodes(
   page: Page,
   sourceIndex: number,
@@ -104,14 +113,16 @@ test("operator can build, version, assign, refresh, and override a flow from the
 
   await openNodeConfig(page, 1);
   await renameNode(page, "Feasibility Review");
+  await openCompatibilityControls(page);
   await page
     .getByTestId("task-team-id-input")
     .fill("office_cfo+office_cio+office_chrm+office_cso");
-  await page.getByTestId("task-timeout-input").fill("900");
+  await page.getByTestId("task-timeout-input").last().fill("900");
   await page.getByTestId("task-escalate-team-input").fill("exec_ceo");
 
   await openNodeConfig(page, 2);
   await renameNode(page, "PDR Creation");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("exec_coo+dept_production");
   await page.getByTestId("task-retries-input").fill("2");
 
@@ -121,6 +132,7 @@ test("operator can build, version, assign, refresh, and override a flow from the
 
   await openNodeConfig(page, 4);
   await renameNode(page, "Implementation");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("office_cto");
 
   await openNodeConfig(page, 5);
@@ -149,6 +161,7 @@ test("operator can build, version, assign, refresh, and override a flow from the
   await expect(page.locator(".react-flow__node")).toHaveCount(7);
   await openNodeConfig(page, 6);
   await renameNode(page, "QA Review");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("dept_qa");
   await connectNodes(page, 4, 6);
   await connectNodes(page, 6, 5);

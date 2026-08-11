@@ -6,7 +6,6 @@ from uuid import UUID, uuid4
 import pytest
 from conftest import PROJECT_ID
 
-
 FLOW_ID = UUID("00000000-0000-4000-a000-0000000000f1")
 FLOW_INSTANCE_ID = UUID("00000000-0000-4000-a000-0000000000f2")
 
@@ -141,6 +140,242 @@ def _instance(
 
 
 @pytest.mark.anyio
+async def test_flow_node_schema_catalog_is_public_and_versioned(client):
+    response = await client.get("/flows/node-schemas")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "1.0"
+    assert set(body["node_types"]) == {
+        "start",
+        "end",
+        "task",
+        "approval",
+        "condition",
+        "parallel",
+        "join",
+        "switch",
+        "escalate",
+    }
+    assert body["node_types"]["task"]["required_any"] == ["worker_id", "team_id", "action"]
+
+
+@pytest.mark.anyio
+async def test_flow_templates_are_discoverable_and_create_validated_flows(client):
+    catalog_response = await client.get("/flow-templates")
+    assert catalog_response.status_code == 200
+    catalog = catalog_response.json()
+    assert catalog["schema_version"] == "aiat.flow-template.v1"
+    assert len(catalog["templates"]) == 6
+
+    created = _flow(flow_id=uuid4(), name="Template flow")
+    storage = MagicMock()
+    storage.create_flow = AsyncMock(return_value=created)
+    _patch_state(storage)
+    response = await client.post(
+        "/flows/from-template",
+        json={"template_id": "software_delivery", "name": "My delivery flow"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "created_from_template"
+    assert response.json()["template_id"] == "software_delivery"
+    assert storage.create_flow.await_args.kwargs["definition_json"]["metadata"]["template_id"] == "software_delivery"
+
+
+@pytest.mark.anyio
+async def test_unknown_flow_template_is_rejected(client):
+    response = await client.post("/flows/from-template", json={"template_id": "missing"})
+
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_flow_export_and_diff_are_deterministic(client):
+    first = _flow(name="First")
+    second = _flow(flow_id=uuid4(), name="Second", version=2)
+    second["definition_json"] = {
+        **_flow_definition(),
+        "nodes": [
+            *_flow_definition()["nodes"][:-1],
+            {"id": "review", "type": "approval", "label": "Review", "config": {"approver_user": "human"}},
+            _flow_definition()["nodes"][-1],
+        ],
+    }
+    storage = MagicMock()
+    storage.get_flow = AsyncMock(side_effect=[first, first, second])
+    _patch_state(storage)
+
+    export_response = await client.get(f"/flows/{FLOW_ID}/export")
+    assert export_response.status_code == 200
+    export_body = export_response.json()
+    assert export_body["format"] == "aiat.flow-export.v1"
+    assert export_body["flow"]["definition_json"]["nodes"]
+    assert len(export_body["definition_sha256"]) == 64
+
+    diff_response = await client.post(
+        "/flows/diff",
+        json={"from_flow_id": str(FLOW_ID), "to_flow_id": str(second["id"])},
+    )
+    assert diff_response.status_code == 200
+    diff = diff_response.json()
+    assert diff["changes"]["nodes"]["added"][0]["id"] == "review"
+    assert diff["from"]["definition_sha256"] != diff["to"]["definition_sha256"]
+
+
+@pytest.mark.anyio
+async def test_flow_import_and_publish_deprecate_keep_authority_in_storage(client):
+    imported = _flow(flow_id=uuid4(), version=1)
+    storage = MagicMock()
+    storage.get_flow = AsyncMock(return_value=imported)
+    storage.create_flow = AsyncMock(return_value=imported)
+    storage.update_flow = AsyncMock(side_effect=[{**imported, "is_active": True}, {**imported, "is_active": False}])
+    _patch_state(storage)
+
+    import_response = await client.post(
+        "/flows/import",
+        json={"name": "Imported", "definition_json": _flow_definition()},
+    )
+    assert import_response.status_code == 201
+    assert import_response.json()["status"] == "imported"
+    assert storage.create_flow.await_args.kwargs["definition_json"]["schema_version"] == "1.0"
+
+    publish_response = await client.post(f"/flows/{imported['id']}/publish")
+    deprecate_response = await client.post(f"/flows/{imported['id']}/deprecate")
+    assert publish_response.status_code == 200
+    assert deprecate_response.status_code == 200
+    assert storage.update_flow.await_args_list[0].kwargs == {"is_active": True}
+    assert storage.update_flow.await_args_list[1].kwargs == {"is_active": False}
+
+
+@pytest.mark.anyio
+async def test_compatible_flow_migration_preserves_active_nodes_and_history(client):
+    new_flow_id = uuid4()
+    old_flow = _flow()
+    new_flow = _flow(flow_id=new_flow_id, version=2, name="Migrated")
+    migrated = {**_instance(), "flow_id": new_flow_id, "flow_version": 2}
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=_instance())
+    storage.get_flow = AsyncMock(side_effect=[old_flow, new_flow])
+    storage.migrate_flow_instance = AsyncMock(return_value=migrated)
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    storage.transition_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/migrate",
+        json={"flow_id": str(new_flow_id), "actor_id": "operator"},
+    )
+
+    assert response.status_code == 200
+    storage.migrate_flow_instance.assert_awaited_once()
+    kwargs = storage.migrate_flow_instance.await_args.kwargs
+    assert kwargs["active_node_ids"] == ["feasibility_review"]
+    assert kwargs["migration_record"]["from_flow_version"] == 1
+    assert kwargs["migration_record"]["to_flow_version"] == 2
+    storage.transition_project.assert_awaited_once()
+    assert storage.transition_project.await_args.kwargs["event"] == "flow_migrated"
+
+
+@pytest.mark.anyio
+async def test_flow_migration_rejects_removed_active_node(client):
+    new_flow_id = uuid4()
+    old_flow = _flow()
+    target_definition = _flow_definition()
+    target_definition["nodes"] = [
+        node for node in target_definition["nodes"] if node["id"] != "feasibility_review"
+    ]
+    target_definition["edges"] = [
+        edge
+        for edge in target_definition["edges"]
+        if edge["source"] != "feasibility_review" and edge["target"] != "feasibility_review"
+    ]
+    new_flow = {**_flow(flow_id=new_flow_id, version=2), "definition_json": target_definition}
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=_instance())
+    storage.get_flow = AsyncMock(side_effect=[old_flow, new_flow])
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/migrate",
+        json={"flow_id": str(new_flow_id)},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "FLOW_MIGRATION_INCOMPATIBLE"
+
+
+@pytest.mark.anyio
+async def test_graph_rewrite_migration_requires_explicit_mapping_and_preserves_history(client):
+    new_flow_id = uuid4()
+    old_flow = _flow()
+    target_definition = _flow_definition()
+    target_definition["nodes"] = [
+        {**node, "id": "review"} if node["id"] == "feasibility_review" else node
+        for node in target_definition["nodes"]
+    ]
+    target_definition["edges"] = [
+        {
+            **edge,
+            "source": "review" if edge["source"] == "feasibility_review" else edge["source"],
+            "target": "review" if edge["target"] == "feasibility_review" else edge["target"],
+        }
+        for edge in target_definition["edges"]
+    ]
+    new_flow = {
+        **_flow(flow_id=new_flow_id, version=2, name="Rewritten"),
+        "definition_json": target_definition,
+    }
+    migrated = {**_instance(active_node_ids=["review"]), "flow_id": new_flow_id, "flow_version": 2}
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=_instance())
+    storage.get_flow = AsyncMock(side_effect=[old_flow, new_flow])
+    storage.migrate_flow_instance = AsyncMock(return_value=migrated)
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    storage.transition_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/migrate",
+        json={
+            "flow_id": str(new_flow_id),
+            "actor_id": "operator",
+            "allow_graph_rewrite": True,
+            "active_node_mapping": {"feasibility_review": "review"},
+        },
+    )
+
+    assert response.status_code == 200
+    kwargs = storage.migrate_flow_instance.await_args.kwargs
+    assert kwargs["active_node_ids"] == ["review"]
+    assert kwargs["migration_record"]["graph_rewrite"] is True
+    assert kwargs["migration_record"]["active_node_mapping"] == {"feasibility_review": "review"}
+    assert kwargs["migration_record"]["preserved_active_node_ids"] == ["feasibility_review"]
+
+
+@pytest.mark.anyio
+async def test_graph_rewrite_mapping_without_opt_in_is_rejected(client):
+    new_flow_id = uuid4()
+    old_flow = _flow()
+    new_flow = _flow(flow_id=new_flow_id, version=2)
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=_instance())
+    storage.get_flow = AsyncMock(side_effect=[old_flow, new_flow])
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/migrate",
+        json={
+            "flow_id": str(new_flow_id),
+            "active_node_mapping": {"feasibility_review": "feasibility_review"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "FLOW_GRAPH_REWRITE_NOT_ENABLED"
+
+
+@pytest.mark.anyio
 async def test_create_flow_version_from_existing_flow(client):
     base_flow = _flow(version=1)
     created_flow = _flow(flow_id=uuid4(), version=2)
@@ -166,6 +401,7 @@ async def test_create_flow_version_from_existing_flow(client):
     storage.get_flow.assert_awaited_once_with(FLOW_ID)
     _, kwargs = storage.create_flow.await_args
     assert kwargs["version"] == 2
+    assert kwargs["definition_json"]["schema_version"] == "1.0"
     assert kwargs["definition_json"]["metadata"]["version_group_id"] == str(FLOW_ID)
     assert kwargs["definition_json"]["metadata"]["source_flow_id"] == str(FLOW_ID)
 

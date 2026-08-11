@@ -10955,7 +10955,7 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
 async def list_flow_templates() -> dict[str, Any]:
     """Return the canonical reusable flow templates."""
 
-    from mas_core.workflow.templates import flow_template_catalog
+    from mas_core.workflow import flow_template_catalog
 
     return flow_template_catalog()
 
@@ -10977,7 +10977,11 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     storage = _storage()
 
     version = 1
+    # Persist the explicit node-schema version even when an older client did
+    # not send it.  This makes later migrations/diffs deterministic while the
+    # parser remains backwards-compatible with legacy definitions.
     definition_payload = dict(req.definition_json)
+    definition_payload.setdefault("schema_version", definition.schema_version)
     if req.version_from_flow_id is not None:
         base_flow = await storage.get_flow(req.version_from_flow_id)
         if base_flow is None:
@@ -11006,7 +11010,7 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
 async def create_flow_from_template(req: FlowFromTemplateRequest) -> dict[str, Any]:
     """Create a flow from a canonical template after normal validation."""
 
-    from mas_core.workflow.templates import flow_template
+    from mas_core.workflow import flow_template
 
     template = flow_template(req.template_id)
     if template is None:
@@ -11513,8 +11517,6 @@ async def get_flow(flow_id: UUID) -> dict[str, Any]:
 async def export_flow(flow_id: UUID) -> dict[str, Any]:
     """Return a portable, hashed flow envelope for backup or review."""
 
-    from mas_core.workflow.definition_tools import flow_definition_hash
-
     storage = _storage()
     flow = await storage.get_flow(flow_id)
     if flow is None:
@@ -11529,7 +11531,7 @@ async def export_flow(flow_id: UUID) -> dict[str, Any]:
             "created_by": flow.get("created_by"),
             "definition_json": definition_json,
         },
-        "definition_sha256": flow_definition_hash(definition_json),
+        "definition_sha256": _flow_definition_hash(definition_json),
     }
 
 
@@ -11566,6 +11568,7 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
     """Update a flow definition."""
     from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
 
+    definition_payload = req.definition_json
     if req.definition_json is not None:
         try:
             definition = parse_flow_definition(req.definition_json)
@@ -11575,6 +11578,8 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         errors = validate_flow(definition)
         if errors:
             raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
+        definition_payload = dict(req.definition_json)
+        definition_payload.setdefault("schema_version", definition.schema_version)
 
     storage = _storage()
     if req.definition_json is not None and inspect.iscoroutinefunction(getattr(storage, "list_flow_instances", None)):
@@ -11585,7 +11590,7 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         flow_id,
         name=req.name,
         description=req.description,
-        definition_json=req.definition_json,
+        definition_json=definition_payload,
         is_active=req.is_active,
     )
     if flow is None:
@@ -12551,9 +12556,13 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
         retry_count = int(instance.get("retry_count") or 0) + 1
         restored_node = definition.get_node(last_safe_node_id)
-        # Retain prior attempts as evidence; only their traversal authority is
-        # removed before the restored node is dispatched again.
-        await storage.supersede_flow_node_executions(instance_id)
+        supersede = getattr(storage, "supersede_flow_node_executions", None)
+        if not inspect.iscoroutinefunction(supersede):
+            raise HTTPException(
+                503,
+                "Flow retry requires evidence-preserving node-execution storage",
+            )
+        await supersede(instance_id)
         await storage.update_flow_instance(
             instance_id,
             status="RUNNING",

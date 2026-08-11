@@ -36,6 +36,15 @@ async function login(page: Page): Promise<void> {
   await page.goto("/projects");
 }
 
+async function openCompatibilityControls(page: Page): Promise<void> {
+  const details = page
+    .locator("details")
+    .filter({ hasText: "Compatibility controls (legacy aliases)" });
+  if ((await details.getAttribute("open")) === null) {
+    await details.locator("summary").click();
+  }
+}
+
 // ── Flow builder helpers ──────────────────────────────────────────────────────
 
 async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
@@ -74,8 +83,9 @@ async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   // Node 1: Analysis (task with timeout + escalation)
   await nodes.nth(1).click();
   await page.getByTestId("node-label-input").fill("Analysis");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("exec_ceo");
-  await page.getByTestId("task-timeout-input").fill("300");
+  await page.getByTestId("task-timeout-input").last().fill("300");
   await page.getByTestId("task-escalate-team-input").fill("exec_ceo");
 
   // Node 2: Approval Gate
@@ -100,11 +110,13 @@ async function buildTest2Flow(page: Page, flowName: string): Promise<void> {
   // Node 4: Branch A (task)
   await nodes.nth(4).click();
   await page.getByTestId("node-label-input").fill("Branch A");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("dept_system");
 
   // Node 5: Branch B (task)
   await nodes.nth(5).click();
   await page.getByTestId("node-label-input").fill("Branch B");
+  await openCompatibilityControls(page);
   await page.getByTestId("task-team-id-input").fill("dept_qa");
 
   // Node 6: Completed (end)
@@ -159,10 +171,12 @@ async function createProjectWithFlow(
   await page
     .getByPlaceholder("What should the agents build?")
     .fill("Test-2 branching project");
-  await page
-    .locator("select")
-    .last()
-    .selectOption({ label: `${flowName} (v1)` });
+  const flowSelect = page.locator("select").last();
+  const flowOption = flowSelect.locator("option").filter({
+    hasText: `${flowName} (v1)`,
+  });
+  await expect(flowOption).toHaveCount(1, { timeout: 30_000 });
+  await flowSelect.selectOption({ label: `${flowName} (v1)` });
   await page.getByRole("button", { name: /^create$/i }).click();
   await expect(page.getByText(projectName)).toBeVisible();
   const projectRow = page.getByRole("row", { name: new RegExp(projectName) });

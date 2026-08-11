@@ -527,7 +527,7 @@ async def test_retry_failed_instance_restores_last_safe_node(client):
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(side_effect=[failed_inst, restored])
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.clear_flow_node_executions = AsyncMock(return_value=None)
+    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
     storage.update_flow_instance = AsyncMock(return_value=restored)
     storage.create_flow_node_execution = AsyncMock(return_value={"id": 7})
     storage.create_approval_gate = AsyncMock(return_value={"id": uuid4()})
