@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 yaml = pytest.importorskip("yaml")
-from team_runner.main import load_team_config
+from team_runner.main import load_team_config  # noqa: E402  (yaml import guard above)
 
 
 def _write_team_yaml(content: str) -> Path:
@@ -107,3 +107,22 @@ def test_exec_ceo_declares_full_operator_workflow_tool_surface():
         "approval.override_cso",
     }
     assert expected.issubset(set(cfg.admin.tools))
+
+
+def test_prompt_time_block_uses_configured_company_timezone():
+    from team_runner.main import TeamRuntime
+
+    rendered = TeamRuntime._prepend_time_block("prompt body", "America/Toronto")
+
+    assert rendered.startswith("## Current Time (America/Toronto)\n")
+    assert "company-timezone reference" in rendered
+    assert "prompt body" in rendered
+    assert "America/New_York" not in rendered
+
+
+def test_prompt_time_block_falls_back_to_utc_for_invalid_timezone():
+    from team_runner.main import TeamRuntime
+
+    rendered = TeamRuntime._prepend_time_block("prompt body", "Not/AZone")
+
+    assert rendered.startswith("## Current Time (UTC)\n")

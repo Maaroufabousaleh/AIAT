@@ -88,12 +88,14 @@ class RunnerSettings(BaseModel):
     pgbouncer_dsn: str | None = None
     orchestrator_url: str = "http://orchestrator-api:8000"
     mas_api_key: str | None = None
-    # Deployed runners use a distinct CEO/worker control-plane credential;
-    # MAS_API_KEY remains a local-fixture compatibility input only.
+    # Explicit caller identity for control-plane acknowledgements.  The
+    # legacy ``mas_api_key`` field remains for local fixtures; deployed CEO
+    # and worker runners select their distinct credentials below.
     control_plane_api_key: str | None = None
     health_host: str = "0.0.0.0"
     health_port: int = 8080
     llm_model: str = "auto"
+    company_timezone: str = "UTC"
     tool_manifest_startup_attempts: int = 30
     tool_manifest_retry_seconds: float = 1.0
 
@@ -123,6 +125,9 @@ class RunnerSettings(BaseModel):
             ),
             tool_service_url=os.environ.get("TOOL_SERVICE_URL"),
             tool_secret=os.environ.get("TOOL_SECRET"),
+            # A direct DSN is intentionally a development-only escape hatch.
+            # Compose deployments omit it and use the typed control-plane
+            # storage client below.
             pgbouncer_dsn=os.environ.get("PGBOUNCER_DSN"),
             orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
             mas_api_key=os.environ.get("MAS_API_KEY"),
@@ -130,6 +135,7 @@ class RunnerSettings(BaseModel):
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
             llm_model=os.environ.get("LLM_DEFAULT_MODEL", "auto"),
+            company_timezone=os.environ.get("AIAT_COMPANY_TIMEZONE", "UTC"),
             tool_manifest_startup_attempts=int(
                 os.environ.get("TOOL_MANIFEST_STARTUP_ATTEMPTS", "30")
             ),
@@ -208,7 +214,11 @@ class CheckpointAdapter:
         row = await self._store.load(agent_id, team_id=self._team_id)
         if row is None:
             return
-        await self._store.delete(agent_id, row["task_message_id"], team_id=self._team_id)
+        await self._store.delete(
+            agent_id,
+            row["task_message_id"],
+            team_id=self._team_id,
+        )
 
     async def record_project_usage(self, **kwargs: Any) -> dict[str, Any] | None:
         """Expose the shared usage ledger through AgentBase's storage adapter."""
@@ -270,8 +280,8 @@ class TeamRuntime:
             except Exception:
                 await remote_storage.close()
                 raise
-            self.storage = remote_storage  # type: ignore[assignment]
-            self.checkpoint_store = remote_storage  # type: ignore[assignment]
+            self.storage = remote_storage
+            self.checkpoint_store = remote_storage
 
         await self.router.start()
         self._instantiate_agents()
@@ -482,33 +492,36 @@ class TeamRuntime:
             path = repo_root / path
         if not path.is_file():
             return None
-        return self._prepend_time_block(path.read_text(encoding="utf-8"))
+        return self._prepend_time_block(
+            path.read_text(encoding="utf-8"), self.settings.company_timezone
+        )
 
     @staticmethod
-    def _prepend_time_block(prompt_body: str) -> str:
+    def _prepend_time_block(prompt_body: str, timezone_name: str = "UTC") -> str:
         """Stamp a 'current time' header on every loaded prompt so all
         agents in a team share a common time reference.
 
-        Mirrors ``mas/apps/mas-dashboard/lib/datetime.ts`` (and the
-        ``TZ=America/New_York`` env in the runtime Dockerfiles). The
-        zone auto-switches between EDT (summer) and EST (winter) with
-        daylight saving — currently EDT in June. Agents can refresh
-        mid-conversation by calling the ``time.now`` tool.
+        The company manifest/environment selects the IANA zone. Agents can
+        refresh mid-conversation by calling the canonical ``time_now`` tool.
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("America/New_York")
+        try:
+            tz = ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            tz = ZoneInfo("UTC")
+            timezone_name = "UTC"
         now = datetime.now(tz)
         offset = now.strftime("%z")  # e.g. "-0400"
         offset_str = f"UTC{offset[:3]}:{offset[3:]}"
         header = (
-            f"## Current Time (America/New_York)\n"
+            f"## Current Time ({timezone_name})\n"
             f"**{now.strftime('%Y-%m-%d %H:%M:%S %Z')}** "
             f"({offset_str})\n\n"
             f"_Session-start timestamp. All agents in this team share "
-            f"this time reference; coordinate using EDT/EST. Call the "
-            f"`time.now` tool if you need a fresh reading mid-task._\n\n"
+            f"this company-timezone reference. Call the "
+            f"`time_now` tool if you need a fresh reading mid-task._\n\n"
         )
         return header + prompt_body
 
@@ -620,7 +633,10 @@ class TeamRuntime:
         admin_id = self.admin_agent.agent_id if self.admin_agent else "unknown"
         api_key = self.settings.control_plane_api_key or self.settings.mas_api_key
         if not api_key:
-            log.error("team_runner.shutdown_ack_not_sent", reason="control-plane API key is not configured")
+            log.error(
+                "team_runner.shutdown_ack_not_sent",
+                reason="control-plane API key is not configured",
+            )
             self._stop_event.set()
             return
         try:
