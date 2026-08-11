@@ -238,7 +238,7 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 scan-state/findings reconciliation, static worker/runtime/provenance
 reconciliation, bounded metric label inventory, persisted CEO/service section
 ACLs, immutable image-input contract, fail-closed local image identity probe,
-tool-service profile split, bounded image budgets (`b24ca0c`), read-only persisted default-worker binding
+tool-service profile split and opt-in browser dependency boundary (`b24ca0c`, `e6ee8b8`), bounded image budgets, read-only persisted default-worker binding
 reconciliation, the bounded metric contract (`90a7d82`) and lifecycle wiring
 (`cbeb9db`), and the secret-safe release-environment/provenance input group
 (`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
