@@ -81,7 +81,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Offline fixture command: [`mas/scripts/check_object_store_conformance.py`](../../mas/scripts/check_object_store_conformance.py)
 - Live/fixture conformance command: [`mas/scripts/check_object_store_conformance.py`](../../mas/scripts/check_object_store_conformance.py) (`--live` with `AIAT_OBJECT_STORE_*` or `MINIO_*` configuration)
 - Running local MinIO probe: [`mas/infra/compose/scripts/check-minio-conformance.sh`](../../mas/infra/compose/scripts/check-minio-conformance.sh) (executes the same contract inside the private Compose network)
-- Local MinIO IAM reconciliation: [`mas/infra/compose/scripts/reconcile-minio-agent-user.sh`](../../mas/infra/compose/scripts/reconcile-minio-agent-user.sh)
+- Local MinIO IAM reconciliation (`5558f3c`): [`mas/infra/compose/scripts/reconcile-minio-agent-user.sh`](../../mas/infra/compose/scripts/reconcile-minio-agent-user.sh). The helper uses a pinned `mc` image, keeps credentials in a mode-600 temporary file, updates only the agent user/policy, and performs no object-data mutation.
 - Offline copy/parity command: [`mas/scripts/check_object_store_copy.py`](../../mas/scripts/check_object_store_copy.py)
 - Live copy/parity runner: [`mas/scripts/check_object_store_copy.py`](../../mas/scripts/check_object_store_copy.py) (`--live` with explicit source/target provider configuration)
 - Backup manifest/restore boundary: [`mas/packages/mas-core/mas_core/memory/object_store_backup.py`](../../mas/packages/mas-core/mas_core/memory/object_store_backup.py)

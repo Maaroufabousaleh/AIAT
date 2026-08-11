@@ -290,6 +290,7 @@ single frozen commit before production claims are made.
   [`object_store_live_conformance.json`](../../mas/docs/provenance/object_store_live_conformance.json)
   and
   [`object_store_backup_restore_live.json`](../../mas/docs/provenance/object_store_backup_restore_live.json).
+  The pinned, credential-safe reconciliation helper is committed as `5558f3c`.
   Provider-pair, encrypted, clean-environment, and disaster-recovery evidence
   remain open.
 

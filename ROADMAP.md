@@ -495,6 +495,7 @@ project isolation, path validation, and cleanup); the secret-safe report is
 retained at [`mas/docs/provenance/object_store_live_conformance.json`](mas/docs/provenance/object_store_live_conformance.json).
 The checked-in reconciliation helper
 [`mas/infra/compose/scripts/reconcile-minio-agent-user.sh`](mas/infra/compose/scripts/reconcile-minio-agent-user.sh)
+(`5558f3c`)
 repairs a persisted local IAM secret after rotation without touching object
 data. The same result is reproducible with the checked-in private-network
 probe [`mas/infra/compose/scripts/check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh).
