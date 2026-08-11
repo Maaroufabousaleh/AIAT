@@ -27,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-
 from conftest import NOW_ISO, PROJECT_ID, _fake_project
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -691,6 +690,115 @@ async def test_create_task(client):
         r = await client.post("/tasks", json={"team_id": "exec_ceo", "payload": {"action": "ping"}})
     assert r.status_code == 200
     assert r.json()["status"] == "published"
+
+
+@pytest.mark.anyio
+async def test_completed_issue_updates_agent_profile_once(client):
+    issue_id = uuid4()
+    issue = {
+        "id": issue_id,
+        "project_id": PROJECT_ID,
+        "status": "IN_PROGRESS",
+        "assigned_agent": "worker-1",
+        "assigned_team": "dept_qa",
+        "estimated_hours": 2,
+        "actual_hours": None,
+        "sprint_id": None,
+        "revision": 1,
+    }
+    updated = {**issue, "status": "DONE", "actual_hours": 3}
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.get_issue = AsyncMock(side_effect=[issue, updated])
+    storage.update_issue = AsyncMock()
+    storage.observe_agent_profile = AsyncMock(
+        return_value={"agent_id": "worker-1", "correction_factor": 1.25}
+    )
+    _patch(storage)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "project_id": str(PROJECT_ID),
+            "payload": {
+                "action": "UPDATE_ISSUE_STATUS",
+                "issue_id": str(issue_id),
+                "status": "DONE",
+            },
+        },
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["profile_learning"]["source_issue_id"] == str(issue_id)
+    storage.observe_agent_profile.assert_awaited_once_with(
+        agent_id="worker-1",
+        team_id="dept_qa",
+        role=None,
+        estimated_hours=2,
+        actual_hours=3,
+        tasks_completed=1,
+        alpha=0.5,
+    )
+
+
+@pytest.mark.anyio
+async def test_completed_sprint_persists_retrospective_lineage(client):
+    issue_id = uuid4()
+    sprint_id = uuid4()
+    issue = {
+        "id": issue_id,
+        "project_id": PROJECT_ID,
+        "status": "IN_PROGRESS",
+        "assigned_agent": "worker-1",
+        "assigned_team": "dept_qa",
+        "estimated_hours": 2,
+        "actual_hours": None,
+        "story_points": 3,
+        "sprint_id": sprint_id,
+        "revision": 1,
+    }
+    updated = {**issue, "status": "DONE", "actual_hours": 3}
+    snapshot = {
+        "id": uuid4(),
+        "project_id": PROJECT_ID,
+        "sprint_id": sprint_id,
+        "scope": "sprint_retrospective",
+    }
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.get_issue = AsyncMock(side_effect=[issue, updated])
+    storage.update_issue = AsyncMock()
+    storage.observe_agent_profile = AsyncMock(return_value={"agent_id": "worker-1"})
+    storage.list_issues = AsyncMock(return_value=[updated])
+    storage.update_sprint = AsyncMock()
+    storage.save_kpi_snapshot = AsyncMock(return_value=snapshot)
+    _patch(storage)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "project_id": str(PROJECT_ID),
+            "payload": {
+                "action": "UPDATE_ISSUE_STATUS",
+                "issue_id": str(issue_id),
+                "status": "DONE",
+            },
+        },
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sprint_retrospective"]["scope"] == "sprint_retrospective"
+    storage.save_kpi_snapshot.assert_awaited_once()
+    snapshot_kwargs = storage.save_kpi_snapshot.await_args.kwargs
+    assert snapshot_kwargs["scope"] == "sprint_retrospective"
+    assert snapshot_kwargs["sprint_id"] == sprint_id
+    assert snapshot_kwargs["raw_data"]["source_issue_ids"] == [str(issue_id)]
+    assert snapshot_kwargs["raw_data"]["completed_issue_ids"] == [str(issue_id)]
+    assert snapshot_kwargs["raw_data"]["profile_lineage"] == [
+        {"issue_id": str(issue_id), "agent_id": "worker-1"}
+    ]
 
 
 @pytest.mark.anyio

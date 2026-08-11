@@ -145,6 +145,23 @@ interface ProjectEvidence {
   evidence_refs: Record<string, string[]>;
 }
 
+interface EvidencePackageCategory {
+  category: string;
+  status: string;
+  required: boolean;
+  item_count: number;
+  evidence_refs: string[];
+  reason?: string | null;
+}
+
+interface ProjectEvidencePackage {
+  schema_version: string;
+  status: string;
+  completeness_score: number;
+  categories: EvidencePackageCategory[];
+  notices: Array<{ artifact_id: string; field: string; value: string }>;
+}
+
 interface RepositorySummary {
   status?: string;
   mode?: "clone" | "init" | "none" | string;
@@ -268,6 +285,9 @@ export default function ProjectDetailPage() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [allowedTransitions, setAllowedTransitions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [projectStale, setProjectStale] = useState(false);
+  const [projectRefreshError, setProjectRefreshError] = useState<string | null>(null);
+  const hasProjectRef = useRef(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
 
@@ -301,6 +321,8 @@ export default function ProjectDetailPage() {
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
   const [evidence, setEvidence] = useState<ProjectEvidence | null>(null);
+  const [evidencePackage, setEvidencePackage] =
+    useState<ProjectEvidencePackage | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [showContextUpload, setShowContextUpload] = useState(false);
   const [newContextName, setNewContextName] = useState("");
@@ -331,6 +353,7 @@ export default function ProjectDetailPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setProjectRefreshError(null);
     try {
       const [proj, hist, dec, trans] = await Promise.allSettled([
         fetch(`/api/projects/${id}`)
@@ -346,7 +369,15 @@ export default function ProjectDetailPage() {
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
       ]);
-      if (proj.status === "fulfilled" && proj.value) setProject(proj.value);
+      if (proj.status === "fulfilled" && proj.value) {
+        setProject(proj.value);
+        hasProjectRef.current = true;
+        setProjectStale(false);
+        setProjectRefreshError(null);
+      } else if (hasProjectRef.current) {
+        setProjectStale(true);
+        setProjectRefreshError("The latest project refresh failed; this page may be out of date.");
+      }
       if (hist.status === "fulfilled")
         setHistory(
           Array.isArray(hist.value) ? hist.value : (hist.value?.history ?? []),
@@ -361,7 +392,11 @@ export default function ProjectDetailPage() {
             ? trans.value
             : (trans.value?.transitions ?? []),
         );
-    } catch {
+    } catch (cause) {
+      if (hasProjectRef.current) {
+        setProjectStale(true);
+        setProjectRefreshError(cause instanceof Error ? cause.message : "The latest project refresh failed; this page may be out of date.");
+      }
     } finally {
       setLoading(false);
     }
@@ -447,10 +482,17 @@ export default function ProjectDetailPage() {
   const loadEvidence = useCallback(async () => {
     setEvidenceLoading(true);
     try {
-      const response = await fetch(`/api/projects/${id}/evidence`);
+      const [response, packageResponse] = await Promise.all([
+        fetch(`/api/projects/${id}/evidence`),
+        fetch(`/api/projects/${id}/evidence/package`),
+      ]);
       setEvidence(response.ok ? await response.json() : null);
+      setEvidencePackage(
+        packageResponse.ok ? await packageResponse.json() : null,
+      );
     } catch {
       setEvidence(null);
+      setEvidencePackage(null);
     } finally {
       setEvidenceLoading(false);
     }
@@ -913,11 +955,16 @@ export default function ProjectDetailPage() {
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
   const handleRefresh = () => {
-    if (activeTab === "flow") return loadFlowData();
-    if (activeTab === "workspace") return loadWorkspace();
-    if (activeTab === "context") return loadContextData();
-    if (activeTab === "evidence") return loadEvidence();
-    return load();
+    const surfaceRefresh = activeTab === "flow"
+      ? loadFlowData()
+      : activeTab === "workspace"
+        ? loadWorkspace()
+        : activeTab === "context"
+          ? loadContextData()
+          : activeTab === "evidence"
+            ? loadEvidence()
+            : Promise.resolve();
+    return Promise.all([load(), surfaceRefresh]);
   };
   const isRefreshing =
     loading || flowLoading || workspaceLoading || contextLoading || evidenceLoading;
@@ -971,6 +1018,28 @@ export default function ProjectDetailPage() {
           </>
         }
       />
+
+      {projectStale && projectRefreshError && (
+        <ErrorBanner
+          tone="warning"
+          title="Showing last known project state"
+          action={(
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              disabled={isRefreshing}
+              aria-busy={isRefreshing}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} aria-hidden="true" />
+              Retry
+            </button>
+          )}
+        >
+          {projectRefreshError} The project controls remain visible, but the
+          canonical state may have changed.
+        </ErrorBanner>
+      )}
 
       <div
         className="flex flex-wrap gap-1 border-b border-slate-800"
@@ -1601,6 +1670,57 @@ export default function ProjectDetailPage() {
                   </div>
                 ))}
               </div>
+              {evidencePackage && (
+                <section className="dashboard-surface p-4" aria-labelledby="evidence-package-heading">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 id="evidence-package-heading" className="text-sm font-medium text-white">
+                        Evidence package coverage
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {evidencePackage.schema_version} · grouped read-only views over canonical project records
+                      </p>
+                    </div>
+                    <span className="text-xs text-slate-400">
+                      {evidencePackage.categories.filter((category) => category.status === "present").length}/
+                      {evidencePackage.categories.length} categories present
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {evidencePackage.categories.map((category) => (
+                      <div key={category.category} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium capitalize text-slate-200">
+                            {category.category}
+                          </span>
+                          <span className={clsx(
+                            "rounded-full px-2 py-0.5",
+                            category.status === "present"
+                              ? "bg-emerald-950/50 text-emerald-300"
+                              : category.status === "missing"
+                                ? "bg-amber-950/50 text-amber-200"
+                                : "bg-slate-800 text-slate-400",
+                          )}>
+                            {category.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xxs text-slate-500">
+                          {category.item_count} item{category.item_count === 1 ? "" : "s"}
+                          {category.required ? " · required" : " · optional"}
+                        </p>
+                        {category.reason && (
+                          <p className="mt-1 text-xxs text-amber-200">{category.reason}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {evidencePackage.notices.length > 0 && (
+                    <p className="mt-3 text-xxs text-slate-500">
+                      Resource licence/restriction values are retained as metadata notices only and do not change package status.
+                    </p>
+                  )}
+                </section>
+              )}
             </>
           )}
         </div>

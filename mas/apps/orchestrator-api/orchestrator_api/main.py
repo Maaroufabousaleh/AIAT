@@ -3886,6 +3886,20 @@ async def _collect_project_evidence(
         repository=repository,
         audit_events=history,
     )
+    return project, evidence, {
+        "documents": documents,
+        "artifacts": artifacts,
+        "flow_instance": flow_instance,
+        "approvals": approvals,
+        "worker_runs": runs,
+        "repository": repository,
+        "audit_events": history,
+    }, policy
+
+
+async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> Any:
+    _project, evidence, _sources, _policy = await _collect_project_evidence(project_id, storage)
+    return evidence
 
 
 @app.get("/projects/{project_id}/overview")
@@ -4101,6 +4115,96 @@ async def _project_usage_summary(storage: AgentStorage, project_id: UUID) -> dic
     result["available"] = True
     result["source"] = "project_usage_events"
     return result
+
+
+async def _record_sprint_retrospective(
+    storage: Any,
+    *,
+    project_id: UUID,
+    sprint_id: UUID,
+) -> dict[str, Any] | None:
+    """Persist one explainable sprint aggregate with issue/profile lineage.
+
+    The existing KPI snapshot table is the durable read surface for sprint
+    retrospectives.  This helper intentionally derives every value from the
+    canonical issue rows and keeps the source IDs in ``raw_data`` so an
+    operator can reproduce or challenge the aggregate later.  Lightweight
+    storage doubles and older rolling deployments may not expose the snapshot
+    writer yet; in that case the issue completion remains authoritative and no
+    synthetic success is reported.
+    """
+
+    list_issues = getattr(storage, "list_issues", None)
+    save_snapshot = getattr(storage, "save_kpi_snapshot", None)
+    if not inspect.iscoroutinefunction(list_issues) or not inspect.iscoroutinefunction(save_snapshot):
+        return None
+    issues = await list_issues(sprint_id=sprint_id)
+    if not isinstance(issues, list):
+        return None
+
+    terminal_states = {"DONE", "COMPLETED", "CLOSED"}
+    status_counts: dict[str, int] = {}
+    source_issue_ids: list[str] = []
+    completed_issue_ids: list[str] = []
+    profile_lineage: list[dict[str, str]] = []
+    total_estimated = Decimal("0")
+    total_actual = Decimal("0")
+    completed_story_points = 0
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        issue_id = issue.get("id")
+        if issue_id is None:
+            continue
+        issue_id_text = str(issue_id)
+        source_issue_ids.append(issue_id_text)
+        status = str(issue.get("status") or "UNKNOWN").upper()
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status not in terminal_states:
+            continue
+        completed_issue_ids.append(issue_id_text)
+        completed_story_points += int(issue.get("story_points") or 0)
+        estimated = Decimal(str(issue.get("estimated_hours") or 0))
+        actual = Decimal(str(issue.get("actual_hours") or 0))
+        total_estimated += max(Decimal("0"), estimated)
+        total_actual += max(Decimal("0"), actual)
+        agent_id = str(issue.get("assigned_agent") or "")
+        if agent_id:
+            profile_lineage.append({"issue_id": issue_id_text, "agent_id": agent_id})
+
+    issue_count = len(source_issue_ids)
+    completed_count = len(completed_issue_ids)
+    completion_rate = (
+        Decimal(completed_count) / Decimal(issue_count) if issue_count else None
+    )
+    estimation_accuracy = None
+    if total_estimated > 0:
+        estimation_accuracy = max(
+            Decimal("0"),
+            min(Decimal("1"), Decimal("1") - abs(total_actual - total_estimated) / total_estimated),
+        )
+    raw_data = {
+        "schema": "aiat.sprint-retrospective.v1",
+        "project_id": str(project_id),
+        "sprint_id": str(sprint_id),
+        "total_estimated_hours": str(total_estimated),
+        "total_actual_hours": str(total_actual),
+        "source_issue_ids": source_issue_ids,
+        "completed_issue_ids": completed_issue_ids,
+        "profile_lineage": profile_lineage,
+        "status_counts": status_counts,
+        "issue_count": issue_count,
+        "completed_issue_count": completed_count,
+    }
+    return await save_snapshot(
+        project_id=project_id,
+        scope="sprint_retrospective",
+        sprint_id=sprint_id,
+        estimation_accuracy=estimation_accuracy,
+        task_completion_rate=completion_rate,
+        velocity=Decimal(completed_story_points),
+        raw_data=raw_data,
+    )
 
 
 @app.get("/projects/{project_id}/artifacts")
@@ -4626,6 +4730,10 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
             actor_id=req.actor_id,
             context=req.context,
         )
+        # The controller has committed the state transition at this point;
+        # keep aggregate metrics aligned even if a later evidence/approval
+        # projection fails independently.
+        record_project_state_transition(result.prior_state, result.next_state)
     except InvalidTransitionError as e:
         raise HTTPException(
             409,
@@ -4681,10 +4789,8 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
         ProjectState(result.next_state),
     )
 
-    # Update the bounded aggregate project-state gauge and transition counter
-    # after the controller has committed the transition.
+    # Update the bounded aggregate project-state gauge and transition counter.
     try:
-        record_project_state_transition(result.prior_state, result.next_state)
         workflow_transitions_total.labels(
             from_state=str(result.prior_state),
             to_state=str(result.next_state),
@@ -6036,6 +6142,8 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
         _require_operator_identity(request)
         storage = _storage()
         projection_rows: list[dict[str, Any]] = []
+        profile_learning: dict[str, Any] | None = None
+        sprint_retrospective: dict[str, Any] | None = None
         pid: UUID | None = None
         if project_id:
             try:
@@ -6132,6 +6240,7 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
                 issue = await storage.get_issue(issue_id)
                 if issue is None or issue.get("project_id") != pid:
                     raise HTTPException(404, f"Issue {issue_id} not found for project {pid}")
+                previous_issue_status = str(issue.get("status") or "").upper()
                 values: dict[str, Any] = {"status": str(task_payload.get("status") or "IN_PROGRESS")}
                 if task_payload.get("actual_hours") is not None:
                     values["actual_hours"] = task_payload["actual_hours"]
@@ -6145,7 +6254,43 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
                     await storage.update_issue(issue_id, **values)
                     result = await storage.get_issue(issue_id)
                 if result and str(values["status"]).upper() in {"DONE", "COMPLETED", "CLOSED"}:
-                    sprint_id = result.get("sprint_id")
+                    # A completed issue is the canonical retrospective signal.
+                    # Learn only once on the terminal transition, and only when
+                    # the issue names an agent plus both hour measurements. The
+                    # profile update is durable and remains independent of any
+                    # licence/provenance metadata.
+                    completed_before = previous_issue_status in {"DONE", "COMPLETED", "CLOSED"}
+                    result_row = result if isinstance(result, dict) else {}
+                    profile_agent_id = str(result_row.get("assigned_agent") or issue.get("assigned_agent") or "")
+                    estimated = result_row.get("estimated_hours")
+                    if estimated is None:
+                        estimated = issue.get("estimated_hours")
+                    actual = result_row.get("actual_hours")
+                    if actual is None:
+                        actual = issue.get("actual_hours")
+                    observe_profile = getattr(storage, "observe_agent_profile", None)
+                    if (
+                        not completed_before
+                        and profile_agent_id
+                        and estimated is not None
+                        and actual is not None
+                        and inspect.iscoroutinefunction(observe_profile)
+                    ):
+                        profile_learning = await observe_profile(
+                            agent_id=profile_agent_id,
+                            team_id=result_row.get("assigned_team") or issue.get("assigned_team"),
+                            role=None,
+                            estimated_hours=estimated,
+                            actual_hours=actual,
+                            tasks_completed=1,
+                            alpha=0.5,
+                        )
+                        if isinstance(profile_learning, dict):
+                            profile_learning = {
+                                **profile_learning,
+                                "source_issue_id": str(issue_id),
+                            }
+                    sprint_id = result_row.get("sprint_id")
                     if sprint_id:
                         sprint_issues = await storage.list_issues(sprint_id=sprint_id)
                         completed = [
@@ -6158,6 +6303,23 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
                             completed_story_points=sum(item.get("story_points") or 0 for item in completed),
                             actual_hours=sum(float(item.get("actual_hours") or 0) for item in sprint_issues),
                         )
+                        if not completed_before:
+                            try:
+                                sprint_retrospective = await _record_sprint_retrospective(
+                                    storage,
+                                    project_id=pid,
+                                    sprint_id=UUID(str(sprint_id)),
+                                )
+                            except Exception:
+                                # The issue transition and sprint projection are
+                                # canonical. A retrospective snapshot is durable
+                                # evidence, but must not turn a completed issue
+                                # into an ambiguous state if its optional writer
+                                # is temporarily unavailable.
+                                logger.exception(
+                                    "sprint_retrospective_snapshot_failed",
+                                    extra={"project_id": str(pid), "sprint_id": str(sprint_id)},
+                                )
         except HTTPException:
             raise
         except (TypeError, ValueError) as exc:
@@ -6165,6 +6327,10 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
         response = {"status": "completed", "action": action, "result": _serialize(result)}
         if projection_rows:
             response["projections"] = [_serialize_projection(row) for row in projection_rows]
+        if profile_learning is not None:
+            response["profile_learning"] = _serialize(profile_learning)
+        if sprint_retrospective is not None:
+            response["sprint_retrospective"] = _serialize(sprint_retrospective)
         return response
 
     envelope = {

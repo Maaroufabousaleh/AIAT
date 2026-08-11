@@ -8887,10 +8887,37 @@ class AgentStorage:
         return await self.get_project_repository_record(project_id)
 
     async def create_project_evidence_package(self, *, project_id: UUID, policy_id: str, policy_version: str, status: str, checks: dict[str, Any], evidence_refs: dict[str, Any], completeness_score: float) -> dict[str, Any]:
-        values = {"id": uuid4(), "project_id": project_id, "policy_id": policy_id, "policy_version": policy_version, "status": status, "checks": checks, "evidence_refs": evidence_refs, "completeness_score": completeness_score}
+        """Upsert the latest operator-generated package for one policy version."""
+
+        values = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "status": status,
+            "checks": checks,
+            "evidence_refs": evidence_refs,
+            "completeness_score": completeness_score,
+            "generated_at": datetime.now(tz=UTC),
+        }
         async with self.engine.begin() as conn:
-            await conn.execute(t.project_evidence_packages.insert().values(**values))
-        return values
+            stmt = (
+                pg_insert(t.project_evidence_packages)
+                .values(**values)
+                .on_conflict_do_update(
+                    constraint="uq_project_evidence_policy",
+                    set_={
+                        "status": values["status"],
+                        "checks": values["checks"],
+                        "evidence_refs": values["evidence_refs"],
+                        "completeness_score": values["completeness_score"],
+                        "generated_at": values["generated_at"],
+                    },
+                )
+                .returning(t.project_evidence_packages)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+        return dict(row) if row else values
 
     async def get_project_evidence_package(self, project_id: UUID, *, policy_id: str | None = None) -> dict[str, Any] | None:
         q = t.project_evidence_packages.select().where(t.project_evidence_packages.c.project_id == project_id).order_by(t.project_evidence_packages.c.generated_at.desc()).limit(1)

@@ -294,6 +294,23 @@ test.describe("Operational UI smoke flows", () => {
       page.getByRole("heading", { name: "Completion Evidence" }),
     ).toBeVisible();
     await expect(page.getByText(/worker runs terminal/i)).toBeVisible();
+
+    const projectId = new URL(page.url()).pathname.split("/").pop();
+    if (!projectId) throw new Error("project id missing from detail URL");
+    await page.route(`**/api/projects/${projectId}`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "project fixture unavailable" }),
+      });
+    });
+    await page.getByRole("button", { name: "Refresh project data" }).click();
+    await expect(
+      page.getByText("Showing last known project state"),
+    ).toBeVisible();
+    await expect(page.getByText(/latest project refresh failed/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("heading", { name })).toBeVisible();
   });
 
   test("system, logs, metrics, and DLQ pages load operational controls", async ({

@@ -428,6 +428,254 @@ async def test_project_evidence_uses_project_scoped_approval_gates(client):
     storage.list_approval_gates.assert_awaited_once_with(project_id=PROJECT_ID)
 
 
+@pytest.mark.anyio
+async def test_project_evidence_package_groups_repository_security_deployment_and_cost_views(client):
+    """The package is one read model over the existing project authorities."""
+
+    project = _fake_project("IN_PROGRESS")
+    project["config"] = {}
+    storage = _make_storage(project=project)
+    storage.list_documents = AsyncMock(
+        return_value=[
+            {"id": "doc-1", "doc_type": "PDR", "status": "APPROVED", "version": 1}
+        ]
+    )
+    storage.list_artifacts = AsyncMock(
+        return_value=[
+            {
+                "id": 1,
+                "kind": "security-scan",
+                "path": f"{PROJECT_ID}/security.json",
+                "sha256": "abc",
+                "metadata": {"project_id": str(PROJECT_ID), "license": "notice-only"},
+            },
+            {
+                "id": 2,
+                "kind": "deployment",
+                "path": f"{PROJECT_ID}/deployment.json",
+                "metadata": {"project_id": str(PROJECT_ID)},
+            },
+        ]
+    )
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(
+        return_value={
+            "id": "repo-1",
+            "initialized": True,
+            "adapter_health": "ok",
+            "branch": "main",
+            "head_commit": "deadbeef",
+        }
+    )
+    storage.get_project_history = AsyncMock(return_value=[])
+    _patch_state(storage)
+
+    response = await client.get(f"/projects/{PROJECT_ID}/evidence/package")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "aiat.project-evidence-package.v1"
+    assert {item["category"] for item in body["items"]} >= {"security", "deployment", "repository"}
+    assert body["notices"] == [
+        {"artifact_id": "1", "field": "license", "value": "notice-only"}
+    ]
+    assert body["snapshot"] is None
+
+
+@pytest.mark.anyio
+async def test_project_evidence_package_snapshot_is_operator_only_and_idempotent(client):
+    project = _fake_project("IN_PROGRESS")
+    project["config"] = {}
+    storage = _make_storage(project=project)
+    storage.list_documents = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(return_value=None)
+    storage.get_project_history = AsyncMock(return_value=[])
+    storage.create_project_evidence_package = AsyncMock(
+        return_value={"id": "snapshot-1", "project_id": PROJECT_ID, "status": "incomplete"}
+    )
+    _patch_state(storage)
+
+    denied = await client.post(f"/projects/{PROJECT_ID}/evidence/package")
+    assert denied.status_code == 403
+
+    allowed = await client.post(
+        f"/projects/{PROJECT_ID}/evidence/package",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+    assert allowed.status_code == 200
+    body = allowed.json()
+    assert body["stored"] is True
+    assert body["snapshot"]["id"] == "snapshot-1"
+    storage.create_project_evidence_package.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_project_evidence_resolves_milestone_before_company_default(client):
+    project = _fake_project("IN_PROGRESS")
+    project["company_id"] = "00000000-0000-4000-8000-000000000001"
+    project["config"] = {}
+    storage = _make_storage(project=project)
+    storage.list_documents = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(return_value=None)
+    storage.list_sprints = AsyncMock(return_value=[{
+        "milestone": "implementation", "sprint_number": 2, "status": "ACTIVE"
+    }])
+    storage.get_company_manifest = AsyncMock(return_value={
+        "manifest_json": {
+            "evidence_policy": {
+                "default_policy": {"policy_id": "software_delivery", "version": "1.0", "requirements": {}},
+                "milestone_policies": {
+                    "implementation": {"policy_id": "operations", "version": "1.0", "requirements": {}}
+                },
+            }
+        }
+    })
+    _patch_state(storage)
+
+    response = await client.get(f"/projects/{PROJECT_ID}/evidence")
+
+    assert response.status_code == 200
+    assert response.json()["policy_id"] == "operations"
+
+
+@pytest.mark.anyio
+async def test_evidence_policy_catalog_is_available_to_operator_clients(client):
+    response = await client.get("/evidence-policies")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "aiat.evidence-policy.v1"
+    assert "software_delivery" in body["policies"]
+    assert body["policies"]["software_delivery"]["required_document_types"] == ["PDR", "CDR", "RR"]
+
+
+@pytest.mark.anyio
+async def test_project_evidence_policy_selection_is_persisted(client):
+    project = _fake_project("IN_PROGRESS")
+    project["config"] = {}
+    storage = _make_storage(project=project)
+    storage.update_project_config = AsyncMock(return_value={**project, "config": {
+        "evidence_policy": {
+            "policy_id": "software_delivery",
+            "version": "1.0",
+            "requirements": {},
+        }
+    }})
+    _patch_state(storage)
+
+    response = await client.put(
+        f"/projects/{PROJECT_ID}/evidence-policy",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"policy_id": "software_delivery", "policy_version": "1.0", "requirements": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["evidence_policy"]["policy_id"] == "software_delivery"
+    storage.update_project_config.assert_awaited_once_with(
+        PROJECT_ID,
+        config={"evidence_policy": {"policy_id": "software_delivery", "version": "1.0", "requirements": {}}},
+    )
+
+
+@pytest.mark.anyio
+async def test_milestone_evidence_policy_selection_is_persisted(client):
+    project = _fake_project("IN_PROGRESS")
+    project["config"] = {}
+    storage = _make_storage(project=project)
+    storage.update_project_config = AsyncMock(return_value={**project, "config": {
+        "evidence_policy_milestones": {
+            "implementation": {
+                "policy_id": "operations",
+                "version": "1.0",
+                "requirements": {"required_artifact_kinds": ["deployment"]},
+            }
+        }
+    }})
+    _patch_state(storage)
+
+    response = await client.put(
+        f"/projects/{PROJECT_ID}/evidence-policy",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "policy_id": "operations",
+            "policy_version": "1.0",
+            "requirements": {"required_artifact_kinds": ["deployment"]},
+            "scope": "milestone",
+            "milestone": "implementation",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scope"] == "milestone"
+    assert response.json()["milestone"] == "implementation"
+    storage.update_project_config.assert_awaited_once_with(
+        PROJECT_ID,
+        config={
+            "evidence_policy_milestones": {
+                "implementation": {
+                    "policy_id": "operations",
+                    "version": "1.0",
+                    "requirements": {"required_artifact_kinds": ["deployment"]},
+                }
+            }
+        },
+    )
+
+
+@pytest.mark.anyio
+async def test_company_evidence_policy_is_persisted_in_manifest(client):
+    from unittest.mock import patch
+
+    from mas_core.company_manifest import DEFAULT_COMPANY_ID
+
+    storage = _make_storage(project=None)
+    storage.get_company = AsyncMock(return_value={"id": DEFAULT_COMPANY_ID})
+    storage.get_company_manifest = AsyncMock(return_value={
+        "manifest_json": {"slug": "aiat-default", "evidence_policy": {"required_for_completion": []}}
+    })
+    storage.apply_company_manifest = AsyncMock(return_value={"company": {"id": DEFAULT_COMPANY_ID}})
+    _patch_state(storage)
+    compiled_manifest = MagicMock()
+    compiled_manifest_result = (compiled_manifest, "digest", {
+        "slug": "aiat-default",
+        "evidence_policy": {
+            "default_policy": {
+                "policy_id": "software_delivery",
+                "version": "1.0",
+                "requirements": {},
+            }
+        },
+    })
+
+    with patch("orchestrator_api.main.compile_company_manifest", return_value=compiled_manifest_result):
+        response = await client.put(
+            f"/companies/{DEFAULT_COMPANY_ID}/evidence-policy",
+            headers={"X-API-Key": "test-operator-key"},
+            json={"policy_id": "software_delivery", "policy_version": "1.0", "requirements": {}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["evidence_policy"]["policy_id"] == "software_delivery"
+    storage.apply_company_manifest.assert_awaited_once_with(
+        company_id=DEFAULT_COMPANY_ID,
+        manifest=compiled_manifest,
+        digest="digest",
+        canonical=compiled_manifest_result[2],
+        source="api:company-evidence-policy",
+        actor="operator",
+    )
+
+
 # ── POST /projects/{id}/retry ─────────────────────────────────────────────────
 
 
