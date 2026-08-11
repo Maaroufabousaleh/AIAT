@@ -1,9 +1,13 @@
-"""Typed control-plane storage adapter for deployed team runners.
+"""Control-plane storage adapter for deployed team runners.
 
-Compose runners deliberately do not receive database or object-storage
-credentials. This adapter exposes only the checkpoint, usage, document, and
-review operations needed by runner execution and sends them to the
-authenticated orchestrator boundary.
+Team runners deliberately do not receive database or object-storage
+credentials.  This adapter keeps the small storage surface used by
+``AgentBase`` and ``ExecutiveAgent`` while sending typed, allow-listed
+operations to the orchestrator API over the worker/CEO control-plane key.
+
+The local ``PGBOUNCER_DSN`` path remains available to isolated development
+fixtures, but Compose deployments use this client so the database and MinIO
+networks stay private to the control plane.
 """
 
 from __future__ import annotations
@@ -68,15 +72,24 @@ class ControlPlaneStorageClient:
             json={"operation": operation, "payload": _json_value(payload)},
         )
         if response.is_error:
+            detail: Any
             try:
                 decoded = response.json()
-                detail = decoded.get("detail", response.text) if isinstance(decoded, dict) else decoded
+                detail = (
+                    decoded.get("detail", response.text)
+                    if isinstance(decoded, dict)
+                    else decoded
+                )
             except ValueError:
                 detail = response.text
             raise RuntimeError(
                 f"control-plane storage {operation} failed ({response.status_code}): {detail}"
             )
         return response.json()
+
+    # ------------------------------------------------------------------
+    # CheckpointStore-compatible surface
+    # ------------------------------------------------------------------
 
     async def save(
         self,
@@ -139,6 +152,10 @@ class ControlPlaneStorageClient:
         )
         return bool(result.get("deleted")) if isinstance(result, dict) else False
 
+    # ------------------------------------------------------------------
+    # AgentStorage-compatible usage/review surface
+    # ------------------------------------------------------------------
+
     async def record_project_usage(self, **kwargs: Any) -> dict[str, Any] | None:
         result = await self._request("usage_record", **kwargs)
         return result if isinstance(result, dict) else None
@@ -154,7 +171,11 @@ class ControlPlaneStorageClient:
         return result
 
     async def update_document_status(self, document_id: UUID, *, status: str) -> None:
-        await self._request("document_update_status", document_id=document_id, status=status)
+        await self._request(
+            "document_update_status",
+            document_id=document_id,
+            status=status,
+        )
 
     async def create_review_session(self, **kwargs: Any) -> dict[str, Any]:
         result = await self._request("review_create", **kwargs)
@@ -167,7 +188,11 @@ class ControlPlaneStorageClient:
         return result if isinstance(result, dict) else None
 
     async def update_review_session(self, session_id: UUID, **kwargs: Any) -> None:
-        await self._request("review_update", session_id=session_id, updates=kwargs)
+        await self._request(
+            "review_update",
+            session_id=session_id,
+            updates=kwargs,
+        )
 
     async def add_review_comment(self, **kwargs: Any) -> dict[str, Any]:
         result = await self._request("review_comment_add", **kwargs)
@@ -179,6 +204,15 @@ class ControlPlaneStorageClient:
         result = await self._request("review_comments_get", session_id=session_id)
         return result if isinstance(result, list) else []
 
-    async def list_review_sessions(self, project_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
-        result = await self._request("review_list", project_id=project_id, limit=limit)
+    async def list_review_sessions(
+        self,
+        project_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        result = await self._request(
+            "review_list",
+            project_id=project_id,
+            limit=limit,
+        )
         return result if isinstance(result, list) else []
