@@ -974,6 +974,70 @@ class TestAgentStorageCRUD:
         assert settled["metadata"]["budget_settlement"] == "CAP_EXCEEDED"
         assert conn.execute.await_count == 6
 
+    @pytest.mark.asyncio
+    async def test_settle_budget_reservation_replay_is_a_noop(self):
+        """A retry cannot commit or release a terminal reservation twice."""
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        reservation_id = uuid4()
+        company_id = uuid4()
+        reservation = {
+            "id": reservation_id,
+            "company_id": company_id,
+            "budget_key": "max_cost_usd",
+            "amount": Decimal("2"),
+            "state": "RESERVED",
+            "metadata": {"source": "worker_dispatch"},
+        }
+        committed = {
+            **reservation,
+            "amount": Decimal("1"),
+            "state": "COMMITTED",
+            "metadata": {
+                "source": "worker_dispatch",
+                "actual_cost_usd": "1",
+            },
+        }
+
+        def result(*, row=None, scalar=None):
+            value = MagicMock()
+            value.mappings.return_value.first.return_value = row
+            value.scalar_one.return_value = scalar
+            return value
+
+        conn.execute = AsyncMock(
+            side_effect=[
+                result(row=reservation),
+                result(
+                    row={
+                        "company_id": company_id,
+                        "budget_key": "max_cost_usd",
+                        "limit_value": Decimal("10"),
+                    }
+                ),
+                result(row=reservation),
+                result(scalar=Decimal("0")),
+                result(),
+                result(row=committed),
+                result(row=committed),
+            ]
+        )
+
+        first = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("1"),
+        )
+        replay = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("9"),
+        )
+
+        assert first == committed
+        assert replay == committed
+        assert conn.execute.await_count == 7
+
     # ── System Config ──
 
     @pytest.mark.asyncio

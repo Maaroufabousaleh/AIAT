@@ -1924,6 +1924,36 @@ class ModelResolutionPreviewRequest(BaseModel):
     requested_raw_model_id: str | None = None
 
 
+def _model_override_is_expired(value: Any, *, now: datetime | None = None) -> bool:
+    """Return whether an override expiry is past, failing closed on bad data.
+
+    Durable PostgreSQL rows normally provide an aware ``datetime``.  API
+    adapters and replay fixtures may provide an ISO-8601 string instead, so
+    normalise both representations at this boundary.  A missing expiry is
+    intentionally non-expiring; an invalid or unsupported value is treated as
+    expired so it can never authorize a model override accidentally.
+    """
+
+    if value is None:
+        return False
+    expires_at: datetime
+    if isinstance(value, datetime):
+        expires_at = value
+    elif isinstance(value, str):
+        try:
+            expires_at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    else:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+    return expires_at <= reference
+
+
 class WorkerRunDispatchRequest(BaseModel):
     worker_id: UUID
     idempotency_key: str
@@ -10471,7 +10501,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
                 )
             override = await storage.get_model_override_request(req.model_override_request_id)
             approval = await storage.get_approval_record(req.model_override_approval_id)
-            expired = override is not None and override.get("expires_at") is not None and override["expires_at"] <= datetime.now(UTC)
+            expired = override is None or _model_override_is_expired(override.get("expires_at"))
             if (
                 override is None
                 or override.get("status") != "APPROVED"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -11,6 +12,18 @@ import pytest
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000701")
 PROJECT_ID = UUID("00000000-0000-4000-a000-000000000702")
 COMPANY_ID = UUID("00000000-0000-4000-a000-000000000703")
+
+
+def test_model_override_expiry_normalizes_serialized_values_and_fails_closed() -> None:
+    import orchestrator_api.main as main
+
+    reference = datetime(2026, 1, 1, tzinfo=UTC)
+    assert main._model_override_is_expired(None, now=reference) is False
+    assert main._model_override_is_expired(reference - timedelta(seconds=1), now=reference) is True
+    assert main._model_override_is_expired("2025-12-31T23:59:59Z", now=reference) is True
+    assert main._model_override_is_expired("2026-01-01T00:00:01+00:00", now=reference) is False
+    assert main._model_override_is_expired("not-a-timestamp", now=reference) is True
+    assert main._model_override_is_expired(object(), now=reference) is True
 
 
 class _Adapter:
