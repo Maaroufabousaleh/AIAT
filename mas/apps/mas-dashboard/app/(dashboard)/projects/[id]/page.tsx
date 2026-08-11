@@ -305,6 +305,9 @@ export default function ProjectDetailPage() {
   >("activity");
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceStale, setWorkspaceStale] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const workspaceRef = useRef<WorkspaceSummary | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(
@@ -542,25 +545,87 @@ export default function ProjectDetailPage() {
         fetch(`/api/projects/${id}/workspace`),
         fetch(`/api/projects/${id}/repository`),
       ]);
-      if (res.ok) {
-        const data = await res.json();
+      const workspacePayload = await res.json().catch(() => null);
+      const repositoryPayload = repositoryRes.ok
+        ? await repositoryRes.json().catch(() => null)
+        : null;
+      const failures: string[] = [];
+
+      if (!res.ok) {
+        const detail =
+          workspacePayload && typeof workspacePayload === "object"
+            ? ((workspacePayload as { detail?: unknown; error?: unknown })
+                .detail ??
+              (workspacePayload as { detail?: unknown; error?: unknown }).error)
+            : null;
+        failures.push(
+          typeof detail === "string" && detail.trim()
+            ? `Workspace request failed: ${detail}`
+            : `Workspace request failed (HTTP ${res.status})`,
+        );
+      }
+      if (!repositoryRes.ok) {
+        const detail =
+          repositoryPayload && typeof repositoryPayload === "object"
+            ? ((repositoryPayload as { detail?: unknown; error?: unknown })
+                .detail ??
+              (repositoryPayload as { detail?: unknown; error?: unknown })
+                .error)
+            : null;
+        failures.push(
+          typeof detail === "string" && detail.trim()
+            ? `Repository request failed: ${detail}`
+            : `Repository request failed (HTTP ${repositoryRes.status})`,
+        );
+      }
+
+      if (
+        res.ok &&
+        workspacePayload &&
+        typeof workspacePayload === "object" &&
+        "recent_activity" in workspacePayload
+      ) {
+        const data = { ...(workspacePayload as WorkspaceSummary) };
         if (repositoryRes.ok) {
-          const repositoryData = await repositoryRes.json();
-          data.repository = repositoryData.workspace ?? null;
+          data.repository =
+            repositoryPayload && typeof repositoryPayload === "object"
+              ? ((repositoryPayload as { workspace?: RepositorySummary | null })
+                  .workspace ?? null)
+              : null;
+        } else if (workspaceRef.current) {
+          data.repository = workspaceRef.current.repository;
         }
-        // Validate workspace data structure - ensure required fields exist
-        if (data && typeof data === "object" && "recent_activity" in data) {
-          setWorkspace(data);
-        } else {
-          console.error("Invalid workspace data structure:", data);
-          setWorkspace(null);
-        }
+        setWorkspace(data);
+        workspaceRef.current = data;
+        setWorkspaceStale(failures.length > 0);
+        setWorkspaceError(failures.length > 0 ? failures.join(" ") : null);
       } else {
-        setWorkspace(null);
+        const failure =
+          failures[0] ??
+          "Workspace response was missing the required activity data.";
+        if (workspaceRef.current) {
+          setWorkspaceStale(true);
+          setWorkspaceError(failure);
+        } else {
+          setWorkspace(null);
+          setWorkspaceStale(false);
+          setWorkspaceError(failure);
+        }
       }
     } catch (err) {
       console.error("Failed to load workspace:", err);
-      setWorkspace(null);
+      const failure =
+        err instanceof Error
+          ? err.message
+          : "The project workspace could not be loaded from the control plane.";
+      if (workspaceRef.current) {
+        setWorkspaceStale(true);
+        setWorkspaceError(failure);
+      } else {
+        setWorkspace(null);
+        setWorkspaceStale(false);
+        setWorkspaceError(failure);
+      }
     } finally {
       setWorkspaceLoading(false);
     }
@@ -1229,10 +1294,56 @@ export default function ProjectDetailPage() {
           aria-labelledby="project-tab-workspace"
           className="space-y-4"
         >
+          {workspaceStale && workspaceError && (
+            <div data-testid="project-workspace-stale">
+              <ErrorBanner
+                tone="warning"
+                title="Showing last known workspace"
+                action={
+                  <button
+                    type="button"
+                    onClick={() => void loadWorkspace()}
+                    disabled={workspaceLoading}
+                    aria-busy={workspaceLoading}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={workspaceLoading ? "animate-spin" : ""}
+                      aria-hidden="true"
+                    />
+                    Retry
+                  </button>
+                }
+              >
+                {workspaceError} Retained workspace data remains visible while
+                the latest refresh is retried.
+              </ErrorBanner>
+            </div>
+          )}
           {workspace === null && !workspaceLoading && (
-            <ErrorBanner tone="error" title="Workspace data unavailable">
-              The project workspace API may be unavailable or the project may
-              not exist. Please try refreshing the page.
+            <ErrorBanner
+              tone="error"
+              title="Workspace data unavailable"
+              action={
+                <button
+                  type="button"
+                  onClick={() => void loadWorkspace()}
+                  disabled={workspaceLoading}
+                  aria-busy={workspaceLoading}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 transition-colors hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw
+                    size={14}
+                    className={workspaceLoading ? "animate-spin" : ""}
+                    aria-hidden="true"
+                  />
+                  Retry
+                </button>
+              }
+            >
+              {workspaceError ??
+                "The project workspace API may be unavailable or the project may not exist. Retry to try again."}
             </ErrorBanner>
           )}
 
