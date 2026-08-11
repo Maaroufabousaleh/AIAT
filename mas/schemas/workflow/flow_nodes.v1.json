@@ -1,0 +1,264 @@
+{
+  "additional_properties": true,
+  "catalog_id": "aiat.flow-node-schemas",
+  "node_types": {
+    "approval": {
+      "description": "Pause until a configured authority approves or rejects.",
+      "fields": [
+        {
+          "label": "Approver role",
+          "name": "approver_role",
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "label": "Approver user",
+          "name": "approver_user",
+          "type": "string",
+          "widget": "text"
+        }
+      ],
+      "label": "Approval",
+      "required_any": [
+        "approver_role",
+        "approver_user"
+      ]
+    },
+    "condition": {
+      "description": "Evaluate a bounded context/completion expression.",
+      "fields": [
+        {
+          "label": "Expression",
+          "name": "expression",
+          "placeholder": "node_id completed or context.result == approved",
+          "required": true,
+          "type": "string",
+          "widget": "text"
+        }
+      ],
+      "label": "Condition"
+    },
+    "end": {
+      "description": "Terminal point for a flow.",
+      "fields": [],
+      "label": "End"
+    },
+    "escalate": {
+      "description": "Delegate a failure or decision to a higher authority.",
+      "fields": [
+        {
+          "label": "Escalate to team",
+          "name": "escalate_to_team",
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "label": "Escalate to agent",
+          "name": "escalate_to_agent",
+          "type": "string",
+          "widget": "text"
+        }
+      ],
+      "label": "Escalate",
+      "required_any": [
+        "escalate_to_team",
+        "escalate_to_agent"
+      ]
+    },
+    "join": {
+      "description": "Wait for all incoming branches.",
+      "fields": [],
+      "label": "Join"
+    },
+    "parallel": {
+      "description": "Fan out to branch roots and wait at a join.",
+      "fields": [
+        {
+          "items": "string",
+          "label": "Branches",
+          "min_items": 1,
+          "name": "branches",
+          "required": true,
+          "type": "array",
+          "widget": "csv"
+        }
+      ],
+      "label": "Parallel"
+    },
+    "start": {
+      "description": "Entry point for a flow.",
+      "fields": [],
+      "label": "Start"
+    },
+    "switch": {
+      "description": "Route using a context field and case-to-node map.",
+      "fields": [
+        {
+          "label": "Switch key",
+          "name": "switch_key",
+          "required": true,
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "label": "Switch cases",
+          "min_properties": 1,
+          "name": "switch_cases",
+          "placeholder": "{\"approved\": \"node_approved\"}",
+          "required": true,
+          "type": "object",
+          "widget": "json"
+        }
+      ],
+      "label": "Switch"
+    },
+    "task": {
+      "description": "Execute a governed worker run.",
+      "fields": [
+        {
+          "description": "Concrete governed worker UUID for universal Worker Run dispatch.",
+          "label": "Worker",
+          "name": "worker_id",
+          "type": "string",
+          "widget": "worker-select"
+        },
+        {
+          "deprecated": true,
+          "description": "Compatibility assignment for a team-owned task.",
+          "label": "Team ID",
+          "name": "team_id",
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "deprecated": true,
+          "description": "Compatibility action; governed worker_id is preferred.",
+          "label": "Legacy action",
+          "name": "action",
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "description": "Stable task type passed to the worker contract.",
+          "label": "Task type",
+          "name": "task_type",
+          "type": "string",
+          "widget": "text"
+        },
+        {
+          "default": "aiat_gateway",
+          "enum": [
+            "none",
+            "aiat_gateway",
+            "certified_external_runtime",
+            "hybrid"
+          ],
+          "label": "Model mode",
+          "name": "model_mode",
+          "type": "string",
+          "widget": "select"
+        },
+        {
+          "description": "Governed profile; raw provider/model IDs are not accepted.",
+          "label": "Model Profile",
+          "name": "model_profile_id",
+          "type": "string",
+          "widget": "model-profile-select"
+        },
+        {
+          "default": [],
+          "items": "string",
+          "label": "Required capabilities",
+          "name": "required_capabilities",
+          "type": "array",
+          "widget": "csv"
+        },
+        {
+          "default": [],
+          "items": "string",
+          "label": "Permission requirements",
+          "name": "permission_requirements",
+          "type": "array",
+          "widget": "csv"
+        },
+        {
+          "default": "isolated",
+          "enum": [
+            "isolated",
+            "shared_readonly",
+            "approved_write"
+          ],
+          "label": "Workspace mode",
+          "name": "project_workspace_mode",
+          "type": "string",
+          "widget": "select"
+        },
+        {
+          "default": [],
+          "items": "string",
+          "label": "Tool grants",
+          "name": "tool_grants",
+          "type": "array",
+          "widget": "csv"
+        },
+        {
+          "label": "Timeout (seconds)",
+          "minimum": 1,
+          "name": "timeout_seconds",
+          "type": "integer",
+          "widget": "number"
+        },
+        {
+          "default": {},
+          "label": "Retry policy",
+          "name": "retry_policy",
+          "type": "object",
+          "widget": "json"
+        },
+        {
+          "default": {},
+          "label": "Cancellation policy",
+          "name": "cancellation_policy",
+          "type": "object",
+          "widget": "json"
+        },
+        {
+          "default": {},
+          "label": "Checkpoint policy",
+          "name": "checkpoint_policy",
+          "type": "object",
+          "widget": "json"
+        },
+        {
+          "default": [],
+          "items": "object",
+          "label": "Artifact expectations",
+          "name": "artifact_expectations",
+          "type": "array",
+          "widget": "json"
+        },
+        {
+          "default": {},
+          "label": "Completion criteria",
+          "name": "completion_criteria",
+          "type": "object",
+          "widget": "json"
+        },
+        {
+          "default": {},
+          "label": "Runtime extensions",
+          "name": "runtime_extensions",
+          "type": "object",
+          "widget": "json"
+        }
+      ],
+      "label": "Task",
+      "required_any": [
+        "worker_id",
+        "team_id",
+        "action"
+      ]
+    }
+  },
+  "schema_version": "1.0"
+}
