@@ -58,7 +58,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Prompt/tool reconciliation and governed review/privileged adapters | [`check_prompt_tool_reconciliation.py`](mas/scripts/check_prompt_tool_reconciliation.py), [`mas/prompts/`](mas/prompts/), [`review.submit`](mas/apps/tool-service/tool_service/tools/project.py), [`privileged_ops.request`](mas/apps/tool-service/tool_service/tools/project.py) |
 | Versioned flow-node schemas and evidence policies | [`generate_flow_node_schemas.py`](mas/scripts/generate_flow_node_schemas.py), [node schema artifact](mas/schemas/workflow/flow_nodes.v1.json), [`/flows/node-schemas`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/evidence-policies`](mas/apps/orchestrator-api/orchestrator_api/main.py) |
 | Evidence-policy scope resolution fixture | [`resolve_evidence_policy_selection`](mas/packages/mas-core/mas_core/workflow/evidence.py), [`check_evidence_policy_resolution.py`](mas/scripts/check_evidence_policy_resolution.py), [`test_evidence_policy_resolution.py`](mas/packages/mas-core/tests/test_evidence_policy_resolution.py) |
-| Project evidence package fixture | [`check_project_evidence_package.py`](mas/scripts/check_project_evidence_package.py), [`aiat.project-evidence-package.v1`](mas/packages/mas-core/mas_core/workflow/evidence.py) |
+| Project evidence package fixture | [`check_project_evidence_package.py`](mas/scripts/check_project_evidence_package.py), [`aiat.project-evidence-package.v1`](mas/packages/mas-core/mas_core/workflow/evidence.py), project workspace/read model group `1112d5e` |
 | Governed asynchronous flow-task binding | [`worker_binding.py`](mas/packages/mas-core/mas_core/workflow/worker_binding.py), [`check_flow_worker_binding.py`](mas/scripts/check_flow_worker_binding.py), [`test_flow_worker_binding.py`](mas/packages/mas-core/tests/test_flow_worker_binding.py), and the governed `flow_node_action` route |
 | Flow worker-binding review status | [Governed Flow Worker-Binding Status](Docs/current/FLOW_WORKER_BINDING_STATUS.md) |
 | Flow execution semantics review status | [Flow Execution Semantics Status](Docs/current/FLOW_EXECUTION_SEMANTICS_STATUS.md), [`check_flow_execution_semantics.py`](mas/scripts/check_flow_execution_semantics.py), [`test_flow_execution_semantics.py`](mas/packages/mas-core/tests/test_flow_execution_semantics.py) |
@@ -266,7 +266,7 @@ implemented; the latest static ledger run is 48/48 pass with two pending
 technical evidence items and `NO-RELEASE`; native/live/release gates remain
 open
 
-The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`; project-page composition and live storage/provider/worker evidence remain separate reviewed groups.
+The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, and project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`; live storage/provider/worker evidence and dashboard typecheck repair remain separate reviewed gates.
 
 Required outcomes:
 
