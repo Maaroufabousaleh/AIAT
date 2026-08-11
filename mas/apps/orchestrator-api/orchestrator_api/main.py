@@ -9293,6 +9293,15 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/flows/node-schemas")
+async def list_flow_node_schemas() -> dict[str, Any]:
+    """Return the versioned node catalogue used by validation and dashboard forms."""
+
+    from mas_core.workflow import node_schema_catalog
+
+    return node_schema_catalog()
+
+
 @app.get("/flows")
 async def list_flows(
     is_active: bool | None = None,

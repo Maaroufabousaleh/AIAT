@@ -43,6 +43,8 @@ import {
 import { convertReactFlowToFlow } from "@/lib/flow-editor";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { NodeSchemaContractSummary } from "@/components/flows/NodeSchemaContractSummary";
+import { NodeSchemaForm } from "@/components/flows/NodeSchemaForm";
 
 /**
  * A reusable flow scaffolding users can drop in to get started quickly.
@@ -833,6 +835,27 @@ export default function NewFlowPage() {
               </div>
             </div>
 
+            <NodeSchemaContractSummary nodeType={selectedNode.data.type as FlowNodeType} />
+
+            <NodeSchemaForm
+              nodeType={selectedNode.data.type as FlowNodeType}
+              value={nodeConfig}
+              onChange={updateNodeConfig}
+              governedWorkers={governedWorkers}
+              modelProfiles={modelProfiles}
+              governanceLoading={governanceLoading}
+            />
+            {governanceLoadError && (
+              <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
+                {governanceLoadError}. Governed worker and Model Profile fields remain unavailable until the catalogue recovers.
+              </div>
+            )}
+
+            <details className="rounded-md border border-slate-800 bg-slate-950/30">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-slate-400 hover:text-slate-200">
+                Compatibility controls (legacy aliases)
+              </summary>
+              <div className="space-y-4 border-t border-slate-800 p-2.5">
             {selectedNode.data.type === "task" && (
               <>
                 <div className="rounded-md border border-blue-900/70 bg-blue-950/20 p-2.5 text-xs text-blue-100">
@@ -1120,6 +1143,9 @@ export default function NewFlowPage() {
                 />
               </div>
             )}
+
+              </div>
+            </details>
 
             <div>
               <label className="block text-xs text-slate-500 mb-1">Description (optional)</label>

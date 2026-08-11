@@ -33,6 +33,12 @@ import {
 import { convertFlowToReactFlow, convertReactFlowToFlow } from "@/lib/flow-editor";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { NodeSchemaContractSummary } from "@/components/flows/NodeSchemaContractSummary";
+import {
+  NodeSchemaForm,
+  type GovernedModelProfile,
+  type GovernedWorkerOption,
+} from "@/components/flows/NodeSchemaForm";
 
 const CUSTOM_NODE_TYPES: NodeTypes = {};
 let pendingConnectionSource: string | null = null;
@@ -101,8 +107,42 @@ export default function FlowEditorPage() {
   const [history, setHistory] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const [redoStack, setRedoStack] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [governedWorkers, setGovernedWorkers] = useState<GovernedWorkerOption[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
+  const [governanceLoading, setGovernanceLoading] = useState(true);
+  const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
+  const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
 
   const isNew = !currentFlow?.id;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadGovernanceOptions() {
+      setGovernanceLoading(true);
+      try {
+        const [workersResponse, profilesResponse] = await Promise.all([
+          fetch("/api/workers", { signal: controller.signal }),
+          fetch("/api/governance/model-profiles", { signal: controller.signal }),
+        ]);
+        if (!workersResponse.ok || !profilesResponse.ok) {
+          throw new Error("The worker registry or Model Profile catalog is unavailable");
+        }
+        const workers = await workersResponse.json();
+        const profiles = await profilesResponse.json();
+        setGovernedWorkers(Array.isArray(workers) ? workers : []);
+        setModelProfiles(Array.isArray(profiles) ? profiles : []);
+        setGovernanceLoadError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setGovernanceLoadError(error instanceof Error ? error.message : "Could not load governed worker options");
+        }
+      } finally {
+        if (!controller.signal.aborted) setGovernanceLoading(false);
+      }
+    }
+    void loadGovernanceOptions();
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const flowId = window.location.pathname.split("/").pop();
@@ -112,6 +152,7 @@ export default function FlowEditorPage() {
           setName(flow.name);
           setDescription(flow.description || "");
           setIsActive(flow.is_active);
+          setFlowMetadata(flow.definition_json?.metadata || {});
           const { nodes: rawNodes, edges: rawEdges } = convertFlowToReactFlow(
             flow.definition_json?.nodes || [],
             flow.definition_json?.edges || []
@@ -362,7 +403,7 @@ export default function FlowEditorPage() {
     setSaving(true);
     setSaveStatus("saving");
 
-    const definition = convertReactFlowToFlow(nodes, edges);
+    const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
 
     try {
       if (isNew) {
@@ -414,7 +455,7 @@ export default function FlowEditorPage() {
       const created = await createFlow({
         name,
         description,
-        definition_json: convertReactFlowToFlow(nodes, edges),
+        definition_json: convertReactFlowToFlow(nodes, edges, flowMetadata),
         is_active: isActive,
         version_from_flow_id: currentFlow.id,
       });
@@ -676,6 +717,27 @@ export default function FlowEditorPage() {
               </div>
             </div>
 
+            <NodeSchemaContractSummary nodeType={selectedNode.data.type as FlowNodeType} />
+
+            <NodeSchemaForm
+              nodeType={selectedNode.data.type as FlowNodeType}
+              value={nodeConfig}
+              onChange={updateNodeConfig}
+              governedWorkers={governedWorkers}
+              modelProfiles={modelProfiles}
+              governanceLoading={governanceLoading}
+            />
+            {governanceLoadError && (
+              <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
+                {governanceLoadError}. Governed worker and Model Profile fields remain unavailable until the catalogue recovers.
+              </div>
+            )}
+
+            <details className="rounded-md border border-slate-800 bg-slate-950/30">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-slate-400 hover:text-slate-200">
+                Compatibility controls (legacy aliases)
+              </summary>
+              <div className="space-y-4 border-t border-slate-800 p-2.5">
             {selectedNode.data.type === "task" && (
               <>
                 <div>
@@ -892,6 +954,8 @@ export default function FlowEditorPage() {
                 />
               </div>
             )}
+              </div>
+            </details>
 
             <button
               onClick={deleteSelectedNode}
