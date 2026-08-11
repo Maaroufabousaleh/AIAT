@@ -46,6 +46,35 @@ class ProviderRequestError(RuntimeError):
         self.retry_after = retry_after
 
 
+# Provider adapters share one retry classification so the outbox, reconciliation
+# loop, and conformance fixtures do not drift by provider.  Conflicts and
+# precondition failures (409/412) are retryable only after the caller refreshes
+# canonical/provider state; they are not permission approvals.
+RETRYABLE_PROVIDER_STATUS_CODES = frozenset({408, 409, 412, 425, 429, 500, 502, 503, 504})
+
+
+def provider_failure_is_permanent(status_code: object) -> bool:
+    """Return whether an HTTP provider failure should not be blindly retried."""
+
+    return (
+        isinstance(status_code, int)
+        and 400 <= status_code < 500
+        and status_code not in RETRYABLE_PROVIDER_STATUS_CODES
+    )
+
+
+def provider_failure_disposition(status_code: object) -> str:
+    """Return the stable fixture vocabulary for a provider HTTP status."""
+
+    if not isinstance(status_code, int) or status_code < 400:
+        return "not_an_error"
+    if provider_failure_is_permanent(status_code):
+        return "permanent"
+    if status_code in RETRYABLE_PROVIDER_STATUS_CODES or status_code >= 500:
+        return "retryable"
+    return "permanent"
+
+
 def validate_provider_url(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:

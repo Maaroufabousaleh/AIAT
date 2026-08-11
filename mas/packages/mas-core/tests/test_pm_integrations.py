@@ -10,6 +10,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from mas_core.integrations.conformance import run_work_management_conformance
 from mas_core.integrations.contracts import (
     BootstrapAction,
     BootstrapPlan,
@@ -17,16 +18,19 @@ from mas_core.integrations.contracts import (
     CanonicalProject,
     CanonicalWorkItem,
     ExternalEvent,
-    PMLifecycleTransitionPlan,
     LifecyclePlanStatus,
+    PMLifecycleTransitionPlan,
     ProviderConnection,
     pm_binding_effective_policy,
     validate_credential_references,
 )
+from mas_core.integrations.providers.base import (
+    provider_failure_disposition,
+    provider_ssl_context,
+)
 from mas_core.integrations.providers.fake import FakeProvider
 from mas_core.integrations.providers.github import GitHubProvider
 from mas_core.integrations.providers.youtrack import YouTrackProvider
-from mas_core.integrations.providers.base import provider_ssl_context
 from mas_core.integrations.registry import ProviderRegistry
 
 
@@ -58,6 +62,52 @@ async def test_fake_provider_supports_project_iteration_and_archive_contracts() 
     assert (await provider.read_work_item(conn, str(work.external_id))).title == "Task"
     await provider.archive_work_item(conn, str(work.external_id), idempotency_key="archive-1")
     assert (await provider.read_work_item(conn, str(work.external_id))).status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_fake_provider_conformance_fixture_covers_common_provider_contract() -> None:
+    report = await run_work_management_conformance(FakeProvider(), connection())
+
+    assert report.fixture_version == "aiat.provider-conformance.v1"
+    assert report.passed is True
+    assert report.counts["FAIL"] == 0
+    assert {
+        "pagination_cursor",
+        "failure_classification",
+        "deletion_archive",
+        "renamed_field_webhook",
+    }.issubset({case.case_id for case in report.cases})
+
+
+@pytest.mark.asyncio
+async def test_conformance_skips_unsupported_project_and_iteration_operations() -> None:
+    class IssueOnlyFake(FakeProvider):
+        async def capabilities(self, connection):
+            return (await super().capabilities(connection)).model_copy(
+                update={"projects": False, "iterations": False}
+            )
+
+        async def project_project(self, *args, **kwargs):
+            raise AssertionError("unsupported project operation was invoked")
+
+        async def project_iteration(self, *args, **kwargs):
+            raise AssertionError("unsupported iteration operation was invoked")
+
+    report = await run_work_management_conformance(IssueOnlyFake(), connection())
+
+    assert report.passed is True
+    by_id = {case.case_id: case for case in report.cases}
+    assert by_id["project_projection"].status == "SKIP"
+    assert by_id["iteration_projection"].status == "SKIP"
+
+
+def test_provider_failure_fixture_classifies_rate_limit_stale_outage_and_permission_loss() -> None:
+    assert provider_failure_disposition(429) == "retryable"
+    assert provider_failure_disposition(409) == "retryable"
+    assert provider_failure_disposition(412) == "retryable"
+    assert provider_failure_disposition(503) == "retryable"
+    assert provider_failure_disposition(401) == "permanent"
+    assert provider_failure_disposition(403) == "permanent"
 
 
 def test_nested_provider_secret_material_is_rejected() -> None:
@@ -536,6 +586,8 @@ def test_youtrack_webhook_resolves_readable_issue_and_comments_shape() -> None:
         event_type="commentUpdated",
         payload={
             "id": "AIAT-3",
+            "summary": "stale full snapshot title",
+            "description": "stale full snapshot description",
             "project": {"id": "0-1", "shortName": "AIAT"},
             "comments": [{"text": "human edit", "author": {"login": "admin"}}],
             "timestamp": "2026-07-29T21:00:00Z",
@@ -578,8 +630,41 @@ def test_youtrack_issue_updated_preserves_aiat_revision_marker() -> None:
     assert command.fields["description"] == "projected"
 
 
+def test_youtrack_changed_fields_normalize_priority_only_updates() -> None:
+    provider = YouTrackProvider()
+    conn = connection("youtrack")
+    event = ExternalEvent(
+        connection_id=conn.id,
+        provider_delivery_id="delivery-youtrack-priority",
+        event_type="issueUpdated",
+        payload={
+            "id": "AIAT-3",
+            "project": {"id": "0-1", "shortName": "AIAT"},
+            "updatedBy": {"login": "admin"},
+            "changedFields": [
+                {
+                    "name": "Priority",
+                    "oldValue": {"name": "Critical", "presentation": "Critical"},
+                    "value": {"name": "high", "presentation": "high"},
+                }
+            ],
+            "updated": 1785805191744,
+        },
+        verified=True,
+    )
+
+    command = provider.normalize_webhook(event)
+
+    assert command is not None
+    assert command.external_id == "AIAT-3"
+    assert command.fields == {"priority": "high"}
+    assert command.actor is not None
+    assert command.actor.provider_login == "admin"
+
+
 def test_lifecycle_digest_excludes_execution_status_but_covers_operations() -> None:
     from datetime import UTC, datetime, timedelta
+
     from mas_core.integrations.contracts import LifecyclePlanStatus, PMLifecycleTransitionPlan
 
     now = datetime(2026, 7, 29, tzinfo=UTC)

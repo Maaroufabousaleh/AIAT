@@ -1485,16 +1485,48 @@ class YouTrackProvider:
                 if source in issue:
                     value = issue[source]
                     fields[target] = value.get("name") if isinstance(value, dict) else value
-            # Webhook Triggers payloads expose AIAT's stable revision marker in
-            # changedFields rather than customFields.  Preserve only the
-            # marker metadata needed to recognize an outbound echo; arbitrary
-            # provider fields remain evidence and never become authorization.
+            # Webhook Triggers payloads expose changed values in
+            # ``changedFields`` rather than always including the current field
+            # at the issue root.  Normalize the bounded command vocabulary
+            # from that provider shape while retaining only the stable
+            # provider fields that the control plane can authorize.
             changed_fields = issue.get("changedFields") or payload.get("changedFields")
             if isinstance(changed_fields, list):
+                changed_business_fields: set[str] = set()
                 for changed in changed_fields:
-                    if isinstance(changed, dict) and str(changed.get("name") or "") == "AIAT Revision":
-                        if changed.get("value") is not None:
-                            fields["_aiat_marker_revision"] = changed.get("value")
+                    if not isinstance(changed, dict):
+                        continue
+                    name = str(changed.get("name") or "").strip().lower()
+                    value = changed.get("value")
+                    if name == "aiat revision":
+                        if value is not None:
+                            fields["_aiat_marker_revision"] = value
+                    elif name == "priority":
+                        changed_business_fields.add("priority")
+                        fields["priority"] = (
+                            value.get("name")
+                            if isinstance(value, dict)
+                            else value
+                        )
+                    elif name == "summary":
+                        changed_business_fields.add("title")
+                        fields["title"] = value
+                    elif name == "description":
+                        changed_business_fields.add("description")
+                        fields["description"] = value
+                    elif name == "status":
+                        changed_business_fields.add("status")
+                        fields["status"] = (
+                            value.get("name")
+                            if isinstance(value, dict)
+                            else value
+                        )
+                if changed_business_fields:
+                    fields = {
+                        key: value
+                        for key, value in fields.items()
+                        if key.startswith("_") or key in changed_business_fields
+                    }
             actor_data = issue.get("updatedBy") or issue.get("reporter")
         comment_data = payload.get("comment")
         if not isinstance(comment_data, dict):
