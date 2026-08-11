@@ -60,7 +60,8 @@ evidence-detail refresh retention (`6c52552`), and governance read-surface
 stale/retry recovery (`52de581`), and System Control stale/retry recovery
 (`f445c17`), Projects list stale/retry recovery (`d3482ab`), Tools catalogue
 stale/retry recovery (`5f4b0eb`), and dead-letter queue stale/retry recovery
-(`823fa6d`), each with separate
+(`823fa6d`), and credentials metadata stale/retry recovery (`970f09c`), each
+with separate
 documentation updates. The static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain
