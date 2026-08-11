@@ -1309,6 +1309,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "get_artifact_evidence_artifacts__artifact_id__get": {
+    method: "GET";
+    path: "/artifacts/{artifact_id}";
+    parameters: {
+      "path:artifact_id": number;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "list_capabilities_capabilities_get": {
     method: "GET";
     path: "/capabilities";
@@ -4499,6 +4512,19 @@ export type OrchestratorApiOperations = {
       "200": Array<{
   [key: string]: string;
 }>;
+    };
+  };
+  "get_usage_event_evidence_usage_events__event_id__get": {
+    method: "GET";
+    path: "/usage/events/{event_id}";
+    parameters: {
+      "path:event_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
     };
   };
   "chat_completions_v1_chat_completions_post": {

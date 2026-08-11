@@ -21,6 +21,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -4281,6 +4282,17 @@ async def list_project_artifacts(
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
 
 
+@app.get("/artifacts/{artifact_id}")
+async def get_artifact_evidence(artifact_id: int, request: Request) -> dict[str, Any]:
+    """Return operator-safe scalar metadata for one artifact citation."""
+
+    _require_operator_identity(request)
+    artifact = await _storage().get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(404, f"Artifact {artifact_id} not found")
+    return _serialize_safe_scalars(artifact, _ARTIFACT_EVIDENCE_KEYS)
+
+
 @app.get("/observability/traces/{trace_id}", response_model=TraceEvidence)
 async def get_trace_evidence(
     trace_id: str,
@@ -4466,6 +4478,17 @@ async def list_project_usage_events(
             offset=offset,
         )
     ]
+
+
+@app.get("/usage/events/{event_id}")
+async def get_usage_event_evidence(event_id: UUID, request: Request) -> dict[str, Any]:
+    """Return operator-safe scalar metadata for one usage-event citation."""
+
+    _require_operator_identity(request)
+    event = await _storage().get_project_usage_event(event_id)
+    if event is None:
+        raise HTTPException(404, f"Usage event {event_id} not found")
+    return _serialize_safe_scalars(event, _USAGE_EVIDENCE_KEYS)
 
 
 @app.post("/projects/{project_id}/artifacts", status_code=201)
@@ -12738,6 +12761,59 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════════════
 # Utilities
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+_ARTIFACT_EVIDENCE_KEYS = frozenset(
+    {"id", "agent_id", "path", "sha256", "size_bytes", "created_at"}
+)
+_USAGE_EVIDENCE_KEYS = frozenset(
+    {
+        "id",
+        "project_id",
+        "company_id",
+        "run_id",
+        "worker_id",
+        "event_type",
+        "agent_id",
+        "team_id",
+        "model",
+        "provider_id",
+        "tool_name",
+        "status",
+        "prompt_tokens",
+        "completion_tokens",
+        "cost_usd",
+        "duration_ms",
+        "trace_id",
+        "span_id",
+        "occurred_at",
+    }
+)
+
+
+def _serialize_safe_scalars(row: dict[str, Any], allowed_keys: frozenset[str]) -> dict[str, Any]:
+    """Project a row to bounded scalar evidence without nested payloads."""
+
+    result: dict[str, Any] = {}
+    for key in sorted(allowed_keys):
+        if key not in row:
+            continue
+        value = row[key]
+        if value is None:
+            result[key] = None
+        elif isinstance(value, UUID):
+            result[key] = str(value)
+        elif isinstance(value, datetime):
+            result[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            result[key] = str(value)
+        elif isinstance(value, str):
+            result[key] = value[:256]
+        elif isinstance(value, (bool, int)):
+            result[key] = value
+        elif isinstance(value, float) and math.isfinite(value):
+            result[key] = value
+    return result
 
 
 def _serialize(obj: dict[str, Any]) -> dict[str, Any]:

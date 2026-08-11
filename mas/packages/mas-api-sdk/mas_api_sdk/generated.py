@@ -1041,6 +1041,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='AgentProfileObservationRequest',
         response_types=('HTTPValidationError',),
     ),
+    'get_artifact_evidence_artifacts__artifact_id__get': ApiOperation(
+        operation_id='get_artifact_evidence_artifacts__artifact_id__get',
+        method='GET',
+        path='/artifacts/{artifact_id}',
+        path_params=('artifact_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'list_capabilities_capabilities_get': ApiOperation(
         operation_id='list_capabilities_capabilities_get',
         method='GET',
@@ -3255,6 +3264,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=(),
     ),
+    'get_usage_event_evidence_usage_events__event_id__get': ApiOperation(
+        operation_id='get_usage_event_evidence_usage_events__event_id__get',
+        method='GET',
+        path='/usage/events/{event_id}',
+        path_params=('event_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'chat_completions_v1_chat_completions_post': ApiOperation(
         operation_id='chat_completions_v1_chat_completions_post',
         method='POST',
@@ -3411,7 +3429,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 130
-OPERATION_COUNT = 266
+OPERATION_COUNT = 268
 
 __all__ = [
     "ApiOperation",

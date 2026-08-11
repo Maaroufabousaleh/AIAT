@@ -5527,6 +5527,13 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
+    async def get_project_usage_event(self, event_id: UUID) -> dict[str, Any] | None:
+        """Fetch one durable usage event by its canonical evidence ID."""
+        query = t.project_usage_events.select().where(t.project_usage_events.c.id == event_id)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
     async def list_pm_slo_observations(
         self,
         *,

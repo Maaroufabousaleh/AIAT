@@ -29,11 +29,75 @@ test.describe("CEO evidence detail", () => {
   });
 
   test("keeps unsupported kinds as identity-only citations", async ({ page }) => {
-    await authenticate(page, "/evidence/artifact/artifact-123");
+    await authenticate(page, "/evidence/company/company-123");
 
-    await expect(page.getByTestId("ceo-evidence-record")).toContainText("artifact-123");
+    await expect(page.getByTestId("ceo-evidence-record")).toContainText("company-123");
     await expect(page.getByTestId("ceo-evidence-detail")).toHaveCount(0);
     await expect(page.getByTestId("ceo-evidence-canonical-link")).toBeVisible();
+  });
+
+  test("renders artifact scalars without nested metadata", async ({ page }) => {
+    await page.route("**/api/evidence/artifact/42", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema_version: "aiat.evidence-detail.v1",
+          kind: "artifact",
+          id: "42",
+          source: "control-plane",
+          record: {
+            id: 42,
+            agent_id: "requirements_writer",
+            path: "project-1/requirements.md",
+            sha256: "a".repeat(64),
+            size_bytes: 128,
+          },
+        }),
+      });
+    });
+
+    await authenticate(page, "/evidence/artifact/42");
+
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("requirements_writer");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("requirements.md");
+    await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("metadata");
+    await expect(page.getByTestId("ceo-evidence-canonical-link")).toHaveAttribute(
+      "href",
+      "/projects?evidence_kind=artifact&evidence_id=42",
+    );
+  });
+
+  test("renders usage scalars without pricing or resource payloads", async ({ page }) => {
+    const usageId = "00000000-0000-4000-a000-000000000099";
+    await page.route(`**/api/evidence/usage/${usageId}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema_version: "aiat.evidence-detail.v1",
+          kind: "usage",
+          id: usageId,
+          source: "control-plane",
+          record: {
+            id: usageId,
+            event_type: "llm",
+            model: "local-model",
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cost_usd: "0.01250000",
+            duration_ms: "42.500",
+          },
+        }),
+      });
+    });
+
+    await authenticate(page, `/evidence/usage/${usageId}`);
+
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("local-model");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("0.01250000");
+    await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("pricing snapshot");
+    await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("resource json");
   });
 
   test("projects the bounded trace summary without rendering trace items", async ({ page }) => {

@@ -46,6 +46,8 @@ const DETAIL_KINDS = new Set([
   "dead_letter",
   "trace",
   "runtime",
+  "artifact",
+  "usage",
 ]);
 
 function canonicalEvidenceHref(kind: string, id: string): string | null {
