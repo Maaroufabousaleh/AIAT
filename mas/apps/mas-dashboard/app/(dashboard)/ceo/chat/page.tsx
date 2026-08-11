@@ -12,6 +12,7 @@ import {
   Command,
   Eraser,
   Loader2,
+  RefreshCw,
   Send,
   Sparkles,
   Wifi,
@@ -26,6 +27,7 @@ import {
   useCeoStream,
   type FeedEntry,
 } from "@/lib/ceo-feed";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 type ActiveRequest = {
   id: string;
@@ -223,7 +225,15 @@ export default function CeoChatPage() {
   const autoScrollRef = useRef(true);
   const initialScrollRef = useRef(false);
 
-  const { entries, connected, clear, append } = useCeoStream(
+  const {
+    entries,
+    connected,
+    stale: streamStale,
+    error: streamError,
+    retry: retryStream,
+    clear,
+    append,
+  } = useCeoStream(
     "exec_ceo",
     isChatEntry,
     100,
@@ -439,7 +449,7 @@ export default function CeoChatPage() {
             <div className="mt-0.5 flex items-center gap-2 text-xs">
               <span className={clsx("inline-flex items-center gap-1.5", connected ? "text-emerald-300" : "text-amber-300")} aria-live="polite">
                 {connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-                {connected ? "Live" : "Reconnecting"}
+                {connected ? "Live" : streamStale ? "Last known" : "Reconnecting"}
               </span>
               <span className="text-slate-600">•</span>
               <span className="truncate text-slate-400">Ask for an outcome; the CEO handles routing and details.</span>
@@ -461,6 +471,28 @@ export default function CeoChatPage() {
       <div className="min-h-0 flex-1 p-3 md:p-4">
         <div className="mx-auto grid h-full max-w-[1600px] min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
           <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/55 shadow-2xl shadow-black/20">
+            {streamError && (
+              <ErrorBanner
+                tone={streamStale ? "warning" : "error"}
+                title={streamStale ? "Showing last known CEO conversation" : "CEO conversation unavailable"}
+                className="mx-3 mt-3 sm:mx-4"
+                action={(
+                  <button
+                    type="button"
+                    onClick={retryStream}
+                    aria-label="Retry CEO conversation"
+                    className="inline-flex min-h-11 items-center gap-2 rounded-md border border-current px-3 py-2 text-xs font-medium transition-colors hover:bg-white/10"
+                  >
+                    <RefreshCw size={14} aria-hidden="true" />
+                    Retry
+                  </button>
+                )}
+              >
+                {streamStale
+                  ? `${streamError}. Retained messages remain visible while the conversation reconnects.`
+                  : `${streamError}. Retry to reconnect the CEO conversation.`}
+              </ErrorBanner>
+            )}
             <div ref={transcriptRef} onScroll={handleTranscriptScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 md:px-8" aria-label="CEO conversation" aria-live="polite">
               {groupedEntries.length === 0 ? (
                 <div className="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center py-12 text-center">
@@ -674,8 +706,8 @@ export default function CeoChatPage() {
               <div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles size={15} className="text-cyan-300" /> Ask for outcomes</div>
               <p className="mt-2 text-xs leading-5 text-slate-400">You do not need to choose teams, tools, or routes. The CEO resolves those details and reports what changed.</p>
               <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-950/50 px-3 py-2 text-[11px] text-slate-400">
-                {connected ? <CheckCircle2 size={13} className="text-emerald-300" /> : <Loader2 size={13} className="animate-spin text-amber-300" />}
-                {connected ? "Real-time control stream connected" : "Restoring the control stream"}
+                {connected ? <CheckCircle2 size={13} className="text-emerald-300" /> : streamStale ? <WifiOff size={13} className="text-amber-300" /> : <Loader2 size={13} className="animate-spin text-amber-300" />}
+                {connected ? "Real-time control stream connected" : streamStale ? "Last known conversation retained" : "Restoring the control stream"}
               </div>
             </div>
 
