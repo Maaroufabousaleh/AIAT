@@ -310,7 +310,7 @@ Required outcomes:
 - [x] `scripts/mas-ctl` provides authenticated `status`, `diagnostics`, and
   fail-closed `bootstrap` commands plus explicit `resume`/`shutdown` actions;
   it does not invoke container lifecycle operations or expose upstream error
-  bodies (`380daf5`).
+  bodies (`380daf5`; executable mode `f8df50e`).
 
 **Exit:** no Critical defects and every P0 gate has current reproducible evidence.
 

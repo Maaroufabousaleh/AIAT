@@ -193,7 +193,8 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   `diagnostics`, and a fail-closed `bootstrap` preflight, plus explicit
   authenticated `resume`/`shutdown` commands. The wrapper is independent of
   container lifecycle, accepts an operator key from an argument or environment,
-  and never prints upstream error bodies (`380daf5`).
+  and never prints upstream error bodies (`380daf5`; executable mode
+  `f8df50e`).
 
 ### Evidence
 
