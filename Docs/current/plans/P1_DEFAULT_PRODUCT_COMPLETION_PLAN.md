@@ -311,6 +311,7 @@ external client-language SDK compatibility yet.
 - [x] Preserve the canonical System Control runtime status on refresh failure, label it as the last known system status, and expose a retry action without hiding the retained status; `e2e/system-status-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live runtime evidence remains separate (`f445c17`).
 - [x] Preserve the paired Projects list project/active-flow read on refresh failure, label the last known list, keep create/action errors separate, and expose a retry action; `e2e/projects-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live project evidence remains separate (`d3482ab`).
 - [x] Preserve the Tools catalogue definitions and circuit-breaker summaries on refresh failure, label the last known catalogue, keep the catalogue visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/tools-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live tool evidence remains separate (`5f4b0eb`).
+- [x] Preserve dead-letter queue messages and replay context on refresh failure, label the last known queue, keep cards visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/dlq-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live DLQ evidence remains separate (`823fa6d`).
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
 - [x] Make the project flow selector read the active catalogue with `cache: "no-store"` so newly created/versioned flows are selectable immediately; the one-test flow-builder golden path and the aggregate local dashboard matrix pass again.
 - [x] Add the dashboard theme preference foundation (`5e3cc13`): persisted `system`/`light`/`dark` selection, no-flash bootstrap, system media changes, light-palette migration tokens, compact mobile control, and reduced-motion defaults; source-built focused Playwright coverage passes 2/2 while full page parity remains open.
@@ -319,18 +320,18 @@ external client-language SDK compatibility yet.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
   visualization, identity tables, PM integrations, project list/detail, the
-  combined governance read surface, System Control, and the Tools catalogue now
-  expose explicit stale/partial/conflict endpoint failures and retryable
-  first-load/offline states; broader page-specific denial and rollback coverage
-  remains.
+  combined governance read surface, System Control, Tools catalogue, and
+  dead-letter queue now expose explicit stale/partial/conflict endpoint failures
+  and retryable first-load/offline states; broader page-specific denial and
+  rollback coverage remains.
 - Deep-link statuses to evidence, traces, decisions, and recovery; the CEO
   citation route is implemented, including bounded tool/model/integration/
   artifact/usage/worker-run/runtime/trace links. Resource-specific detail now
   covers all fourteen canonical kinds through scalar-only reads and retains
   safe detail across a failed refresh; governance, System Control, and Projects
-  list and Tools catalogue read-state recovery are also covered by focused 1/1
-  source-built tests; broader stale/offline recovery and golden-path coverage
-  remain.
+  list, Tools catalogue, and dead-letter queue read-state recovery are also
+  covered by focused 1/1 source-built tests; broader stale/offline recovery and
+  golden-path coverage remain.
 - [x] Run the stable local Compose Playwright matrix: 34/35 pass with one
   explicit safe DLQ-fixture skip, including shell skip-link/mobile focus
   recovery, identity stale-record/retry state, PM integration conflict/stale
