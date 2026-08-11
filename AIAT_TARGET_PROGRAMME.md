@@ -1175,7 +1175,7 @@ The programme is organised around completing and hardening the existing architec
    deep links, and incident views.
 2. Automated backup/restore and disaster-recovery drills.
 3. Native Linux browser, sandbox, and production Compose certification pipeline.
-4. Mobile/accessibility/theme completion and the remaining dashboard stale/offline/conflict states. Identity, PM integration, project-list/detail, system-visualisation, evidence-detail, governance, System Control, Tools catalogue, dead-letter queue, credentials, Metrics, and Flows read surfaces now have focused stale/retry coverage; native-Linux/page-level visual and broader recovery evidence remain open.
+4. Mobile/accessibility/theme completion and the remaining dashboard stale/offline/conflict states. Identity, PM integration, project-list/detail, system-visualisation, evidence-detail, governance, System Control, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, and Container Logs read surfaces now have focused stale/retry coverage; native-Linux/page-level visual and broader recovery evidence remain open.
 5. Provider-neutral PM/SCM adapter certification UI and provider-specific live
    conformance evidence (the shared fixture kit is implemented).
 
