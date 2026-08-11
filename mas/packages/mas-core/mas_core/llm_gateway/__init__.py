@@ -5,7 +5,7 @@ Exports
 -------
 LLMGatewayClient      Async HTTP client with automatic provider routing.
                       Supports chat-completions, responses, and CLI API styles.
-                      Retry: exponential backoff on 429 / 5xx.
+                      Retry: exponential backoff on transient 408/409/412/425/429/5xx.
                       Tracks token usage per call; feeds BudgetTracker.
                       Continuous audit, metrics, and rate-limit discovery.
 LLMConfig             Pydantic settings model (url, default_model, timeout_s).
@@ -23,6 +23,7 @@ AuditEvent            Single auditable LLM gateway call.
 AuditLevel            Detail level for audit capture.
 MetricsCollector      Real-time sliding-window metrics per model.
 RateLimitTracker      Empirical rate-limit discovery from 429 observations.
+                      Also persists transient model/provider cooldown state.
 SmartRouter           Metrics-enhanced intelligent model selection.
 ModelSelector         Task-aware automatic model selection with fallback chains.
 ConversationContext   Stateful multi-turn conversation context manager.
@@ -33,6 +34,7 @@ ObservabilityPersistence  Persist audit/metrics/rate-limit data across restarts.
 
 from .audit import AuditEvent, AuditLevel, AuditLog
 from .client import (
+    RETRYABLE_LLM_STATUS_CODES,
     LLMGatewayClient,
     LLMGatewayError,
     LLMRateLimited,
@@ -41,10 +43,18 @@ from .client import (
     _ConversationContext as ConversationContext,
 )
 from .dashboard import DASHBOARD_HTML
+from .default_profiles import (
+    DEFAULT_MODEL_PROFILE_SPECS,
+    PROFILE_BOOTSTRAP_SCHEMA,
+    ModelProfileSeedSpec,
+    build_registry_model_profile_specs,
+    seed_default_model_profiles,
+    seed_model_profile_specs,
+)
 from .metrics import MetricsCollector
 from .metrics import Window as MetricsWindow
-from .model_selector import ModelSelector
 from .model_profiles import (
+    MODEL_PROFILE_CATALOGUE_SCHEMA,
     ModelPolicyConstraints,
     ModelPolicyLayer,
     ModelProfile,
@@ -55,8 +65,10 @@ from .model_profiles import (
     ModelResolutionSnapshot,
     PrivacyClass,
     RejectedModelCandidate,
+    build_model_profile_catalogue,
 )
 from .model_resolver import ModelProfileResolver, ResolutionResult
+from .model_selector import ModelSelector
 from .models import (
     ChatMessage,
     ChatResponse,
@@ -78,7 +90,7 @@ from .providers import (
 )
 from .providers.api.mistral import MistralModelScanner
 from .providers.cli.copilot import COPILOT_COST_MAP, CopilotModelScanner
-from .rate_limits import ExperimentalLimit, ModelRateLimits, RateLimitTracker
+from .rate_limits import CooldownState, ExperimentalLimit, ModelRateLimits, RateLimitTracker
 from .routes_observability import create_observability_router
 from .smart_router import ModelScore, SmartRouter
 from .thinking import Depth as ThinkingDepth
@@ -88,6 +100,7 @@ __all__ = [
     "LLMGatewayClient",
     "LLMGatewayError",
     "LLMRateLimited",
+    "RETRYABLE_LLM_STATUS_CODES",
     "LLMConfig",
     "ChatMessage",
     "ChatResponse",
@@ -115,11 +128,20 @@ __all__ = [
     "MetricsCollector",
     "MetricsWindow",
     "RateLimitTracker",
+    "CooldownState",
     "ModelRateLimits",
     "ExperimentalLimit",
     "SmartRouter",
     "ModelScore",
     "ModelSelector",
+    "MODEL_PROFILE_CATALOGUE_SCHEMA",
+    "build_model_profile_catalogue",
+    "PROFILE_BOOTSTRAP_SCHEMA",
+    "DEFAULT_MODEL_PROFILE_SPECS",
+    "ModelProfileSeedSpec",
+    "seed_default_model_profiles",
+    "seed_model_profile_specs",
+    "build_registry_model_profile_specs",
     "ModelProfile",
     "ModelProfileVersion",
     "ModelProfileStatus",

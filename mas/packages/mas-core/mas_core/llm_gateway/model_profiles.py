@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class ModelProfileStatus(StrEnum):
@@ -17,6 +19,9 @@ class ModelProfileStatus(StrEnum):
     APPROVED = "approved"
     DEPRECATED = "deprecated"
     BLOCKED = "blocked"
+
+
+MODEL_PROFILE_CATALOGUE_SCHEMA = "aiat.model-profile-catalogue.v1"
 
 
 class PrivacyClass(StrEnum):
@@ -69,7 +74,7 @@ class ModelProfileVersion(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_model_id(self) -> "ModelProfileVersion":
+    def validate_model_id(self) -> ModelProfileVersion:
         if self.exact_model_id.lower() in {"auto", "default", "latest"}:
             raise ValueError("unmanaged model routing values are not valid Model Profiles")
         return self
@@ -122,7 +127,7 @@ class ModelProfile(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_versions(self) -> "ModelProfile":
+    def validate_versions(self) -> ModelProfile:
         if len({version.version for version in self.versions}) != len(self.versions):
             raise ValueError("Model Profile versions must be unique")
         if self.approved_provider_ids:
@@ -140,6 +145,165 @@ class ModelProfile(BaseModel):
             and (version.effective_from is None or version.effective_from <= at)
             and (version.effective_until is None or version.effective_until > at)
         ]
+
+
+def build_model_profile_catalogue(
+    profiles: Iterable[ModelProfile],
+    registry: Any,
+) -> dict[str, Any]:
+    """Build a deterministic registry/profile reconciliation catalogue.
+
+    The provider registry is the available-model declaration; persisted Model
+    Profiles are the governed approval layer. This report keeps those concerns
+    separate: an unprofiled registry model is visible as ``profile_pending``
+    rather than silently becoming an approved route, while a profile version
+    that names an unknown or differently-owned model is retained as a finding.
+
+    No licence or redistribution field participates in this report. It is an
+    operational identity/capability reconciliation surface only.
+    """
+    profile_list = sorted(profiles, key=lambda profile: profile.profile_id)
+    bindings: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    profile_version_count = 0
+    for profile in profile_list:
+        for version in sorted(profile.versions, key=lambda item: item.version):
+            profile_version_count += 1
+            binding = {
+                "profile_id": profile.profile_id,
+                "profile_status": profile.status.value,
+                "version": version.version,
+                "version_status": version.status.value,
+                "provider_id": version.provider_id,
+                "exact_model_id": version.exact_model_id,
+            }
+            bindings.setdefault((version.provider_id, version.exact_model_id), []).append(binding)
+
+    entries: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    covered_version_keys: set[tuple[str, str, str, str]] = set()
+    registry_model_ids: set[str] = set()
+    for model in sorted(registry.list_models(), key=lambda item: (item.provider, item.model_id)):
+        registry_model_ids.add(model.model_id)
+        model_bindings = sorted(
+            bindings.get((model.provider, model.model_id), []),
+            key=lambda item: (item["profile_id"], item["version"]),
+        )
+        for binding in model_bindings:
+            covered_version_keys.add(
+                (
+                    binding["profile_id"],
+                    binding["version"],
+                    binding["provider_id"],
+                    binding["exact_model_id"],
+                )
+            )
+        if not model_bindings:
+            profile_state = "profile_pending"
+        elif any(item["profile_status"] == ModelProfileStatus.APPROVED.value and item["version_status"] == ModelProfileStatus.APPROVED.value for item in model_bindings):
+            profile_state = "approved_profile_present"
+        else:
+            profile_state = "profile_present_not_approved"
+        entries.append(
+            {
+                "model_id": model.model_id,
+                "provider_id": model.provider,
+                "api_style": model.api_style.value,
+                "description": model.description,
+                "profile_state": profile_state,
+                "profile_bindings": model_bindings,
+                "capabilities": {
+                    **model.capabilities.model_dump(mode="json"),
+                    "tool_calling": model.supports_tools,
+                    "streaming": model.supports_streaming,
+                },
+                "max_context_tokens": model.max_context_tokens,
+                "cost_per_1m_input": model.cost_per_1m_input,
+                "cost_per_1m_output": model.cost_per_1m_output,
+                "best_for": sorted(model.best_for),
+                "limits": sorted(model.limits),
+            }
+        )
+
+    # Keep stale/unknown profile versions visible rather than dropping them.
+    for profile in profile_list:
+        for version in sorted(profile.versions, key=lambda item: item.version):
+            key = (profile.profile_id, version.version, version.provider_id, version.exact_model_id)
+            if key in covered_version_keys:
+                continue
+            registered_provider_ids = sorted(
+                {
+                    item.provider
+                    for item in registry.list_models()
+                    if item.model_id == version.exact_model_id
+                }
+            )
+            finding_code = (
+                "PROFILE_PROVIDER_MISMATCH"
+                if registered_provider_ids
+                else "PROFILE_MODEL_NOT_REGISTERED"
+            )
+            findings.append(
+                {
+                    "code": finding_code,
+                    "profile_id": profile.profile_id,
+                    "version": version.version,
+                    "provider_id": version.provider_id,
+                    "exact_model_id": version.exact_model_id,
+                    "registered_provider_ids": registered_provider_ids,
+                }
+            )
+            entries.append(
+                {
+                    "model_id": version.exact_model_id,
+                    "provider_id": version.provider_id,
+                    "api_style": None,
+                    "description": "Persisted Model Profile version is not present in the runtime registry",
+                    "profile_state": "profile_not_registered",
+                    "profile_bindings": [
+                        {
+                            "profile_id": profile.profile_id,
+                            "profile_status": profile.status.value,
+                            "version": version.version,
+                            "version_status": version.status.value,
+                            "provider_id": version.provider_id,
+                            "exact_model_id": version.exact_model_id,
+                        }
+                    ],
+                    "capabilities": {},
+                    "max_context_tokens": version.context_window,
+                    "cost_per_1m_input": version.cost_per_1k_input_usd * 1000,
+                    "cost_per_1m_output": version.cost_per_1k_output_usd * 1000,
+                    "best_for": [],
+                    "limits": [],
+                }
+            )
+
+    entries.sort(key=lambda item: (item["provider_id"], item["model_id"], item["profile_state"]))
+    findings.sort(key=lambda item: (item["code"], item["provider_id"], item["exact_model_id"], item["profile_id"], item["version"]))
+    duplicate_bindings = sorted(
+        [
+            {
+                "provider_id": provider_id,
+                "exact_model_id": exact_model_id,
+                "binding_count": len(items),
+                "profiles": [f"{item['profile_id']}:{item['version']}" for item in items],
+            }
+            for (provider_id, exact_model_id), items in bindings.items()
+            if len(items) > 1
+        ],
+        key=lambda item: (item["provider_id"], item["exact_model_id"]),
+    )
+    return {
+        "schema_version": MODEL_PROFILE_CATALOGUE_SCHEMA,
+        "registry_model_count": len(registry_model_ids),
+        "profile_count": len(profile_list),
+        "profile_version_count": profile_version_count,
+        "covered_profile_version_count": len(covered_version_keys),
+        "profile_pending_model_count": sum(item["profile_state"] == "profile_pending" for item in entries),
+        "duplicate_profile_bindings": duplicate_bindings,
+        "findings": findings,
+        "entries": entries,
+    }
 
 
 class ModelPolicyConstraints(BaseModel):
@@ -165,7 +329,7 @@ class ModelPolicyConstraints(BaseModel):
     require_vision: bool = False
     require_reasoning: bool = False
 
-    def intersect(self, other: "ModelPolicyConstraints") -> "ModelPolicyConstraints":
+    def intersect(self, other: ModelPolicyConstraints) -> ModelPolicyConstraints:
         def intersection(left: frozenset[str] | None, right: frozenset[str] | None) -> frozenset[str] | None:
             if left is None:
                 return right
@@ -232,7 +396,7 @@ class ModelResolutionRequest(BaseModel):
     requested_raw_model_id: str | None = None
 
     @model_validator(mode="after")
-    def reject_raw_route(self) -> "ModelResolutionRequest":
+    def reject_raw_route(self) -> ModelResolutionRequest:
         if self.requested_raw_model_id:
             raise ValueError("raw model IDs are not accepted; request a governed Model Profile")
         if not self.task_type.strip():

@@ -381,6 +381,36 @@ class TestRateLimitTracker:
         db = tracker.dashboard()
         assert "models" in db
         assert "m1" in db["models"]
+        assert "cooldowns" in db
+
+    def test_transient_cooldown_backoff_and_success_recovery(self):
+        tracker = RateLimitTracker(cooldown_base_s=10, cooldown_max_s=40)
+        now = 1_000.0
+
+        tracker.record_transient_failure(
+            "m1", status_code=503, reason="upstream unavailable", timestamp=now
+        )
+        state = tracker.cooldown_status("m1", now=now + 1)
+        assert state["in_cooldown"] is True
+        assert state["cooldown_remaining_s"] == 9.0
+
+        # A second failure doubles the backoff, bounded by cooldown_max_s.
+        tracker.record_transient_failure("m1", status_code=503, timestamp=now + 2)
+        state = tracker.cooldown_status("m1", now=now + 3)
+        assert state["cooldown_remaining_s"] == 19.0
+
+        tracker.record_success("m1", timestamp=now + 4)
+        assert tracker.is_in_cooldown("m1", now=now + 4) is False
+
+    def test_provider_cooldown_requires_two_failures(self):
+        tracker = RateLimitTracker(cooldown_base_s=10)
+        now = 2_000.0
+        tracker.record_transient_failure("m1", provider="p", timestamp=now)
+        assert tracker.is_in_cooldown("m1", provider="p", now=now + 1)
+        assert tracker.cooldown_status("m2", provider="p", now=now + 1)["in_cooldown"] is False
+
+        tracker.record_transient_failure("m2", provider="p", timestamp=now + 1)
+        assert tracker.cooldown_status("m3", provider="p", now=now + 2)["in_cooldown"] is True
 
     def test_reset_model(self):
         tracker = RateLimitTracker()
@@ -461,6 +491,15 @@ class TestSmartRouter:
         assert router.should_avoid("bad", threshold=score_bad.total_score + 0.01) is True
         # should_avoid should NOT trigger for the good model at same threshold
         assert router.should_avoid("good", threshold=score_bad.total_score + 0.01) is False
+
+    def test_cooldown_candidates_are_not_selected(self):
+        mc, rl, router = self._setup()
+        rl.record_transient_failure("bad", status_code=503)
+        mc.record_request(model="good", status="success", latency_s=0.5)
+        ranking = router.rank_models(["bad", "good"])
+        assert ranking[0].model == "good"
+        assert ranking[1].available is False
+        assert router.pick_best(["bad", "good"]) == "good"
 
     def test_dashboard(self):
         mc, rl, router = self._setup()

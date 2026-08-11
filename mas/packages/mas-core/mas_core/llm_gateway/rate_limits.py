@@ -46,9 +46,12 @@ import math
 import statistics
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +185,53 @@ class ModelRateLimits:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint/provider transient-failure cooldowns
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CooldownState:
+    """Bounded transient-failure state for one model or provider scope.
+
+    Cooldowns are an operational routing aid, not an availability or licence
+    gate. They only apply to transient provider failures and are cleared by
+    the next successful request.
+    """
+
+    key: str
+    failure_count: int = 0
+    cooldown_until: float | None = None
+    last_failure_at: float | None = None
+    last_success_at: float | None = None
+    last_status_code: int | None = None
+    last_reason: str = ""
+
+    def remaining(self, now: float | None = None) -> float:
+        """Return the active cooldown in seconds, or ``0`` when available."""
+        if self.cooldown_until is None:
+            return 0.0
+        now = time.time() if now is None else now
+        return max(0.0, self.cooldown_until - now)
+
+    def active(self, now: float | None = None) -> bool:
+        return self.remaining(now) > 0.0
+
+    def to_dict(self, now: float | None = None) -> dict[str, Any]:
+        remaining = self.remaining(now)
+        return {
+            "key": self.key,
+            "failure_count": self.failure_count,
+            "cooldown_until": self.cooldown_until,
+            "cooldown_remaining_s": round(remaining, 3),
+            "in_cooldown": remaining > 0.0,
+            "last_failure_at": self.last_failure_at,
+            "last_success_at": self.last_success_at,
+            "last_status_code": self.last_status_code,
+            "last_reason": self.last_reason,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Success event buffer (for looking back on 429)
 # ---------------------------------------------------------------------------
 
@@ -199,7 +249,7 @@ class _SuccessEvent:
 
 
 class RateLimitTracker:
-    """Discovers empirical rate limits by observing 429 responses.
+    """Discovers empirical limits and steers around transient endpoint failures.
 
     Parameters
     ----------
@@ -209,6 +259,15 @@ class RateLimitTracker:
         ``{"gpt-4o": {"rpm": 500, "tpm": 30_000}}``.
     max_history:
         Maximum number of success events to keep per model (ring buffer).
+    cooldown_base_s / cooldown_max_s:
+        Exponential backoff bounds for transient model failures.
+    cooldown_failure_window_s:
+        Idle time after which consecutive failure backoff starts over.
+    provider_cooldown_threshold:
+        Number of transient failures in one provider scope before the
+        provider-wide cooldown becomes active. Model scopes cool down after
+        the first failure; provider scopes require a second failure so one
+        isolated model outage does not suppress every sibling model.
     """
 
     def __init__(
@@ -216,8 +275,24 @@ class RateLimitTracker:
         *,
         documented_limits: dict[str, dict[str, int]] | None = None,
         max_history: int = 100_000,
+        cooldown_base_s: float = 15.0,
+        cooldown_max_s: float = 300.0,
+        cooldown_failure_window_s: float = 300.0,
+        provider_cooldown_threshold: int = 2,
     ) -> None:
         self._max_history = max_history
+        if cooldown_base_s <= 0:
+            raise ValueError("cooldown_base_s must be positive")
+        if cooldown_max_s < cooldown_base_s:
+            raise ValueError("cooldown_max_s must be >= cooldown_base_s")
+        if cooldown_failure_window_s <= 0:
+            raise ValueError("cooldown_failure_window_s must be positive")
+        if provider_cooldown_threshold < 1:
+            raise ValueError("provider_cooldown_threshold must be >= 1")
+        self._cooldown_base_s = float(cooldown_base_s)
+        self._cooldown_max_s = float(cooldown_max_s)
+        self._cooldown_failure_window_s = float(cooldown_failure_window_s)
+        self._provider_cooldown_threshold = int(provider_cooldown_threshold)
         # {model: deque[_SuccessEvent]}
         self._success_log: dict[str, deque[_SuccessEvent]] = defaultdict(
             lambda: deque(maxlen=max_history)
@@ -228,6 +303,8 @@ class RateLimitTracker:
         self._documented: dict[str, dict[str, int]] = documented_limits or {}
         # Persistence sinks — called after each success/rate_limit event
         self._sinks: list[Callable] = []
+        # {model-id | provider:<provider-id>: CooldownState}
+        self._cooldowns: dict[str, CooldownState] = {}
 
     def _ensure_model(self, model: str) -> ModelRateLimits:
         if model not in self._limits:
@@ -269,16 +346,194 @@ class RateLimitTracker:
         model: str,
         tokens: int = 0,
         timestamp: float | None = None,
+        provider: str | None = None,
     ) -> None:
         """Record a successful LLM request."""
         ts = timestamp or time.time()
         self._success_log[model].append(_SuccessEvent(timestamp=ts, tokens=tokens))
         self._ensure_model(model)
+        self._clear_cooldown(model, ts)
+        if provider:
+            self._clear_cooldown(self.provider_key(provider), ts)
         for sink in self._sinks:
             try:
                 sink(model, "success")
             except Exception:
                 logger.debug("RateLimitTracker sink error", exc_info=True)
+
+    @staticmethod
+    def provider_key(provider: str) -> str:
+        """Return the namespaced key used for provider-wide health state."""
+        return f"provider:{provider}"
+
+    def _clear_cooldown(self, key: str, timestamp: float) -> None:
+        state = self._cooldowns.get(key)
+        if state is None:
+            return
+        state.failure_count = 0
+        state.cooldown_until = None
+        state.last_success_at = timestamp
+
+    def _record_cooldown(
+        self,
+        key: str,
+        *,
+        status_code: int,
+        reason: str,
+        timestamp: float,
+        threshold: int,
+    ) -> CooldownState:
+        state = self._cooldowns.setdefault(key, CooldownState(key=key))
+        if (
+            state.last_failure_at is None
+            or timestamp - state.last_failure_at > self._cooldown_failure_window_s
+        ):
+            state.failure_count = 0
+        state.failure_count += 1
+        state.last_failure_at = timestamp
+        state.last_status_code = status_code
+        state.last_reason = reason[:240]
+        if state.failure_count >= threshold:
+            exponent = state.failure_count - threshold
+            duration = min(self._cooldown_max_s, self._cooldown_base_s * (2**exponent))
+            state.cooldown_until = timestamp + duration
+        else:
+            state.cooldown_until = None
+        return state
+
+    def record_transient_failure(
+        self,
+        model: str,
+        *,
+        status_code: int = 0,
+        reason: str = "",
+        provider: str | None = None,
+        timestamp: float | None = None,
+        retryable: bool = True,
+    ) -> None:
+        """Record a transient failure and arm model/provider cooldowns.
+
+        Permanent client/configuration failures are deliberately ignored by
+        this method when ``retryable`` is false. They remain visible in the
+        normal audit and metrics streams but do not silently turn into a
+        routing block.
+        """
+        if not retryable:
+            return
+        ts = time.time() if timestamp is None else timestamp
+        self._record_cooldown(
+            model,
+            status_code=status_code,
+            reason=reason,
+            timestamp=ts,
+            threshold=1,
+        )
+        if provider:
+            self._record_cooldown(
+                self.provider_key(provider),
+                status_code=status_code,
+                reason=reason,
+                timestamp=ts,
+                threshold=self._provider_cooldown_threshold,
+            )
+        for sink in self._sinks:
+            try:
+                sink(model, "transient_failure")
+            except Exception:
+                logger.debug("RateLimitTracker sink error", exc_info=True)
+
+    def cooldown_status(
+        self,
+        model: str,
+        *,
+        provider: str | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Return deterministic model/provider cooldown evidence."""
+        now = time.time() if now is None else now
+        scopes: list[dict[str, Any]] = []
+        for key in (model, self.provider_key(provider) if provider else None):
+            if not key:
+                continue
+            state = self._cooldowns.get(key)
+            if state is not None:
+                scopes.append(state.to_dict(now))
+        active = [scope for scope in scopes if scope["in_cooldown"]]
+        selected = min(active, key=lambda item: item["cooldown_remaining_s"]) if active else None
+        return {
+            "model": model,
+            "provider": provider,
+            "in_cooldown": bool(active),
+            "cooldown_remaining_s": selected["cooldown_remaining_s"] if selected else 0.0,
+            "scope": selected["key"] if selected else None,
+            "scopes": scopes,
+        }
+
+    def is_in_cooldown(
+        self,
+        model: str,
+        *,
+        provider: str | None = None,
+        now: float | None = None,
+    ) -> bool:
+        """Return whether model or its provider is currently cooling down."""
+        return bool(self.cooldown_status(model, provider=provider, now=now)["in_cooldown"])
+
+    def available_models(
+        self,
+        models: list[str],
+        *,
+        provider_for_model: Callable[[str], str | None] | None = None,
+        now: float | None = None,
+    ) -> list[str]:
+        """Filter a candidate list without changing its deterministic order."""
+        return [
+            model
+            for model in models
+            if not self.is_in_cooldown(
+                model,
+                provider=provider_for_model(model) if provider_for_model else None,
+                now=now,
+            )
+        ]
+
+    def earliest_available_model(
+        self,
+        models: list[str],
+        *,
+        provider_for_model: Callable[[str], str | None] | None = None,
+        now: float | None = None,
+    ) -> str | None:
+        """Return the candidate whose cooldown expires first for probing."""
+        now = time.time() if now is None else now
+        if not models:
+            return None
+        ranked = sorted(
+            models,
+            key=lambda model: self.cooldown_status(
+                model,
+                provider=provider_for_model(model) if provider_for_model else None,
+                now=now,
+            )["cooldown_remaining_s"],
+        )
+        return ranked[0]
+
+    def cooldown_dashboard(self, now: float | None = None) -> dict[str, Any]:
+        """Return model/provider cooldown evidence for operator dashboards."""
+        now = time.time() if now is None else now
+        return {
+            "timestamp": now,
+            "configuration": {
+                "base_cooldown_s": self._cooldown_base_s,
+                "max_cooldown_s": self._cooldown_max_s,
+                "failure_window_s": self._cooldown_failure_window_s,
+                "provider_failure_threshold": self._provider_cooldown_threshold,
+            },
+            "scopes": {
+                key: state.to_dict(now)
+                for key, state in sorted(self._cooldowns.items())
+            },
+        }
 
     def record_rate_limit(
         self,
@@ -412,7 +667,7 @@ class RateLimitTracker:
         return usage
 
     def dashboard(self, now: float | None = None) -> dict[str, Any]:
-        """Full rate-limit dashboard for all tracked models."""
+        """Full rate-limit and transient-endpoint dashboard."""
         now = now or time.time()
         return {
             "timestamp": now,
@@ -423,6 +678,7 @@ class RateLimitTracker:
                 }
                 for model, mrl in sorted(self._limits.items())
             },
+            "cooldowns": self.cooldown_dashboard(now),
         }
 
     # ------------------------------------------------------------------
@@ -474,9 +730,11 @@ class RateLimitTracker:
         if model:
             self._success_log.pop(model, None)
             self._limits.pop(model, None)
+            self._cooldowns.pop(model, None)
         else:
             self._success_log.clear()
             self._limits.clear()
+            self._cooldowns.clear()
 
     def add_sink(self, sink: Callable) -> None:
         """Register a sink called after each record_success / record_rate_limit."""
@@ -484,10 +742,8 @@ class RateLimitTracker:
 
     def remove_sink(self, sink: Callable) -> None:
         """Unregister a previously added sink."""
-        try:
+        with suppress(ValueError):
             self._sinks.remove(sink)
-        except ValueError:
-            pass
 
     def dump_state(self, now: float | None = None) -> dict[str, Any]:
         """Serialize full tracker state for disk persistence.
@@ -499,6 +755,7 @@ class RateLimitTracker:
             "timestamp": now,
             "success_log": {},
             "limits": {},
+            "cooldowns": {},
         }
         for model, log in self._success_log.items():
             state["success_log"][model] = [
@@ -513,6 +770,17 @@ class RateLimitTracker:
                     "documented_limit": lim.documented_limit,
                 }
             state["limits"][model] = dims
+        state["cooldowns"] = {
+            key: {
+                "failure_count": cooldown.failure_count,
+                "cooldown_until": cooldown.cooldown_until,
+                "last_failure_at": cooldown.last_failure_at,
+                "last_success_at": cooldown.last_success_at,
+                "last_status_code": cooldown.last_status_code,
+                "last_reason": cooldown.last_reason,
+            }
+            for key, cooldown in self._cooldowns.items()
+        }
         return state
 
     def load_state(self, state: dict[str, Any], max_age_s: float = 86400.0) -> None:
@@ -541,3 +809,36 @@ class RateLimitTracker:
                 doc = d.get("documented_limit")
                 if doc is not None:
                     lim.documented_limit = int(doc)
+        for key, raw in state.get("cooldowns", {}).items():
+            if not isinstance(raw, dict):
+                continue
+            last_failure_at = raw.get("last_failure_at")
+            cooldown_until = raw.get("cooldown_until")
+            try:
+                last_failure = float(last_failure_at) if last_failure_at is not None else None
+                until = float(cooldown_until) if cooldown_until is not None else None
+            except (TypeError, ValueError):
+                continue
+            # Keep a still-active cooldown even when its failure event is just
+            # outside the normal history window; discard stale inactive state.
+            if until is not None and until <= now and (
+                last_failure is None or last_failure < cutoff
+            ):
+                continue
+            self._cooldowns[key] = CooldownState(
+                key=key,
+                failure_count=int(raw.get("failure_count", 0) or 0),
+                cooldown_until=until,
+                last_failure_at=last_failure,
+                last_success_at=(
+                    float(raw["last_success_at"])
+                    if raw.get("last_success_at") is not None
+                    else None
+                ),
+                last_status_code=(
+                    int(raw["last_status_code"])
+                    if raw.get("last_status_code") is not None
+                    else None
+                ),
+                last_reason=str(raw.get("last_reason", ""))[:240],
+            )

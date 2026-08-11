@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import pytest
 
@@ -205,6 +208,16 @@ class TestRateLimitStatePersistence:
         limits = rl2.get_limits("gpt-4o")
         assert limits.rpm.documented_limit == 500
         assert limits.tpm.documented_limit == 30_000
+
+    def test_load_state_restores_active_cooldown(self):
+        rl = make_rl()
+        rl.record_transient_failure("gpt-4o", status_code=503, provider="openai")
+        state = rl.dump_state()
+
+        rl2 = make_rl()
+        rl2.load_state(state, max_age_s=3600)
+        assert rl2.is_in_cooldown("gpt-4o", provider="openai") is True
+        assert "cooldowns" in rl2.dump_state()
 
 
 # ---------------------------------------------------------------------------

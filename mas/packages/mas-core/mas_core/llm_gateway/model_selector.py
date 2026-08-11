@@ -421,6 +421,13 @@ class ModelSelector:
 
             # Router score
             router_score_obj: ModelScore = router.score_model(mid)
+            if not router_score_obj.available:
+                # Cooldown state is an operational routing signal. Do not
+                # let task/free bonuses re-introduce a cooling endpoint into
+                # automatic selection; the gateway fallback path may still
+                # probe the earliest-expiring candidate when every option is
+                # cooling.
+                continue
             rs = router_score_obj.total_score
 
             # Bonuses

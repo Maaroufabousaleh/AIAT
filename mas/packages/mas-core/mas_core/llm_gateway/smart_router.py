@@ -36,10 +36,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .rate_limits import RateLimitTracker
 
 from .metrics import MetricsCollector, Window
-from .rate_limits import RateLimitTracker
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,9 @@ class ModelScore:
 
     # Context
     reason: str = ""
+    available: bool = True
+    cooldown_remaining_s: float = 0.0
+    cooldown_scope: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +81,9 @@ class ModelScore:
             "cost_score": round(self.cost_score, 4),
             "latency_score": round(self.latency_score, 4),
             "reason": self.reason,
+            "available": self.available,
+            "cooldown_remaining_s": round(self.cooldown_remaining_s, 3),
+            "cooldown_scope": self.cooldown_scope,
         }
 
 
@@ -110,6 +120,7 @@ class SmartRouter:
         w_headroom: float = 0.30,
         w_cost: float = 0.15,
         w_latency: float = 0.20,
+        provider_for_model: Callable[[str], str | None] | None = None,
     ) -> None:
         self.metrics = metrics
         self.rate_limits = rate_limits
@@ -117,6 +128,7 @@ class SmartRouter:
         self.w_headroom = w_headroom
         self.w_cost = w_cost
         self.w_latency = w_latency
+        self.provider_for_model = provider_for_model
 
     # ------------------------------------------------------------------
     # Scoring
@@ -126,6 +138,8 @@ class SmartRouter:
         """Compute a composite routing score for a single model."""
         health = self.metrics.health_score(model)
         headroom = self.rate_limits.headroom_score(model)
+        provider = self.provider_for_model(model) if self.provider_for_model else None
+        cooldown = self.rate_limits.cooldown_status(model, provider=provider)
 
         # Cost efficiency normalised to 0–1
         # tokens_per_dollar: inf (free) → 1.0, 0 → 0.0
@@ -158,7 +172,7 @@ class SmartRouter:
         if cost_score < 0.3:
             reason_parts.append("expensive")
 
-        return ModelScore(
+        score = ModelScore(
             model=model,
             total_score=round(total, 4),
             health_score=health,
@@ -167,6 +181,16 @@ class SmartRouter:
             latency_score=latency_score,
             reason=", ".join(reason_parts) if reason_parts else "ok",
         )
+        if cooldown["in_cooldown"]:
+            score.total_score = 0.0
+            score.available = False
+            score.cooldown_remaining_s = float(cooldown["cooldown_remaining_s"])
+            score.cooldown_scope = cooldown["scope"]
+            score.reason = (
+                f"cooldown({score.cooldown_remaining_s:.1f}s, "
+                f"scope={score.cooldown_scope})"
+            )
+        return score
 
     # ------------------------------------------------------------------
     # Ranking
@@ -177,7 +201,13 @@ class SmartRouter:
     ) -> list[ModelScore]:
         """Score and rank a list of candidate models (best first)."""
         scores = [self.score_model(m) for m in candidates]
-        scores.sort(key=lambda s: s.total_score, reverse=True)
+        scores.sort(
+            key=lambda s: (
+                s.available,
+                -s.cooldown_remaining_s if not s.available else s.total_score,
+            ),
+            reverse=True,
+        )
         return scores
 
     def pick_best(
@@ -188,8 +218,9 @@ class SmartRouter:
     ) -> str | None:
         """Pick the best candidate above ``min_score``, or None."""
         ranking = self.rank_models(candidates)
-        if ranking and ranking[0].total_score >= min_score:
-            chosen = ranking[0]
+        candidates = [score for score in ranking if score.available]
+        if candidates and candidates[0].total_score >= min_score:
+            chosen = candidates[0]
             logger.debug(
                 "SmartRouter picked '%s' (score=%.3f, reason=%s) from %d candidates",
                 chosen.model, chosen.total_score, chosen.reason, len(candidates),
@@ -238,8 +269,9 @@ class SmartRouter:
                 "latency": self.w_latency,
             },
             "ranking": [s.to_dict() for s in ranking],
-            "recommended": ranking[0].model if ranking else None,
+            "recommended": next((s.model for s in ranking if s.available), None),
             "avoided": [
-                s.model for s in ranking if s.total_score < 0.25
+                s.model for s in ranking if not s.available or s.total_score < 0.25
             ],
+            "cooldowns": self.rate_limits.cooldown_dashboard(),
         }
