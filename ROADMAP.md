@@ -206,6 +206,11 @@ The codebase already includes:
   Prometheus histogram `_created` sample into the declared family, and the
   current local scrape passes at 31 bounded series; native many-project scrape
   evidence remains open.
+- The bounded project-state metric contract is committed as `90a7d82` and its
+  orchestrator lifecycle wiring as `cbeb9db`; creation, transition, decision,
+  retry, watchdog, and archive paths update aggregate state, while resume-time
+  reconciliation restores counts from durable project rows without reintroducing
+  a `project_id` label.
 - `scripts/check_release_environment.py` emits a secret-safe
   `aiat.release-environment.v1` manifest with thirteen release-input hashes,
   tool-version identities, environment-presence flags, and a deterministic
@@ -234,7 +239,8 @@ scan-state/findings reconciliation, static worker/runtime/provenance
 reconciliation, bounded metric label inventory, persisted CEO/service section
 ACLs, immutable image-input contract, fail-closed local image identity probe,
 tool-service profile split, read-only persisted default-worker binding
-reconciliation, and the secret-safe release-environment/provenance input group
+reconciliation, the bounded metric contract (`90a7d82`) and lifecycle wiring
+(`cbeb9db`), and the secret-safe release-environment/provenance input group
 (`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
 implemented; the latest static ledger run is 48/48 pass with two pending
 technical evidence items and `NO-RELEASE`; native/live/release gates remain
@@ -257,8 +263,9 @@ Required outcomes:
 - production images and runtimes are live-reconciled against their provenance/SBOM;
 - [x] raw project IDs are removed from metric labels and every AIAT label has a
   declared bounded-cardinality policy; the current local scrape passes at 31
-  bounded series after histogram `_created` normalization; native many-project
-  scrape evidence remains open;
+  bounded series after histogram `_created` normalization; runtime lifecycle
+  paths record bounded aggregate state and resume-time reconciliation restores
+  persisted counts; native many-project scrape evidence remains open;
 - [x] heavyweight tool image is split or reduced within explicit budgets; [x] local Linux engine measurements pass for both profiles (core 267,957,904 bytes, 26,836 ms/112.3 MiB; extensions 4,155,668,123 bytes, 29,913 ms/137.7 MiB) with retained evidence; clean native-Linux build/pull, compressed archive, SBOM, and vulnerability measurements remain open;
 - [x] production runtime/CLI declarations are exact in the operator-pin
   manifest, while host-, optional-, and deployment-supplied capabilities are
