@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, and local live transport/tool evidence are verified in `84a1c01`. The retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json); deployed load/soak/chaos, model-backed worker, and mail-edge evidence remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json); deployed load/soak/chaos, model-backed worker, and mail-edge evidence remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -60,6 +60,9 @@ not block workers, routing, integrations, or project completion.
   adapter now emits a non-networking `aiat.monitoring-analytics-plan.v1` for
   the LiteLLM/OmniRoute health and analytics URLs; the API-owned projections
   still use durable AIAT evidence as their source of truth.
+- Resume-time project-state metric reconciliation preserves the bounded
+  aggregate contract and falls back to a capped project listing when an older
+  lightweight storage double does not expose the state-only query (`541d6e0`).
 
 ## Code anchors
 

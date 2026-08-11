@@ -227,8 +227,9 @@ The codebase already includes:
   current local scrape passes at 31 bounded series; native many-project scrape
   evidence remains open.
 - The bounded project-state metric contract is committed as `90a7d82` and its
-  orchestrator lifecycle wiring as `cbeb9db`; creation, transition, decision,
-  retry, watchdog, and archive paths update aggregate state, while resume-time
+  orchestrator lifecycle wiring as `cbeb9db`; resume-time reconciliation also
+  has a bounded compatibility fallback for older storage doubles (`541d6e0`);
+  creation, transition, decision, retry, watchdog, and archive paths update aggregate state, while resume-time
   reconciliation restores counts from durable project rows without reintroducing
   a `project_id` label.
 - `scripts/check_release_environment.py` emits a secret-safe
