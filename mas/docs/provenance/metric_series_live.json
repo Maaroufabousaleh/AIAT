@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.metric-series-budget-live.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-10T18:18:23Z",
+  "observed_at": "2026-08-11T20:45:21Z",
   "environment": {
     "host_class": "WSL2 with Docker Desktop Linux engine",
     "orchestrator_url_configured": true,
