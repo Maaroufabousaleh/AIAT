@@ -1,6 +1,7 @@
 # ── Dockerfile.tool-service ───────────────────────────────────────────────────
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
+ARG TOOL_SERVICE_PROFILE=core
 ARG OPENTOFU_VERSION=1.11.7
 ARG OPENTOFU_SHA256=2ae4434e08da9a17372c11509d11b07f1cb3730dea0bf7ff658bdb4b83b1cbab
 ARG MERMAID_CLI_VERSION=11.12.0
@@ -8,7 +9,10 @@ ARG MERMAID_CLI_VERSION=11.12.0
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git nodejs npm ripgrep unzip \
+        ca-certificates curl git ripgrep unzip \
+    && if [ "$TOOL_SERVICE_PROFILE" = "extensions" ]; then \
+         apt-get install -y --no-install-recommends nodejs npm; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSLo /tmp/tofu.zip \
@@ -18,8 +22,10 @@ RUN curl -fsSLo /tmp/tofu.zip \
     && rm /tmp/tofu.zip \
     && tofu version
 
-RUN PUPPETEER_SKIP_DOWNLOAD=true npm install --global \
-        "@mermaid-js/mermaid-cli@${MERMAID_CLI_VERSION}"
+RUN if [ "$TOOL_SERVICE_PROFILE" = "extensions" ]; then \
+      PUPPETEER_SKIP_DOWNLOAD=true npm install --global \
+        "@mermaid-js/mermaid-cli@${MERMAID_CLI_VERSION}"; \
+    fi
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
@@ -35,22 +41,28 @@ RUN pip install \
         structlog \
         psutil \
         aiolimiter \
-        playwright \
         prometheus-fastapi-instrumentator \
         "mcp==1.23.3" \
         "pytest>=8,<9" \
         "ruff>=0.12,<1" \
-        "semgrep==1.168.0" \
-        "docling==2.110.0"
+        cryptography
 
 RUN pip install --no-cache-dir "asyncpg==0.31.0"
 
-RUN python -m playwright install --with-deps chromium
+RUN if [ "$TOOL_SERVICE_PROFILE" = "extensions" ]; then \
+      pip install --no-cache-dir \
+        "playwright==1.58.0" \
+        "semgrep==1.168.0" \
+        "docling==2.110.0"; \
+      python -m playwright install --with-deps chromium; \
+    fi
 
-RUN chromium_path="$(find /ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)" \
-    && test -n "$chromium_path" \
-    && ln -s "$chromium_path" /usr/local/bin/chromium \
-    && chmod -R a+rX /ms-playwright
+RUN if [ "$TOOL_SERVICE_PROFILE" = "extensions" ]; then \
+      chromium_path="$(find /ms-playwright -type f -path '*/chrome-linux64/chrome' | head -n 1)"; \
+      test -n "$chromium_path"; \
+      ln -s "$chromium_path" /usr/local/bin/chromium; \
+      chmod -R a+rX /ms-playwright; \
+    fi
 
 # Keep application source after the heavyweight, pinned dependency layers so
 # a bridge or route fix does not re-download Docling and Playwright.
@@ -68,6 +80,7 @@ RUN groupadd --gid 10001 aiat \
     && chown -R 10001:10001 /app
 
 ENV HOME=/home/aiat
+ENV AIAT_TOOL_SERVICE_PROFILE=${TOOL_SERVICE_PROFILE}
 WORKDIR /app
 USER 10001:10001
 
