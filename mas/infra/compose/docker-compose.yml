@@ -15,17 +15,27 @@
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
-#             LLM_GATEWAY_URL, LLM_API_KEY, LITELLM_MASTER_KEY
+#             LLM_GATEWAY_URL, LLM_API_KEY, LITELLM_MASTER_KEY, and the
+#             immutable *_IMAGE_REF values documented in
+#             production-image-lock.example.env
+# Production release runs pull/build images in a separate locked step and then
+# start without `--build`; the `build:` blocks remain for the development
+# wrapper, whose local `:dev` refs are isolated in mas.sh.
 
 name: mas
 
-# ── Shared runner env (no direct data-plane credentials) ─────────────────────
+# ── Shared env vars (merged into each team's environment: block) ──────────────
 x-team-common-env: &team-common-env
   ROUTER_URL: "http://message-router:8001"
   ROUTER_SECRET: "${ROUTER_SECRET}"
   TOOL_SERVICE_URL: "http://tool-service:8002"
   TOOL_SECRET: "${TOOL_SECRET}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+  # IANA timezone selected by the applied company manifest. Internal storage
+  # remains UTC; runners use this only for operator-facing prompt timestamps.
+  AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+  # LLM gateway defaults are intentionally shared; runner identity is added
+  # by one of the two narrow maps below.
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
   LLM_BACKEND: "${LLM_BACKEND:-litellm}"
@@ -303,7 +313,8 @@ services:
       - internal
       - workers
       - public
-    # No host port in production — only team-runners (on workers) need it.
+    # No host port in production — team-runners reach this gateway on workers;
+    # the service itself owns the private data-plane bridges.
     # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
       opencode-workspace-init:
@@ -331,11 +342,12 @@ services:
       LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
+      AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
       TOOL_CODE_REVIEW_COMMAND: "${TOOL_CODE_REVIEW_COMMAND:-aiat-code-review --json-stdin}"
       TOOL_INFRA_PROVISION_COMMAND: "${TOOL_INFRA_PROVISION_COMMAND:-aiat-devops-adapter infra --json-stdin}"
       TOOL_MONITORING_SETUP_COMMAND: "${TOOL_MONITORING_SETUP_COMMAND:-aiat-devops-adapter monitoring --json-stdin}"
       TOOL_SANDBOX_COMMAND: "${TOOL_SANDBOX_COMMAND:-aiat-sandbox-runner --json-stdin}"
-      AIAT_SANDBOX_IMAGE: "${AIAT_SANDBOX_IMAGE:-mas/tool-service:latest}"
+      AIAT_SANDBOX_IMAGE: "${AIAT_TOOL_SERVICE_IMAGE_REF:?AIAT_TOOL_SERVICE_IMAGE_REF must be an immutable OCI image reference}"
       TOOL_WORKSPACE_ROOT: "/workspace"
       AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
       PYTHONPATH: "/app"
@@ -552,6 +564,8 @@ services:
       LOG_LEVEL: "INFO"
       MAS_API_KEY: "${MAS_API_KEY}"
       AIAT_OPERATOR_API_KEY: "${AIAT_OPERATOR_API_KEY:?AIAT_OPERATOR_API_KEY must be configured}"
+      AIAT_CEO_API_KEY: "${AIAT_CEO_API_KEY:?AIAT_CEO_API_KEY must be configured}"
+      AIAT_WORKER_API_KEY: "${AIAT_WORKER_API_KEY:?AIAT_WORKER_API_KEY must be configured}"
       LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
@@ -673,6 +687,10 @@ services:
       ORCHESTRATOR_URL: "http://orchestrator-api:8000"
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
+      AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      NEXT_PUBLIC_DISPLAY_TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      DISPLAY_TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
       PROMETHEUS_URL: "http://prometheus:9090"
       PROMETHEUS_TIMEOUT_MS: "${PROMETHEUS_TIMEOUT_MS:-750}"
       LITELLM_DASHBOARD_URL: "${LITELLM_DASHBOARD_URL:-http://localhost:4001/ui/}"
@@ -689,12 +707,12 @@ services:
       retries: 3
 
   # ── Team runners (11 containers) ────────────────────────────────────────────
-  # Each team merges &team-env (env vars only) then adds TEAM_CONFIG.
-  # Using <<: *team-env inside environment: is correct because *team-env
-  # contains ONLY key=value environment pairs, not service-level keys.
+  # Each team merges one identity-specific environment map (env vars only)
+  # then adds TEAM_CONFIG. The CEO runner never receives the worker key and
+  # worker runners never receive the CEO key.
 
   team-exec-ceo:
-    <<: *team-defaults
+    <<: *team-defaults  # shared defaults
     container_name: mas-team-exec-ceo
     environment:
       <<: *team-ceo-env
@@ -736,7 +754,7 @@ services:
       TEAM_CONFIG: /app/teams/office_cso.yaml
 
   team-office-cto:
-    <<: *team-defaults
+    <<: *team-defaults  # shared defaults
     container_name: mas-team-office-cto
     environment:
       <<: *team-env

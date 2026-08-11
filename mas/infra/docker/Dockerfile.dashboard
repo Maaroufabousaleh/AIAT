@@ -38,11 +38,11 @@ RUN npm run build
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
 WORKDIR /app
 
-# Install tzdata so the container's TZ is honored by Node's Date
-# (and any tool that consults /etc/localtime). Use the IANA zone
-# America/New_York so EDT/EST auto-switches with daylight saving.
+# Install tzdata so the deployment's company timezone is honored by Node's
+# Date implementation and any tool that consults /etc/localtime. Compose
+# supplies `TZ` from the company timezone policy at runtime.
 RUN apk add --no-cache tzdata
-ENV TZ=America/New_York
+ENV TZ=UTC
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

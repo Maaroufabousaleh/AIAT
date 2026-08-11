@@ -41,11 +41,12 @@ elif [ -f ".env" ]; then
     load_env_file "$ENV_FILE"
 fi
 
-# The wrapper is the development entrypoint. Keep its convenience image names
-# separate from the production Compose contract: direct production invocations
-# must provide every immutable *_IMAGE_REF value, while a personal local
-# `mas.sh up --build` can build checked-in services without a registry digest.
-# A caller-supplied value always wins, including a digest-bearing image ref.
+# This wrapper always loads the development overlay.  Keep its convenience
+# image names separate from the production Compose contract: direct production
+# invocations must provide every immutable *_IMAGE_REF value, while a personal
+# local `mas.sh up --build` can build the checked-in services without requiring
+# a registry digest first.  A caller-supplied value always wins, including a
+# digest-bearing release image when the wrapper is used for a local smoke test.
 set_development_image_defaults() {
     local var value
     local -a defaults=(
@@ -65,14 +66,27 @@ set_development_image_defaults() {
             export "$var=$value"
         fi
     done
-    # Existing local .env files may still use the old gateway aliases. They
-    # remain development-only compatibility inputs; production must set the
-    # *_IMAGE_REF counterparts explicitly.
+    # These names are retained as development-only compatibility inputs for
+    # existing .env files. Production must set the *_IMAGE_REF counterparts.
     if [ -z "${LITELLM_IMAGE_REF:-}" ]; then
         export LITELLM_IMAGE_REF="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
     fi
     if [ -z "${OMNIROUTE_IMAGE_REF:-}" ]; then
         export OMNIROUTE_IMAGE_REF="${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
+    fi
+    # Development-only principal keys keep the local stack's identities
+    # distinct. Production deployments must replace them with secret values
+    # in the environment manifest; never use these defaults for release.
+    if [ -z "${AIAT_CEO_API_KEY:-}" ]; then
+        export AIAT_CEO_API_KEY="aiat-dev-ceo-key"
+    fi
+    if [ -z "${AIAT_WORKER_API_KEY:-}" ]; then
+        export AIAT_WORKER_API_KEY="aiat-dev-worker-key"
+    fi
+    # Local development follows the default company manifest unless an
+    # explicit IANA timezone was supplied by the operator.
+    if [ -z "${AIAT_COMPANY_TIMEZONE:-}" ]; then
+        export AIAT_COMPANY_TIMEZONE="UTC"
     fi
 }
 
@@ -156,7 +170,8 @@ validate_env() {
         POSTGRES_PASSWORD MINIO_ROOT_PASSWORD
         ROUTER_PASSWORD TOOLCACHE_PASSWORD
         ROUTER_SECRET TOOL_SECRET
-        LLM_GATEWAY_URL MAS_API_KEY
+        LLM_GATEWAY_URL MAS_API_KEY AIAT_OPERATOR_API_KEY
+        AIAT_CEO_API_KEY AIAT_WORKER_API_KEY
         DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH JWT_SECRET
     )
     for var in "${required_vars[@]}"; do

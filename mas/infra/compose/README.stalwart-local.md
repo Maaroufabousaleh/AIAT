@@ -63,8 +63,8 @@ Its JSON result marks each required reference as `configured` and includes
 
 ## Start the complete local identity stack
 
-The migration is run as a Compose dependency and must report revision
-`0001_identity_control_plane`:
+The migration is run as a Compose dependency and must report the identity
+migration head `0002_mail_trace_correlation`:
 
 ```powershell
 docker compose @compose up -d identity-service orchestrator-api tool-service
@@ -75,7 +75,7 @@ Invoke-WebRequest http://127.0.0.1:8011/readyz | Select-Object -Expand Content
 ```
 
 The expected migration evidence is an Alembic `Running upgrade ... ->
-0001_identity_control_plane` (or an already-at-head/no-op result on a repeat
+0002_mail_trace_correlation` (or an already-at-head/no-op result on a repeat
 run), followed by a healthy `identity-service` `/readyz` check. No identity
 credential is printed by these commands.
 

@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
-RUN pip install --no-cache-dir uv==0.4.*
+RUN pip install --no-cache-dir uv==0.4.30
 
 COPY packages/mas-core/ /tmp/mas-core/
 COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
