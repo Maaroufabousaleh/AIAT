@@ -299,7 +299,8 @@ single frozen commit before production claims are made.
   unavailable, and never emits image refs or credentials. The live scope is
   local identity only; it does not claim SBOM, scan, build, or clean-room
   evidence. `production-image-lock.example.env` documents the deployment
-  inputs without inventing local OCI digests; `b9a77e9` keeps development-only
+  inputs without inventing local OCI digests; its complete Compose-variable
+  coverage regression is committed as `1d373ee`; `b9a77e9` keeps development-only
   `:dev` defaults in the wrapper instead of weakening direct production
   Compose.
 - `Dockerfile.tool-service` now builds a lightweight `core` profile. Browser,

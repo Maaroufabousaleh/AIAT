@@ -76,15 +76,16 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   internal network. A
   startup health check fails closed if the durable control-plane storage path
   is down.
-- Production Compose image inputs are structurally digest-pinned: fixed infrastructure refs carry OCI digests, application refs are required `*_IMAGE_REF` values, Dockerfile bases are pinned, and `check_image_provenance.py` validates the contract.
+- Production Compose image inputs are structurally digest-pinned: fixed infrastructure refs carry OCI digests, application refs are required `*_IMAGE_REF` values, Dockerfile bases are pinned, and `check_image_provenance.py` validates the contract. Commit `1d373ee` adds a non-secret lock template and verifies that it covers every Compose image variable; populated release locks remain operator-supplied.
 - `check_image_provenance.py --live --json` now provides a fail-closed native/Docker
   evidence boundary: it compares deployment-supplied digests with local
   `RepoDigests` without printing image references or credentials. The live result
   is deliberately scoped to local identity; SBOM, scan, build, and clean-room
   evidence remain separate release artifacts.
 - The general tool-service profile no longer installs browser/Docling/Semgrep/Mermaid extension payloads; those dependencies are isolated behind the separately budgeted `extensions` build profile.
-- The deployment image lock, provenance inventory, and image budgets are
-  checked in under `mas/infra/compose/production-image-lock.example.env`,
+- The deployment image lock template, provenance inventory, and image budgets
+  are checked in under `mas/infra/compose/production-image-lock.example.env`
+  (template coverage regression committed as `1d373ee`),
   `mas/docs/provenance/production_images.yaml`, and
   `mas/infra/docker/image-budgets.yaml`; `mas.sh` keeps local `:dev` defaults
   isolated from direct production Compose usage.
