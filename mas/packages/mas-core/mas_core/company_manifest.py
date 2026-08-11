@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEFAULT_COMPANY_ID = UUID("00000000-0000-4000-8000-000000000001")
 NonNegativeFiniteFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+UnitIntervalFiniteFloat = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
 class CompanyManifestError(ValueError):
@@ -62,6 +64,125 @@ class WorkerAssignmentManifest(BaseModel):
         return value
 
 
+class RetentionPolicyManifest(BaseModel):
+    """Company-level retention defaults; project policies may narrow them.
+
+    Trace evidence is intentionally a bounded operational read model.  Its
+    sampling and retention values are configuration metadata; they do not
+    change worker authority, licensing metadata, or the project completion
+    predicate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_days: int = Field(default=3650, ge=1, le=36500)
+    evidence_days: int = Field(default=3650, ge=1, le=36500)
+    artifact_days: int = Field(default=365, ge=1, le=36500)
+    audit_days: int = Field(default=3650, ge=1, le=36500)
+    trace_days: int = Field(default=3650, ge=1, le=36500)
+    trace_sample_rate: UnitIntervalFiniteFloat = 1.0
+    terminal_mode: Literal["archive", "delete"] = "archive"
+
+
+class PrivacyPolicyManifest(BaseModel):
+    """Data classes allowed by the company and external-worker boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_class: Literal["public", "internal", "confidential", "restricted"] = "internal"
+    external_worker_allowed_classes: list[
+        Literal["public", "internal", "confidential", "restricted"]
+    ] = Field(default_factory=lambda: ["public", "internal"])
+    require_residency_match: bool = False
+
+    @field_validator("external_worker_allowed_classes")
+    @classmethod
+    def unique_classes(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("privacy classes must be unique")
+        return value
+
+
+class EvidencePolicySelectionManifest(BaseModel):
+    """A named evidence policy selection stored in the company manifest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_id: str = Field(default="manual", min_length=1, max_length=120)
+    version: str = Field(default="1.0", min_length=1, max_length=40)
+    requirements: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidencePolicyManifest(BaseModel):
+    """Default evidence requirements for completed company work."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    required_for_completion: list[str] = Field(default_factory=list)
+    require_checksums: bool = True
+    require_approval_records: bool = True
+    default_policy: EvidencePolicySelectionManifest = Field(default_factory=EvidencePolicySelectionManifest)
+    milestone_policies: dict[str, EvidencePolicySelectionManifest] = Field(default_factory=dict)
+
+    @field_validator("required_for_completion")
+    @classmethod
+    def unique_evidence_types(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("required evidence types must be unique")
+        return value
+
+    @field_validator("milestone_policies")
+    @classmethod
+    def valid_milestone_names(
+        cls, value: dict[str, EvidencePolicySelectionManifest]
+    ) -> dict[str, EvidencePolicySelectionManifest]:
+        if any(not key.strip() for key in value):
+            raise ValueError("milestone evidence-policy names must not be blank")
+        return value
+
+
+class ModelPolicyManifest(BaseModel):
+    """Company-level model constraints intersected with project/worker policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_profile_ids: list[str] = Field(default_factory=list)
+    default_profile_id: str | None = None
+    require_exact_profile: bool = True
+    allow_gateway_failover: bool = True
+
+    @field_validator("allowed_profile_ids")
+    @classmethod
+    def unique_profiles(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed model profiles must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def default_profile_is_allowed(self) -> ModelPolicyManifest:
+        if self.default_profile_id and self.allowed_profile_ids and self.default_profile_id not in self.allowed_profile_ids:
+            raise ValueError("default_profile_id must be included in allowed_profile_ids")
+        return self
+
+
+class DeploymentPolicyManifest(BaseModel):
+    """Deployment and isolation defaults; host evidence remains separate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: Literal["local", "native-linux", "production"] = "local"
+    sandbox_profile: Literal["standard", "restricted", "gvisor", "firecracker"] = "gvisor"
+    require_immutable_images: bool = True
+    allowed_regions: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_regions")
+    @classmethod
+    def unique_regions(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed deployment regions must be unique")
+        return value
+
+
 class CompanyManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,11 +191,27 @@ class CompanyManifest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
     ceo_worker_id: str = Field(min_length=1, max_length=120)
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    retention: RetentionPolicyManifest | None = None
+    privacy: PrivacyPolicyManifest | None = None
+    evidence_policy: EvidencePolicyManifest | None = None
+    model_policy: ModelPolicyManifest | None = None
+    deployment: DeploymentPolicyManifest | None = None
     departments: list[DepartmentManifest] = Field(min_length=1)
     worker_assignments: list[WorkerAssignmentManifest] = Field(default_factory=list)
     budgets: dict[str, NonNegativeFiniteFloat] = Field(default_factory=dict)
     policy: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        """Keep the policy value directly consumable by runtime surfaces."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"timezone must be a valid IANA zone: {value!r}") from exc
+        return value
 
     @model_validator(mode="after")
     def validate_references(self) -> CompanyManifest:
