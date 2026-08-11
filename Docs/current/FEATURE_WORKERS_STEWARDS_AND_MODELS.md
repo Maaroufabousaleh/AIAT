@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, and read-only persisted default-worker reconciliation (39/39) pass; worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, runtime benchmark readiness contract (`ad31793`), LangGraph/CrewAI dependency benchmarks, exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), and the selected worker-run readiness contract (`5553b19`) pass in fixture/static scope; its current live selection is blocked and worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -104,6 +104,21 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   deterministic in-memory fixture: database, sandbox, live worker, canary,
   and rollback certification remain explicit boundaries. `--live` is
   fail-closed and makes no mutation.
+- `scripts/check_worker_run_readiness.py` and
+  `worker_registry/worker_run_readiness.py` provide a read-only, fail-closed
+  preflight for one explicitly selected model-backed worker and project. The
+  evaluator reconciles worker lifecycle status, immutable shell/adapter/skill
+  pointers, source/version and evaluation state, project/company state, active
+  company assignment, approved model-profile version, bounded concurrent/cost
+  budget headroom, sandbox declaration, and health metadata. Fixture mode
+  passes with a complete snapshot; live mode never auto-selects, activates,
+  provisions identity, reserves a budget, dispatches a run, or reads task or
+  provider payloads. Identity, provider, sandbox runtime, retention,
+  canary, and rollback are reported as separate `not_checked` boundaries.
+  The current local read-only selection is blocked because all persisted
+  workers are inactive, the selected project is terminal, the selected worker
+  has no active immutable pointers, and it has no company assignment. Licence
+  metadata remains informational only.
 - `scripts/generate_worker_certification_matrix.py` (worker readiness group
   committed as `4c5fd68`) generates the deterministic
   39-worker declaration/evidence matrix at
@@ -217,6 +232,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Static and read-only live reconciliation: [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py) and [`worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). The default mode validates all 39 declarations; the authenticated local `--live` run matches 39/39 persisted defaults with zero missing rows or binding mismatches. It compares exact adapter, sandbox, model, source-pin, capability, and active immutable-record bindings and reports missing API/configuration as blocked.
 - Default worker implementation binding matrix (`4c5fd68`): [`mas/scripts/check_default_worker_bindings.py`](../../mas/scripts/check_default_worker_bindings.py) and [`test_default_worker_bindings.py`](../../mas/packages/mas-core/tests/test_default_worker_bindings.py). The static contract covers all 15 documented default slots, verifies each declared transport/isolation pair against `RUNTIME_CATALOG`, and requires matching runtime/integration adapter entrypoints; `--live` remains an explicit operator/environment boundary and never mutates runtime state.
 - Worker-run lifecycle fixture (`fe6fb8d`): [`mas/scripts/check_worker_run_lifecycle.py`](../../mas/scripts/check_worker_run_lifecycle.py) and [`test_worker_run_lifecycle.py`](../../mas/packages/mas-core/tests/test_worker_run_lifecycle.py). The static fixture checks real controller ordering, failure normalization, and recovery invariants; `--live` reports the explicit operator/database boundary.
+- Selected worker-run readiness preflight (`5553b19`): [`mas/scripts/check_worker_run_readiness.py`](../../mas/scripts/check_worker_run_readiness.py), [`worker_run_readiness.py`](../../mas/packages/mas-core/mas_core/worker_registry/worker_run_readiness.py), and [`test_worker_run_readiness.py`](../../mas/packages/mas-core/tests/test_worker_run_readiness.py). Fixture mode passes a complete model-backed snapshot; `--live` reads only selected control-plane records and returns stable blockers without activation, identity provisioning, budget reservation, dispatch, or payload access. The current local selection is blocked by worker/project/immutable-pointer/assignment state, not by licence metadata.
 - Runtime catalogue and manifest reconciliation (`80e0ca3`): [`mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py), [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py), and [`test_worker_reconciliation.py`](../../mas/packages/mas-core/tests/test_worker_reconciliation.py). Static mode reconciles all 39 manifests and the read-only live mode compares persisted adapter/model/sandbox/source bindings without treating licence metadata as a gate; package availability, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime readiness probe (`4c5fd68`): [`mas/scripts/check_worker_runtime_readiness.py`](../../mas/scripts/check_worker_runtime_readiness.py). Static mode reconciles all 39 manifests; the local Compose image import probe passes required LangGraph/CrewAI imports, while host-package, external-adapter, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime install-profile contract (`9a10a4b`): [`mas/scripts/check_runtime_install_profile.py`](../../mas/scripts/check_runtime_install_profile.py). The `runtime-default` extra, lock metadata, runtime catalogue, and production Dockerfile install command reconcile to LangGraph `0.6.11` and CrewAI `1.6.1`.
@@ -248,10 +264,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 3. Capture canonical source, exact version/digest, documentation snapshot, SBOM/lock, and scans; record licence/notices as non-blocking metadata when known.
 4. Generate an immutable adapter and skill-bundle candidate.
 5. Run contract, compatibility, security, sandbox, budget, and regression gates. Licence metadata cannot fail this step.
-6. Obtain the required independent and human approvals.
-7. Run shadow, read-only canary, and bounded live canary stages.
-8. Promote exact active pointers or roll back to exact prior pointers.
-9. Keep in-flight runs pinned to the versions with which they started.
+6. Run the read-only selected worker/project readiness preflight; it must pass before any optional dispatch confirmation and does not mutate state.
+7. Obtain the required independent and human approvals.
+8. Run shadow, read-only canary, and bounded live canary stages.
+9. Promote exact active pointers or roll back to exact prior pointers.
+10. Keep in-flight runs pinned to the versions with which they started.
 
 ## Default runtime policy
 
@@ -320,6 +337,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   registration probe; prove gVisor smoke/network behaviour and optional
   Firecracker with real host evidence.
 - [x] Add a deterministic real-controller lifecycle fixture for checkpoint persistence, pause/resume/checkpoint reference, cold cancellation, cold-crash failure normalization, lease expiry/requeue, and artifact/usage-before-terminal ordering; database, sandbox, live worker, canary, and rollback proof remain separate evidence gates.
+- [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
+  `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
+  operator-selected worker/project, fails closed on missing activation
+  pointers, non-dispatchable projects, assignment/model/budget gaps, or
+  unhealthy workers, and emits no mutation or payload evidence. The live
+  worker-run, identity, sandbox runtime, canary, and rollback gates remain
+  open.
 - [x] Reconcile worker manifests, runtime catalogue, Compose/OpenCode links, provenance, and notices in CI; the read-only live binding checker compares persisted default-worker rows without treating licence metadata as a gate; installed-package availability, image digests/SBOMs, and live worker-run certification remain separate gates.
 - [x] Reconcile the 15 documented default worker slots with their implementation
   declarations (department, runtime, transport, isolation, capability,

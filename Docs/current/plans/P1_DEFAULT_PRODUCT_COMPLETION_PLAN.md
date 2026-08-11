@@ -92,6 +92,17 @@ external client-language SDK compatibility yet.
   artifact/usage-before-terminal ordering;
   the deterministic fixture is not a database, sandbox, canary, or live-run
   certificate.
+- [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
+  `scripts/check_worker_run_readiness.py` (`5553b19`) for one explicitly
+  selected model-backed worker/project. It reconciles lifecycle status,
+  immutable shell/adapter/skill pointers, source/version and evaluation state,
+  project/company/assignment state, approved model-profile versions, bounded
+  concurrent/cost budget headroom, sandbox declaration, and health metadata.
+  Fixture evidence passes; the current live selection is blocked by inactive
+  workers, a terminal project, missing immutable pointers, and missing company
+  assignment. It never activates, provisions identity, reserves budget,
+  dispatches, or returns payloads; live worker, sandbox runtime, canary, and
+  rollback certification remain open.
 - [x] Persist the compatibility matrix produced by certification through the
   canonical storage owner, retaining runtime/adapter/contract versions,
   fixtures, capability/model context, and pass/fail status with the
