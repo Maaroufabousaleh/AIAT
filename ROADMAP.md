@@ -145,7 +145,7 @@ The codebase already includes:
 - typed company policy values are projected into runner prompt timestamps,
   schedule defaults, clock-tool responses, dashboard display, and Compose
   environment defaults; durable records remain UTC.
-- the generated dashboard and Python SDK contract surfaces both contain 129
+- the generated dashboard and Python SDK contract surfaces both contain 130
   models and 266 operation records tied to the same OpenAPI/provenance hash;
   the three role-scoped executive action routes are included in that export.
 - the 11 shipped authority/manager prompts resolve only concrete, policy-allowed
