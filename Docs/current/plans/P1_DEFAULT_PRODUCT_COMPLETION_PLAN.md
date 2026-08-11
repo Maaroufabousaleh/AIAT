@@ -136,6 +136,13 @@ external client-language SDK compatibility yet.
   transport/isolation support pair; this is implementation-coherence evidence
   only and does not claim live runtime, canary, rollback, or provider
   certification.
+- [x] Harden the worker registry authority boundary (`d8cafbb`): constrain
+  registration and partial updates to the manifest `update_policy` vocabulary,
+  and re-run persisted capability `required_tools` grants whenever capability
+  IDs or team context changes. Forbidden direct or persisted grants fail closed
+  before storage mutation; focused worker configuration coverage is 66/66, with
+  adjacent capability, lifecycle, and policy suites passing. Licence metadata
+  remains informational only.
 - [x] Add deterministic Microsoft Agent Framework adapter compatibility
   coverage for bounded Agent/ChatAgent construction, run/invoke translation,
   shutdown, and fail-closed missing-package/instructions paths; locked

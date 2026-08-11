@@ -349,7 +349,9 @@ not external Docling certification; installation and live adapter evidence
 remain part of the open R2 work.
 The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
 `trufflehog` compatibility aliases; the SDK/manifest forwarding group is
-`965ba38`.
+`965ba38`. Worker registry registration and authority-bearing updates now
+constrain update-policy values and revalidate persisted capability grants before
+mutation (`d8cafbb`; focused worker configuration coverage 66/66).
 provider-specific PM/DevOps adapters still need their own conformance evidence.
 
 Required outcomes:
@@ -401,6 +403,10 @@ Required outcomes:
   worker slots with implementation declarations and runtime/integration
   adapter entrypoints; installed runtime, adapter conformance, canary, live-run,
   and rollback evidence remain separate.
+- [x] worker registry registration and partial updates constrain the four
+  manifest `update_policy` values and revalidate persisted capability grants
+  when capability IDs or team context changes (`d8cafbb`); forbidden grants are
+  rejected before persistence, and licence metadata remains informational only.
 - pause/cancel/checkpoint/lease/crash/artifact/usage semantics proven live.
 
 ### R3 — complete project and flow execution
