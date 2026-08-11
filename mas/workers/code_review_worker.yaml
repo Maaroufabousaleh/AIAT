@@ -2,7 +2,7 @@ metadata:
   id: code_review_worker
   name: Code Review Worker
   version: "1.0"
-  description: QA worker for PR/code review using pinned OSS review adapters.
+  description: QA worker for PR/code review using the bounded local reviewer and explicitly pinned external adapters.
   source_repo: local
   source_revision: working-tree
   tags: [worker, dept_qa]
@@ -12,10 +12,9 @@ runtime:
   transport: process
   adapter_config:
     entrypoint: WorkerAgent
-    review_adapters:
-      - qodo-ai/pr-agent
-      - open-code-review
-      - stage-cli
+    default_adapter: aiat_deterministic_diff_review
+    adapter_catalogue: mas/docs/provenance/code_review_adapters.yaml
+    optional_external_adapters: [pr-agent, open-code-review, stage-cli]
 integration:
   adapter_entrypoint: WorkerAgent
   isolation_mode: wrapper

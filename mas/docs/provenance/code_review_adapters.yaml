@@ -1,0 +1,36 @@
+schema_version: "aiat.code-review-adapters.v1"
+programme_scope: personal-internal-only
+policy:
+  licence_metadata_is_gate: false
+  external_exact_pin_required: true
+  default_adapter_must_be_reproducible: true
+adapters:
+  - id: aiat_deterministic_diff_review
+    kind: local
+    source_repo: local
+    source_revision: working-tree
+    version: "1"
+    entrypoint: mas/apps/tool-service/tool_service/code_review_runner.py
+    status: available
+    notes: "Default credential-free diff reviewer used when no external command is configured."
+  - id: pr-agent
+    kind: external
+    source_repo: https://github.com/The-PR-Agent/pr-agent
+    source_revision: null
+    version: null
+    status: pending_exact_revision
+    notes: "Candidate identity is recorded; do not activate without an exact revision and representative review evidence."
+  - id: open-code-review
+    kind: external
+    source_repo: null
+    source_revision: null
+    version: null
+    status: unresolved_identity
+    notes: "The name maps to multiple repositories; an operator must select one exact source before activation."
+  - id: stage-cli
+    kind: external
+    source_repo: null
+    source_revision: null
+    version: null
+    status: unresolved_identity
+    notes: "The name is generic; an operator must select one exact source before activation."

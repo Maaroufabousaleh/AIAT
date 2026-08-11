@@ -1,0 +1,25 @@
+schema_version: "aiat.runtime-compatibility.v1"
+programme_scope: personal-internal-only
+policy:
+  licence_metadata_is_gate: false
+  compatibility_is_technical_gate: true
+  installation_is_optional: true
+  activation_requires_ready_preflight: true
+runtimes:
+  - id: microsoft_agent_framework
+    distribution: agent-framework
+    import: agent_framework
+    locked_version: "1.13.0"
+    source: https://github.com/microsoft/agent-framework/tree/main/python
+    source_metadata_observed: "2026-08-10"
+    required_symbols: [Agent, ChatAgent]
+    execution_methods: [run, invoke]
+    mcp:
+      distribution: mcp
+      version_specifier: ">=1.27,<2"
+      current_workspace_specifier: "==1.23.3"
+    status: locked-pending-install
+    activation_status: blocked_until_package_and_mcp_preflight
+    notices:
+      - "The workspace MCP pin is below the MAF compatibility floor; do not activate this optional runtime until the isolated dependency set is updated and verified."
+      - "Licence and restriction fields remain informational metadata and are not part of this preflight."

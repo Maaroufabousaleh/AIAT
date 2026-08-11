@@ -14,6 +14,8 @@ from typing import Any
 
 from mas_core.protocols.worker_manifest import WorkerManifest
 
+from .maf_compatibility import evaluate_microsoft_agent_framework_compatibility
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +31,12 @@ class MicrosoftAgentFrameworkAdapter:
 
     async def initialize(self) -> None:
         if self._initialized or self._availability_reason:
+            return
+        compatibility = evaluate_microsoft_agent_framework_compatibility()
+        if not compatibility.ready:
+            self._availability_reason = "MAF compatibility preflight blocked: " + "; ".join(
+                compatibility.blockers
+            )
             return
         try:
             module = importlib.import_module("agent_framework")
