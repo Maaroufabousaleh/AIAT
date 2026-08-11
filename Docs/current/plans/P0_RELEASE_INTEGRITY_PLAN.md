@@ -75,10 +75,12 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   live external-router evidence remains separate.
 - [x] Add a hierarchy-graph communication-policy overlay (`8b7d9f1`) so an
   operator can select a sender role and see allowed/denied team paths without
-  changing policy. Dashboard typecheck, focused lint/build, and source-built
-  E2E spec coverage is checked in (execution remains pending); the running Compose image predates the change and live
-  image evidence remains open while its Docker context contains unreadable
-  `.tmp-*` paths.
+  changing policy. Dashboard typecheck, focused lint/build, and the focused
+  authenticated Playwright flow pass 1/1 against a current locally rebuilt
+  `mas/dashboard:overlay` image (`d5f596e`). The image used a clean explicit
+  context because the normal WSL Docker context still traverses protected
+  `.tmp-*` paths; generalized exclusions are recorded in `b3a2e8e`, while
+  normal-context rebuild and release-image evidence remain separate.
 
 ### Evidence
 
@@ -223,9 +225,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   executable bootstrap wrapper is present, leaving only the separate
   per-service restart TODO skip.
 - `npm run typecheck`, focused ESLint, and `npm run build` in
-  `apps/mas-dashboard` pass for the hierarchy policy overlay. The source-built
-  E2E interaction is checked in; live Compose verification is blocked by the
-  stale running image and unreadable temporary Docker-context paths.
+  `apps/mas-dashboard` pass for the hierarchy policy overlay. The focused
+  authenticated E2E now passes 1/1 against the current `mas/dashboard:overlay`
+  image (`d5f596e`); the normal WSL Docker context remains blocked by protected
+  temporary paths, so native/release image verification remains open.
 
 ### Exit gate
 

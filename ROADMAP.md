@@ -276,8 +276,11 @@ deterministic CLI cases (`380daf5`); message-router sender role/team coherence
 is enforced before dedupe/enqueue with static and mocked-router coverage
 (`fb39128`); native/live/release gates remain open
 The hierarchy graph communication-policy overlay and source-built allowed/denied
-path coverage are implemented in `8b7d9f1`; live Compose image evidence remains
-open because the running image predates that commit.
+path coverage are implemented in `8b7d9f1`; the focused authenticated hierarchy
+and path-tracing E2E passes 1/1 against a current locally rebuilt
+`mas/dashboard:overlay` image (`d5f596e`). Normal WSL Docker-context rebuild and
+release-image evidence remain open because protected `.tmp-*` paths are still
+traversed (generalized exclusions are recorded in `b3a2e8e`).
 
 The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9` with its router boundary clarified in `33e0384`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`, and the dashboard typecheck repair is committed as `fc4f0fa`; live storage/provider/worker evidence remains a separate gate.
 
@@ -323,11 +326,11 @@ Required outcomes:
   external-router and dashboard hierarchy evidence remain separate.
 - [x] hierarchy visualization exposes a sender-role communication-policy
   overlay with color-coded/labeled allowed and denied team paths; dashboard
-  typecheck and focused lint/build pass; the source-built E2E spec is checked in
-  but has not yet executed successfully against a current image
-  (`8b7d9f1`). Live Compose image evidence remains open while the deployed
-  image predates the commit and its Docker context contains unreadable
-  `.tmp-*` paths.
+  typecheck and focused lint/build pass; the focused authenticated hierarchy
+  and path-tracing E2E passes 1/1 against a current locally rebuilt
+  `mas/dashboard:overlay` image (`d5f596e`). Normal WSL Docker-context rebuild
+  and release-image evidence remain open while protected `.tmp-*` paths are
+  still traversed (`b3a2e8e`).
 
 **Exit:** no Critical defects and every P0 gate has current reproducible evidence.
 
