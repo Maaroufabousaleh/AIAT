@@ -7702,6 +7702,67 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
         checks=checks,
         approved_by=None,
     )
+    compatibility_matrix_row: dict[str, Any] | None = None
+    create_matrix = getattr(storage, "create_compatibility_matrix", None)
+    if inspect.iscoroutinefunction(create_matrix):
+        provenance_version = (
+            provenance.exact_release
+            or provenance.package_version
+            or provenance.oci_image_digest
+            or provenance.commit_sha
+            or worker.get("version_pin")
+            or "unknown"
+        )
+        verified_capabilities = candidate.bundle.verified_capabilities
+        compatibility_matrix_row = await create_matrix(
+            worker_id=worker_id,
+            runtime_version=str(provenance_version),
+            adapter_version=str(candidate.adapter.version),
+            contract_version=str(
+                provenance.protocol_api_version
+                or config.get("contract_version")
+                or "aiat.adapter.v1"
+            ),
+            model_profiles=(
+                {"worker": str(worker.get("model_profile_id"))}
+                if worker.get("model_profile_id")
+                else {}
+            ),
+            capabilities=(
+                verified_capabilities.capabilities.model_dump(mode="json")
+                if verified_capabilities is not None
+                else {}
+            ),
+            fixtures=[
+                str(test.get("name"))
+                for test in (certification.conformance.get("tests") or [])
+                if isinstance(test, dict) and test.get("name")
+            ],
+            passed=certification.passed,
+        )
+        # Keep the process-local steward evidence graph in lockstep with the
+        # canonical storage write.  Restart rehydration covers the durable
+        # boundary, but a same-process status/rollout must not temporarily
+        # report an empty compatibility history.
+        steward.record_compatibility_matrix(
+            CompatibilityMatrix(
+                matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                contract_version=str(compatibility_matrix_row["contract_version"]),
+                model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                passed=bool(compatibility_matrix_row.get("passed", False)),
+                generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+            )
+        )
+    certification_evidence = {
+        "operator_conformance_submission": req.conformance,
+        "server_derived_checks": server_checks,
+    }
+    if compatibility_matrix_row is not None:
+        certification_evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
     await storage.create_certification_run(
         certification_id=certification.certification_id,
         worker_id=worker_id,
@@ -7710,10 +7771,7 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
         status="passed" if certification.passed else "rejected",
         conformance=certification.conformance,
         checks=certification.checks,
-        evidence={
-            "operator_conformance_submission": req.conformance,
-            "server_derived_checks": server_checks,
-        },
+        evidence=certification_evidence,
         failure_reasons=list(certification.failures),
         completed_at=certification.completed_at,
     )
@@ -7727,6 +7785,8 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
                 candidate=persisted_candidate,
             )
             evidence["worker_shell_version_id"] = str(shell["id"])
+        if compatibility_matrix_row is not None:
+            evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
         evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
         await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
     await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
