@@ -310,7 +310,7 @@ external client-language SDK compatibility yet.
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
 - [x] Make the project flow selector read the active catalogue with `cache: "no-store"` so newly created/versioned flows are selectable immediately; the one-test flow-builder golden path and the aggregate local dashboard matrix pass again.
 - [x] Add the dashboard theme preference foundation (`5e3cc13`): persisted `system`/`light`/`dark` selection, no-flash bootstrap, system media changes, light-palette migration tokens, compact mobile control, and reduced-motion defaults; source-built focused Playwright coverage passes 2/2 while full page parity remains open.
-- [x] Add the bounded `aiat.evidence-detail.v1` dashboard read model (`8fefc8b`, trace extension `c8505eb`, model/integration expansion and scalar hardening `dc50719`, recovery regression `5357166`, tool catalogue extension `ec8cf67`) for project, flow, flow-instance, worker, worker-run, credential, dead-letter, runtime, trace, model, integration, and tool citations; the proxy selects matching list/catalogue/manifest records, allow-lists scalar fields and backend paths, bounds values, strips nested payloads/trace items/configuration/profile bindings/tool schemas/credential requirements, and preserves identity-only behavior for unsupported kinds. Source-built focused coverage passes 7/7, including temporary-detail-unavailable identity recovery; artifact/usage detail and broader stale/offline recovery remain open.
+- [x] Add the bounded `aiat.evidence-detail.v1` dashboard read model (`8fefc8b`, trace extension `c8505eb`, model/integration expansion and scalar hardening `dc50719`, recovery regression `5357166`, tool catalogue extension `ec8cf67`, artifact/usage authority `2ca5f3d`) for project, flow, flow-instance, worker, worker-run, credential, dead-letter, runtime, trace, model, integration, tool, artifact, and usage citations; the proxy selects matching list/catalogue/manifest records or operator-authenticated artifact/usage reads, allow-lists scalar fields and backend paths, bounds values, strips nested payloads/trace items/metadata/pricing/resource/configuration/profile bindings/tool schemas/credential requirements, and preserves identity-only behavior for unsupported kinds. Source-built focused coverage passes 9/9, including artifact/usage scalar checks and temporary-detail-unavailable identity recovery; broader stale/offline recovery remains open.
 - Finish light/dark/system themes and mobile parity.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
@@ -319,8 +319,9 @@ external client-language SDK compatibility yet.
   states; broader page-specific denial and rollback coverage remains.
 - Deep-link statuses to evidence, traces, decisions, and recovery; the CEO
   citation route is implemented, including bounded tool/model/integration/
-  artifact/usage/worker-run/runtime/trace links. Resource-specific detail
-  loading and broader recovery/golden-path coverage remain.
+  artifact/usage/worker-run/runtime/trace links. Resource-specific detail now
+  covers all fourteen canonical kinds through scalar-only reads; broader
+  stale/offline recovery and golden-path coverage remain.
 - [x] Run the stable local Compose Playwright matrix: 34/35 pass with one
   explicit safe DLQ-fixture skip, including shell skip-link/mobile focus
   recovery, identity stale-record/retry state, PM integration conflict/stale

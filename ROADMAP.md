@@ -34,7 +34,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Postgres/pgvector/Redis/object storage, retention, and memory services | [Data, Storage, Memory, and Retention](Docs/current/FEATURE_DATA_STORAGE_AND_MEMORY.md) |
 | Object-store conformance, copy, backup/restore, migration, and benchmark workflow | [`object_store_conformance.py`](mas/packages/mas-core/mas_core/memory/object_store_conformance.py), [`object_store_migration.py`](mas/packages/mas-core/mas_core/memory/object_store_migration.py), [`object_store_backup.py`](mas/packages/mas-core/mas_core/memory/object_store_backup.py), [`object_store_rollout.py`](mas/packages/mas-core/mas_core/memory/object_store_rollout.py), [`object_store_benchmark.py`](mas/packages/mas-core/mas_core/memory/object_store_benchmark.py), [`check_object_store_conformance.py`](mas/scripts/check_object_store_conformance.py), [`check_object_store_copy.py`](mas/scripts/check_object_store_copy.py), [`check_object_store_backup_restore.py`](mas/scripts/check_object_store_backup_restore.py), [`check_object_store_migration.py`](mas/scripts/check_object_store_migration.py), [`check_object_store_benchmarks.py`](mas/scripts/check_object_store_benchmarks.py), and the local MinIO probes [`check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh)/[`check-minio-backup-restore.sh`](mas/infra/compose/scripts/check-minio-backup-restore.sh) (`--live` paths included) |
 | Object-store migration review status | [Object-Store Migration Review Status](Docs/current/FEATURE_OBJECT_STORE_MIGRATION_STATUS.md) |
-| Dashboard information architecture, CEO UX, accessibility, and E2E | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); finite section ACL policy `d405ccb`, fail-closed enforcement/operator proxies `e9b4da4`, project-evidence typecheck repair `fc4f0fa`, and operation-selector hardening `e378f40` |
+| Dashboard information architecture, CEO UX, accessibility, and E2E | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); finite section ACL policy `d405ccb`, fail-closed enforcement/operator proxies `e9b4da4`, project-evidence typecheck repair `fc4f0fa`, operation-selector hardening `e378f40`, and bounded artifact/usage evidence reads `2ca5f3d` |
 | Local dashboard E2E evidence | [`dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json) — 34/35 Playwright tests pass on the WSL2 Compose stack, including skip-link/mobile navigation focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage; native-Linux and provider-owned paths remain separate gates |
 | Tool authority catalogue and adapter boundary | [Tool Catalogue](tools.md) |
 | Worker/runtime declaration, persisted-binding reconciliation, run-lifecycle fixture, and selected run-readiness preflight | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [`check_worker_reconciliation.py`](mas/scripts/check_worker_reconciliation.py) (static/`--live`), [`check_worker_run_lifecycle.py`](mas/scripts/check_worker_run_lifecycle.py), [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py) (fixture/read-only `--live`), [`generate_worker_certification_matrix.py`](mas/scripts/generate_worker_certification_matrix.py), [`test_worker_certification_matrix.py`](mas/packages/mas-core/tests/test_worker_certification_matrix.py), [matrix](mas/docs/provenance/worker_certification_matrix.yaml) |
@@ -150,7 +150,7 @@ The codebase already includes:
   environment defaults; scheduler/display fallback hardening is committed as
   `ee1361f` and durable records remain UTC.
 - the generated dashboard and Python SDK contract surfaces both contain 130
-  models and 266 operation records tied to the same OpenAPI/provenance hash;
+  models and 268 operation records tied to the same OpenAPI/provenance hash;
   the three role-scoped executive action routes are included in that export.
 - the 11 shipped authority/manager prompts resolve only concrete, policy-allowed
   tools; review submissions publish canonical `REVIEW_RESPONSE` envelopes and
@@ -531,9 +531,9 @@ Required outcomes:
   responses; the chat renders them, links bounded project/flow/governance/
   worker/credential/integration/tool/project-evidence/log kinds, and exposes a
   dedicated evidence-record route. Scalar `aiat.evidence-detail.v1` summaries
-  now load twelve kinds (including model, integration, tool, and trace), while
-  artifact and usage IDs remain payload-free citations unless a bounded detail
-  authority exists. Legacy fallback output accepts only
+  now load fourteen kinds (including model, integration, tool, trace, artifact,
+  and usage), with operator-authenticated artifact/usage read authorities that
+  exclude nested metadata, pricing, resource, and detail payloads. Legacy fallback output accepts only
   explicit stripped `AIAT_EVIDENCE` markers and labels those citations
   `unverified` (`f1801bb`); complete governed-flow coverage, broader detail
   loading, and recovery states remain;
@@ -825,9 +825,9 @@ an explicit open gate.
    explicit fallback markers, bounded project/flow/governance/worker/credential/
    integration/tool/project-evidence/log links, payload-free artifact/model/
    runtime/usage/worker-run/trace references, dedicated evidence records, and
-   the bounded twelve-kind `aiat.evidence-detail.v1` scalar projection and
-   temporary-detail-unavailable identity recovery now pass; broader detail
-   kinds and stale/offline recovery remain.
+   the bounded fourteen-kind `aiat.evidence-detail.v1` scalar projection,
+   operator-authenticated artifact/usage read authorities, and temporary-detail-
+   unavailable identity recovery now pass; broader stale/offline recovery remains.
 6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the 34/35 evidence count.
