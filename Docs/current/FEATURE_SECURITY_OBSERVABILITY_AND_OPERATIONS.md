@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, and local API/transport read-back are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), and local API/transport read-back are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
