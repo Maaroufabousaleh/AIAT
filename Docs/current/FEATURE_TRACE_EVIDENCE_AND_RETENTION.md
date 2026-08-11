@@ -3,11 +3,13 @@
 **Baseline:** 2026-08-11
 **Status:** the pure trace-context, native-span, and secret-safe trace-evidence
 contracts are reviewed and committed in `77d5494` with deterministic fixtures;
-the bounded API-observation schema/migrations are committed in `9c39919`, and
-the tool-service HTTP and usage-writer integration is committed in `53d38fc`.
-Broader API/storage writer integration remains a separate review group. Direct model-usage, worker-artifact, integration-evidence,
-API-request correlation, native transport/model/tool/audit/integration span
-persistence, and a deterministic metadata-only retention planner are defined.
+the bounded API-observation schema/migrations are committed in `9c39919`, the
+tool-service HTTP and usage-writer integration is committed in `53d38fc`, and
+the API/storage trace writer, native-span, SLO projection, and operator
+read-route integration is committed in `84a1c01`. Direct model-usage,
+worker-artifact, integration-evidence, API-request correlation, native
+transport/model/tool/audit/integration span persistence, and a deterministic
+metadata-only retention planner are now queryable through the bounded route.
 The refreshed local orchestrator deployment is at migration
 `0036_native_trace_spans`; bounded live transport and representative pure-tool
 probes pass. The tool probe proves one
@@ -162,7 +164,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Model-backed worker source checker: [`mas/scripts/check_worker_trace_coverage.py`](../../mas/scripts/check_worker_trace_coverage.py)
 - Local live transport checker/evidence (`eac83ae`): [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py), [`mas/docs/provenance/trace_observability_live.json`](../../mas/docs/provenance/trace_observability_live.json)
 - Local live tool checker/evidence (`eac83ae`): [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py), [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json), and [`mas/apps/tool-service/tool_service/usage.py`](../../mas/apps/tool-service/tool_service/usage.py). Both probes are fail-closed and emit no payloads, credentials, or project identifiers.
-- Core/API tests: [`test_trace_evidence.py`](../../mas/packages/mas-core/tests/test_trace_evidence.py), [`test_trace_evidence.py`](../../mas/apps/orchestrator-api/tests/test_trace_evidence.py)
+- Core/API tests: [`test_trace_evidence.py`](../../mas/packages/mas-core/tests/test_trace_evidence.py), [`test_trace_evidence.py`](../../mas/apps/orchestrator-api/tests/test_trace_evidence.py), [`test_trace_propagation.py`](../../mas/apps/orchestrator-api/tests/test_trace_propagation.py), and [`test_slo_capacity.py`](../../mas/apps/orchestrator-api/tests/test_slo_capacity.py)
 - Worker source coverage tests: [`test_worker_trace_coverage.py`](../../mas/packages/mas-core/tests/test_worker_trace_coverage.py)
 - API observation fixture/check: [`test_api_observations.py`](../../mas/packages/mas-core/tests/test_api_observations.py), [`check_api_observability.py`](../../mas/scripts/check_api_observability.py)
 - Native span fixture/check: [`test_native_trace_spans.py`](../../mas/packages/mas-core/tests/test_native_trace_spans.py), [`check_native_trace_spans.py`](../../mas/scripts/check_native_trace_spans.py)

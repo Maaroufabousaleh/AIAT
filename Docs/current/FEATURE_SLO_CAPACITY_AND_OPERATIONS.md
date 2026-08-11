@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
-**Baseline:** 2026-08-10  
-**Status:** deterministic policy/report/forecast contracts implemented; operator API, payload-free API observation ledger, fixture checkers, durable usage aggregate query, and local live transport/tool read-backs are verified. The 2026-08-10 report is retained at [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json); deployed load/soak/chaos, model-backed worker, and mail-edge evidence remain open  
+**Baseline:** 2026-08-11
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, and local live transport/tool evidence are verified in `84a1c01`. The retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json); deployed load/soak/chaos, model-backed worker, and mail-edge evidence remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -86,7 +86,9 @@ not block workers, routing, integrations, or project completion.
   [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json)
 - Core and API tests:
   [`mas/packages/mas-core/tests/test_slo.py`](../../mas/packages/mas-core/tests/test_slo.py),
-  [`mas/apps/orchestrator-api/tests/test_slo_capacity.py`](../../mas/apps/orchestrator-api/tests/test_slo_capacity.py)
+  [`mas/apps/orchestrator-api/tests/test_slo_capacity.py`](../../mas/apps/orchestrator-api/tests/test_slo_capacity.py),
+  [`mas/apps/orchestrator-api/tests/test_trace_evidence.py`](../../mas/apps/orchestrator-api/tests/test_trace_evidence.py),
+  [`mas/apps/orchestrator-api/tests/test_trace_propagation.py`](../../mas/apps/orchestrator-api/tests/test_trace_propagation.py)
 
 ## Contract semantics
 
