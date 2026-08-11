@@ -235,7 +235,9 @@ reconciliation, bounded metric label inventory, persisted CEO/service section
 ACLs, immutable image-input contract, fail-closed local image identity probe,
 tool-service profile split, read-only persisted default-worker binding
 reconciliation, and the secret-safe release-environment/provenance input group
-(`64771b5`) implemented; native/live/release gates remain
+(`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
+implemented; the latest static ledger run is 48/48 pass with two pending
+technical evidence items and `NO-RELEASE`; native/live/release gates remain
 open
 
 The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`; project-page composition and live storage/provider/worker evidence remain separate reviewed groups.

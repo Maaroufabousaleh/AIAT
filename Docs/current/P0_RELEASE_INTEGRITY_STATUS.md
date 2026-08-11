@@ -1,7 +1,7 @@
 # P0 Release Integrity Status
 
 **Updated:** 2026-08-11  
-**Status:** in progress — metadata-only policy, section ACL contract, immutable image contract, fail-closed local image identity probe, tool-service profile split, bounded project-state metrics, read-only persisted default-worker binding reconciliation, deterministic worker-run lifecycle fixture, exact-locked LangGraph/CrewAI adapter conformance, deterministic flow traversal semantics, explicit evidence-policy scope resolution, external-account action-policy and lifecycle fixtures, outbound-mail approval/idempotency/retry/outage fixture, built-in YouTrack/GitHub adapter declaration and mocked HTTP conformance fixtures, asynchronous governed flow-task binding, evidence-preserving flow retry, watchdog/recovery fixture, WSL/DrvFS-safe project Git initialization, local dashboard UI golden paths (including shell focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry states), and the secret-safe release-environment/provenance input group committed as `64771b5` implemented; the evidence-package core/resolver batch is committed as `a44a1aa` with package-level workflow exports isolated in `d0472af`, isolated API/snapshot/policy routes are committed in `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed in `82bbaeb`; native/live release exit gates, project-page composition, and live provider snapshot evidence remain open
+**Status:** in progress — metadata-only policy, section ACL contract, immutable image contract, fail-closed local image identity probe, tool-service profile split, bounded project-state metrics, read-only persisted default-worker binding reconciliation, deterministic worker-run lifecycle fixture, exact-locked LangGraph/CrewAI adapter conformance, deterministic flow traversal semantics, explicit evidence-policy scope resolution, external-account action-policy and lifecycle fixtures, outbound-mail approval/idempotency/retry/outage fixture, built-in YouTrack/GitHub adapter declaration and mocked HTTP conformance fixtures, asynchronous governed flow-task binding, evidence-preserving flow retry, watchdog/recovery fixture, WSL/DrvFS-safe project Git initialization, local dashboard UI golden paths (including shell focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry states), the secret-safe release-environment/provenance input group committed as `64771b5`, and the bounded release-ledger aggregator committed as `eff4eef` implemented; the evidence-package core/resolver batch is committed as `a44a1aa` with package-level workflow exports isolated in `d0472af`, isolated API/snapshot/policy routes are committed in `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed in `82bbaeb`; native/live release exit gates, project-page composition, and live provider snapshot evidence remain open
 **Plan:** [P0 Release Integrity Plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)  
 **Roadmap:** [ROADMAP.md](../../ROADMAP.md)
 **Ledger:** [AIAT Current Release Ledger](../../mas/docs/AIAT_CURRENT_RELEASE_LEDGER.md)
@@ -181,16 +181,22 @@ single frozen commit before production claims are made.
 
 ### Machine-readable release ledger
 
-- `scripts/check_release_ledger.py --json` now aggregates the checked-in
-  verifier inventory into `aiat.release-ledger.v1`. The static profile currently
-  reports all 48 configured fixture/contract/documentation/release-environment/
-  operator-pin/governance checks passing, two worker security findings-review evidence items, and
+- `scripts/check_release_ledger.py --json` (committed as `eff4eef`) now
+  aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
+  The latest static run reports 48/48 configured
+  fixture/contract/documentation/release-environment/operator-pin/governance
+  checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
-  included.
-- `scripts/check_release_environment.py --json` now emits the current source
-  revision, branch/dirty state, hashes for thirteen release inputs, available tool
-  identities, configured-input presence flags, and a deterministic
-  `aiat.release-environment.v1` digest (`fc8bdc6423117a7db4a597abe10da3f797c3fbe2919764bc4ae90e2930cb53d5`) without printing values or credentials. The current WSL manifest passes its static identity check; `--require-clean` remains appropriately open until a frozen release worktree exists.
+  included. Child-check timeouts and live unavailability remain explicit
+  blocked evidence rather than passes.
+- `scripts/check_release_environment.py --json` (inputs committed as
+  `64771b5`) emits the current source revision, branch/dirty state, hashes for
+  thirteen release inputs, available tool identities, configured-input
+  presence flags, and a deterministic per-revision
+  `aiat.release-environment.v1` digest without printing values or credentials.
+  The current WSL manifest passes its static identity check;
+  `--require-clean` remains appropriately open until a frozen release worktree
+  exists.
 - `scripts/check_docs_index.py --json` passes the canonical target, ten current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
@@ -354,7 +360,7 @@ single frozen commit before production claims are made.
 | External-account lifecycle fixture | PASS (static/unit/fixture; provider live open) | `uv run --isolated pytest packages/mas-core/tests/test_external_account_lifecycle.py -q`; `uv run --isolated python scripts/check_external_account_lifecycle.py --json` drives the actual `IdentityService` through eight in-memory cases for category approval/idempotency, one-use browser leases, credential rotation/session revocation, closure approval, immediate suspension, fail-closed unknown categories, and secret-safe output without external account/provider calls |
 | Outbound-mail lifecycle fixture | PASS (static/unit/fixture; relay live open) | `uv run --isolated pytest packages/mas-core/tests/test_outbound_mail_lifecycle.py -q`; `uv run --isolated python scripts/check_outbound_mail_lifecycle.py --json` drives the actual `IdentityService` through approval pause, request/submission idempotency, definitive provider-failure retry, ambiguous-outage reconciliation hold, and secret-safe output without external relay calls |
 | Self-improvement candidate detection | PASS (static/unit/fixture; live signal sources open) | `uv run --isolated pytest packages/mas-core/tests/test_improvement_candidates.py -q`; `uv run --isolated python scripts/check_self_improvement_candidates.py --json` reconciles defect, metric, upstream-update, cost, and operator-goal signals with deterministic deduplication/risk/budget mapping, conflicting-ID rejection, secret-safe metadata, and zero project/budget/credential/deployment side effects |
-| Machine-readable release ledger | PASS (static aggregation); BLOCKED (live profile with local URL) | `uv run --isolated python scripts/check_release_ledger.py --json` reports all 48 static checks passing with pending evidence and `NO-RELEASE`; the current configured `uv run --isolated python scripts/check_release_ledger.py --live --json` profile records 55 pass/9 blocked across 64 checks and never exposes credentials. The authenticated worker-reconciliation child passes 39/39 persisted defaults with zero missing rows or binding mismatches; trace/tool endpoint configuration, default-worker certification, image identity, gVisor, outbound relay, and self-improvement source remain blocked. Each child checker is bounded by the ledger timeout; the object-store child invokes `--compose-local` to execute the checked-in 8/8 MinIO probe inside the private network. The separate local `check_network_boundary.py --live --json` matrix passes all 11 runners; the metric-series scrape still passes when a live endpoint is configured after Prometheus histogram `_created` normalization. |
+| Machine-readable release ledger | PASS (static aggregation; committed `eff4eef`); BLOCKED (live profile with local URL) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 48/48 static checks passing, two pending worker security findings-review items, and `NO-RELEASE`; the configured live snapshot records 55 pass/9 blocked across 64 checks and never exposes credentials. The authenticated worker-reconciliation child passes 39/39 persisted defaults with zero missing rows or binding mismatches; trace/tool endpoint configuration, default-worker certification, image identity, gVisor, outbound relay, and self-improvement source remain blocked. Each child checker is bounded by the ledger timeout; the object-store child invokes `--compose-local` to execute the checked-in 8/8 MinIO probe inside the private network. The separate local `check_network_boundary.py --live --json` matrix passes all 11 runners; the metric-series scrape still passes when a live endpoint is configured after Prometheus histogram `_created` normalization. |
 | Release environment manifest | PASS (secret-safe static identity; committed `64771b5`) | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with thirteen input hashes, tool identities, environment-presence flags, and a deterministic per-revision manifest digest without printing values or credentials. The report records the current branch, revision, changed-path count, and dirty state; its digest must be captured again for the eventual frozen release commit. |
 
 ## Still open before P0 exit
