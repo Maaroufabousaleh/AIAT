@@ -1,15 +1,12 @@
 # AIAT as a Modular AI Company Operating System
 
 > **2026 authoritative overlay:** This document is historical design research.
-> For implementation status and current licensing decisions, use
-> [`AIAT_Deep_Research_Implementation_Plan.md`](AIAT_Deep_Research_Implementation_Plan.md)
-> and [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). The current
-> default product keeps the AIAT control plane and custom authority agents;
-> workers are adapter-backed. Semgrep (CLI boundary), gVisor, OpenTofu,
-> LangGraph/CrewAI, LiteLLM/OmniRoute, ccpm/GitHub Issues, and the pinned
-> OpenCode/Docling/Mermaid paths are approved defaults. TruffleHog, Plane,
-> ZITADEL, Vault, Ansible, OpenProject, Neo4j Community, and unrestricted
-> browser-use are external/optional and must not be bundled by default.
+> Use [`../AIAT_TARGET_PROGRAMME.md`](../AIAT_TARGET_PROGRAMME.md) and
+> [`../ROADMAP.md`](../ROADMAP.md) for current implementation direction. AIAT
+> is personal/internal only; third-party licence information is non-blocking
+> metadata. Historical licence-based exclusions below are superseded. Any
+> technically suitable resource may be used normally through an appropriate
+> security and integration boundary.
 
 ## Executive summary
 

@@ -1,5 +1,13 @@
 # AIAT External Worker Steward, Universal Worker Contract, Governed Model Profiles, Flow Reliability, and Projects Enhancement
 
+> **Personal-use policy override (2026-08-09):** The architecture remains a
+> design input, but licence review is now metadata capture only. It cannot
+> reject, block, or delay worker discovery, hiring, activation, rollout,
+> updating, or execution. Current authority is
+> [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) and
+> [`ROADMAP.md`](ROADMAP.md). Security, sandbox, compatibility, source/version
+> provenance, budget, and human-action gates remain operative.
+
 ## Summary
 
 This plan defines the implementation of a universal AIAT worker contract, dedicated external-runtime Steward Agents, governed model profiles, reliable flow execution, and a complete project workspace/evidence experience.
@@ -365,11 +373,13 @@ delete evidence referenced by an active or historical run. Logs are redacted
 by field/type before hot storage, and secrets/credential values are never
 persisted in event payloads.
 
-License and supply-chain evidence must include the root license, dependency
-licenses, generated SBOM, OCI base-image licenses, redistribution class,
+Licence and supply-chain evidence may include the root licence, dependency
+licences, generated SBOM, OCI base-image licences, redistribution class,
 network-service obligations, modified-file obligations, notice/attribution
-bundle, and active-versus-candidate license changes. A missing or incompatible
-item blocks certification.
+bundle, and active-versus-candidate licence changes. These values are
+informational provenance metadata for the personal/internal programme. Missing
+or unusual licence metadata never blocks certification; security, compatibility,
+source/version, sandbox, resource, and approval evidence remains authoritative.
 
 ### Repository-level implementation map
 
@@ -1014,8 +1024,8 @@ Add foreign keys linking:
 Hiring any external worker must execute this pipeline:
 
 1. Source/provenance intake.
-2. Repository and license assessment.
-3. Redistribution review.
+2. Repository and licence/notice metadata capture.
+3. Optional redistribution-context metadata capture (never an AIAT gate).
 4. Security and supply-chain scan.
 5. Documentation and interface discovery.
 6. Exact upstream version selection.
@@ -1072,12 +1082,12 @@ Worker activation must require (when the worker's `model_mode` is not `none`):
 - valid sandbox;
 - valid permissions;
 - readiness check;
-- no unresolved security/license blocker.
+- no unresolved security blocker (licence metadata is informational only).
 
 For `model_mode: none`, activation instead requires a deterministic runtime
 contract, certified adapter, valid capability and permission declarations,
-readiness, sandbox validation where applicable, and no unresolved
-security/license blocker. Pure tools such as scanners, formatters, repository
+readiness, sandbox validation where applicable, and no unresolved security
+blocker. Pure tools such as scanners, formatters, repository
 queries, and file utilities remain registered with tool-service and do not
 enter the worker hiring lifecycle.
 
@@ -1412,7 +1422,7 @@ Implement:
 - read-only candidate evaluation;
 - immutable active bundles;
 - signature/hash verification for source and artifacts;
-- license and security gates;
+- security and policy gates; licence/notice fields remain provenance metadata;
 - prompt/document provenance;
 - protection against upstream instruction injection;
 - external documentation treated as untrusted input;
@@ -1618,7 +1628,7 @@ For every adapter:
 - external hire creates Steward Agent;
 - source provenance required;
 - exact version required;
-- license/security review required;
+- security/policy review required; licence metadata is collected but is not a gate;
 - failed evaluation blocks activation;
 - missing adapter certification blocks activation;
 - missing model profile blocks activation only for `model_mode` other than

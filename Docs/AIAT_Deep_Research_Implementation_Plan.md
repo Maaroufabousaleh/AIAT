@@ -1,5 +1,12 @@
 # AIAT Deep-Research Reconciliation and Implementation Plan
 
+> **Personal-use policy override (2026-08-09):** This is a historical
+> reconciliation plan. [`../AIAT_TARGET_PROGRAMME.md`](../AIAT_TARGET_PROGRAMME.md)
+> and [`../ROADMAP.md`](../ROADMAP.md) are authoritative. All licence
+> allowlists, prohibited-component rules, commercial-distribution concerns,
+> and licence-based activation gates below are superseded. Licence/notices are
+> metadata only and never block normal use in the personal AIAT instance.
+
 ## Summary
 
 This plan reconciles the root `deep-research-report.md` with the current AIAT
@@ -94,8 +101,9 @@ into unrelated unit-test configuration.
   repository-gap claims as historical.
 - Reconcile root/`mas/` READMEs, active plans, architecture docs, and the live
   ledger with current services, workers, OpenCode, identity, and license rules.
-- Add `THIRD_PARTY_NOTICES`, component provenance records, license allowlists,
-  SBOM generation, dependency scanning, and prohibited-license CI checks.
+- Add `THIRD_PARTY_NOTICES`, component provenance records, SBOM generation,
+  dependency/security scanning, and CI checks that preserve licence/notices as
+  metadata without an allowlist or prohibited-licence gate.
 - Pin mutable production image tags to reviewed versions/digests.
 - Add CI for Python, dashboard, protocol, migration, Compose, dependency, and
   image checks.

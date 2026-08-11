@@ -7,8 +7,11 @@ commands from there.
 The core MAS stack, configurable flows, project context layer, worker registry,
 credentials manager, privileged-operation policy, dashboard, and compose/systemd
 deployment files are implemented in code. Current implementation truth and
-remaining validation work are tracked by the phased plans under
-`.github/prompts/` and by `Docs/AIAT_LIVE_TEST_LEDGER.md`.
+remaining validation work are tracked by the root
+[`ROADMAP.md`](ROADMAP.md), the maintained feature/plan set under
+`Docs/current/`, and the current release ledger under `mas/docs/`. Older
+`.github/prompts/` and `Docs/AIAT_LIVE_TEST_LEDGER.md` files remain historical
+research/evidence inputs and do not override the roadmap.
 
 ## What Is Included
 
@@ -29,6 +32,9 @@ remaining validation work are tracked by the phased plans under
 - Credentials manager and CEO privileged-operation audit/policy layer.
 - LiteLLM and OmniRoute analytics shortcuts, optional Prometheus platform
   metrics, DLQ inspection, and system visualization pages.
+- Deployed team runners use one identity-specific CEO or worker control-plane
+  credential and an allow-listed storage API for checkpoints, usage, documents,
+  and reviews; they do not receive database/object-storage credentials.
 
 ## Repository Layout
 
@@ -84,6 +90,7 @@ From the repository root, copy `.env.example` to `.env` and set real values for 
 - `DASHBOARD_PASSWORD_HASH`
 - `JWT_SECRET`
 - `MAS_API_KEY`
+- `AIAT_CEO_API_KEY` and `AIAT_WORKER_API_KEY` (distinct automation principals)
 
 Generate a dashboard password hash from the dashboard package:
 
@@ -129,6 +136,11 @@ RedisInsight ports:
 mas/infra/compose/mas.sh up --build
 ```
 
+`mas.sh` is the development wrapper and supplies local `:dev` image names for
+the services built from this checkout. Direct production Compose usage remains
+strict: provide the immutable image inputs from
+`mas/infra/compose/production-image-lock.example.env` (with real digests).
+
 Useful local URLs:
 
 | Service | URL |
@@ -161,7 +173,14 @@ Python workspace:
 ```bash
 cd mas
 uv sync
+uv run python scripts/check_worker_reconciliation.py --json
+uv run python scripts/check_runtime_install_profile.py --json
+uv run python scripts/check_worker_steward_contract.py --json
+uv run python scripts/check_native_trace_spans.py --json
+uv run python scripts/check_docs_index.py --json
+uv run python scripts/check_release_ledger.py --json
 uv run pytest
+PYTHONPATH=apps/identity-service uv run pytest apps/identity-service/tests/test_identity_service.py
 uv run ruff check .
 uv run mypy .
 ```
@@ -197,14 +216,20 @@ deployed behind the mail-edge TLS boundary):
 - Dev overlay adds pgAdmin, RedisInsight, LiteLLM and OmniRoute host access,
   plus optional Prometheus platform metrics. Grafana is not bundled.
 
+Team runners are attached to the internal `workers` network only. PgBouncer and
+MinIO remain on the private control-plane network; the runner storage adapter
+calls the authenticated orchestrator storage boundary instead of opening SQL
+or S3 connections.
+
 The dashboard is an authenticated server-side proxy. Browser code calls
 Next.js API routes, and those routes hold service credentials server-side.
 
 ## Planning
 
-The reconciled implementation plan is [`Docs/AIAT_Deep_Research_Implementation_Plan.md`](Docs/AIAT_Deep_Research_Implementation_Plan.md).
-Historical phased plans remain useful for context, but the plan above and the
-license/provenance inventory are authoritative for current work:
+The authoritative programme is [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md)
+and the ordered documentation/implementation index is [`ROADMAP.md`](ROADMAP.md).
+The specifications and delivery plans linked there are authoritative for new
+work. The older reconciled and phased plans remain useful historical context:
 
 - `.github/prompts/PLAN_alpha_beta.md`
 - `.github/prompts/PLAN_gamma.md`
@@ -226,4 +251,7 @@ the YouTrack/GitHub setup guides.
 
 ## License
 
-Proprietary - internal use only.
+AIAT is a personal, single-operator, internal-use programme. Third-party
+licence information is recorded as non-blocking metadata under
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); resource selection and
+normal internal use are not controlled by licence allowlists.

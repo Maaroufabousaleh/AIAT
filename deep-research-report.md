@@ -3,10 +3,15 @@
 > **Repository reconciliation notice (2026-08-03):** This report is a July
 > 30, 2026 design/research snapshot. Its statement that the AIAT repository
 > was unavailable is historical and no longer true. The code-grounded status,
-> implementation decisions, and license corrections are maintained in
-> [`Docs/AIAT_Deep_Research_Implementation_Plan.md`](Docs/AIAT_Deep_Research_Implementation_Plan.md)
-> and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Do not treat this
-> report's old dependency recommendations as default-shipping authority.
+> implementation decisions are maintained in
+> [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) and
+> [`ROADMAP.md`](ROADMAP.md). Licence, notice, and stated-use findings in this
+> report are metadata only for the personal/internal instance. Do not treat
+> its old distribution assumptions, licence allowlists, prohibited-component
+> rules, commercial-use concerns, or licence-based build/activation exclusions
+> as current authority: resources may be used normally through AIAT's current
+> technical, security, compatibility, provenance, resource, and approval
+> boundaries.
 
 ## Executive summary and research assumptions
 
@@ -274,7 +279,7 @@ The roadmap deliberately implements AIAT’s differentiators before product poli
 | **Five to six** | Adapt Paperclip-inspired task checkout, heartbeat run, session and cost-event models; create workspace lease interface | Task service; atomic checkout; heartbeat queue; cost ledger; budget hard stop; workspace lease API | Fifty concurrent checkout attempts produce one winner; duplicate usage events do not double charge; expired leases recover; overspend prevents new work | New scheduler behind flag; legacy task path remains available; reconciliation job can rebuild rollups from raw events |
 | **Seven to eight** | Adapt Zeenie-inspired plugin specification, schema renderer and conformance suite; build minimal capability canvas | AIAT plugin SDK; manifest-to-form UI; plugin registry; tool conformance harness; graph read view | New plugin requires no handwritten settings UI; malformed schemas fail registration; unapproved tools are invisible to workers; timeout and cancellation tests pass | Registry supports disable/quarantine; copied MIT files removable as one package; canvas remains read-only if execution path is disabled |
 | **Nine to ten** | Clean-room company manifest inspired by TinyHumans; compile templates into org roles, grants, approvals and budgets; add original software-company template | Versioned `company.yaml` or equivalent; validator; migration framework; one original template; policy compiler | Unknown fields handled according to version policy; circular reporting rejected; template cannot grant privileges above operator ceiling; all prose passes provenance review | Manifest feature optional; generated entities tagged by package version and removable; no Tiny GPL code or template text enters the branch |
-| **Eleven to twelve** | Implement identity and credential leases; integrate worker certification; run Zeenie/Paperclip sidecar spikes; security hardening and release candidate | Scoped short-lived leases; worker attestation and rollout records; sidecar adapters; full audit timeline; SBOM and notices | Lease expiry and revocation; worker cannot access another identity; sidecar compromise simulation; controller-state tampering blocked; end-to-end reboot and recovery; license scan clean | Global worker kill switch; per-adapter circuit breaker; revoke all leases; network deny policy; ability to disable all external-derived packages and operate native AIAT only |
+| **Eleven to twelve** | Implement identity and credential leases; integrate worker certification; run Zeenie/Paperclip sidecar spikes; security hardening and release candidate | Scoped short-lived leases; worker attestation and rollout records; sidecar adapters; full audit timeline; SBOM and notices | Lease expiry and revocation; worker cannot access another identity; sidecar compromise simulation; controller-state tampering blocked; end-to-end reboot and recovery; security scan clean; licence/notices metadata recorded when available | Global worker kill switch; per-adapter circuit breaker; revoke all leases; network deny policy; ability to disable all external-derived packages and operate native AIAT only |
 
 The release candidate should not be accepted merely because workflows execute. It should demonstrate the differentiating control loop:
 
@@ -363,7 +368,10 @@ If a legal issue is discovered after implementation, the containment plan should
 | **Day six** | Run dependency, secret, vulnerability and license scans on all three projects | Initial SBOMs, vulnerability report, transitive-license report |
 | **Day seven** | Hold architecture and counsel gate | Approved twelve-week scope, prohibited reuse list, staffing commitment and rollback owner |
 
-No upstream code should enter the main AIAT branch during the first week. Candidate code should remain in quarantined repositories or branches until license, provenance, dependency and security reviews complete.
+Candidate code may enter the personal AIAT instance through the normal adapter
+path. Keep source/version provenance, dependency, and security evidence
+attached to the candidate; licence findings remain metadata and do not create a
+quarantine or activation gate.
 
 ### Code provenance checklist
 
@@ -374,7 +382,10 @@ No upstream code should enter the main AIAT branch during the first week. Candid
 - Compare clean-room implementations against upstream code for suspicious structural or textual similarity.
 - Review commit history for files whose repository-level license may not accurately describe older contributions.
 - Inventory vendored code, submodules, generated code, icons, fonts, fixtures, skills and template prose separately.
-- Block builds containing unapproved GPL paths or unknown-license dependencies.
+- Record licence values and notices for dependency inventory; do not block a
+  build solely because a licence is missing, unusual, copyleft, or marked for
+  non-commercial use. Build failures remain appropriate for integrity,
+  vulnerability, malicious-content, sandbox, or compatibility defects.
 - Generate an SBOM and third-party notice bundle for every release.
 - Retain provenance records for the lifetime of the distributed product.
 

@@ -1,5 +1,11 @@
 # Paperclip and Your Three Plans: Unified Architecture for Company-Style Orchestration
 
+> **Historical research notice (2026-08-09):** Current authority is
+> [`../../AIAT_TARGET_PROGRAMME.md`](../../AIAT_TARGET_PROGRAMME.md) and
+> [`../../ROADMAP.md`](../../ROADMAP.md). Licence classifications in this
+> report are non-blocking metadata for personal internal use; historical
+> licence-based exclusions and distribution assumptions are superseded.
+
 ## Executive summary
 
 Your three plans describe a “company simulation” orchestration system with deterministic workflow control, durable messaging, role-gated tools, and restart-proof execution. fileciteturn0file0 fileciteturn0file1 fileciteturn0file2  
