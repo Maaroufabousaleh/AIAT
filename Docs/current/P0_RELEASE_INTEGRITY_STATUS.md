@@ -301,7 +301,7 @@ single frozen commit before production claims are made.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Worker/steward/evaluator regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_default_shipped_agents.py apps/orchestrator-api/tests/test_workers_test5_lifecycle.py -q`; the steward fixture also passes `uv run --isolated python scripts/check_worker_steward_contract.py --json`, including regression blocking and pre-activation pointer preservation |
+| Worker/steward/evaluator regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_default_shipped_agents.py apps/orchestrator-api/tests/test_workers_test5_lifecycle.py apps/orchestrator-api/tests/test_steward_rehydration.py -q`; the steward fixture also passes `uv run --isolated python scripts/check_worker_steward_contract.py --json`, including regression blocking, pre-activation pointer preservation, and restart-safe rehydration coverage |
 | Document ingest fallback contract | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; Docling execution and explicit degraded plain-text fallback are covered without claiming the optional binary is installed |
 | Backend and team-runner regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests -q` |
 | Broader worker/observability regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_*.py packages/mas-core/tests/test_observability.py apps/orchestrator-api/tests/test_metrics.py -q` |
