@@ -86,6 +86,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   Docker `RepoDigests` identity probe; it never claims SBOM, scan, build, or
   clean-room evidence and returns exit 2 when Docker or deployment refs are
   unavailable.
+- [x] Extend the same helper's `--require-sbom` path to validate the minimum
+  CycloneDX artifact shape (format/version, metadata component, named
+  components, and unique `bom-ref` values); missing deployment refs or release
+  artifacts remain blocked, and licence fields remain metadata only.
 - [x] Lock production operator-pinned runtime/CLI versions and mark host-,
   optional-, and deployment-supplied capabilities unavailable until an exact
   identity is supplied; `scripts/check_operator_pins.py` checks the source
