@@ -693,7 +693,7 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
    integration/tool/project-evidence/log links, payload-free artifact/model/
    runtime/usage/worker-run/trace references, and dedicated evidence records
    now pass; resource-specific detail loading remains.
-6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, and the focused shell regression passes 2/2 for skip-link and mobile focus recovery. The matrix also covers identity stale-record/retry, PM integration conflict/stale retry, and system-visualization partial/offline retry states, while native-Linux WCAG/mobile/visual evidence remains open.
+6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 34/35 with one explicit safe-fixture skip, and focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation. The matrix also covers PM integration conflict/stale retry and system-visualization partial/offline retry states, while native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the 34/35 evidence count.
 

@@ -272,6 +272,7 @@ external client-language SDK compatibility yet.
 ## Workstream 6 — complete operator UX
 
 - [x] Establish the mobile shell accessibility baseline: semantic header/navigation/main landmarks, a keyboard-visible skip link, 44px menu target, focus transfer/restoration, Escape recovery, and an exposed interactive backdrop close action are covered by `e2e/dashboard-shell-accessibility.spec.ts` (2/2 focused tests pass). This does not close the full WCAG, theme, native-Linux, or page-level visual gates.
+- [x] Preserve identity-resource last-known records on refresh failure, label the stale state, and expose a retry action; `e2e/identity-states.spec.ts` passes the authenticated failure/retry path without rendering sensitive fields. Provider/live identity evidence remains separate.
 - Finish light/dark/system themes and mobile parity.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
