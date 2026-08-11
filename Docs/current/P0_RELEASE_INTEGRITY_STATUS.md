@@ -375,6 +375,7 @@ single frozen commit before production claims are made.
   conformance probe now passes all 8/8 scoped cases, and the same-provider
   backup/restore rehearsal passes two disposable objects with manifest parity
   and cleanup. Evidence is retained at
+  (evidence refreshed 2026-08-11 in `22c736d`) at
   [`object_store_live_conformance.json`](../../mas/docs/provenance/object_store_live_conformance.json)
   and
   [`object_store_backup_restore_live.json`](../../mas/docs/provenance/object_store_backup_restore_live.json).

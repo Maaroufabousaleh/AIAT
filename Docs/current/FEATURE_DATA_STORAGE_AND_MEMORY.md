@@ -25,7 +25,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   with `scripts/check_object_store_conformance.py --live`; missing endpoint or
   credentials and unavailable providers fail closed as a blocked result rather
   than being reported as a pass. The running local MinIO deployment passed all
-  8/8 cases; the secret-safe report is retained in
+  8/8 cases (evidence refreshed 2026-08-11 in `22c736d`); the secret-safe report is retained in
   [`mas/docs/provenance/object_store_live_conformance.json`](../../mas/docs/provenance/object_store_live_conformance.json),
   and [`mas/infra/compose/scripts/reconcile-minio-agent-user.sh`](../../mas/infra/compose/scripts/reconcile-minio-agent-user.sh)
   reconciles a persisted IAM secret after local rotation without touching
