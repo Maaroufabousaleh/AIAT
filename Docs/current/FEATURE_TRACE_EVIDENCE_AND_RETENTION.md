@@ -1,12 +1,15 @@
 # Trace Evidence and Retention Feature Specification
 
 **Baseline:** 2026-08-10  
-**Status:** bounded static/unit/API slice implemented with direct model-usage,
-worker-artifact, integration-evidence, API-request correlation, native
-transport/model/tool/audit/integration span persistence, and a deterministic
-metadata-only retention planner. The refreshed local orchestrator deployment is
-at migration `0036_native_trace_spans`; bounded live transport and
-representative pure-tool probes pass. The tool probe proves one
+**Status:** the pure trace-context, native-span, and secret-safe trace-evidence
+contracts are reviewed and committed in `77d5494` with deterministic fixtures;
+the broader API/storage writer integration is present as a separate uncommitted
+review group. Direct model-usage, worker-artifact, integration-evidence,
+API-request correlation, native transport/model/tool/audit/integration span
+persistence, and a deterministic metadata-only retention planner are defined.
+The refreshed local orchestrator deployment is at migration
+`0036_native_trace_spans`; bounded live transport and representative pure-tool
+probes pass. The tool probe proves one
 `project_usage_events` row plus one `tool_service` native span and is retained
 at [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json).
 Live model/worker/audit/integration source coverage, mail-edge spans, and live
@@ -129,6 +132,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Read model: [`mas/packages/mas-core/mas_core/observability/trace_evidence.py`](../../mas/packages/mas-core/mas_core/observability/trace_evidence.py)
 - Trace validation/context: [`mas/packages/mas-core/mas_core/observability/tracing.py`](../../mas/packages/mas-core/mas_core/observability/tracing.py)
 - Native span contract/normalizer: [`mas/packages/mas-core/mas_core/observability/native_spans.py`](../../mas/packages/mas-core/mas_core/observability/native_spans.py)
+- Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
 - API observation contract/table/migration: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py)

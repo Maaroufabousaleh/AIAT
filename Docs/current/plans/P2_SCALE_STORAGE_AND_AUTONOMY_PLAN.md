@@ -125,10 +125,11 @@
   legacy run fallback), API observations, and PM inbound metadata; project
   `trace_days`/`trace_sample_rate` from the company manifest, redact raw
   payloads, and expose a deterministic fixture plus fail-closed live checker.
-- [x] Persist bounded native transport/model/tool/audit/worker/integration
-  spans in `native_trace_spans`, with scalar allow-listed attributes and trace
-  projection; live deployment coverage, identity-service mail-edge spans,
-  incident views, and retention enforcement remain open.
+- [x] Define and commit the bounded native transport/model/tool/audit/worker/
+  integration span and trace-evidence contracts (`77d5494`), with scalar
+  allow-listed attributes and deterministic redaction fixtures. The API/storage
+  writers, live deployment coverage, identity-service mail-edge spans, incident
+  views, and retention enforcement remain separate review/live gates.
 - [x] Define versioned descriptive SLO targets for API, queue age, worker
   startup/run, tool latency, model routing, PM/SCM sync, mail delivery, and
   recovery; expose observed/attention/no-data statuses through the operator

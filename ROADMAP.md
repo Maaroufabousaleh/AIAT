@@ -672,6 +672,10 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
 11. [x] Publish a current progress ledger.
 12. [ ] Refresh the frozen release ledger after native/live evidence.
 
+The trace-evidence/native-span core is now reviewed and committed as `77d5494`;
+API/storage writer wiring, native deployment read-back, model/mail coverage, and
+retention enforcement remain separate R1/P2 evidence gates.
+
 ### Next — R2 to R5/P1
 
 1. Keep the 15-slot default-worker binding matrix green, then certify all
