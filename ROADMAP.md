@@ -243,7 +243,8 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 
 ### R0 — documentation authority established
 
-**Status:** in progress — the authority set and policy are consolidated; clean-checkout link closure remains open
+**Status:** complete — the authority set and policy are consolidated, and both
+the working-tree and clean Git-archive documentation checks pass
 
 - One normative target programme.
 - Eleven current feature specifications.
@@ -268,7 +269,7 @@ implemented; the latest static ledger run is 48/48 pass with two pending
 technical evidence items and `NO-RELEASE`; native/live/release gates remain
 open
 
-The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, and project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`; live storage/provider/worker evidence and dashboard typecheck repair remain separate reviewed gates.
+The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9` with its router boundary clarified in `33e0384`, bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`, project workspace/read-model composition, durable package upsert, terminal profile learning, and sprint retrospective lineage are committed as `1112d5e`, and the dashboard typecheck repair is committed as `fc4f0fa`; live storage/provider/worker evidence remains a separate gate.
 
 Required outcomes:
 
