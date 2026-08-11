@@ -1,7 +1,7 @@
 # Control Plane and Company Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implemented foundation; company-timezone runner propagation committed as `c955ac8`, prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
+**Status:** implemented foundation; typed company policy manifest fields committed as `e0f0aee`, company-timezone runner propagation committed as `c955ac8`, prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -14,6 +14,7 @@ The control plane turns AIAT from a collection of agents into one governed compa
 - Versioned company manifests with validation, stable digest, apply, history, and rollback.
 - Explicit manifest policy fields for timezone, retention, privacy classes,
   evidence requirements, model constraints, and deployment/sandbox defaults;
+  typed validation and legacy compatibility are covered by `e0f0aee`, and
   older manifests remain valid without the optional policy blocks.
 - Durable company, department, assignment, budget, reservation, and usage-ledger tables.
 - A default software-company manifest with 11 authority/manager departments, USD 100 starter budget, 20 concurrent-run limit, human approval for external workers, and gVisor default.

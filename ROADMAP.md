@@ -95,7 +95,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 The codebase already includes:
 
 - custom orchestrator, router, tool service, dashboard, team runners, identity service, and PM gateway;
-- versioned company manifests, 11 authority/manager teams, budgets, permissions, and org graph;
+- versioned company manifests, typed policy fields (`e0f0aee`), 11 authority/manager teams, budgets, permissions, and org graph;
 - 39 non-placeholder worker manifests plus two placeholders;
 - universal `aiat.worker.v1`, worker-run controller, stewards, candidates, certification, compatibility matrices, canary, rollback, and a deterministic controller lifecycle fixture;
 - visual flows with nine node types and durable instances/executions;

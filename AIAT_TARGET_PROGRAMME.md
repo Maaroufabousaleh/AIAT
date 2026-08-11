@@ -962,7 +962,7 @@ The programme is organised around completing and hardening the existing architec
 - [x] Generate deterministic dashboard and internal Python SDK types from
   schemas, add operation metadata, and enforce compatibility fixtures; external
   client-language SDKs remain optional.
-- [x] Make company timezone, retention, privacy classes, evidence requirements, model constraints, sandbox profile, and deployment policy explicit manifest fields.
+- [x] Make company timezone, retention, privacy classes, evidence requirements, model constraints, sandbox profile, and deployment policy explicit manifest fields (`e0f0aee`).
 - [x] Reconcile worker manifests, runtime catalogue, default company references,
   OpenCode Compose link/version, provenance inventory, and metadata-only notices
   in CI. Live worker/runtime certification and image/SBOM evidence remain
