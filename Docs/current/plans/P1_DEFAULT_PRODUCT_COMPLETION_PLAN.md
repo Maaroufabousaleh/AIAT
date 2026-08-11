@@ -313,6 +313,7 @@ external client-language SDK compatibility yet.
 - [x] Preserve the Tools catalogue definitions and circuit-breaker summaries on refresh failure, label the last known catalogue, keep the catalogue visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/tools-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live tool evidence remains separate (`5f4b0eb`).
 - [x] Preserve dead-letter queue messages and replay context on refresh failure, label the last known queue, keep cards visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/dlq-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live DLQ evidence remains separate (`823fa6d`).
 - [x] Preserve redacted credential metadata (names, placeholders, policy, usage) on refresh failure, label the last known credentials list, keep rows visible while retrying, and expose header Refresh plus banner Retry controls without rendering secret values; `e2e/credentials-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live credential expiry/revocation evidence remains separate (`970f09c`).
+- [x] Preserve successful Metrics query series on partial Prometheus refresh failure, label the surface as stale, keep charts and the last-successful timestamp honest, and expose header Refresh plus banner Retry controls; `e2e/metrics-states.spec.ts` passes the source-built partial-failure/recovery path 1/1. Native/live telemetry evidence remains separate (`85596b0`).
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
 - [x] Make the project flow selector read the active catalogue with `cache: "no-store"` so newly created/versioned flows are selectable immediately; the one-test flow-builder golden path and the aggregate local dashboard matrix pass again.
 - [x] Add the dashboard theme preference foundation (`5e3cc13`): persisted `system`/`light`/`dark` selection, no-flash bootstrap, system media changes, light-palette migration tokens, compact mobile control, and reduced-motion defaults; source-built focused Playwright coverage passes 2/2 while full page parity remains open.
@@ -321,8 +322,8 @@ external client-language SDK compatibility yet.
 - Complete WCAG 2.2 AA audit and remediation.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
   visualization, identity tables, PM integrations, project list/detail, the
-  combined governance read surface, System Control, Tools catalogue, and
-  dead-letter queue, and credentials list now expose explicit stale/partial/conflict endpoint failures
+  combined governance read surface, System Control, Tools catalogue,
+  dead-letter queue, credentials list, and Metrics now expose explicit stale/partial/conflict endpoint failures
   and retryable first-load/offline states; broader page-specific denial and
   rollback coverage remains.
 - Deep-link statuses to evidence, traces, decisions, and recovery; the CEO
@@ -330,7 +331,7 @@ external client-language SDK compatibility yet.
   artifact/usage/worker-run/runtime/trace links. Resource-specific detail now
   covers all fourteen canonical kinds through scalar-only reads and retains
   safe detail across a failed refresh; governance, System Control, and Projects
-  list, Tools catalogue, dead-letter queue, and credentials list read-state recovery are also
+  list, Tools catalogue, dead-letter queue, credentials list, and Metrics read-state recovery are also
   covered by focused 1/1 source-built tests; broader stale/offline recovery and
   golden-path coverage remain.
 - [x] Run the stable local Compose Playwright matrix: 34/35 pass with one

@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), and local API/transport read-back are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -21,6 +21,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   remain explicit evidence stages.
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
 - Health/metrics endpoints, structured logging helpers, traces/metrics modules, LiteLLM and OmniRoute services/pages, optional Prometheus dev profile, and Playwright/API health tooling.
+- The dashboard Metrics page reads its six Prometheus query families with `cache: "no-store"`, retains successful series when another query fails, labels partial data as stale, keeps the last-successful timestamp honest, and exposes header Refresh plus banner Retry controls. [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>) and [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) cover the partial-failure/recovery path 1/1.
 - The target-specific monitoring adapter can render a non-networking
   `aiat.monitoring-analytics-plan.v1` for LiteLLM and OmniRoute health/dashboard
   surfaces; implementation `525a94b` validates http(s) endpoints without
@@ -127,6 +128,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Release evidence aggregation: [`mas/scripts/check_release_ledger.py`](../../mas/scripts/check_release_ledger.py), [`mas/docs/provenance/release_ledger.yaml`](../../mas/docs/provenance/release_ledger.yaml)
 - API request observation ledger: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py), [`mas/scripts/check_api_observability.py`](../../mas/scripts/check_api_observability.py)
 - SLO/capacity read models: [`mas/packages/mas-core/mas_core/observability/slo.py`](../../mas/packages/mas-core/mas_core/observability/slo.py), [`/observability/slo`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`/observability/capacity/forecast`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/scripts/check_slo_capacity.py`](../../mas/scripts/check_slo_capacity.py)
+- Dashboard metrics surface: [`mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>) and [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts)
 - Monitoring adapter: [`mas/apps/tool-service/tool_service/devops_adapter.py`](../../mas/apps/tool-service/tool_service/devops_adapter.py), [`test_real_adapter_backends.py`](../../mas/apps/tool-service/tests/test_real_adapter_backends.py)
 - Tool registry: [`mas/apps/tool-service/tool_service/registry.py`](../../mas/apps/tool-service/tool_service/registry.py)
 - Historical live evidence: [`Docs/AIAT_LIVE_TEST_LEDGER.md`](../AIAT_LIVE_TEST_LEDGER.md)
