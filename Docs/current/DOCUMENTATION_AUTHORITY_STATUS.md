@@ -47,6 +47,14 @@ uv run --isolated python scripts/check_docs_index.py --json
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
+The latest bounded implementation groups are reflected in the maintained
+authority set: team-runner declaration reconciliation (`d9b1262`), production
+startup reconciliation and `AgentConfig`/health propagation (`569231f`), and
+their separate documentation updates (`313683f`, `2134c01`). The static
+contract currently passes 11 team files and 39 exact agent-to-manifest
+bindings. These checks establish technical identity only; registration,
+activation, certification, and licence metadata remain separate.
+
 ## Clean-checkout limitation
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the
