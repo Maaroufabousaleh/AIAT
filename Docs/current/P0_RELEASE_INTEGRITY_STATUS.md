@@ -95,9 +95,10 @@ single frozen commit before production claims are made.
   [`worker_steward_contract.json`](../../mas/docs/provenance/worker_steward_contract.json).
 - The certification route now writes the compatibility matrix through the
   canonical storage owner and links its ID into certification/candidate
-  evidence. Restart rehydration now restores persisted matrix rows into the
-  steward cache with profile/capability-shape normalization; production
-  database reconciliation and live canary evidence are still required.
+  evidence. The same-process steward cache records the row immediately, and
+  restart rehydration restores persisted matrix rows with
+  profile/capability-shape normalization; production database reconciliation
+  and live canary evidence are still required.
 - API steward rehydration now restores durable active bundle/adapter pointers
   before another rollout and fails closed when a persisted pointer is unknown;
   this preserves restart-time rollback state without claiming live worker

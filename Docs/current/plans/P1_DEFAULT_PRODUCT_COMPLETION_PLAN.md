@@ -131,9 +131,10 @@ external client-language SDK compatibility yet.
   rows after API restart and fail closed on unknown IDs; live worker
   certification remains open.
 - [x] Rehydrate durable compatibility-matrix rows into the steward-owned
-  runtime after API restart, normalizing the persisted single-profile and
-  structured-capability JSON forms; database reconciliation and live worker
-  certification remain open.
+  runtime after API restart, and record new certification rows in the same
+  process, normalizing the persisted single-profile and structured-capability
+  JSON forms; database reconciliation and live worker certification remain
+  open.
 - Exercise shadow, read-only canary, live canary, promotion, regression block, and rollback.
 
 **Done when:** every default worker table entry can execute one representative project-scoped task with exact versions, evidence, budgets, and rollback.

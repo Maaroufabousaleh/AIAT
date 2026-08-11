@@ -166,10 +166,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Certification now persists a compatibility-matrix row through
   `AgentStorage.create_compatibility_matrix`, linking runtime, adapter, and
   contract versions plus fixtures, capability/model context, and pass/fail
-  status to certification evidence. API restart rehydration now restores those
-  rows into the steward-owned compatibility history, normalizing the persisted
-  single-profile and structured-capability JSON shapes without dropping
-  evidence. This does not replace live certification or database reconciliation.
+  status to certification evidence. The same-process steward cache records the
+  row immediately, and API restart rehydration restores durable rows into the
+  steward-owned compatibility history, normalizing the persisted single-profile
+  and structured-capability JSON shapes without dropping evidence. This does
+  not replace live certification or database reconciliation.
 - The shared `security.scan` adapter now routes `semgrep`, `skillspector`, and
   `trufflehog` aliases through the bounded sandbox boundary. SkillSpector uses
   an optional `TOOL_SKILLSPECTOR_COMMAND` (or its conventional CLI shape),
