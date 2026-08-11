@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,25 +22,43 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState("");
   const [stale, setStale] = useState(false);
+  const itemsRef = useRef<Record<string, unknown>[]>([]);
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
-    setError("");
+    setError((previous) => (itemsRef.current.length > 0 ? previous : ""));
     try {
-      const response = await fetch(`/api/identity/${resource}`, { cache: "no-store" });
+      const response = await fetch(`/api/identity/${resource}`, { cache: "no-store", signal: controller.signal });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Identity data is unavailable");
-      setItems(Array.isArray(data.items) ? data.items : []);
+      if (requestId !== requestIdRef.current) return;
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      setError("");
       setStale(false);
     } catch (cause) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       setError(cause instanceof Error ? cause.message : "Identity data is unavailable");
       setStale(true);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [resource]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => {
+      requestIdRef.current += 1;
+      abortRef.current?.abort();
+    };
+  }, [load]);
   const columns = Array.from(new Set(items.flatMap((item) => Object.keys(item).filter((key) => !SENSITIVE.test(key))))).slice(0, 10);
 
   function itemActions(item: Record<string, unknown>): { action: string; label: string }[] {

@@ -8,7 +8,7 @@ test("identity tables label stale records and preserve a retry path", async ({
   let requestCount = 0;
   await page.route("**/api/identity/identities**", async (route) => {
     requestCount += 1;
-    if (requestCount === 1) {
+    if (requestCount === 1 || requestCount >= 3) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -18,7 +18,7 @@ test("identity tables label stale records and preserve a retry path", async ({
               id: "identity-e2e-001",
               worker_id: "worker-e2e",
               service: "mail",
-              state: "ACTIVE",
+              state: requestCount === 1 ? "ACTIVE" : "RECOVERED",
             },
           ],
         }),
@@ -41,4 +41,9 @@ test("identity tables label stale records and preserve a retry path", async ({
   await expect(page.getByText(/latest refresh failed/i)).toBeVisible();
   await expect(page.getByText("identity-e2e-001")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByText("Showing last known records")).toHaveCount(0);
+  await expect(page.getByText("RECOVERED")).toBeVisible();
+  await expect(page.getByText(/latest refresh failed/i)).toHaveCount(0);
 });
