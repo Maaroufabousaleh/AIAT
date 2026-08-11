@@ -19,10 +19,11 @@ integrates it with the canonical flow engine. The bounded core group includes:
   and
 - the `aiat.flow-topology-check.v1` fixture covering valid and invalid graphs.
 
-The generated JSON/TypeScript artefacts are now committed in `4151e36`; see
+The generated JSON/TypeScript artefacts are committed in `4151e36`, and
+`4777ee3` publishes the catalogue through the API and dashboard editors; see
 [Flow Node Schema Generation Status](FLOW_NODE_SCHEMA_GENERATION_STATUS.md) for
-the generator and reproducibility evidence. API/dashboard publication remains
-a separate follow-up group. Resource licence or restriction notices remain
+the grouped generator, route, and editor evidence. Resource licence or
+restriction notices remain
 metadata only and never affect schema validation, migration, activation, or
 execution.
 
@@ -44,7 +45,9 @@ engine integration. The topology report records
 
 ## Remaining gates
 
-- publish the schema contract through the API and dashboard form editors;
+- run dashboard typecheck/editor/browser evidence against the published
+  contract (the full typecheck currently has an unrelated pre-existing
+  `ErrorBanner` prop mismatch in the project evidence page);
 - validate persisted definitions and migration paths against live storage; and
 - complete live fan-out/join/switch recovery, native-Linux, and provider-owned
   certification.

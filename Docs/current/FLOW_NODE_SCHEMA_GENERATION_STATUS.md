@@ -19,9 +19,11 @@ versioned `aiat.flow-node-schemas` catalogue introduced by `9adcedf`:
 
 The generator supports `--write` for intentional refreshes and `--check` for
 stale-artifact detection. The generated files are not hand-edited. The current
-catalogue is schema version `1.0` with nine runtime node types. The API
-publication and dashboard form-consumer wiring are a separate review group;
-this commit establishes their deterministic shared input only.
+catalogue is schema version `1.0` with nine runtime node types. Commit
+`4777ee3` publishes the catalogue through `/flows/node-schemas` and connects
+both dashboard flow editors to the generated contract, including typed fields,
+governed worker/Model Profile selectors, and a collapsed legacy compatibility
+surface.
 
 Resource licence or restriction notices remain metadata only. They do not
 prevent generation, schema publication, dashboard loading, migration,
@@ -36,17 +38,20 @@ uv run --isolated python scripts/generate_flow_node_schemas.py --check
 uv run --isolated pytest \
   packages/mas-core/tests/test_flow_node_schema_generation.py \
   packages/mas-core/tests/test_flow_node_schema.py -q
+uv run --isolated pytest \
+  apps/orchestrator-api/tests/test_flow_node_schema_api.py -q
 ```
 
 The reproducibility test reads both checked-in artefacts and invokes the
 generator in check mode. The broader flow/schema regression group and
-`scripts/check_flow_topology.py --json` also pass; the topology fixture reports
-no mutation, worker dispatch, or licence gate.
+API route test pass. Focused dashboard ESLint also passes. The full dashboard
+typecheck is currently blocked by an unrelated pre-existing `ErrorBanner`
+prop mismatch in `app/(dashboard)/projects/[id]/evidence/page.tsx`; it is not
+part of this schema group. The topology fixture reports no mutation, worker
+dispatch, or licence gate.
 
 ## Remaining gates
 
-- review and commit the API schema route and dashboard form consumers as a
-  separate bounded group;
 - run the dashboard typecheck and focused editor/browser evidence against the
   generated catalogue;
 - validate persisted definition/version migration against live storage; and
