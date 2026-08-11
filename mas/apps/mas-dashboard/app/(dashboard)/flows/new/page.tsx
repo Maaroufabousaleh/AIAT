@@ -39,49 +39,43 @@ import {
   NODE_TYPE_LABELS,
   FLOW_NODE_COLORS,
   type FlowNodeType,
+  type FlowTemplate as CanonicalFlowTemplate,
 } from "@/lib/flow-types";
 import { convertReactFlowToFlow } from "@/lib/flow-editor";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { NodeSchemaContractSummary } from "@/components/flows/NodeSchemaContractSummary";
-import { NodeSchemaForm } from "@/components/flows/NodeSchemaForm";
+import {
+  NodeSchemaForm,
+  type GovernedModelProfile,
+  type GovernedWorkerOption,
+} from "@/components/flows/NodeSchemaForm";
 
 /**
- * A reusable flow scaffolding users can drop in to get started quickly.
- * Templates are position-only blueprints — labels get generated at apply time
- * so multiple templates never collide on `Date.now()` IDs in the same canvas.
+ * A dashboard-ready projection of the canonical flow-template API response.
+ * IDs are remapped at apply time so repeatedly using a template never creates
+ * collisions on the canvas.
  */
-interface FlowTemplate {
+interface DashboardFlowTemplate {
   id: string;
   name: string;
   description: string;
   icon: LucideIcon;
-  nodes: Array<{ type: FlowNodeType; label: string; position: { x: number; y: number } }>;
+  nodes: Array<{
+    templateNodeId?: string;
+    type: FlowNodeType;
+    label: string;
+    config?: Record<string, unknown>;
+    position: { x: number; y: number };
+  }>;
   edges: Array<{ sourceIndex: number; targetIndex: number; label?: string }>;
+  metadata?: Record<string, unknown>;
 }
 
 interface FlowDryRunResult {
   valid: boolean;
   errors: Array<{ code: string; message: string; node_id?: string }>;
   warnings: Array<{ code: string; message: string; node_id?: string }>;
-}
-
-interface GovernedWorkerOption {
-  id: string;
-  name: string;
-  status?: string;
-  model_mode?: string;
-  model_profile_id?: string | null;
-  adapter_type?: string;
-  active_adapter_id?: string | null;
-  active_skill_bundle_id?: string | null;
-}
-
-interface GovernedModelProfile {
-  profile_id: string;
-  status?: string;
-  purpose?: string;
-  versions?: Array<{ version?: string; status?: string }>;
 }
 
 function csvValues(value: unknown): string {
@@ -92,97 +86,56 @@ function parseCsv(value: string): string[] {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
-const FLOW_TEMPLATES: FlowTemplate[] = [
-  {
-    id: "blank",
-    name: "Blank canvas",
-    description: "Start from scratch with just a Start and End node.",
-    icon: GitBranch,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "end", label: "End", position: { x: 80, y: 220 } },
-    ],
-    edges: [{ sourceIndex: 0, targetIndex: 1 }],
-  },
-  {
-    id: "approval",
-    name: "Approval workflow",
-    description: "Task → human approval → end. Pauses until a user signs off.",
-    icon: ShieldCheck,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "task", label: "Do work", position: { x: 80, y: 200 } },
-      { type: "approval", label: "Manager review", position: { x: 80, y: 320 } },
-      { type: "end", label: "End", position: { x: 80, y: 440 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3 },
-    ],
-  },
-  {
-    id: "branch",
-    name: "Branch on condition",
-    description: "Fan out a task into parallel branches that re-join.",
-    icon: GitFork,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 200, y: 60 } },
-      { type: "task", label: "Prepare", position: { x: 200, y: 180 } },
-      { type: "parallel", label: "Run in parallel", position: { x: 200, y: 300 } },
-      { type: "task", label: "Branch A", position: { x: 60, y: 420 } },
-      { type: "task", label: "Branch B", position: { x: 340, y: 420 } },
-      { type: "join", label: "Re-join", position: { x: 200, y: 540 } },
-      { type: "end", label: "End", position: { x: 200, y: 660 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3, label: "a" },
-      { sourceIndex: 2, targetIndex: 4, label: "b" },
-      { sourceIndex: 3, targetIndex: 5 },
-      { sourceIndex: 4, targetIndex: 5 },
-      { sourceIndex: 5, targetIndex: 6 },
-    ],
-  },
-  {
-    id: "switch",
-    name: "Switch routing",
-    description: "Route outcomes to different downstream nodes based on a key.",
-    icon: ArrowRightLeft,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 200, y: 60 } },
-      { type: "switch", label: "Decide", position: { x: 200, y: 200 } },
-      { type: "task", label: "Path: approved", position: { x: 40, y: 360 } },
-      { type: "task", label: "Path: rejected", position: { x: 360, y: 360 } },
-      { type: "end", label: "End", position: { x: 200, y: 520 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2, label: "approved" },
-      { sourceIndex: 1, targetIndex: 3, label: "rejected" },
-      { sourceIndex: 2, targetIndex: 4 },
-      { sourceIndex: 3, targetIndex: 4 },
-    ],
-  },
-  {
-    id: "escalate",
-    name: "Escalation ladder",
-    description: "Try a task first, then escalate to a senior team if it fails.",
-    icon: Sparkles,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "task", label: "First attempt", position: { x: 80, y: 200 } },
-      { type: "escalate", label: "Escalate to lead", position: { x: 80, y: 340 } },
-      { type: "end", label: "End", position: { x: 80, y: 480 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3 },
-    ],
-  },
-];
+const TEMPLATE_ICONS: Record<string, LucideIcon> = {
+  software_delivery: GitBranch,
+  research: Sparkles,
+  hiring: ShieldCheck,
+  incident_response: GitFork,
+  integration_rollout: ArrowRightLeft,
+  self_improvement: Sparkles,
+};
+
+const BLANK_TEMPLATE: DashboardFlowTemplate = {
+  id: "blank",
+  name: "Blank canvas",
+  description: "Start from scratch with just a Start and End node.",
+  icon: GitBranch,
+  nodes: [
+    { type: "start", label: "Start", position: { x: 80, y: 80 } },
+    { type: "end", label: "End", position: { x: 80, y: 220 } },
+  ],
+  edges: [{ sourceIndex: 0, targetIndex: 1 }],
+};
+
+function toDashboardTemplate(template: CanonicalFlowTemplate): DashboardFlowTemplate {
+  const sourceNodes = template.definition_json.nodes || [];
+  const sourceEdges = template.definition_json.edges || [];
+  const nodeIndex = new Map(sourceNodes.map((node, index) => [node.id, index]));
+  return {
+    id: template.template_id,
+    name: template.name,
+    description: template.description,
+    icon: TEMPLATE_ICONS[template.template_id] || GitBranch,
+    nodes: sourceNodes.map((node, index) => ({
+      templateNodeId: node.id,
+      type: node.type,
+      label: node.label,
+      config: node.config || {},
+      position: node.position || {
+        x: (index % 3) * 220 + 80,
+        y: Math.floor(index / 3) * 140 + 80,
+      },
+    })),
+    edges: sourceEdges.flatMap((edge) => {
+      const sourceIndex = nodeIndex.get(edge.source);
+      const targetIndex = nodeIndex.get(edge.target);
+      return sourceIndex === undefined || targetIndex === undefined
+        ? []
+        : [{ sourceIndex, targetIndex, label: edge.condition }];
+    }),
+    metadata: template.definition_json.metadata,
+  };
+}
 
 const CUSTOM_NODE_TYPES: NodeTypes = {};
 let pendingConnectionSource: string | null = null;
@@ -246,6 +199,10 @@ export default function NewFlowPage() {
   const [rawSwitchCases, setRawSwitchCases] = useState("");
   const [showTemplates, setShowTemplates] = useState(true);
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
+  const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
+  const [flowTemplates, setFlowTemplates] = useState<DashboardFlowTemplate[]>([BLANK_TEMPLATE]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
   const [governedWorkers, setGovernedWorkers] = useState<GovernedWorkerOption[]>([]);
   const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
   const [governanceLoading, setGovernanceLoading] = useState(true);
@@ -280,19 +237,65 @@ export default function NewFlowPage() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadCanonicalTemplates() {
+      setTemplatesLoading(true);
+      try {
+        const response = await fetch("/api/flow-templates", { signal: controller.signal });
+        if (!response.ok) throw new Error("The canonical flow-template catalogue is unavailable");
+        const payload = await response.json();
+        const templates = Array.isArray(payload?.templates)
+          ? payload.templates
+            .map((template: CanonicalFlowTemplate) => toDashboardTemplate(template))
+            .filter((template: DashboardFlowTemplate) => template.nodes.length > 0)
+          : [];
+        setFlowTemplates([BLANK_TEMPLATE, ...templates]);
+        setTemplatesLoadError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setTemplatesLoadError(error instanceof Error ? error.message : "Could not load canonical flow templates");
+          setFlowTemplates([BLANK_TEMPLATE]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setTemplatesLoading(false);
+      }
+    }
+    void loadCanonicalTemplates();
+    return () => controller.abort();
+  }, []);
+
   /**
    * Apply a template by replacing the current canvas with the template's
    * scaffold. IDs are unique-ified at apply time so re-applying or switching
    * templates never collides with existing nodes.
    */
-  const applyTemplate = useCallback((template: FlowTemplate) => {
+  const applyTemplate = useCallback((template: DashboardFlowTemplate) => {
     const stamp = Date.now();
     const idMap = template.nodes.map((n) => `${n.type}_${stamp}_${Math.random().toString(36).slice(2, 7)}`);
+    const templateIdMap = new Map(
+      template.nodes.flatMap((node, index) => node.templateNodeId ? [[node.templateNodeId, idMap[index]] as const] : [])
+    );
+    const remapConfig = (config: Record<string, unknown> | undefined): Record<string, unknown> => {
+      const next = { ...(config || {}) };
+      if (Array.isArray(next.branches)) {
+        next.branches = next.branches.map((branch) => templateIdMap.get(String(branch)) || branch);
+      }
+      if (next.switch_cases && typeof next.switch_cases === "object" && !Array.isArray(next.switch_cases)) {
+        next.switch_cases = Object.fromEntries(
+          Object.entries(next.switch_cases as Record<string, unknown>).map(([key, target]) => [
+            key,
+            templateIdMap.get(String(target)) || target,
+          ])
+        );
+      }
+      return next;
+    };
     const newNodes: Node[] = template.nodes.map((n, i) => ({
       id: idMap[i],
       type: "flowNode",
       position: n.position,
-      data: { label: n.label, type: n.type },
+      data: { label: n.label, type: n.type, config: remapConfig(n.config) },
     }));
     const newEdges: Edge[] = template.edges.map((e, i) => ({
       id: `e_${stamp}_${i}`,
@@ -303,6 +306,7 @@ export default function NewFlowPage() {
     }));
     setNodes(newNodes);
     setEdges(newEdges);
+    setFlowMetadata(template.metadata || {});
     setSelectedNode(null);
     setShowConfig(false);
     setAppliedTemplateId(template.id);
@@ -449,7 +453,7 @@ export default function NewFlowPage() {
     if (validation) { setValidationError(validation); return; }
     setValidationError(null);
     setSaving(true);
-    const definition = convertReactFlowToFlow(nodes, edges);
+    const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
     try {
       const res = await fetch("/api/flows", {
         method: "POST",
@@ -479,7 +483,7 @@ export default function NewFlowPage() {
     setDryRunResult(null);
     setDryRunning(true);
     try {
-      const definition = convertReactFlowToFlow(nodes, edges);
+      const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
       const response = await fetch("/api/flows/dry-run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -653,7 +657,9 @@ export default function NewFlowPage() {
               <div className="flex items-center gap-2">
                 <Sparkles size={14} className="text-blue-400" aria-hidden="true" />
                 <h2 className="text-sm font-medium text-slate-200">Start from a template</h2>
-                <span className="text-xxs text-slate-500">Optional — pick a starter or build from scratch.</span>
+                <span className="text-xxs text-slate-500">
+                  {templatesLoading ? "Loading canonical starters…" : "Optional — pick a starter or build from scratch."}
+                </span>
               </div>
               <button
                 onClick={() => setShowTemplates(false)}
@@ -663,11 +669,16 @@ export default function NewFlowPage() {
                 <X size={14} aria-hidden="true" />
               </button>
             </div>
+            {templatesLoadError && (
+              <div className="mb-2 rounded-md border border-amber-800/60 bg-amber-950/20 px-2.5 py-2 text-xs text-amber-200" role="status">
+                {templatesLoadError}. The blank canvas remains available.
+              </div>
+            )}
             <div
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"
               role="list"
             >
-              {FLOW_TEMPLATES.map((template) => {
+              {flowTemplates.map((template) => {
                 const Icon = template.icon;
                 const isApplied = appliedTemplateId === template.id;
                 return (
@@ -1143,7 +1154,6 @@ export default function NewFlowPage() {
                 />
               </div>
             )}
-
               </div>
             </details>
 

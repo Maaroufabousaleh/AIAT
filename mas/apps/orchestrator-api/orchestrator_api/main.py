@@ -1806,6 +1806,14 @@ class CreateFlowRequest(BaseModel):
     version_from_flow_id: UUID | None = None
 
 
+class FlowFromTemplateRequest(BaseModel):
+    template_id: str = Field(..., min_length=1, max_length=100)
+    name: str | None = None
+    description: str | None = None
+    created_by: str = "template"
+    is_active: bool = False
+
+
 class FlowDryRunRequest(BaseModel):
     """Non-mutating validation of a typed flow definition and its assignments."""
 
@@ -9059,6 +9067,15 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+@app.get("/flow-templates")
+async def list_flow_templates() -> dict[str, Any]:
+    """Return the canonical reusable flow templates."""
+
+    from mas_core.workflow.templates import flow_template_catalog
+
+    return flow_template_catalog()
+
+
 @app.post("/flows", status_code=201)
 async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     """Create a new flow definition."""
@@ -9099,6 +9116,27 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
         version=version,
     )
     return _serialize(flow)
+
+
+@app.post("/flows/from-template", status_code=201)
+async def create_flow_from_template(req: FlowFromTemplateRequest) -> dict[str, Any]:
+    """Create a flow from a canonical template after normal validation."""
+
+    from mas_core.workflow.templates import flow_template
+
+    template = flow_template(req.template_id)
+    if template is None:
+        raise HTTPException(404, f"Flow template {req.template_id} not found")
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name or str(template["name"]),
+            description=req.description or str(template["description"]),
+            definition_json=template["definition_json"],
+            created_by=req.created_by,
+            is_active=req.is_active,
+        )
+    )
+    return {"status": "created_from_template", "template_id": req.template_id, "flow": created}
 
 
 @app.post("/flows/dry-run")
