@@ -893,6 +893,40 @@ def test_pre_activation_rollback_preserves_active_candidate_and_blocks_regressio
     assert steward.active_adapter == baseline_adapter
 
 
+def test_steward_restores_active_pointers_from_durable_ids() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="rehydrated-pointer-worker",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+
+    assert steward.restore_active_pointers(
+        bundle_id=str(candidate.bundle.bundle_id),
+        adapter_id=str(candidate.adapter.adapter_id),
+    ) is True
+    assert steward.active_bundle == candidate.bundle
+    assert steward.active_adapter == candidate.adapter
+    assert steward.provenance == candidate.source_provenance
+
+    steward.active_bundle = None
+    steward.active_adapter = None
+    prior_provenance = steward.provenance
+    assert steward.restore_active_pointers(bundle_id="missing-bundle", adapter_id=None) is False
+    assert steward.active_bundle is None
+    assert steward.active_adapter is None
+    assert steward.provenance == prior_provenance
+
+
 @pytest.mark.asyncio
 async def test_controller_returns_canonical_idempotent_run() -> None:
     canonical_id = uuid4()

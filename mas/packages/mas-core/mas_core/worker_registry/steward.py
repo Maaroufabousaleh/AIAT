@@ -608,6 +608,50 @@ class ExternalWorkerSteward:
         self.advance_rollout(rollout_id, RolloutStatus.ROLLING_BACK)
         return self.advance_rollout(rollout_id, RolloutStatus.ROLLED_BACK)
 
+    def restore_active_pointers(
+        self,
+        *,
+        bundle_id: UUID | str | None,
+        adapter_id: UUID | str | None,
+    ) -> bool:
+        """Restore active immutable pointers from the durable steward row.
+
+        The in-memory steward is only a cache.  On API restart, persisted
+        bundle/adapter IDs are authoritative and must be projected back onto
+        the rehydrated candidate records before another rollout can snapshot
+        or roll back the active version.  Unknown non-null IDs fail closed
+        without mutating the current pointers.
+        """
+
+        def _matches(value: UUID | str | None, target: UUID | str | None) -> bool:
+            return target is not None and str(value) == str(target)
+
+        bundle = next(
+            (
+                candidate.bundle
+                for candidate in self.candidates.values()
+                if _matches(candidate.bundle.bundle_id, bundle_id)
+            ),
+            None,
+        )
+        adapter = next(
+            (
+                candidate.adapter
+                for candidate in self.candidates.values()
+                if _matches(candidate.adapter.adapter_id, adapter_id)
+            ),
+            None,
+        )
+        if (bundle_id is not None and bundle is None) or (adapter_id is not None and adapter is None):
+            return False
+        self.active_bundle = bundle
+        self.active_adapter = adapter
+        if bundle is not None:
+            self.provenance = bundle.source_provenance
+        elif adapter is not None:
+            self.provenance = adapter.source_provenance
+        return True
+
     def _candidate(self, candidate_id: UUID) -> CandidateRecord:
         try:
             return self.candidates[candidate_id]

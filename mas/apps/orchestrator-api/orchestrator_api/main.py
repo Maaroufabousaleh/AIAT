@@ -6993,6 +6993,22 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
             steward.rollouts[rollout.rollout_id] = rollout
         except (KeyError, ValueError):
             logger.warning("steward_rollout_rehydrate_failed", extra={"rollout_id": str(row.get("id"))})
+    if not steward.restore_active_pointers(
+        bundle_id=persisted.get("active_skill_bundle_id"),
+        adapter_id=persisted.get("active_adapter_id"),
+    ):
+        logger.warning(
+            "steward_active_pointer_rehydrate_failed",
+            extra={
+                "worker_id": key,
+                "active_skill_bundle_id": str(persisted.get("active_skill_bundle_id"))
+                if persisted.get("active_skill_bundle_id")
+                else None,
+                "active_adapter_id": str(persisted.get("active_adapter_id"))
+                if persisted.get("active_adapter_id")
+                else None,
+            },
+        )
     _worker_steward_runtimes[key] = steward
     return steward
 
