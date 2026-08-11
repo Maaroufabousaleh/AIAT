@@ -12,12 +12,15 @@ import json
 import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from mas_core.worker_contract import ConformanceReport, WorkerCapabilities
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class StewardStatus(StrEnum):
@@ -63,6 +66,18 @@ class StewardTransitionError(ValueError):
     """Raised when a governance transition would bypass a gate."""
 
 
+def _is_license_metadata_check(name: str) -> bool:
+    """Return whether a caller-supplied check is licence metadata only."""
+    normalized = str(name).strip().lower().replace("-", "_")
+    return normalized in {
+        "license",
+        "licensing",
+        "license_id",
+        "redistribution",
+        "redistribution_status",
+    } or normalized.endswith(":license") or normalized.endswith(":licensing")
+
+
 class ExternalProvenance(BaseModel):
     """Pinned identity and supply-chain evidence for an external runtime."""
 
@@ -86,12 +101,41 @@ class ExternalProvenance(BaseModel):
     last_verified_documentation_at: datetime | None = None
 
     @model_validator(mode="after")
-    def require_pin(self) -> "ExternalProvenance":
+    def require_pin(self) -> ExternalProvenance:
         if not any((self.exact_release, self.commit_sha, self.package_version, self.oci_image_digest)):
             raise ValueError("external provenance requires an exact release, commit, package, or OCI digest")
         if self.transport_type == "oci" and not self.oci_image_digest:
             raise ValueError("OCI provenance requires an image digest")
         return self
+
+
+def operational_promotion_checks(
+    provenance: ExternalProvenance,
+    *,
+    documentation: bool | None = None,
+    capability_snapshot: bool | None = None,
+) -> dict[str, bool]:
+    """Build the shared non-licence promotion predicate.
+
+    The same immutable provenance checks are used by in-process steward
+    certification and the orchestrator API.  Optional evidence arguments let
+    the API add its persisted documentation/capability requirements without
+    making licence metadata part of the predicate.
+    """
+    checks = {
+        "provenance_pin": bool(
+            provenance.exact_release
+            or provenance.commit_sha
+            or provenance.package_version
+            or provenance.oci_image_digest
+        ),
+        "security": provenance.security_scan_status == "passed",
+    }
+    if documentation is not None:
+        checks["documentation"] = documentation
+    if capability_snapshot is not None:
+        checks["capability_snapshot"] = capability_snapshot
+    return checks
 
 
 class DocumentationSource(BaseModel):
@@ -303,6 +347,25 @@ class ExternalWorkerSteward:
     def record_capabilities(self, snapshot: CapabilitySnapshot) -> None:
         self.capability_snapshots.append(snapshot)
 
+    def record_compatibility_matrix(self, matrix: CompatibilityMatrix) -> CompatibilityMatrix:
+        """Record one immutable runtime/adapter compatibility result.
+
+        Compatibility matrices are evidence owned by the steward.  A failed
+        matrix is retained as evidence and does not silently become a passing
+        certification; promotion still uses the independent certification,
+        security, sandbox, canary, approval, and budget gates.
+        """
+        if not isinstance(matrix, CompatibilityMatrix):
+            raise StewardTransitionError("compatibility evidence must be a CompatibilityMatrix")
+        if not all(
+            value.strip()
+            for value in (matrix.runtime_version, matrix.adapter_version, matrix.contract_version)
+        ):
+            raise StewardTransitionError("compatibility matrix requires runtime, adapter, and contract versions")
+        recorded = matrix.model_copy(deep=True)
+        self.compatibility_matrices.append(recorded)
+        return recorded
+
     def generate_candidate(
         self,
         *,
@@ -353,8 +416,21 @@ class ExternalWorkerSteward:
         target = CandidateIntakeStatus(target)
         legal: dict[CandidateIntakeStatus, set[CandidateIntakeStatus]] = {
             CandidateIntakeStatus.DISCOVERED: {CandidateIntakeStatus.SOURCE_REVIEW, CandidateIntakeStatus.BLOCKED},
-            CandidateIntakeStatus.SOURCE_REVIEW: {CandidateIntakeStatus.LICENSE_REVIEW, CandidateIntakeStatus.BLOCKED},
-            CandidateIntakeStatus.LICENSE_REVIEW: {CandidateIntakeStatus.SECURITY_REVIEW, CandidateIntakeStatus.BLOCKED},
+            # Keep the historical LICENSE_REVIEW state in the intake
+            # protocol so stored candidates and operators remain compatible.
+            # It is a metadata-capture checkpoint only; licence values never
+            # decide whether the candidate can continue.  The direct
+            # SOURCE_REVIEW -> SECURITY_REVIEW edge keeps metadata capture
+            # optional for normal personal/internal use.
+            CandidateIntakeStatus.SOURCE_REVIEW: {
+                CandidateIntakeStatus.LICENSE_REVIEW,
+                CandidateIntakeStatus.SECURITY_REVIEW,
+                CandidateIntakeStatus.BLOCKED,
+            },
+            # LICENSE_REVIEW is retained for historical records and metadata
+            # capture, but it cannot be a blocking decision.  Operators must
+            # use the technical/security/provenance stages for a real block.
+            CandidateIntakeStatus.LICENSE_REVIEW: {CandidateIntakeStatus.SECURITY_REVIEW},
             CandidateIntakeStatus.SECURITY_REVIEW: {CandidateIntakeStatus.INTERFACE_RESEARCH, CandidateIntakeStatus.BLOCKED},
             CandidateIntakeStatus.INTERFACE_RESEARCH: {CandidateIntakeStatus.GENERATED, CandidateIntakeStatus.BLOCKED},
             CandidateIntakeStatus.GENERATED: {CandidateIntakeStatus.CERTIFYING, CandidateIntakeStatus.BLOCKED},
@@ -380,22 +456,17 @@ class ExternalWorkerSteward:
         if candidate.intake_status != CandidateIntakeStatus.CERTIFYING:
             raise StewardTransitionError("candidate must be in CERTIFYING before certification")
         conformance_data = conformance.as_dict() if isinstance(conformance, ConformanceReport) else dict(conformance)
-        # Provenance gates are derived from the immutable steward evidence,
-        # never trusted from caller-selected check names.  Supplemental
-        # attestations may make certification stricter but cannot manufacture
-        # a passing license or security result.
-        mandatory_checks = {
-            "provenance_pin": bool(
-                self.provenance.exact_release
-                or self.provenance.commit_sha
-                or self.provenance.package_version
-                or self.provenance.oci_image_digest
-            ),
-            "license": bool(self.provenance.license_id)
-            and self.provenance.redistribution_status == "approved",
-            "security": self.provenance.security_scan_status == "passed",
+        # Operational gates are derived from immutable steward evidence, never
+        # trusted from caller-selected check names.  Licence fields remain in
+        # ``source_provenance`` as metadata only and are intentionally absent
+        # from this predicate.
+        mandatory_checks = operational_promotion_checks(self.provenance)
+        supplemental_checks = {
+            name: bool(value)
+            for name, value in dict(checks).items()
+            if not _is_license_metadata_check(name)
         }
-        effective_checks = {**dict(checks), **mandatory_checks}
+        effective_checks = {**supplemental_checks, **mandatory_checks}
         passed = bool(conformance_data.get("passed")) and all(effective_checks.values())
         failures = tuple(sorted([name for name, result in effective_checks.items() if not result] + ([] if conformance_data.get("passed") else ["adapter_conformance"])))
         certification = CertificationRun(
@@ -456,6 +527,14 @@ class ExternalWorkerSteward:
             candidate_id=candidate_id,
             eligible_task_classes=tuple(eligible_task_classes),
             promotion_actor=actor,
+            # Snapshot the currently active immutable pointers when the
+            # rollout is opened.  A candidate can be rejected and rolled
+            # back from SHADOW/CANARY/PROMOTING before it ever reaches ACTIVE;
+            # those paths must preserve the prior worker, not restore the
+            # dataclass defaults (None).
+            previous_active_bundle=self.active_bundle,
+            previous_active_adapter=self.active_adapter,
+            previous_provenance=self.provenance,
         )
         self.rollouts[rollout.rollout_id] = rollout
         return rollout
@@ -509,9 +588,6 @@ class ExternalWorkerSteward:
             rollout.comparison_metrics.update(metrics)
         if target == RolloutStatus.ACTIVE:
             candidate = self._candidate(rollout.candidate_id)
-            rollout.previous_active_bundle = self.active_bundle
-            rollout.previous_active_adapter = self.active_adapter
-            rollout.previous_provenance = self.provenance
             self.active_bundle = candidate.bundle
             self.active_adapter = candidate.adapter
             self.provenance = candidate.source_provenance

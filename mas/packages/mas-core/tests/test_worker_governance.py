@@ -40,6 +40,8 @@ from mas_core.worker_contract import (
     verify_opencode_tool_grant,
 )
 from mas_core.worker_registry.runtime_adapters import (
+    CrewAIAdapter,
+    LangGraphAdapter,
     OCIAdapter,
     OpenCodeAdapter,
     OpenCodeInterfaceVerification,
@@ -52,6 +54,7 @@ from mas_core.worker_registry.steward import (
     ExternalWorkerSteward,
     RolloutStatus,
     StewardStatus,
+    StewardTransitionError,
 )
 
 
@@ -67,10 +70,10 @@ def _profile(*, profile_id: str = "coding", model_id: str = "openai/gpt-test", l
         structured_output=True,
         streaming=True,
         privacy_class=PrivacyClass.INTERNAL,
-        regions=frozenset({"ca"}),
-        local=local,
-        status=ModelProfileStatus.APPROVED,
-    )
+    regions=frozenset({"ca"}),
+    local=local,
+    status=ModelProfileStatus.APPROVED,
+)
     return ModelProfile(
         profile_id=profile_id,
         purpose="test profile",
@@ -80,6 +83,26 @@ def _profile(*, profile_id: str = "coding", model_id: str = "openai/gpt-test", l
     )
 
 
+def test_worker_run_request_carries_bounded_trace_context_outside_task_input() -> None:
+    request = WorkerRunRequest(
+        idempotency_key="trace-context-test",
+        worker_id="tester",
+        task_type="verification",
+        task_input={"trace_id": "payload-must-not-be-authoritative"},
+        trace_id="trace-123",
+        span_id="span-456",
+    )
+
+    assert request.trace_id == "trace-123"
+    assert request.span_id == "span-456"
+    assert request.task_input["trace_id"] == "payload-must-not-be-authoritative"
+    with pytest.raises(ValueError, match="bounded safe values"):
+        WorkerRunRequest(
+            idempotency_key="unsafe-trace-context",
+            worker_id="tester",
+            task_type="verification",
+            trace_id="trace value with spaces",
+        )
 def test_model_resolution_intersects_constraints_and_records_rejections() -> None:
     request = ModelResolutionRequest(
         task_type="coding",
@@ -424,6 +447,29 @@ async def test_native_worker_runs_through_controller_and_conformance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_framework_transport_adapters_share_the_universal_conformance_suite() -> None:
+    async def worker(request: WorkerRunRequest, adapter: NativeWorkerAdapter) -> WorkerResult:
+        await adapter.emit_progress(request.run_id, "framework bridge", percent=100)
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"runtime": adapter.runtime_type, "value": request.task_input["value"]},
+        )
+
+    for adapter_type in (LangGraphAdapter, CrewAIAdapter):
+        adapter = adapter_type(worker, worker_id=f"{adapter_type.runtime_type}-contract")
+        report = await ConformanceRunner().run(
+            adapter,
+            worker_id=adapter.worker_id,
+            task_input={"value": "ok"},
+        )
+        assert report.passed is True
+        assert report.adapter_type == adapter_type.runtime_type
+        await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_tool_requests_are_mediated_and_not_direct_runtime_calls() -> None:
     async def worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter):
         yield WorkerEvent(
@@ -599,7 +645,7 @@ def test_external_steward_requires_gates_before_rollout() -> None:
         )
 
 
-def test_certification_cannot_be_passed_with_caller_selected_checks() -> None:
+def test_certification_cannot_be_passed_with_caller_selected_operational_checks() -> None:
     steward = ExternalWorkerSteward(
         worker_id="unverified-worker",
         provenance=ExternalProvenance(
@@ -633,8 +679,99 @@ def test_certification_cannot_be_passed_with_caller_selected_checks() -> None:
         checks={},
     )
     assert certification.passed is False
-    assert {"license", "security"}.issubset(certification.failures)
+    assert "security" in certification.failures
+    assert "license" not in certification.failures
     assert candidate.intake_status == CandidateIntakeStatus.REJECTED
+
+
+def test_restricted_or_missing_license_metadata_does_not_block_certification() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="metadata-only-license-worker",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            license_id="AGPL-3.0",
+            redistribution_status="restricted",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.LICENSE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, status)
+
+    certification = steward.certify_candidate(
+        candidate.candidate_id,
+        conformance={"passed": True},
+        checks={"license": False, "licensing": False},
+    )
+    assert certification.passed is True
+    assert "license" not in certification.checks
+    assert "licensing" not in certification.checks
+
+
+def test_license_metadata_stage_cannot_block_a_candidate() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="metadata-only-block-test",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            license_id="AGPL-3.0",
+            redistribution_status="restricted",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    steward.advance_candidate(candidate.candidate_id, CandidateIntakeStatus.SOURCE_REVIEW)
+    steward.advance_candidate(candidate.candidate_id, CandidateIntakeStatus.LICENSE_REVIEW)
+
+    with pytest.raises(StewardTransitionError, match="invalid candidate transition"):
+        steward.advance_candidate(candidate.candidate_id, CandidateIntakeStatus.BLOCKED)
+
+    assert candidate.intake_status == CandidateIntakeStatus.LICENSE_REVIEW
+
+
+def test_license_metadata_stage_can_be_skipped() -> None:
+    """Licence capture is optional and never delays the technical review path."""
+    steward = ExternalWorkerSteward(
+        worker_id="metadata-stage-skip",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            license_id="AGPL-3.0",
+            redistribution_status="restricted",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    steward.advance_candidate(candidate.candidate_id, CandidateIntakeStatus.SOURCE_REVIEW)
+    steward.advance_candidate(candidate.candidate_id, CandidateIntakeStatus.SECURITY_REVIEW)
+
+    assert candidate.intake_status == CandidateIntakeStatus.SECURITY_REVIEW
 
 
 def test_steward_rollback_restores_previous_active_pointers() -> None:
@@ -690,6 +827,70 @@ def test_steward_rollback_restores_previous_active_pointers() -> None:
     steward.rollback(second_rollout.rollout_id, reason="regression")
     assert steward.active_bundle == prior_bundle
     assert steward.active_adapter == prior_adapter
+
+
+def test_pre_activation_rollback_preserves_active_candidate_and_blocks_regression() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="pre-active-rollback-worker",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+
+    def approved_candidate(version: str):
+        candidate = steward.generate_candidate(
+            semantic_version=version,
+            adapter_version=version,
+            upstream_compatibility_range=f"=={version}",
+        )
+        for status in (
+            CandidateIntakeStatus.SOURCE_REVIEW,
+            CandidateIntakeStatus.SECURITY_REVIEW,
+            CandidateIntakeStatus.INTERFACE_RESEARCH,
+            CandidateIntakeStatus.GENERATED,
+            CandidateIntakeStatus.CERTIFYING,
+        ):
+            steward.advance_candidate(candidate.candidate_id, status)
+        steward.certify_candidate(candidate.candidate_id, conformance={"passed": True}, checks={})
+        steward.approve_candidate(candidate.candidate_id)
+        return candidate
+
+    first = approved_candidate("1.0.0")
+    first_rollout = steward.start_rollout(first.candidate_id, actor="test", eligible_task_classes=["read_only"])
+    steward.advance_rollout(first_rollout.rollout_id, RolloutStatus.SHADOW, sample_count=10)
+    steward.advance_rollout(first_rollout.rollout_id, RolloutStatus.CANARY, sample_count=10)
+    steward.advance_rollout(first_rollout.rollout_id, RolloutStatus.PROMOTING, sample_count=5)
+    steward.advance_rollout(
+        first_rollout.rollout_id,
+        RolloutStatus.ACTIVE,
+        sample_count=3,
+        metrics={"regression_fraction": 0.0},
+    )
+    baseline_bundle = steward.active_bundle
+    baseline_adapter = steward.active_adapter
+
+    second = approved_candidate("2.0.0")
+    second_rollout = steward.start_rollout(second.candidate_id, actor="test", eligible_task_classes=["read_only"])
+    steward.advance_rollout(second_rollout.rollout_id, RolloutStatus.SHADOW, sample_count=10)
+    steward.advance_rollout(second_rollout.rollout_id, RolloutStatus.CANARY, sample_count=10)
+    steward.advance_rollout(second_rollout.rollout_id, RolloutStatus.PROMOTING, sample_count=5)
+    with pytest.raises(StewardTransitionError, match="exceeds rollback threshold"):
+        steward.advance_rollout(
+            second_rollout.rollout_id,
+            RolloutStatus.ACTIVE,
+            sample_count=3,
+            metrics={"regression_fraction": 0.5},
+        )
+
+    assert second_rollout.status == RolloutStatus.PROMOTING
+    steward.rollback(second_rollout.rollout_id, reason="regression blocked before activation")
+    assert second_rollout.status == RolloutStatus.ROLLED_BACK
+    assert steward.active_bundle == baseline_bundle
+    assert steward.active_adapter == baseline_adapter
 
 
 @pytest.mark.asyncio
