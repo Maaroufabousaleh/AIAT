@@ -41,7 +41,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - [x] Reconcile every checked-in worker manifest with the canonical runtime catalogue, default company references, OpenCode Compose link, provenance source/version records, and metadata-only notices policy.
 - [x] Remove remaining licence-derived resource exclusions from default manifests; expose TruffleHog through the bounded `security.scan` alias and keep Plane/OpenProject/Ansible selectable as normal adapters. Starting profiles remain technical packaging choices.
 - [x] Add a read-only live binding reconciliation for every checked-in default worker. `check_worker_reconciliation.py --live` compares persisted `/capabilities/workers` adapter, sandbox, model, source-pin, capability, and active immutable-record bindings; the authenticated local Compose run now matches 39/39 defaults with zero missing rows or binding mismatches (evidence: [`worker_reconciliation_live.json`](../../../mas/docs/provenance/worker_reconciliation_live.json)); a missing URL/auth/API is explicitly blocked and this check does not replace live runtime/security/canary certification.
-- [x] Fail CI when checked-in worker YAML, runtime catalogue, Compose, provenance catalogue, or notices disagree; lockfile/image/SBOM reconciliation remains a separate release-evidence gate.
+- [x] Fail CI when checked-in worker YAML, runtime catalogue, Compose, provenance catalogue, or notices disagree; the workspace lock is now tracked and checked with `uv lock --check` (`2b13d89`), while image/SBOM reconciliation remains a separate release-evidence gate.
 
 ### Evidence
 

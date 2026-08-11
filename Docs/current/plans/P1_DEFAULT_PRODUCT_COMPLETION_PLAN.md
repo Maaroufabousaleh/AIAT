@@ -76,9 +76,10 @@ external client-language SDK compatibility yet.
   translation, bounded completion, health, and shutdown without external
   calls. Framework fixture execution is not a worker canary.
 - [x] Add `scripts/check_runtime_install_profile.py` to reconcile the
-  `runtime-default` dependency extra, `uv.lock` versions, runtime-catalogue
-  imports, and production orchestrator Dockerfile install command; imports,
-  security, sandbox, canary, live-run, and rollback evidence remain separate.
+  `runtime-default` dependency extra, tracked `uv.lock` versions (`2b13d89`),
+  runtime-catalogue imports, and production orchestrator Dockerfile install
+  command; imports, security, sandbox, canary, live-run, and rollback evidence
+  remain separate.
 - [x] Add `scripts/check_worker_steward_contract.py` to run the actual steward
   domain through dedicated-steward, immutable-candidate, compatibility-matrix,
   staged-rollout, and rollback transitions for every externally sourced
