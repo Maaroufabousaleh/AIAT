@@ -64,13 +64,8 @@ certification, and licence metadata remain separate.
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the
 template, node-schema, portability, and migration tests, the generated-schema
-check, and the topology check. A detached Git archive currently fails the
-docs-index command only because the generated `mas/uv.lock` is intentionally
-ignored and therefore absent from the archive; the working-tree checker passes.
-This is an explicit reproducibility/documentation gate, not a reason to weaken
-link checking or to treat missing files as a licence decision.
-
-The next documentation batch should either provide the generated lock artifact
-in the clean release input or keep the runtime-packaging reference explicitly
-local, then rerun the clean checker and update the release ledger only when the
-clean result is reproducible.
+check, and the topology check. The current workspace and a clean Git archive
+both pass `check_docs_index.py`; the generated `mas/uv.lock` is intentionally
+ignored and is documented as a local runtime input rather than a maintained
+documentation link. This keeps the documentation gate reproducible without
+treating the local lock artifact as a licence decision.
