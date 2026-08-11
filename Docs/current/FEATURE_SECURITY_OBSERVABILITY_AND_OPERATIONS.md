@@ -96,7 +96,10 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   direct production image-ref or credential requirements.
 - Technical operator pins are maintained separately in
   [`mas/docs/provenance/operator_pins.yaml`](../../mas/docs/provenance/operator_pins.yaml)
-  and checked by [`check_operator_pins.py`](../../mas/scripts/check_operator_pins.py).
+  and checked by [`check_operator_pins.py`](../../mas/scripts/check_operator_pins.py)
+  (`dd857ae`). Exact production declarations are required; host-, optional-,
+  and deployment-supplied capabilities remain explicitly unavailable until
+  identified.
   Exact production declarations are required; host-, optional-, and
   deployment-supplied capabilities are explicitly unavailable until identified.
   This check does not read licence/restriction metadata.

@@ -77,7 +77,8 @@ single frozen commit before production claims are made.
   production orchestrator Dockerfile install command. This is reproducible
   packaging evidence only; imports, sandbox, security, canary, and live-run
   evidence remain open.
-- `scripts/check_operator_pins.py --json` reconciles the exact production
+- `scripts/check_operator_pins.py --json` (checker/test group `dd857ae`)
+  reconciles the exact production
   `uv`, Docker CLI, MCP, Semgrep, Docling, Playwright, Mermaid, OpenTofu, and
   OpenCode declarations. Microsoft Agent Framework, gVisor, Firecracker,
   SkillSpector, ccpm, LiteLLM, and OmniRoute are represented as explicitly
