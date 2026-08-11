@@ -120,6 +120,20 @@ curl http://localhost:8002/health
 curl http://localhost:4000/api/health
 ```
 
+Use the API-facing operator wrapper for repeatable readiness checks without
+curl:
+
+```bash
+scripts/mas-ctl status --api-key "$AIAT_OPERATOR_API_KEY"
+scripts/mas-ctl diagnostics --api-key "$AIAT_OPERATOR_API_KEY"
+scripts/mas-ctl bootstrap --api-key "$AIAT_OPERATOR_API_KEY"
+```
+
+`bootstrap` exits non-zero when either `/health` or secret-safe
+`/system/diagnostics` is unavailable/degraded. Explicit `resume` and
+`shutdown` commands are also available; container lifecycle remains owned by
+`infra/compose/mas.sh`.
+
 Open the dashboard at `http://localhost:4000`.
 
 ## Development Mode

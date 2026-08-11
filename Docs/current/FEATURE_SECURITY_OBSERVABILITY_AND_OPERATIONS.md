@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), secret-safe control-plane dependency diagnostics (`2860838`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. Live sandbox, metrics, image, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -22,6 +22,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
 - Health/metrics endpoints, structured logging helpers, traces/metrics modules, LiteLLM and OmniRoute services/pages, optional Prometheus dev profile, and Playwright/API health tooling.
 - The read-only `GET /system/diagnostics` route performs a database `SELECT 1`, router/tool-service `/health` probes, and a non-mutating object-store `head_bucket` check when endpoint credentials are configured. It returns only bounded status, latency, HTTP/connection flags, and exception type; dependency payloads, URLs, credentials, and error text are never returned. A failed dependency yields an HTTP 200 `degraded` report, while missing control-plane storage remains a 503 boundary. Focused API coverage exercises healthy, degraded, unconfigured, unavailable-storage, and payload-redaction cases (`2860838`).
+- `scripts/mas-ctl` is the API-facing operator wrapper for `status`, `diagnostics`, `bootstrap`, `resume`, and `shutdown`. It uses the operator API key from an explicit argument or environment, performs no container lifecycle work, never emits upstream error bodies, and makes bootstrap readiness require both `/health` and an `ok` `/system/diagnostics` result (`380daf5`).
 - The dashboard Metrics page reads its six Prometheus query families with `cache: "no-store"`, retains successful series when another query fails, labels partial data as stale, keeps the last-successful timestamp honest, and exposes header Refresh plus banner Retry controls. [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>) and [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) cover the partial-failure/recovery path 1/1.
 - The target-specific monitoring adapter can render a non-networking
   `aiat.monitoring-analytics-plan.v1` for LiteLLM and OmniRoute health/dashboard
@@ -119,6 +120,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Team-runner storage adapter: [`mas/apps/team-runner/team_runner/storage_client.py`](../../mas/apps/team-runner/team_runner/storage_client.py)
 - Control-plane storage boundary: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py)
 - Operational diagnostics: [`GET /system/diagnostics`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`test_test10_ops_scripts.py`](../../mas/apps/orchestrator-api/tests/test_test10_ops_scripts.py)
+- Operator CLI: [`mas-ctl`](../../mas/scripts/mas-ctl), [`mas_ctl.py`](../../mas/scripts/mas_ctl.py), [`test_mas_ctl.py`](../../mas/scripts/tests/test_mas_ctl.py)
 - Redis ACL policy: [`mas/infra/compose/redis.conf`](../../mas/infra/compose/redis.conf)
 - Sandbox assets: [`mas/infra/sandbox/`](../../mas/infra/sandbox/)
 - Policy: [`mas/packages/mas-core/mas_core/policy/`](../../mas/packages/mas-core/mas_core/policy/)
@@ -249,3 +251,6 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   router, tool-service, and optional object-store health; the route remains
   read-only and reports degraded dependencies without masking them as a
   release pass.
+- An operator can run `scripts/mas-ctl bootstrap` or `scripts/mas-ctl status`
+  without curl/httpx; bootstrap fails closed on unavailable or degraded
+  diagnostics, and explicit `resume`/`shutdown` commands remain API-authenticated.

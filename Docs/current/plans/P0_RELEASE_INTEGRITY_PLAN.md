@@ -189,6 +189,11 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   payload-redaction behavior in the operational API suite; generated OpenAPI,
   dashboard TypeScript, Python SDK, and contract provenance are regenerated
   together (236 paths, 269 operations).
+- [x] Add the API-facing `scripts/mas-ctl` wrapper for `status`,
+  `diagnostics`, and a fail-closed `bootstrap` preflight, plus explicit
+  authenticated `resume`/`shutdown` commands. The wrapper is independent of
+  container lifecycle, accepts an operator key from an argument or environment,
+  and never prints upstream error bodies (`380daf5`).
 
 ### Evidence
 
@@ -199,6 +204,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
   236 OpenAPI paths, 130 models, and 269 operations with matching generated
   TypeScript/Python hashes.
+- `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six
+  deterministic CLI cases; the focused operational API suite now verifies the
+  executable bootstrap wrapper is present, leaving only the separate
+  per-service restart TODO skip.
 
 ### Exit gate
 
