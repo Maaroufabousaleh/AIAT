@@ -23,8 +23,10 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Health/metrics endpoints, structured logging helpers, traces/metrics modules, LiteLLM and OmniRoute services/pages, optional Prometheus dev profile, and Playwright/API health tooling.
 - The target-specific monitoring adapter can render a non-networking
   `aiat.monitoring-analytics-plan.v1` for LiteLLM and OmniRoute health/dashboard
-  surfaces; Prometheus-compatible scrape/rule output remains an explicit
-  optional target.
+  surfaces; implementation `525a94b` validates http(s) endpoints without
+  embedded credentials and emits bounded synthetic checks without probing or
+  mutating either service. Prometheus-compatible scrape/rule output remains an
+  explicit optional target.
 - Bounded request-level trace propagation in the orchestrator API, message
   router, and tool service: safe `X-AIAT-Trace-ID`/W3C `traceparent` inputs are
   accepted, invalid values produce a fresh root trace, responses expose
