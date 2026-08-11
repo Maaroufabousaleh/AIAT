@@ -27,6 +27,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | Projects, lifecycle, flow builder/runtime, knowledge, and evidence target | [Projects, Flows, Knowledge, and Evidence](Docs/current/FEATURE_PROJECTS_FLOWS_AND_EVIDENCE.md) |
 | Identity, credentials, mail, external accounts, and browser sessions | [Identity, Mail, Credentials, and External Accounts](Docs/current/FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md) |
 | PM/SCM provider model, YouTrack evidence, and GitHub target | [PM and Source-Control Integrations](Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md) |
+| PM rollout/runbook/readiness and certification evidence | [`PM_INTEGRATION_PLAN.md`](mas/docs/PM_INTEGRATION_PLAN.md), [`PM_INTEGRATION_RUNBOOK.md`](mas/docs/PM_INTEGRATION_RUNBOOK.md), [`PM_ACTIVE_READINESS.md`](mas/docs/PM_ACTIVE_READINESS.md), [`PM_ACTIVE_DEPLOYMENT.md`](mas/docs/PM_ACTIVE_DEPLOYMENT.md), [`PM_ACTIVE_DASHBOARD.md`](mas/docs/PM_ACTIVE_DASHBOARD.md), [`PM_ACTIVE_CERTIFICATION_LEDGER.md`](mas/docs/PM_ACTIVE_CERTIFICATION_LEDGER.md) |
 | Security boundaries, sandbox, observability, recovery, and operations | [Security, Observability, and Operations](Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md) |
 | Trace evidence, sampling metadata, retention, and bounded query contract | [Trace Evidence and Retention](Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md) |
 | Versioned SLOs, durable usage forecasts, and operational capacity evidence | [SLO, Capacity, and Operational Forecast](Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md) |
