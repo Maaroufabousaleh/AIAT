@@ -1,7 +1,7 @@
 # Control Plane and Company Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implemented foundation; prompt/tool reconciliation is complete; modularisation and release hardening remain
+**Status:** implemented foundation; prompt/tool reconciliation contract committed as `20f0499`; modularisation and release hardening remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -73,7 +73,7 @@ The control plane turns AIAT from a collection of agents into one governed compa
 - [x] Reconcile all 11 authority/manager prompts with the canonical tool
   manifest, concrete registrations, role/team grants, canonical review
   payloads, and the CEO privileged-action route using
-  [`check_prompt_tool_reconciliation.py`](../../mas/scripts/check_prompt_tool_reconciliation.py).
+  [`check_prompt_tool_reconciliation.py`](../../mas/scripts/check_prompt_tool_reconciliation.py) (`20f0499`).
 - [x] Expose bounded role-scoped CFO/CTO/CEO write actions through one
   secret-safe envelope and the existing model-override, worker-dispatch, and
   privileged-action owners; live provider/recovery and broader UI evidence

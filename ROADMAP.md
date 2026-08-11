@@ -728,6 +728,7 @@ project workspace test and is included in the 34/35 evidence count.
 7. [x] Project the typed company timezone through prompts, scheduler, clock
    tool, dashboard, and Compose defaults; reconcile prompt/tool-grant drift
    with the manifest/policy checker and canonical review/privileged adapters.
+   The prompt/tool reconciliation implementation is committed as `20f0499`.
 
 The local operator UX evidence now includes stale/retry handling for project
 detail in addition to identity, PM integrations, and system visualization;
