@@ -229,7 +229,7 @@ export default function ToolsPage() {
   const halfOpenCount = visibleTools.filter(t => t.circuit_breaker?.state === 'HALF_OPEN').length;
 
   return (
-    <div className="dashboard-page">
+    <main aria-label="Tools catalogue" className="dashboard-page">
       <PageHeader
         icon="wrench"
         title="Tools"
@@ -251,7 +251,7 @@ export default function ToolsPage() {
               onClick={requestRefresh}
               disabled={loading}
               aria-label="Refresh tools"
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={clsx('w-4 h-4', loading && 'animate-spin')} />
               Refresh
@@ -261,7 +261,7 @@ export default function ToolsPage() {
               onClick={() => setAllGroups(!allExpanded)}
               disabled={visibleTools.length === 0}
               aria-label={allExpanded ? 'Collapse all groups' : 'Expand all groups'}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {allExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
               {allExpanded ? 'Collapse all' : 'Expand all'}
@@ -271,7 +271,7 @@ export default function ToolsPage() {
       />
 
       {/* Stats row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <section aria-label="Tool catalogue summary" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KpiCard
           label="Registered tools"
           value={visibleTools.length}
@@ -293,7 +293,7 @@ export default function ToolsPage() {
           tone={halfOpenCount > 0 ? 'warning' : 'neutral'}
           hint={halfOpenCount > 0 ? 'Probing for recovery' : 'None probing'}
         />
-      </div>
+      </section>
 
       {error && (
         <ErrorBanner tone="warning" title={stale ? "Showing last known tool catalogue" : "Could not load tools"} action={
@@ -301,7 +301,7 @@ export default function ToolsPage() {
             type="button"
             onClick={requestRefresh}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 text-xs font-medium transition-colors"
+            className="inline-flex min-h-11 items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 text-xs font-medium transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
             Retry
@@ -312,30 +312,30 @@ export default function ToolsPage() {
       )}
 
       {/* Search */}
-      <div className="dashboard-toolbar relative">
+      <section aria-label="Tool search" className="dashboard-toolbar relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
         <input
-          type="text"
+          type="search"
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search tools by name or description..."
           aria-label="Search tools"
-          className="w-full pl-9 pr-9 py-2 bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
+          className="w-full min-h-11 pl-9 pr-9 py-2 bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
         />
         {hasSearch && (
           <button
             type="button"
             onClick={() => setSearch('')}
             aria-label="Clear search"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300 rounded transition-colors"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 min-h-11 min-w-11 flex items-center justify-center text-slate-500 hover:text-slate-300 rounded transition-colors"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         )}
-      </div>
+      </section>
 
       {/* Groups */}
-      <div className="space-y-3">
+      <section aria-label="Tool groups" className="space-y-3">
         {groupNames.map(group => {
           const groupTools = grouped[group];
           const groupOpen = groupTools.filter(t => t.circuit_breaker?.state === 'OPEN').length;
@@ -344,14 +344,15 @@ export default function ToolsPage() {
           const panelId = `group-panel-${group.replace(/\s+/g, '-')}`;
 
           return (
-            <div key={group} className="dashboard-surface overflow-hidden">
+            <section key={group} aria-labelledby={headerId} className="dashboard-surface overflow-hidden">
               {/* Group header */}
               <button
                 id={headerId}
+                type="button"
                 onClick={() => toggleGroup(group)}
                 aria-expanded={isExpanded}
                 aria-controls={panelId}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 active:bg-slate-800/60 transition-colors text-left"
+                className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 active:bg-slate-800/60 transition-colors text-left"
               >
                 {isExpanded
                   ? <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
@@ -371,13 +372,14 @@ export default function ToolsPage() {
                 <div
                   id={panelId}
                   role="region"
-                  aria-labelledby={headerId}
+                  aria-label={`${group} tools`}
                   className="border-t border-slate-800/70 overflow-x-auto"
                 >
-                  <table className="w-full text-sm">
+                  <table aria-label={`${group} tools`} className="w-full text-sm">
+                    <caption className="sr-only">Tools registered in the {group} group.</caption>
                     <thead>
                       <tr className="bg-slate-950/40 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-800/70">
-                        <th scope="col" className="px-4 py-2 text-left w-8"></th>
+                        <th scope="col" className="px-4 py-2 text-left w-8"><span className="sr-only">Expand tool details</span></th>
                         <th scope="col" className="px-4 py-2 text-left">Tool Name</th>
                         <th scope="col" className="px-4 py-2 text-left">Description</th>
                         <th scope="col" className="px-4 py-2 text-center">Circuit Breaker</th>
@@ -402,13 +404,24 @@ export default function ToolsPage() {
                                 cb?.state === 'OPEN' && 'bg-rose-950/15'
                               )}
                               onClick={() => toggleTool(tool.name)}
-                              aria-expanded={isToolExpanded}
                             >
                               <td className="px-4 py-2.5 text-slate-500">
-                                {isToolExpanded
-                                  ? <ChevronDown className="w-3.5 h-3.5" />
-                                  : <ChevronRight className="w-3.5 h-3.5" />
-                                }
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleTool(tool.name);
+                                  }}
+                                  aria-label={`${isToolExpanded ? "Collapse" : "Expand"} ${tool.name} details`}
+                                  aria-expanded={isToolExpanded}
+                                  aria-controls={`${rowId}-details`}
+                                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-400 hover:bg-slate-800/70 hover:text-slate-200 focus-visible:ring-1 focus-visible:ring-blue-400/70"
+                                >
+                                  {isToolExpanded
+                                    ? <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+                                    : <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                                  }
+                                </button>
                               </td>
                               <td className="px-4 py-2.5 font-mono text-blue-300 text-xs whitespace-nowrap">
                                 <span className="inline-flex items-center gap-1.5">
@@ -424,7 +437,7 @@ export default function ToolsPage() {
                                     aria-label={isCopied ? `Copied ${tool.name}` : `Copy ${tool.name} to clipboard`}
                                     title={isCopied ? 'Copied!' : 'Copy tool name'}
                                     className={clsx(
-                                      'inline-flex items-center justify-center w-6 h-6 rounded transition-colors',
+                                      'inline-flex items-center justify-center min-h-11 min-w-11 rounded transition-colors',
                                       'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70',
                                       'focus-visible:ring-1 focus-visible:ring-blue-400/70',
                                       isCopied && 'text-emerald-400 hover:text-emerald-300'
@@ -469,7 +482,7 @@ export default function ToolsPage() {
                               </td>
                             </tr>
                             {isToolExpanded && (
-                              <tr key={`${tool.name}-expand`} className="bg-slate-950/40">
+                              <tr id={`${rowId}-details`} key={`${tool.name}-expand`} className="bg-slate-950/40">
                                 <td colSpan={5} className="px-4 py-3">
                                   <div className="space-y-2">
                                     {tool.description && (
@@ -504,7 +517,7 @@ export default function ToolsPage() {
                   </table>
                 </div>
               )}
-            </div>
+            </section>
           );
         })}
 
@@ -523,7 +536,7 @@ export default function ToolsPage() {
                 <button
                   type="button"
                   onClick={() => setSearch('')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors"
                 >
                   <X className="w-3.5 h-3.5" />
                   Clear search
@@ -532,7 +545,7 @@ export default function ToolsPage() {
                 <button
                   type="button"
                   onClick={() => { setLoading(true); fetchTools(); }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   Re-check
@@ -541,7 +554,7 @@ export default function ToolsPage() {
             }
           />
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

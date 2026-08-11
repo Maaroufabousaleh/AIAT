@@ -27,7 +27,57 @@ test("tools catalogue retains the last known state when a refresh fails", async 
 
   await authenticate(page, "/tools");
   await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
+  await expect(
+    page.getByRole("main", { name: "Tools catalogue" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Tool catalogue summary" }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Tool search" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh tools" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(page.getByRole("button", { name: /all groups/ })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(page.getByRole("searchbox", { name: "Search tools" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
+
+  const toolsRegion = page.getByRole("region", { name: "General tools" });
+  await expect(toolsRegion).toBeVisible();
+  const toolsTable = page.getByRole("table", { name: "General tools" });
+  await expect(toolsTable.locator("caption")).toHaveText(
+    /registered in the General group/i,
+  );
+  for (const heading of [
+    "Expand tool details",
+    "Tool Name",
+    "Description",
+    "Circuit Breaker",
+    "Failures",
+  ]) {
+    await expect(
+      toolsTable.getByRole("columnheader", { name: heading }),
+    ).toHaveAttribute("scope", "col");
+  }
+  await expect(
+    page.getByRole("button", { name: "Expand tools-e2e-read details" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    page.getByRole("button", { name: "Copy tools-e2e-read to clipboard" }),
+  ).toHaveCSS("min-height", "44px");
+  await page
+    .getByRole("button", { name: "Expand tools-e2e-read details" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Collapse tools-e2e-read details" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#tool-row-tools-e2e-read-details")).toBeVisible();
 
   await page.unroute("**/api/tools");
   let failNextRead = true;
@@ -49,12 +99,16 @@ test("tools catalogue retains the last known state when a refresh fails", async 
   });
 
   await page.getByRole("button", { name: "Refresh tools" }).click();
-  await expect(page.getByText("Showing last known tool catalogue")).toBeVisible();
+  await expect(
+    page.getByText("Showing last known tool catalogue"),
+  ).toBeVisible();
   await expect(page.getByText(/latest tools refresh failed/i)).toBeVisible();
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Showing last known tool catalogue")).toHaveCount(0);
+  await expect(page.getByText("Showing last known tool catalogue")).toHaveCount(
+    0,
+  );
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
 });
