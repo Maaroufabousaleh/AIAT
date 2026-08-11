@@ -116,6 +116,11 @@ from mas_core.policy.dashboard_access import (
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
+from mas_core.worker_registry.runtime_catalog import (
+    OPTIONAL_RUNTIME_IDS,
+    RUNTIME_REQUIRED_PACKAGES,
+)
+from mas_core.worker_registry.steward import operational_promotion_checks
 from mas_core.workflow import (
     GateName,
     ImprovementArtifactBundle,
@@ -7010,17 +7015,6 @@ class RuntimeValidationRequest(BaseModel):
     dry_run: bool = True
 
 
-RUNTIME_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
-    "langgraph": ("langgraph",),
-    "crewai": ("crewai",),
-    "microsoft_agent_framework": ("agent_framework",),
-    "autogen": ("autogen_agentchat", "autogen_core"),
-    "letta": ("letta",),
-}
-
-OPTIONAL_RUNTIME_IDS = {"autogen", "letta"}
-
-
 def _runtime_status(runtime_id: str) -> str:
     """Return runtime availability status based on package installation."""
     available = not _missing_runtime_packages(runtime_id)
@@ -7047,8 +7041,31 @@ def _runtime_readiness(runtime_id: str) -> dict[str, Any]:
     }
 
 
-async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
-    """Run a dependency-backed benchmark task without network, tools, or credentials."""
+def _runtime_benchmark_timeout_seconds() -> float:
+    """Return the bounded dependency benchmark timeout.
+
+    Runtime packages are third-party code and may do more work than a simple
+    import suggests (CrewAI, for example, can inspect its local settings while
+    importing).  Keep that work outside the event loop and bound it so a
+    readiness probe cannot make the control plane unresponsive.  The setting
+    is intentionally capped: this endpoint is a smoke probe, not a worker
+    execution queue.
+    """
+    raw_value = os.getenv("AIAT_RUNTIME_BENCHMARK_TIMEOUT_SECONDS", "10")
+    try:
+        configured = float(raw_value)
+    except (TypeError, ValueError):
+        configured = 10.0
+    return max(0.1, min(configured, 60.0))
+
+
+def _runtime_dry_run_sync(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
+    """Run a dependency-backed benchmark task without network, tools, or credentials.
+
+    This helper is deliberately synchronous so the async route can execute
+    third-party imports in a worker thread.  A package import must not block
+    the orchestrator event loop or delay unrelated control-plane requests.
+    """
     if runtime_tier == "langgraph":
         importlib.import_module("langgraph")
         return {"tasks_run": 1, "tasks_passed": 1, "output": {"messages": ["aiat runtime smoke"]}}
@@ -7085,6 +7102,16 @@ async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) ->
             },
         }
     return {"tasks_run": 0, "tasks_passed": 0, "output": None}
+
+
+async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
+    """Run the synchronous dependency probe away from the event loop."""
+    return await anyio.to_thread.run_sync(
+        _runtime_dry_run_sync,
+        runtime_tier,
+        runtime_config,
+        abandon_on_cancel=True,
+    )
 
 
 @app.get("/runtimes")
@@ -7195,7 +7222,7 @@ async def validate_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
 
 @app.post("/runtimes/benchmark")
 async def benchmark_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
-    """Run a lightweight dependency-backed dry-run for the specified runtime."""
+    """Run a bounded dependency-backed dry-run for the specified runtime."""
     from mas_core.worker_registry.evaluator import evaluate_runtime
 
     validation = await evaluate_runtime(
@@ -7231,7 +7258,69 @@ async def benchmark_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
             },
         }
 
-    dry_run = await _runtime_dry_run(req.runtime_tier, req.runtime_config)
+    timeout_seconds = _runtime_benchmark_timeout_seconds()
+    try:
+        # Third-party runtime imports execute in a worker thread and are
+        # bounded independently of the client timeout.  A timed-out thread
+        # is abandoned safely; the probe never grants a worker run or keeps
+        # the API event loop hostage to package initialization.
+        with anyio.fail_after(timeout_seconds):
+            dry_run = await _runtime_dry_run(req.runtime_tier, req.runtime_config)
+    except TimeoutError:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "benchmark_timeout",
+            "mode": "benchmark",
+            "validation": validation,
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "timeout_seconds": timeout_seconds,
+                "note": "Runtime package import or dry-run exceeded the bounded benchmark timeout.",
+            },
+        }
+    except ImportError as exc:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "runtime_benchmark_import_unavailable",
+            extra={"runtime_tier": req.runtime_tier, "error_type": type(exc).__name__},
+        )
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "package_unavailable",
+            "mode": "benchmark",
+            "validation": validation,
+            "missing_packages": list(
+                RUNTIME_REQUIRED_PACKAGES.get(req.runtime_tier, (req.runtime_tier,))
+            ),
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "note": "Runtime package import failed during the dependency-backed dry-run.",
+            },
+        }
+    except Exception as exc:  # pragma: no cover - dependency-specific failures
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "runtime_benchmark_failed",
+            extra={"runtime_tier": req.runtime_tier, "error_type": type(exc).__name__},
+        )
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "benchmark_error",
+            "mode": "benchmark",
+            "validation": validation,
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "error_type": type(exc).__name__,
+                "note": "Runtime dependency raised during the bounded dry-run; no worker run was started.",
+            },
+        }
     elapsed_ms = (time.monotonic() - start) * 1000
 
     return {

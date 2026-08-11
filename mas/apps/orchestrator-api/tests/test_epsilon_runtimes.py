@@ -1,7 +1,6 @@
 """Epsilon tests — advanced runtime evaluation endpoints."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
+import anyio
 import pytest
 
 
@@ -201,6 +200,38 @@ async def test_runtime_benchmark_langgraph_with_valid_config(client):
     else:
         assert data["benchmark_results"]["tasks_run"] == 1
         assert data["benchmark_results"]["tasks_passed"] == 1
+
+
+@pytest.mark.anyio
+async def test_runtime_benchmark_timeout_is_bounded(client, monkeypatch):
+    from orchestrator_api import main
+
+    async def slow_probe(_runtime_tier, _runtime_config):
+        await anyio.sleep(0.5)
+        return {"tasks_run": 1, "tasks_passed": 1}
+
+    monkeypatch.setenv("AIAT_RUNTIME_BENCHMARK_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setattr(main, "_missing_runtime_packages", lambda _runtime_tier: [])
+    monkeypatch.setattr(main, "_runtime_dry_run", slow_probe)
+    response = await client.post(
+        "/runtimes/benchmark",
+        json={
+            "runtime_tier": "crewai",
+            "runtime_config": {
+                "crew_config": {
+                    "agents": [{"role": "runtime-smoke-agent"}],
+                    "tasks": [{"description": "bounded runtime smoke task"}],
+                },
+                "process": "sequential",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "benchmark_timeout"
+    assert data["benchmark_results"]["tasks_run"] == 0
+    assert data["benchmark_results"]["timeout_seconds"] == 0.1
 
 
 @pytest.mark.anyio
