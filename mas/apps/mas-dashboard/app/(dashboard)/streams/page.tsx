@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import { clsx } from "clsx";
 import {
   TEAM_STREAMS,
@@ -13,12 +13,14 @@ import {
   Pause,
   Play,
   Radio,
+  RefreshCw,
   Search,
   Trash2,
   X,
   Check,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { FilterChip } from "@/components/ui/FilterChips";
 
@@ -92,50 +94,107 @@ export default function StreamsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [groupByType, setGroupByType] = useState(false);
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
+  const entriesRef = useRef<FeedEntry[]>([]);
+  const connectionIdRef = useRef(0);
+  const streamFailedRef = useRef(false);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  useEffect(() => {
-    setEntries([]);
-    setConnected(false);
-    setTypeFilter("all");
-    setQuery("");
+  const connect = useCallback((preserveEntries: boolean) => {
+    const connectionId = ++connectionIdRef.current;
+    const hadEntries = entriesRef.current.length > 0;
+    const isCurrent = () => connectionIdRef.current === connectionId;
 
-    let cancelled = false;
-    fetch(`/api/streams/${teamId}?history=1&limit=50`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (cancelled || !data?.entries) return;
-        setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = false;
+    setConnected(false);
+    setLoadError(null);
+    setStale(false);
+    if (!preserveEntries) {
+      entriesRef.current = [];
+      setEntries([]);
+    }
+
+    const reportError = (message: string) => {
+      if (!isCurrent()) return;
+      streamFailedRef.current = true;
+      setConnected(false);
+      setLoadError(message);
+      setStale(entriesRef.current.length > 0 || hadEntries);
+      esRef.current?.close();
+      esRef.current = null;
+    };
+
+    fetch(`/api/streams/${teamId}?history=1&limit=50`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
-      .catch(() => {
-        // Live SSE still gives connection truth even if history is unavailable.
+      .then((data) => {
+        if (!isCurrent() || !data.entries) return;
+        const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
+        const liveEntries = entriesRef.current;
+        const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
+        const next = [...history.filter((entry) => !liveRaw.has(entry.raw)), ...liveEntries].slice(-500);
+        entriesRef.current = next;
+        setEntries(next);
+        if (!streamFailedRef.current) setLoadError(null);
+      })
+      .catch((cause: unknown) => {
+        if (!isCurrent()) return;
+        reportError(cause instanceof Error ? `Stream history unavailable: ${cause.message}` : "Stream history unavailable");
       });
 
     const es = new EventSource(`/api/streams/${teamId}`);
     esRef.current = es;
 
-    es.addEventListener("connected", () => setConnected(true));
-    es.addEventListener("error", () => setConnected(false));
+    es.addEventListener("connected", () => {
+      if (!isCurrent()) return;
+      setConnected(true);
+    });
+    es.addEventListener("error", (event) => {
+      const raw = (event as MessageEvent<string>).data;
+      let message = "Stream disconnected.";
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          message = raw;
+        }
+      }
+      reportError(message);
+    });
 
     es.onmessage = (e) => {
-      if (pausedRef.current) return;
+      if (!isCurrent() || pausedRef.current) return;
       setEntries((prev) => {
-        const next = [...prev, entryFromRaw(e.data)];
-        return next.slice(-500); // cap at 500
+        const next = [...prev, entryFromRaw(e.data)].slice(-500);
+        entriesRef.current = next;
+        return next;
       });
     };
-
-    return () => {
-      cancelled = true;
-      es.close();
-    };
   }, [teamId]);
+
+  useEffect(() => {
+    setTypeFilter("all");
+    setQuery("");
+    connect(false);
+  }, [connect]);
+
+  useEffect(() => () => {
+    connectionIdRef.current += 1;
+    esRef.current?.close();
+    esRef.current = null;
+  }, []);
 
   // Auto-scroll
   useEffect(() => {
@@ -347,7 +406,7 @@ export default function StreamsPage() {
                 aria-hidden
               />
               <span className="text-slate-500">
-                {connected ? "connected" : "connecting…"}
+                {connected ? "connected" : loadError ? "disconnected" : "connecting…"}
               </span>
             </span>
           </span>
@@ -393,6 +452,16 @@ export default function StreamsPage() {
               ))}
             </select>
 
+            <button
+              type="button"
+              onClick={() => connect(true)}
+              aria-label="Reconnect stream"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+            >
+              <RefreshCw size={12} />
+              Reconnect
+            </button>
+
             <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
               <input
                 type="checkbox"
@@ -420,7 +489,10 @@ export default function StreamsPage() {
             </button>
 
             <button
-              onClick={() => setEntries([])}
+              onClick={() => {
+                entriesRef.current = [];
+                setEntries([]);
+              }}
               aria-label="Clear message history"
               title="Clear history"
               className="p-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
@@ -430,6 +502,20 @@ export default function StreamsPage() {
           </>
         }
       />
+
+      {loadError && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known stream data" : "Stream unavailable"}
+          action={(
+            <button type="button" onClick={() => connect(true)} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${loadError} The latest stream refresh failed; retained messages remain visible.` : loadError}
+        </ErrorBanner>
+      )}
 
       {/* Type filter chips */}
       {availableTypes.length > 0 && (
