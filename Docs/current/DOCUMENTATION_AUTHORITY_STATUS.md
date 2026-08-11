@@ -60,7 +60,7 @@ currently passes 11 team files and 39 exact agent-to-manifest bindings. These
 checks establish technical identity only; registration, activation,
 certification, and licence metadata remain separate.
 
-## Clean-checkout limitation
+## Clean-checkout verification
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the
 template, node-schema, portability, and migration tests, the generated-schema
