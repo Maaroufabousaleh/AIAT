@@ -79,7 +79,27 @@ from mas_core.observability.metrics import (
     record_project_state_transition,
     reconcile_project_state_metrics,
 )
-from mas_core.observability.tracing import bind_trace_id, new_trace_id
+from mas_core.observability.slo import (
+    CapacityForecast,
+    SLOReport,
+    build_capacity_forecast,
+    build_slo_report,
+    default_slo_policy,
+)
+from mas_core.observability.trace_evidence import (
+    TraceEvidence,
+    TraceRetentionPolicy,
+    build_trace_evidence,
+    trace_retention_from_manifest,
+)
+from mas_core.observability.tracing import (
+    bind_trace_id,
+    clear_trace_context,
+    current_trace_id,
+    is_safe_trace_id,
+    new_trace_id,
+    resolve_trace_id,
+)
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
@@ -185,7 +205,11 @@ def _router_auth_headers() -> dict[str, str]:
     secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
     if not secret:
         raise RuntimeError("ROUTER_SECRET must be configured for router publication")
-    return {"Authorization": f"Bearer orchestrator-api:{secret}"}
+    headers = {"Authorization": f"Bearer orchestrator-api:{secret}"}
+    trace_id = current_trace_id()
+    if trace_id:
+        headers["X-AIAT-Trace-ID"] = trace_id
+    return headers
 
 
 def _control_plane_auth_headers() -> dict[str, str]:
@@ -2671,6 +2695,60 @@ async def require_control_plane_auth(request: Request, call_next):  # type: igno
         response.headers["X-AIAT-API-Version"] = "v1"
     return response
 
+
+def _request_trace_id(request: Request) -> str:
+    """Accept a bounded caller trace ID or create a fresh root trace."""
+
+    return resolve_trace_id(
+        request.headers.get("x-aiat-trace-id"),
+        request.headers.get("traceparent"),
+    )
+
+
+@app.middleware("http")
+async def propagate_trace_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Bind and return one trace ID for every API request, including errors."""
+
+    trace_id = _request_trace_id(request)
+    bind_trace_id(trace_id)
+    request.state.aiat_trace_id = trace_id
+    started_at = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = int(getattr(response, "status_code", 500) or 500)
+        response.headers["X-AIAT-Trace-ID"] = current_trace_id() or trace_id
+        return response
+    except Exception:
+        # The observation is intentionally scalar and never includes the
+        # exception text.  Re-raise so FastAPI's normal error handling remains
+        # authoritative for the client response.
+        status_code = 500
+        raise
+    finally:
+        storage = getattr(request.app.state, "storage", None)
+        recorder = getattr(storage, "record_api_request_observation", None)
+        if inspect.iscoroutinefunction(recorder):
+            route = request.scope.get("route")
+            route_template = getattr(route, "path", None)
+            try:
+                await recorder(
+                    method=request.method,
+                    path=request.url.path,
+                    route_template=route_template,
+                    status_code=status_code,
+                    duration_ms=(time.perf_counter() - started_at) * 1000.0,
+                    trace_id=trace_id,
+                    principal=getattr(request.state, "aiat_auth_principal", None),
+                    dashboard_section=getattr(request.state, "aiat_dashboard_section", None),
+                )
+            except Exception:  # noqa: BLE001
+                # Observability must never turn a successful API request into a
+                # failure.  The scalar row is best effort when the database is
+                # unavailable, and the error text is not persisted.
+                logger.debug("api_request_observation.persist_failed", exc_info=True)
+        clear_trace_context()
+
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
@@ -2727,6 +2805,237 @@ def _storage() -> AgentStorage:
     if s is None:
         raise HTTPException(503, "Database not available")
     return s
+
+
+async def _trace_retention_policy(storage: AgentStorage) -> TraceRetentionPolicy:
+    """Read trace sampling/retention metadata without making it a gate."""
+
+    getter = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(getter):
+        return trace_retention_from_manifest(None)
+    try:
+        record = await getter(DEFAULT_COMPANY_ID)
+    except Exception:  # noqa: BLE001
+        logger.debug("trace_evidence.retention_unavailable", exc_info=True)
+        record = None
+    return trace_retention_from_manifest(record)
+
+
+def _observability_datetime(value: Any) -> datetime | None:
+    """Parse a bounded timestamp for operational read-model calculations."""
+
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+async def _operational_slo_observations(
+    storage: AgentStorage,
+    *,
+    company_id: UUID | None = None,
+    window_days: int = 30,
+) -> list[dict[str, Any]]:
+    """Project currently durable telemetry into the SLO observation shape.
+
+    Missing service-specific authorities are intentionally omitted.  The pure
+    SLO builder then reports those targets as ``no_data`` instead of treating
+    an absent mail edge, integration, API, or recovery metric as a success.
+    """
+
+    since = datetime.now(tz=UTC) - timedelta(days=max(1, min(int(window_days), 3650)))
+    observations: list[dict[str, Any]] = []
+    usage_reader = getattr(storage, "list_project_usage_aggregates", None)
+    if inspect.iscoroutinefunction(usage_reader):
+        usage_rows = await usage_reader(company_id=company_id, since=since, limit=10_000)
+        for row in usage_rows:
+            if not isinstance(row, dict):
+                continue
+            tool_calls = max(0, int(row.get("tool_calls") or 0))
+            if tool_calls:
+                observations.append(
+                    {
+                        "service": "tool_latency",
+                        "total": tool_calls,
+                        "good": max(0, tool_calls - int(row.get("tool_failed_calls") or 0)),
+                        "latency_ms": row.get("tool_duration_avg_ms"),
+                    }
+                )
+            llm_calls = max(0, int(row.get("llm_calls") or 0))
+            if llm_calls:
+                observations.append(
+                    {
+                        "service": "model_routing",
+                        "total": llm_calls,
+                        "good": max(0, llm_calls - int(row.get("llm_failed_calls") or 0)),
+                        "latency_ms": row.get("llm_duration_avg_ms"),
+                    }
+                )
+
+    run_reader = getattr(storage, "list_worker_runs", None)
+    if inspect.iscoroutinefunction(run_reader):
+        project_ids: set[str] | None = None
+        if company_id is not None:
+            project_reader = getattr(storage, "list_projects", None)
+            if inspect.iscoroutinefunction(project_reader):
+                projects = await project_reader(limit=10_000)
+                project_ids = {
+                    str(project.get("id"))
+                    for project in projects
+                    if str(project.get("company_id")) == str(company_id)
+                }
+        runs = await run_reader(limit=10_000)
+        now = datetime.now(tz=UTC)
+        for row in runs:
+            if not isinstance(row, dict):
+                continue
+            if project_ids is not None and str(row.get("project_id")) not in project_ids:
+                continue
+            created = _observability_datetime(row.get("created_at"))
+            if created is None or created < since or created > now:
+                continue
+            started = _observability_datetime(row.get("started_at"))
+            claimed = _observability_datetime(row.get("claimed_at"))
+            completed = _observability_datetime(row.get("completed_at"))
+            state = str(row.get("state") or "").upper()
+            if claimed is not None:
+                observations.append(
+                    {
+                        "service": "queue_age",
+                        "status": "success",
+                        "latency_ms": max(0.0, (claimed - created).total_seconds() * 1000),
+                    }
+                )
+            if started is not None:
+                observations.append(
+                    {
+                        "service": "worker_startup",
+                        "status": "success",
+                        "latency_ms": max(0.0, (started - created).total_seconds() * 1000),
+                    }
+                )
+            if completed is not None:
+                observations.append(
+                    {
+                        "service": "worker_run",
+                        "status": "success" if state == "SUCCEEDED" else "failed",
+                        "latency_ms": max(0.0, (completed - (started or created)).total_seconds() * 1000),
+                    }
+                )
+
+    # API observations are platform-wide because the compact ledger does not
+    # carry a company foreign key.  Do not mix that global source into a
+    # company-scoped report; a future company attribution projection can opt in
+    # once it has a durable, authorized mapping.
+    api_reader = getattr(storage, "list_api_request_observations", None)
+    if company_id is None and inspect.iscoroutinefunction(api_reader):
+        api_rows = await api_reader(since=since, limit=20_000)
+        for row in api_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "orchestrator_api",
+                    "status": row.get("outcome", "failure"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+
+    # Mail delivery is owned by identity-service.  Pull only its bounded,
+    # signed scalar projection when that service is explicitly configured;
+    # company-scoped reports stay isolated because the dashboard projection is
+    # currently platform-wide and has no company foreign key.
+    identity_configured = bool(
+        os.getenv("IDENTITY_SERVICE_URL", "").strip()
+        and os.getenv("AIAT_IDENTITY_CLIENT_PRIVATE_KEY", "").strip()
+    )
+    if company_id is None and identity_configured:
+        try:
+            identity_client = _identity_client()
+            mail_reader = getattr(identity_client, "list_mail_delivery_observations", None)
+            if inspect.iscoroutinefunction(mail_reader):
+                mail_rows = await mail_reader(since=since, limit=20_000)
+                for row in mail_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    observations.append(
+                        {
+                            "service": "mail_delivery",
+                            "status": row.get("status", "failed"),
+                        }
+                    )
+        except Exception:  # noqa: BLE001
+            # A missing or unavailable optional identity edge must remain
+            # explicit `no_data`; it cannot make the SLO endpoint fail or
+            # convert an unobserved mail path into a success.
+            logger.debug("mail_slo.identity_projection_unavailable", exc_info=True)
+
+    pm_reader = getattr(storage, "list_pm_slo_observations", None)
+    if inspect.iscoroutinefunction(pm_reader):
+        pm_rows = await pm_reader(company_id=company_id, since=since, limit=10_000)
+        for row in pm_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "pm_scm_sync",
+                    "status": row.get("status", "failed"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+
+    recovery_reader = getattr(storage, "list_recovery_slo_observations", None)
+    if inspect.iscoroutinefunction(recovery_reader):
+        recovery_rows = await recovery_reader(company_id=company_id, since=since, limit=10_000)
+        for row in recovery_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "recovery",
+                    "status": row.get("status", "failed"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+    return observations
+
+
+async def _operational_budget_limit(
+    storage: AgentStorage,
+    company_id: UUID | None,
+) -> tuple[float | None, Literal["company_budgets", "not_configured"]]:
+    """Sum configured company budget limits for the forecast read model."""
+
+    budget_reader = getattr(storage, "list_company_budgets", None)
+    if not inspect.iscoroutinefunction(budget_reader):
+        return None, "not_configured"
+    if company_id is not None:
+        companies = [await storage.get_company(company_id)]
+    else:
+        company_reader = getattr(storage, "list_companies", None)
+        companies = await company_reader(status="ACTIVE") if inspect.iscoroutinefunction(company_reader) else []
+    total = 0.0
+    configured = False
+    for company in companies:
+        if not isinstance(company, dict) or company.get("id") is None:
+            continue
+        rows = await budget_reader(UUID(str(company["id"])))
+        for row in rows:
+            if not isinstance(row, dict) or row.get("limit_value") is None:
+                continue
+            try:
+                value = float(row["limit_value"])
+            except (TypeError, ValueError):
+                continue
+            if value >= 0 and value == value and abs(value) != float("inf"):
+                total += value
+                configured = True
+    return (round(total, 8), "company_budgets") if configured else (None, "not_configured")
 
 
 def _controller() -> WorkflowController:
@@ -2841,7 +3150,7 @@ async def _persist_project_workspace(
 @app.post("/projects", status_code=201)
 async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     """Human creates a project request. Triggers CEO via SYSTEM_EVENT."""
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     storage = _storage()
@@ -3278,6 +3587,174 @@ async def list_project_artifacts(
     if await storage.get_project(project_id) is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.get("/observability/traces/{trace_id}", response_model=TraceEvidence)
+async def get_trace_evidence(
+    trace_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> TraceEvidence:
+    """Return bounded, secret-safe evidence for one trace/message ID.
+
+    The operator-only route joins existing task, usage, model, artifact,
+    integration, worker-transition, and native span authorities. It exposes
+    only bounded, payload-free metadata; mail-edge coverage and live retention
+    enforcement remain explicit rather than implying full distributed tracing.
+    """
+
+    _require_operator_identity(request)
+    normalized_trace_id = str(trace_id).strip()
+    if not is_safe_trace_id(normalized_trace_id):
+        raise HTTPException(422, "trace_id must be a bounded safe identifier")
+    storage = _storage()
+    task_rows = await storage.list_task_logs(trace_id=normalized_trace_id, limit=limit)
+    usage_rows = await storage.list_project_usage_events_by_trace(normalized_trace_id, limit=limit)
+    transition_rows = await storage.list_worker_run_transitions_by_correlation(
+        normalized_trace_id,
+        limit=limit,
+    )
+    worker_usage_reader = getattr(storage, "list_worker_usage_records_by_trace", None)
+    worker_usage_rows = (
+        await worker_usage_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(worker_usage_reader)
+        else []
+    )
+    artifact_reader = getattr(storage, "list_worker_artifacts_by_trace", None)
+    artifact_rows = (
+        await artifact_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(artifact_reader)
+        else []
+    )
+    integration_reader = getattr(storage, "list_pm_inbox_events_by_correlation", None)
+    integration_rows = (
+        await integration_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(integration_reader)
+        else []
+    )
+    integration_evidence_reader = getattr(storage, "list_integration_evidence_by_trace", None)
+    integration_evidence_rows = (
+        await integration_evidence_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(integration_evidence_reader)
+        else []
+    )
+    api_reader = getattr(storage, "list_api_request_observations", None)
+    api_rows = (
+        await api_reader(trace_id=normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(api_reader)
+        else []
+    )
+    native_span_reader = getattr(storage, "list_native_trace_spans_by_trace", None)
+    native_span_rows = list(
+        await native_span_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(native_span_reader)
+        else []
+    )
+    # The identity service owns its database.  When configured, consume only
+    # its signed scalar delivery-attempt projection and turn matching rows into
+    # mail-kind trace items; provider IDs, recipients, subjects, relay errors,
+    # and message content never cross this boundary.
+    if (
+        os.getenv("IDENTITY_SERVICE_URL", "").strip()
+        and os.getenv("AIAT_IDENTITY_CLIENT_PRIVATE_KEY", "").strip()
+    ):
+        try:
+            identity_client = _identity_client()
+            mail_reader = getattr(identity_client, "list_mail_delivery_observations", None)
+            mail_rows = (
+                await mail_reader(trace_id=normalized_trace_id, limit=limit)
+                if inspect.iscoroutinefunction(mail_reader)
+                else []
+            )
+            for row in mail_rows:
+                if not isinstance(row, dict):
+                    continue
+                native_span_rows.append(
+                    {
+                        "id": row.get("id"),
+                        "trace_id": normalized_trace_id,
+                        "span_id": row.get("span_id"),
+                        "source_kind": "mail",
+                        "operation": "mail.delivery_attempt",
+                        "service": row.get("source") or "identity_service",
+                        "status": row.get("status") or "unknown",
+                        "started_at": row.get("occurred_at"),
+                        "duration_ms": 0,
+                        "sampled": True,
+                    }
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("trace_evidence.identity_mail_projection_unavailable", exc_info=True)
+    return build_trace_evidence(
+        trace_id=normalized_trace_id,
+        api_rows=api_rows,
+        task_rows=task_rows,
+        usage_rows=usage_rows,
+        transition_rows=transition_rows,
+        worker_usage_rows=worker_usage_rows,
+        artifact_rows=artifact_rows,
+        integration_rows=integration_rows,
+        integration_evidence_rows=integration_evidence_rows,
+        native_span_rows=native_span_rows,
+        retention=await _trace_retention_policy(storage),
+        generated_at=datetime.now(tz=UTC).isoformat(),
+        limit=limit * 3,
+    )
+
+
+@app.get("/observability/slo", response_model=SLOReport)
+async def get_operational_slo_report(
+    request: Request,
+    company_id: UUID | None = None,
+    window_days: int = Query(default=30, ge=1, le=3650),
+) -> SLOReport:
+    """Return descriptive SLO targets and observed durable telemetry."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    if company_id is not None and await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    observations = await _operational_slo_observations(
+        storage,
+        company_id=company_id,
+        window_days=window_days,
+    )
+    return build_slo_report(
+        observations,
+        policy=default_slo_policy(),
+        generated_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+@app.get("/observability/capacity/forecast", response_model=CapacityForecast)
+async def get_capacity_forecast(
+    request: Request,
+    company_id: UUID | None = None,
+    window_days: int = Query(default=30, ge=1, le=3650),
+    forecast_days: int = Query(default=30, ge=1, le=3650),
+) -> CapacityForecast:
+    """Forecast cost and token demand from bounded durable usage aggregates."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    if company_id is not None and await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    since = datetime.now(tz=UTC) - timedelta(days=window_days)
+    reader = getattr(storage, "list_project_usage_aggregates", None)
+    usage_rows = (
+        await reader(company_id=company_id, since=since, limit=10_000)
+        if inspect.iscoroutinefunction(reader)
+        else []
+    )
+    budget_limit, budget_source = await _operational_budget_limit(storage, company_id)
+    return build_capacity_forecast(
+        usage_rows,
+        window_days=window_days,
+        forecast_days=forecast_days,
+        budget_limit_usd=budget_limit,
+        budget_source=budget_source,
+        generated_at=datetime.now(tz=UTC).isoformat(),
+    )
 
 
 @app.get("/projects/{project_id}/usage/events")

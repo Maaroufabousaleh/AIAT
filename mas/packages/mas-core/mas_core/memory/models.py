@@ -507,6 +507,61 @@ task_log = sa.Table(
     ),
 )
 
+# Bounded API request observations feed operational SLO/trace read models.
+# Bodies, headers, query strings, credentials, and exception text are never
+# persisted here.
+api_request_observations = sa.Table(
+    "api_request_observations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("method", sa.Text(), nullable=False),
+    sa.Column("route", sa.Text(), nullable=False),
+    sa.Column("status_code", sa.Integer(), nullable=False),
+    sa.Column("outcome", sa.Text(), nullable=False),
+    sa.Column("duration_ms", sa.Numeric(14, 3), nullable=False),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("principal", sa.Text()),
+    sa.Column("dashboard_section", sa.Text()),
+    sa.Column(
+        "occurred_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column("source", sa.Text(), nullable=False, server_default="orchestrator_api"),
+    sa.CheckConstraint("status_code >= 100 AND status_code <= 599", name="ck_api_obs_status_code"),
+    sa.CheckConstraint("outcome IN ('success', 'failure')", name="ck_api_obs_outcome"),
+)
+
+# Native, payload-free spans emitted by AIAT service boundaries.  This is a
+# bounded operational ledger, not a request/body or provider-payload store.
+native_trace_spans = sa.Table(
+    "native_trace_spans",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("trace_id", sa.Text(), nullable=False),
+    sa.Column("span_id", sa.Text(), nullable=False),
+    sa.Column("parent_span_id", sa.Text()),
+    sa.Column("source_kind", sa.Text(), nullable=False),
+    sa.Column("operation", sa.Text(), nullable=False),
+    sa.Column("service", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="unknown"),
+    sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("ended_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("duration_ms", sa.Numeric(14, 3), nullable=False, server_default="0"),
+    sa.Column("sampled", sa.Boolean(), nullable=False, server_default="true"),
+    sa.Column("retention_until", sa.TIMESTAMP(timezone=True)),
+    sa.Column("attributes_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.UniqueConstraint("trace_id", "span_id", name="uq_native_trace_span"),
+    sa.CheckConstraint(
+        "source_kind IN ('transport', 'model', 'tool', 'mail', 'audit', 'worker', 'integration')",
+        name="ck_native_trace_span_source_kind",
+    ),
+    sa.CheckConstraint(
+        "status IN ('success', 'failure', 'unknown')",
+        name="ck_native_trace_span_status",
+    ),
+    sa.CheckConstraint("duration_ms >= 0", name="ck_native_trace_span_duration"),
+)
+
 # ── 16. artifacts ─────────────────────────────────────────────────────────────
 artifacts = sa.Table(
     "artifacts",
@@ -1242,6 +1297,10 @@ integration_evidence_records = sa.Table(
     sa.Column("repository", sa.Text()),
     sa.Column("payload", JSONB(), nullable=False, server_default="{}"),
     sa.Column("idempotency_key", sa.Text(), nullable=False),
+    # Trace correlation is a safe index field; the provider payload remains
+    # an evidence authority and is never projected through trace reads.
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
     sa.UniqueConstraint("idempotency_key", name="uq_integration_evidence_idempotency"),
 )
@@ -1486,6 +1545,8 @@ worker_artifacts = sa.Table(
     sa.Column("sha256", sa.Text(), nullable=False),
     sa.Column("size_bytes", sa.BigInteger()),
     sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
 )
 
@@ -1502,6 +1563,8 @@ worker_usage_records = sa.Table(
     sa.Column("resource_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("provider_id", sa.Text()),
     sa.Column("exact_model_id", sa.Text()),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
 )
 

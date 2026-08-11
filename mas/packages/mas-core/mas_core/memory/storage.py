@@ -29,15 +29,20 @@ import random
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4, uuid5
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from . import models as t
 from ..company_manifest import DEFAULT_COMPANY_ID
+from ..observability.native_spans import build_native_trace_span
+from ..observability.tracing import current_span_id, current_trace_id, new_span_id
+from . import models as t
+
+if TYPE_CHECKING:
+    from ..workflow.self_improvement import ImprovementOpportunity
 
 logger = logging.getLogger(__name__)
 
@@ -688,6 +693,19 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def list_project_states(self) -> list[str]:
+        """Return every persisted project state for aggregate metrics.
+
+        This intentionally selects only the bounded state column rather than
+        applying the page limit used by the project-list API. Observability
+        startup reconciliation must not silently undercount a large instance.
+        """
+
+        query = t.projects.select().with_only_columns(t.projects.c.state)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).all()
+        return [str(row[0]) for row in rows]
 
     async def transition_project(
         self,
@@ -4507,6 +4525,8 @@ class AgentStorage:
         binding_id: UUID | None = None,
         payload: dict[str, Any] | None = None,
         idempotency_key: str,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> dict[str, Any]:
         """Persist source-control facts without making them canonical state.
 
@@ -4515,6 +4535,9 @@ class AgentStorage:
         from PM object mappings so a source-control provider can be replaced
         without rewriting canonical work items.
         """
+        trace_id = trace_id or current_trace_id()
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
+        created_at_value = datetime.now(tz=UTC)
         values = {
             "id": uuid4(),
             "connection_id": connection_id,
@@ -4525,7 +4548,9 @@ class AgentStorage:
             "repository": repository,
             "payload": self._pm_json_safe(payload or {}),
             "idempotency_key": idempotency_key,
-            "created_at": datetime.now(tz=UTC),
+            "trace_id": trace_id,
+            "span_id": effective_span_id,
+            "created_at": created_at_value,
         }
         async with self.engine.begin() as conn:
             stmt = (
@@ -4537,11 +4562,36 @@ class AgentStorage:
                         "payload": values["payload"],
                         "external_id": values["external_id"],
                         "repository": values["repository"],
+                        "trace_id": sa.func.coalesce(
+                            values["trace_id"],
+                            t.integration_evidence_records.c.trace_id,
+                        ),
+                        "span_id": sa.func.coalesce(
+                            values["span_id"],
+                            t.integration_evidence_records.c.span_id,
+                        ),
                     },
                 )
                 .returning(t.integration_evidence_records)
             )
             row = await self._mapping_first(await conn.execute(stmt))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="integration",
+                    operation=evidence_type,
+                    service="integration_evidence",
+                    status="success",
+                    started_at=created_at_value,
+                    ended_at=created_at_value,
+                    attributes={
+                        "evidence_type": evidence_type,
+                        "repository": repository,
+                    },
+                )
         return dict(row) if row else values
 
     async def list_integration_evidence(
@@ -4904,6 +4954,7 @@ class AgentStorage:
         database uniqueness constraint is the final arbiter; the read-before-
         write below also makes the common replay path cheap and deterministic.
         """
+        trace_id = trace_id or current_trace_id()
         if event_type not in {"llm", "tool"}:
             raise ValueError("event_type must be 'llm' or 'tool'")
         normalized_project_id = (
@@ -4918,6 +4969,8 @@ class AgentStorage:
                         )
                     )
                 ).scalar_one_or_none()
+        occurred_at_value = occurred_at or datetime.now(tz=UTC)
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
         values = {
             "id": event_id or uuid4(),
             "project_id": normalized_project_id,
@@ -4940,9 +4993,9 @@ class AgentStorage:
             "cost_usd": max(0.0, float(cost_usd or 0.0)),
             "duration_ms": duration_ms,
             "trace_id": trace_id,
-            "span_id": span_id,
+            "span_id": effective_span_id,
             "details": details,
-            "occurred_at": occurred_at or datetime.now(tz=UTC),
+            "occurred_at": occurred_at_value,
         }
         async with self.engine.begin() as conn:
             if idempotency_key:
@@ -4971,6 +5024,25 @@ class AgentStorage:
                     return dict(existing)
             else:
                 await conn.execute(t.project_usage_events.insert().values(**values))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="model" if event_type == "llm" else "tool",
+                    operation=model or tool_name or event_type,
+                    service="project_usage",
+                    status=status,
+                    started_at=occurred_at_value - timedelta(milliseconds=float(duration_ms or 0)),
+                    ended_at=occurred_at_value,
+                    duration_ms=duration_ms or 0,
+                    attributes={
+                        "event_type": event_type,
+                        "agent_id": agent_id,
+                        "team_id": team_id,
+                    },
+                )
         return values
 
     async def get_project_usage(self, project_id: UUID) -> dict[str, Any]:
@@ -5007,6 +5079,81 @@ class AgentStorage:
         result["source"] = "project_usage_events"
         return result
 
+    async def list_project_usage_aggregates(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return bounded per-project usage aggregates for operations forecasts.
+
+        The query deliberately returns aggregates rather than raw provider or
+        tool payloads.  ``project_usage_events`` remains the accounting
+        authority while this read model supplies enough counts, cost, token,
+        duration, and time-span data for SLO/capacity projections.
+        """
+
+        events = t.project_usage_events
+        projects = t.projects
+        event_type = events.c.event_type
+        status = events.c.status
+        project_join = events.join(projects, events.c.project_id == projects.c.id)
+        clauses = []
+        if company_id is not None:
+            clauses.append(projects.c.company_id == company_id)
+        if since is not None:
+            clauses.append(events.c.occurred_at >= since)
+        query = sa.select(
+            events.c.project_id.label("project_id"),
+            projects.c.company_id.label("company_id"),
+            sa.func.count().label("event_count"),
+            sa.func.count().filter(event_type == "llm").label("llm_calls"),
+            sa.func.count().filter(event_type == "tool").label("tool_calls"),
+            sa.func.count().filter(status != "success").label("failed_calls"),
+            sa.func.count().filter(sa.and_(event_type == "llm", status != "success")).label("llm_failed_calls"),
+            sa.func.count().filter(sa.and_(event_type == "tool", status != "success")).label("tool_failed_calls"),
+            sa.func.coalesce(sa.func.sum(events.c.prompt_tokens), 0).label("prompt_tokens"),
+            sa.func.coalesce(sa.func.sum(events.c.completion_tokens), 0).label("completion_tokens"),
+            sa.func.coalesce(sa.func.sum(events.c.cost_usd), 0).label("total_cost_usd"),
+            sa.func.coalesce(sa.func.sum(events.c.duration_ms).filter(event_type == "llm"), 0).label("llm_duration_sum_ms"),
+            sa.func.coalesce(sa.func.sum(events.c.duration_ms).filter(event_type == "tool"), 0).label("tool_duration_sum_ms"),
+            sa.func.count().filter(sa.and_(event_type == "llm", events.c.duration_ms.is_not(None))).label("llm_duration_count"),
+            sa.func.count().filter(sa.and_(event_type == "tool", events.c.duration_ms.is_not(None))).label("tool_duration_count"),
+            sa.func.min(events.c.occurred_at).label("first_event_at"),
+            sa.func.max(events.c.occurred_at).label("last_event_at"),
+        ).select_from(project_join)
+        if clauses:
+            query = query.where(sa.and_(*clauses))
+        query = query.group_by(events.c.project_id, projects.c.company_id).order_by(
+            sa.func.max(events.c.occurred_at).desc()
+        ).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        aggregates: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["event_count"] = int(item.get("event_count") or 0)
+            item["llm_calls"] = int(item.get("llm_calls") or 0)
+            item["tool_calls"] = int(item.get("tool_calls") or 0)
+            item["failed_calls"] = int(item.get("failed_calls") or 0)
+            item["llm_failed_calls"] = int(item.get("llm_failed_calls") or 0)
+            item["tool_failed_calls"] = int(item.get("tool_failed_calls") or 0)
+            item["prompt_tokens"] = int(item.get("prompt_tokens") or 0)
+            item["completion_tokens"] = int(item.get("completion_tokens") or 0)
+            item["total_tokens"] = item["prompt_tokens"] + item["completion_tokens"]
+            item["total_cost_usd"] = float(item.get("total_cost_usd") or 0.0)
+            for kind in ("llm", "tool"):
+                sum_key = f"{kind}_duration_sum_ms"
+                count_key = f"{kind}_duration_count"
+                item[f"{kind}_duration_avg_ms"] = (
+                    float(item.get(sum_key) or 0.0) / int(item.get(count_key) or 1)
+                    if int(item.get(count_key) or 0) > 0
+                    else None
+                )
+            aggregates.append(item)
+        return aggregates
+
     async def list_project_usage_events(
         self,
         project_id: UUID,
@@ -5020,6 +5167,272 @@ class AgentStorage:
             .order_by(t.project_usage_events.c.occurred_at.desc())
             .limit(limit)
             .offset(offset)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_pm_slo_observations(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return safe PM/SCM delivery observations for the SLO read model.
+
+        The projection reads delivery state and bounded timestamps only. It
+        never returns provider payloads, headers, credentials, or error
+        bodies. A company filter is applied through project bindings when the
+        connection is associated with a project; unscoped operator reads may
+        aggregate all configured PM connections.
+        """
+
+        connections = t.pm_connections
+        bindings = t.pm_project_bindings
+        projects = t.projects
+        connection_company_match = sa.exists(
+            sa.select(1)
+            .select_from(bindings.join(projects, bindings.c.project_id == projects.c.id))
+            .where(bindings.c.connection_id == connections.c.id)
+            .where(projects.c.company_id == company_id)
+        ) if company_id is not None else None
+
+        observations: list[dict[str, Any]] = []
+        inbox = t.pm_inbox_events
+        since_clause = inbox.c.received_at >= since if since is not None else None
+        inbox_clauses: list[Any] = []
+        if since_clause is not None:
+            inbox_clauses.append(since_clause)
+        if connection_company_match is not None:
+            inbox_clauses.append(connection_company_match)
+        inbox_query = sa.select(
+            inbox.c.id.label("id"),
+            inbox.c.status.label("status"),
+            inbox.c.received_at.label("occurred_at"),
+            inbox.c.processed_at.label("completed_at"),
+            sa.literal("pm_inbox_events").label("source"),
+        ).select_from(inbox.join(connections, inbox.c.connection_id == connections.c.id))
+        if inbox_clauses:
+            inbox_query = inbox_query.where(sa.and_(*inbox_clauses))
+
+        outbox = t.pm_outbox_events
+        outbox_since_clause = outbox.c.created_at >= since if since is not None else None
+        outbox_clauses: list[Any] = []
+        if outbox_since_clause is not None:
+            outbox_clauses.append(outbox_since_clause)
+        if connection_company_match is not None:
+            outbox_clauses.append(connection_company_match)
+        outbox_query = sa.select(
+            outbox.c.id.label("id"),
+            outbox.c.status.label("status"),
+            outbox.c.created_at.label("occurred_at"),
+            outbox.c.processed_at.label("completed_at"),
+            sa.literal("pm_outbox_events").label("source"),
+        ).select_from(outbox.join(connections, outbox.c.connection_id == connections.c.id))
+        if outbox_clauses:
+            outbox_query = outbox_query.where(sa.and_(*outbox_clauses))
+
+        combined = sa.union_all(inbox_query, outbox_query).subquery("pm_slo_observations")
+        query = sa.select(combined).order_by(combined.c.occurred_at.asc()).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        for row in rows:
+            item = dict(row)
+            occurred_at = item.get("occurred_at")
+            completed_at = item.get("completed_at")
+            duration_ms = None
+            if isinstance(occurred_at, datetime) and isinstance(completed_at, datetime):
+                duration_ms = max(0.0, (completed_at - occurred_at).total_seconds() * 1000)
+            status = str(item.get("status") or "unknown").strip().upper()
+            item["status"] = "success" if status in {"PROCESSED", "SENT", "DELIVERED", "SUCCESS", "RESOLVED"} else "failed"
+            item["duration_ms"] = duration_ms
+            item.pop("completed_at", None)
+            observations.append(item)
+        return observations
+
+    async def list_recovery_slo_observations(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return bounded worker-run recovery transition observations."""
+
+        transitions = t.worker_run_transitions
+        runs = t.worker_runs
+        projects = t.projects
+        clauses: list[Any] = [
+            sa.or_(
+                transitions.c.actor == "worker-run-recovery",
+                transitions.c.reason.ilike("%recover%"),
+                transitions.c.reason.ilike("%lease expired%"),
+            )
+        ]
+        if since is not None:
+            clauses.append(transitions.c.created_at >= since)
+        if company_id is not None:
+            clauses.append(projects.c.company_id == company_id)
+        query = sa.select(
+            transitions.c.id.label("id"),
+            transitions.c.from_state.label("from_state"),
+            transitions.c.to_state.label("to_state"),
+            transitions.c.actor.label("actor"),
+            transitions.c.reason.label("reason"),
+            transitions.c.created_at.label("occurred_at"),
+        ).select_from(
+            transitions.join(runs, transitions.c.run_id == runs.c.id).outerjoin(
+                projects, runs.c.project_id == projects.c.id
+            )
+        ).where(sa.and_(*clauses)).order_by(transitions.c.created_at.asc()).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [
+            {
+                "id": str(row.get("id")),
+                "status": "success" if str(row.get("to_state") or "").upper() == "QUEUED" else "failed",
+                "occurred_at": row.get("occurred_at"),
+                "source": "worker_run_transitions",
+            }
+            for row in rows
+        ]
+
+    async def list_project_usage_events_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List bounded project usage rows for one trace ID."""
+
+        query = (
+            t.project_usage_events.select()
+            .where(t.project_usage_events.c.trace_id == trace_id)
+            .order_by(t.project_usage_events.c.occurred_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_worker_usage_records_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List direct worker model-usage rows with a legacy run fallback."""
+
+        usage = t.worker_usage_records
+        events = t.project_usage_events
+        # A run can emit multiple model/tool usage events.  Use an EXISTS
+        # correlation instead of a join so one durable worker usage row is
+        # never duplicated merely because its run has several spans.
+        trace_match = sa.exists(
+            sa.select(1)
+            .select_from(events)
+            .where(events.c.run_id == usage.c.run_id)
+            .where(events.c.trace_id == trace_id)
+        )
+        query = (
+            sa.select(
+                usage.c.id,
+                usage.c.run_id,
+                usage.c.prompt_tokens,
+                usage.c.completion_tokens,
+                usage.c.total_tokens,
+                usage.c.cost_usd,
+                usage.c.duration_ms,
+                usage.c.provider_id,
+                usage.c.exact_model_id,
+                usage.c.created_at,
+                usage.c.trace_id,
+                usage.c.span_id,
+            )
+            .where(sa.or_(usage.c.trace_id == trace_id, trace_match))
+            .order_by(usage.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_worker_artifacts_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List direct worker artifact metadata with a legacy run fallback."""
+
+        artifacts = t.worker_artifacts
+        events = t.project_usage_events
+        trace_match = sa.exists(
+            sa.select(1)
+            .select_from(events)
+            .where(events.c.run_id == artifacts.c.run_id)
+            .where(events.c.trace_id == trace_id)
+        )
+        query = (
+            sa.select(
+                artifacts.c.id,
+                artifacts.c.run_id,
+                artifacts.c.artifact_id,
+                artifacts.c.kind,
+                artifacts.c.sha256,
+                artifacts.c.size_bytes,
+                artifacts.c.created_at,
+                artifacts.c.trace_id,
+                artifacts.c.span_id,
+            )
+            .where(sa.or_(artifacts.c.trace_id == trace_id, trace_match))
+            .order_by(artifacts.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_pm_inbox_events_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List bounded PM inbound metadata correlated to a trace/message ID."""
+
+        query = (
+            t.pm_inbox_events.select()
+            .where(t.pm_inbox_events.c.correlation_id == correlation_id)
+            .order_by(t.pm_inbox_events.c.received_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_integration_evidence_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List payload-free integration evidence rows for one trace."""
+
+        query = (
+            sa.select(
+                t.integration_evidence_records.c.id,
+                t.integration_evidence_records.c.connection_id,
+                t.integration_evidence_records.c.project_id,
+                t.integration_evidence_records.c.evidence_type,
+                t.integration_evidence_records.c.created_at,
+                t.integration_evidence_records.c.trace_id,
+                t.integration_evidence_records.c.span_id,
+            )
+            .where(t.integration_evidence_records.c.trace_id == trace_id)
+            .order_by(t.integration_evidence_records.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
         )
         async with self.engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
@@ -5364,6 +5777,130 @@ class AgentStorage:
             await conn.execute(
                 t.task_log.update().where(t.task_log.c.task_id == task_id).values(**kwargs)
             )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Native payload-free trace spans
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def _insert_native_trace_span_tx(
+        self,
+        conn: Any,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        """Insert or finish one native span inside an existing transaction."""
+
+        values = build_native_trace_span(**fields)
+        values["attributes_json"] = values.pop("attributes", {})
+        statement = (
+            pg_insert(t.native_trace_spans)
+            .values(**values)
+            .on_conflict_do_update(
+                constraint="uq_native_trace_span",
+                set_={
+                    "parent_span_id": values["parent_span_id"],
+                    "source_kind": values["source_kind"],
+                    "operation": values["operation"],
+                    "service": values["service"],
+                    "status": values["status"],
+                    "started_at": values["started_at"],
+                    "ended_at": values["ended_at"],
+                    "duration_ms": values["duration_ms"],
+                    "sampled": values["sampled"],
+                    "retention_until": values["retention_until"],
+                    "attributes_json": values["attributes_json"],
+                },
+            )
+        )
+        await conn.execute(statement)
+        return values
+
+    async def create_native_trace_span(self, **fields: Any) -> dict[str, Any]:
+        """Persist one normalized native span without accepting payload data."""
+
+        async with self.engine.begin() as conn:
+            return await self._insert_native_trace_span_tx(conn, **fields)
+
+    async def list_native_trace_spans_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1_000,
+    ) -> list[dict[str, Any]]:
+        """List bounded native spans for one trace in causal time order."""
+
+        query = (
+            t.native_trace_spans.select()
+            .where(t.native_trace_spans.c.trace_id == str(trace_id).strip())
+            .order_by(
+                t.native_trace_spans.c.started_at.asc(),
+                t.native_trace_spans.c.span_id.asc(),
+            )
+            .limit(max(1, min(int(limit), 2_000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Bounded API request observations
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def record_api_request_observation(self, **fields: Any) -> dict[str, Any]:
+        """Persist one payload-free API request observation.
+
+        The observability normalizer is the single boundary for route, status,
+        duration, trace, and principal bounds.  No request/response payload,
+        headers, query strings, credentials, or exception text can enter this
+        table through this method.
+        """
+
+        from mas_core.observability.api_observations import build_api_observation
+
+        values = build_api_observation(**fields)
+        async with self.engine.begin() as conn:
+            await conn.execute(t.api_request_observations.insert().values(**values))
+            if values.get("trace_id"):
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=values["trace_id"],
+                    span_id=new_span_id(),
+                    parent_span_id=current_span_id(),
+                    source_kind="transport",
+                    operation=values["route"],
+                    service=values.get("source") or "orchestrator_api",
+                    status=values["outcome"],
+                    started_at=values["occurred_at"] - timedelta(milliseconds=float(values["duration_ms"])),
+                    ended_at=values["occurred_at"],
+                    duration_ms=values["duration_ms"],
+                    attributes={
+                        "method": values["method"],
+                        "route": values["route"],
+                        "status_code": values["status_code"],
+                        "outcome": values["outcome"],
+                    },
+                )
+        return values
+
+    async def list_api_request_observations(
+        self,
+        *,
+        trace_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """List bounded API observations for trace and operational read models."""
+
+        query = t.api_request_observations.select()
+        if trace_id:
+            query = query.where(t.api_request_observations.c.trace_id == trace_id)
+        if since is not None:
+            query = query.where(t.api_request_observations.c.occurred_at >= since)
+        query = query.order_by(t.api_request_observations.c.occurred_at.asc()).limit(
+            max(1, min(int(limit), 20_000))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Artifacts (blob metadata)
@@ -7856,6 +8393,24 @@ class AgentStorage:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(row) for row in rows]
 
+    async def list_worker_run_transitions_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List worker-run transitions correlated to one trace/message ID."""
+
+        q = (
+            t.worker_run_transitions.select()
+            .where(t.worker_run_transitions.c.correlation_id == correlation_id)
+            .order_by(t.worker_run_transitions.c.created_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def create_worker_artifact(
         self,
         *,
@@ -7866,7 +8421,12 @@ class AgentStorage:
         sha256: str,
         size_bytes: int | None,
         metadata: dict[str, Any] | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> dict[str, Any]:
+        trace_id = trace_id or current_trace_id()
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
+        created_at_value = datetime.now(tz=UTC)
         values = {
             "id": uuid4(),
             "run_id": run_id,
@@ -7876,9 +8436,29 @@ class AgentStorage:
             "sha256": sha256,
             "size_bytes": size_bytes,
             "metadata": metadata or {},
+            "trace_id": trace_id,
+            "span_id": effective_span_id,
+            "created_at": created_at_value,
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.worker_artifacts.insert().values(**values))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="audit",
+                    operation=f"artifact.{kind}",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=created_at_value,
+                    ended_at=created_at_value,
+                    attributes={
+                        "kind": kind,
+                        "size_bytes": size_bytes or 0,
+                    },
+                )
         return values
 
     async def list_worker_artifacts(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
@@ -7893,9 +8473,32 @@ class AgentStorage:
         return [dict(row) for row in rows]
 
     async def create_worker_usage(self, *, run_id: UUID, usage: dict[str, Any]) -> dict[str, Any]:
-        values = {"id": uuid4(), "run_id": run_id, "prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0), "cost_usd": usage.get("cost_usd", 0), "duration_ms": usage.get("duration_ms", 0), "resource_json": usage.get("resource_json") or {}, "provider_id": usage.get("provider_id"), "exact_model_id": usage.get("exact_model_id")}
+        trace_id = usage.get("trace_id") or current_trace_id()
+        effective_span_id = (usage.get("span_id") or current_span_id() or new_span_id()) if trace_id else usage.get("span_id")
+        created_at_value = datetime.now(tz=UTC)
+        values = {"id": uuid4(), "run_id": run_id, "prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0), "cost_usd": usage.get("cost_usd", 0), "duration_ms": usage.get("duration_ms", 0), "resource_json": usage.get("resource_json") or {}, "provider_id": usage.get("provider_id"), "exact_model_id": usage.get("exact_model_id"), "trace_id": trace_id, "span_id": effective_span_id, "created_at": created_at_value}
         async with self.engine.begin() as conn:
             await conn.execute(t.worker_usage_records.insert().values(**values))
+            if trace_id:
+                duration_ms = usage.get("duration_ms") or 0
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="model",
+                    operation=usage.get("exact_model_id") or "worker.model",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=created_at_value - timedelta(milliseconds=float(duration_ms or 0)),
+                    ended_at=created_at_value,
+                    duration_ms=duration_ms,
+                    attributes={
+                        "run_id": str(run_id),
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    },
+                )
         return values
 
     async def list_worker_usage(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
