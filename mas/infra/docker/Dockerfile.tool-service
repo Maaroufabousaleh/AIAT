@@ -29,7 +29,7 @@ RUN if [ "$TOOL_SERVICE_PROFILE" = "extensions" ]; then \
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
-RUN pip install --no-cache-dir uv==0.4.*
+RUN pip install --no-cache-dir uv==0.4.30
 
 RUN pip install \
         uvicorn \
