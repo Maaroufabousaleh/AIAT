@@ -130,10 +130,11 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
         </ErrorBanner>
       )}
       {!loading && !error && items.length === 0 && <EmptyState title="No records" description="No identity records are available for this view." />}
-      {items.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+      {items.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50" aria-busy={loading}>
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th className="px-4 py-3">Actions</th></tr></thead>
-          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex gap-2">{itemActions(item).map(({ action, label }) => <button key={action} onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} className="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
+          <caption className="sr-only">{title} records</caption>
+          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} scope="col" className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th scope="col" className="px-4 py-3">Actions</th></tr></thead>
+          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex flex-wrap gap-2">{itemActions(item).map(({ action, label }) => <button key={action} type="button" onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} aria-label={`${label} ${String(item.id ?? "record")}`} className="inline-flex min-h-11 items-center rounded border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
         </table>
       </div>}
     </div>

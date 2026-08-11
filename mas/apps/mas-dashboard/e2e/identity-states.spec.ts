@@ -35,6 +35,10 @@ test("identity tables label stale records and preserve a retry path", async ({
   await authenticate(page, "/identities");
   await expect(page.getByRole("heading", { name: "Identities" })).toBeVisible();
   await expect(page.getByText("identity-e2e-001")).toBeVisible();
+  const table = page.getByRole("table", { name: "Identities records" });
+  await expect(table).toBeVisible();
+  await expect(table.getByRole("columnheader", { name: "id", exact: true })).toHaveAttribute("scope", "col");
+  await expect(page.getByRole("button", { name: "Suspend identity-e2e-001" })).toHaveCSS("min-height", "44px");
 
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.getByText("Showing last known records")).toBeVisible();
