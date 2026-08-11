@@ -939,6 +939,9 @@ worker records and canonical artifact-row IDs into the manifest, while
 `ImprovementArtifactReadback` and the `record_artifact_readback` action verify
 provider-returned SHA-256/size parity without copying bytes into the project
 snapshot. External certified-worker/provider evidence remains open.
+The core lifecycle/candidate contract and deterministic fixture slice is
+committed as `4d8dddf`; authenticated API/storage integration and live worker
+execution remain separate evidence groups.
 
 ### 16.2 Prohibited autonomy
 

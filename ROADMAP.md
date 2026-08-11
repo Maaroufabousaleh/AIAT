@@ -641,6 +641,10 @@ IDs) into that manifest, and `ImprovementArtifactReadback` verifies provider
 bytes by SHA-256 and size without retaining bytes in lifecycle state; the
 deterministic lifecycle fixture exercises all five records and read-backs.
 Live certified-worker generation and external provider read-back remain open.
+The core lifecycle, artifact/read-back, candidate-detection contracts and
+deterministic fixtures are now committed as `4d8dddf`; the authenticated
+API/storage integration described above remains a separate review group and
+does not count as live worker or provider certification.
 
 Required outcomes:
 
