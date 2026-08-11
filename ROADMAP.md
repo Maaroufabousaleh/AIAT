@@ -165,6 +165,9 @@ The codebase already includes:
   regression blocking, and pre-activation rollback transitions for every
   externally sourced default worker; its domain fixture does not claim
   persisted database or live worker evidence.
+- API steward rehydration restores durable active bundle/adapter pointers and
+  fails closed on unknown IDs, keeping restart-time rollback state coherent;
+  this is persistence/cache evidence, not live worker certification.
 - bounded HTTP trace propagation is implemented in the orchestrator API,
   message router, and tool service with safe incoming-header handling,
   orchestrator/SDK/RouterClient forwarding, response correlation, agent

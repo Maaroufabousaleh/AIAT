@@ -97,6 +97,10 @@ single frozen commit before production claims are made.
   canonical storage owner and links its ID into certification/candidate
   evidence; production database reconciliation and live canary evidence are
   still required.
+- API steward rehydration now restores durable active bundle/adapter pointers
+  before another rollout and fails closed when a persisted pointer is unknown;
+  this preserves restart-time rollback state without claiming live worker
+  certification.
 
 ### Metrics
 

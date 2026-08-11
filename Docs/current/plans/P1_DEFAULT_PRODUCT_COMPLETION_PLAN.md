@@ -127,6 +127,9 @@ external client-language SDK compatibility yet.
   blocking, and pre-activation rollback for every externally sourced default
   worker through the real steward domain; live canary, project execution, and
   database persistence evidence remain open.
+- [x] Rehydrate active immutable bundle/adapter pointers from durable steward
+  rows after API restart and fail closed on unknown IDs; live worker
+  certification remains open.
 - Exercise shadow, read-only canary, live canary, promotion, regression block, and rollback.
 
 **Done when:** every default worker table entry can execute one representative project-scoped task with exact versions, evidence, budgets, and rollback.

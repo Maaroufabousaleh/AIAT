@@ -159,6 +159,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   [`worker_steward_contract.json`](../../mas/docs/provenance/worker_steward_contract.json).
   It is deterministic domain evidence only; database persistence, security,
   sandbox, live canary, and worker-run evidence remain separate.
+- The API rehydration path restores the durable active skill-bundle and adapter
+  IDs into the in-memory steward before accepting another rollout. Unknown
+  non-null pointer IDs fail closed, so a restart cannot turn a valid active
+  worker into an empty rollback target.
 - Certification now persists a compatibility-matrix row through
   `AgentStorage.create_compatibility_matrix`, linking runtime, adapter, and
   contract versions plus fixtures, capability/model context, and pass/fail
@@ -291,6 +295,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - [x] Exercise the actual steward domain for every externally sourced default
   worker, including immutable candidate, compatibility matrix, staged rollout,
   regression blocking, and pre-activation rollback transitions; database/live
+  certification remains open.
+- [x] Rehydrate active immutable bundle/adapter pointers from durable steward
+  rows after API restart and fail closed on unknown IDs; database/live worker
   certification remains open.
 - [x] Keep the normal Semgrep, SkillSpector, and TruffleHog scanner paths
   available through the shared bounded `security.scan` adapter; scanner
