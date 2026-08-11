@@ -147,7 +147,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   [`docs/provenance/worker_certification_matrix.yaml`](../../mas/docs/provenance/worker_certification_matrix.yaml).
   The matrix never claims live certification: it records exact runtime imports,
   transports, adapter versions, security-evidence state, and the next required
-  evidence disposition.
+  evidence disposition. Its regression contract is covered by
+  [`test_worker_certification_matrix.py`](../../mas/packages/mas-core/tests/test_worker_certification_matrix.py)
+  (`a62ddb7`), which checks deterministic output, exact 39-manifest coverage,
+  and metadata-only licence handling.
 - `scripts/check_worker_runtime_readiness.py` provides a static declaration
   report and an explicit `--live` import probe for every runtime tier used by
   the 39 manifests. The aggregate release profile uses

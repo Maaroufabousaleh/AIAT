@@ -119,6 +119,10 @@ external client-language SDK compatibility yet.
   against its mounted worker directory and carry each exact reference into
   `AgentConfig`/health metadata (`569231f`). Missing or mismatched references
   fail closed; this does not register, activate, or certify a worker.
+- [x] Add the missing deterministic regression contract for the 39-row worker
+  certification matrix (`a62ddb7`). The test checks generated-artifact parity,
+  exact manifest coverage, pending security evidence, and metadata-only licence
+  handling without claiming live certification.
 - [x] Persist the compatibility matrix produced by certification through the
   canonical storage owner, retaining runtime/adapter/contract versions,
   fixtures, capability/model context, and pass/fail status with the
