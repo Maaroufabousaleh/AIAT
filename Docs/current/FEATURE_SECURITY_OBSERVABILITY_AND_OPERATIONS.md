@@ -153,7 +153,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   persistence. When configured, the signed identity boundary adds only safe
   outbound delivery-attempt trace/span metadata; the response exposes an
   explicit partial-span notice until provider mail-edge spans exist.
-- The current SLO report consumes the durable API request ledger, optional
+- The SLO/capacity contracts (`14b4e4b`) consume the durable API request ledger, optional
   signed identity-service outbound delivery attempts, and PM/SCM/worker-
   recovery projections where available. Native mail-edge/bounce and complete
   span sources still intentionally return `no_data` until their observations
