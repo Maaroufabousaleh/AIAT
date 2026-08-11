@@ -1,7 +1,7 @@
 # Control Plane and Company Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** implemented foundation; prompt/tool reconciliation contract committed as `20f0499`; modularisation and release hardening remain
+**Status:** implemented foundation; prompt/tool reconciliation contract committed as `20f0499`, with bounded review/scanner/Git workspace adapter implementation committed as `5b830e9`; modularisation and release hardening remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -30,6 +30,11 @@ The control plane turns AIAT from a collection of agents into one governed compa
   `review.submit_veto`, including domain findings and CSO veto evidence; the
   CEO-only `privileged_ops.request` tool routes to the audited
   `/ceo/privileged-action` gate.
+- Review responses retain structured findings, recommendations, severity, and
+  correlation context; sender identity comes from signed caller context rather
+  than model-supplied fields. Managed project workspaces initialize Git without
+  bind-mount-sensitive config-lock rewrites, using a bounded inline commit
+  identity.
 - Organisation and permissions data exposed to the dashboard.
 
 ## Code anchors

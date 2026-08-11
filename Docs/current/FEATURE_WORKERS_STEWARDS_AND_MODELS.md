@@ -191,12 +191,12 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   mismatched, or missing the required symbols. The current workspace MCP pin
   is `1.23.3`, so MAF activation remains blocked until the optional dependency
   set is updated and installed.
-- Code review (`fc528a8`) now has a reproducible AIAT deterministic diff reviewer as its
+- Code review (`fc528a8`, implementation hardening `5b830e9`) now has a reproducible AIAT deterministic diff reviewer as its
   default adapter when no external command is configured. The worker manifest
   points to a versioned adapter catalogue; PR-Agent, open-code-review, and
   stage-cli remain metadata-only external candidates until each receives an
   exact source/revision/version and representative review evidence.
-- Security scanner aliases (`fc528a8`) now have a deterministic contract fixture: the
+- Security scanner aliases (`fc528a8`, implementation hardening `5b830e9`) now have a deterministic contract fixture: the
   `security.scan` path accepts Semgrep, SkillSpector, and TruffleHog, keeps
   SkillSpector's command configurable through `TOOL_SKILLSPECTOR_COMMAND`, and
   routes all three through the same bounded sandbox/audit boundary.
@@ -206,7 +206,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   identifies the missing Docling binary instead of falsely reporting the
   document tool as unavailable. This is fallback behaviour, not Docling
   certification; the external runtime remains an optional extension.
-- Tool-service image profiles now separate the general gateway from browser/Docling/Semgrep/Mermaid extensions; `infra/docker/image-budgets.yaml` records compressed, uncompressed, startup, and memory ceilings for both profiles.
+- Tool-service image profiles now separate the general gateway from browser/Docling/Semgrep/Mermaid extensions; the browser dependency is opt-in in the core package and `infra/docker/image-budgets.yaml` records compressed, uncompressed, startup, and memory ceilings for both profiles.
 
 ## Code anchors
 
