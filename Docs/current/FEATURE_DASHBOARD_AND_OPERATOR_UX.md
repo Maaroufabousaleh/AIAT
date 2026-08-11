@@ -73,14 +73,15 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   routes. It requires the canonical identifiers/reason, validates dispatch and
   payload JSON, requires explicit CEO privileged-action confirmation, and
   renders only the returned envelope.
-- The authenticated local Compose dashboard run passes 34/35 Playwright tests
+- The authenticated local Compose dashboard run passes 58/59 Playwright tests
   (one explicit safe DLQ-fixture skip), covering credential masking, worker
   lifecycle, project workspace creation/audit/cost views, CEO directives and
   hiring context, schema-driven flow editing, all eight branching/recovery
-  scenarios, hiring board, identity stale-record/retry state, PM integration
+  scenarios, hiring board evaluation details, identity stale-record/retry state, PM integration
   conflict/stale retry state, project-detail stale/retry state, runtime-status
   panels, mobile shell keyboard
-  focus recovery, and system-visualization partial/offline retry states.
+  focus recovery, hierarchy communication-policy/path tracing, and
+  system-visualization partial/offline retry states.
   Secret-safe
   evidence is retained at
   [`mas/docs/provenance/dashboard_e2e_live.json`](../../mas/docs/provenance/dashboard_e2e_live.json).
@@ -152,7 +153,7 @@ The CEO cockpit summarises portfolio, company health, spend, risk, approvals, in
   for CEO, credentials, projects, and workers sections. Run the persisted ACL
   through the native-Linux dashboard/network matrix and add UI-level denial
   states before release certification. The local Compose UI matrix is green at
-  34/35 with the explicit DLQ fixture skip, shell keyboard/mobile focus,
+  58/59 with the explicit DLQ fixture skip, shell keyboard/mobile focus,
   identity stale-record/retry, PM integration conflict/stale retry,
   project-detail stale/retry, and
   system-visualization partial/offline retry coverage; it is not native-Linux

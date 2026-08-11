@@ -220,15 +220,15 @@ external client-language SDK compatibility yet.
   grace, downtime-aware watchdog timeout, universal failure transition,
   recorded-safe-state retry, and terminal-state exclusion; native watchdog and
   cold-crash recovery proof remain open.
-- [x] Exercise the local Compose project/flow UI golden path: the 35-test
-  Playwright suite passes 34 tests with one explicit operator-owned DLQ fixture
+- [x] Exercise the local Compose project/flow UI golden path: the 59-test
+  Playwright suite passes 58 tests with one explicit operator-owned DLQ fixture
   skip, including project workspace creation, schema-driven flow editing,
-  branching/rejection/retry/timeout recovery, evidence/cost views, shell
+  branching/rejection/retry/timeout recovery, evidence/cost views, hierarchy
+  communication-policy/path tracing, retained hiring evaluation details, shell
   skip-link/mobile focus recovery, identity stale-record/retry state, PM
   integration conflict/stale retry, project-detail stale/retry state, and
-  system-visualization partial/offline
-  retry states; native UI, live worker recovery, and provider-owned paths
-  remain open. Evidence:
+  system-visualization partial/offline retry states; native UI, live worker
+  recovery, and provider-owned paths remain open. Evidence:
   [`dashboard_e2e_live.json`](../../../mas/docs/provenance/dashboard_e2e_live.json).
 
 **Done when:** a full software project can be created, run, paused, failed, recovered, approved, completed, and archived from the UI with complete evidence.
@@ -352,10 +352,11 @@ external client-language SDK compatibility yet.
   `logs-states.spec.ts`, and `streams-states.spec.ts`;
   broader stale/offline recovery and
   golden-path coverage remain.
-- [x] Run the stable local Compose Playwright matrix: 34/35 pass with one
+- [x] Run the stable local Compose Playwright matrix: 58/59 pass with one
   explicit safe DLQ-fixture skip, including shell skip-link/mobile focus
   recovery, identity stale-record/retry state, PM integration conflict/stale
-  retry, project-detail stale/retry state, and system-visualization
+  retry, project-detail stale/retry state, hierarchy communication-policy/path
+  tracing, retained hiring evaluation details, and system-visualization
   partial/offline retry states. Native-Linux
   Playwright, broader WCAG, mobile-page parity, and visual regression remain
   open.
