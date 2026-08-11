@@ -225,7 +225,7 @@ tool-service profile split, and read-only persisted default-worker binding
 reconciliation implemented; native/live/release gates remain
 open
 
-The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, and the isolated API/snapshot/policy route group is committed as `cbf00d9`; dashboard wiring and live storage/provider/worker evidence remain separate reviewed groups.
+The deterministic evidence-package core/resolver/fixtures are reviewed and committed as `a44a1aa`, package-level workflow exports are isolated in `d0472af`, the isolated API/snapshot/policy route group is committed as `cbf00d9`, and bounded dashboard evidence/proxy surfaces are committed as `82bbaeb`; project-page composition and live storage/provider/worker evidence remain separate reviewed groups.
 
 Required outcomes:
 
