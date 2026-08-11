@@ -39,17 +39,66 @@ test("flows list retains the last known state when a refresh fails", async ({
   });
 
   await authenticate(page, "/flows");
-  await expect(page.getByRole("heading", { name: "Orchestration Flows" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Orchestration Flows" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "flows-e2e-retained", exact: true }),
+  ).toBeVisible();
+
+  const flowsTable = page.getByRole("table", { name: "Flows list" });
+  await expect(flowsTable.locator("caption")).toHaveText(
+    /Use the search and status filters/i,
+  );
+  for (const heading of ["Name", "Version", "Status", "Nodes", "Updated"]) {
+    await expect(
+      flowsTable.getByRole("columnheader", { name: heading }),
+    ).toHaveAttribute("scope", "col");
+  }
+
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(page.getByRole("link", { name: "New Flow" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(
+    page.getByRole("searchbox", {
+      name: "Filter flows by name or description",
+    }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(page.getByRole("button", { name: /^All/ })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(
+    page.getByRole("checkbox", { name: "Select all flows" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    page.getByRole("checkbox", { name: "Select flows-e2e-retained" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(page.getByRole("link", { name: "Edit", exact: true })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(
+    page.getByRole("button", { name: "Delete flow flows-e2e-retained v1" }),
+  ).toHaveCSS("min-height", "44px");
 
   failNextRead = true;
   await page.getByRole("button", { name: "Refresh flows" }).click();
   await expect(page.getByText("Showing last known flows")).toBeVisible();
   await expect(page.getByText(/latest flows refresh failed/i)).toBeVisible();
-  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "flows-e2e-retained", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Showing last known flows")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "flows-e2e-retained", exact: true }),
+  ).toBeVisible();
 });

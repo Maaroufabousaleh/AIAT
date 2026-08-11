@@ -150,18 +150,19 @@ export default function FlowsPage() {
         actions={
           <>
             <button
+              type="button"
               onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh flows"
-              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800/70 transition-colors disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800/70 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
             </button>
             <Link
               href="/flows/new"
               prefetch={false}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
             >
               <Plus size={14} />
               New Flow
@@ -184,7 +185,7 @@ export default function FlowsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter by name or description…"
               aria-label="Filter flows by name or description"
-              className="w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40 transition-colors"
+              className="min-h-11 w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40 transition-colors"
             />
             {search && (
               <button
@@ -192,7 +193,7 @@ export default function FlowsPage() {
                 onClick={() => setSearch("")}
                 aria-label="Clear search"
                 title="Clear search"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 transition-colors"
+                className="absolute right-0.5 top-1/2 min-h-11 min-w-11 -translate-y-1/2 inline-flex items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 transition-colors"
               >
                 <X size={12} />
               </button>
@@ -203,6 +204,7 @@ export default function FlowsPage() {
               active={filter === "all"}
               onClick={() => setFilter("all")}
               count={flows.length}
+              className="min-h-11"
             >
               All
             </FilterChip>
@@ -211,6 +213,7 @@ export default function FlowsPage() {
               onClick={() => setFilter("active")}
               count={activeCount}
               activeTone="emerald"
+              className="min-h-11"
             >
               Active
             </FilterChip>
@@ -218,6 +221,7 @@ export default function FlowsPage() {
               active={filter === "inactive"}
               onClick={() => setFilter("inactive")}
               count={inactiveCount}
+              className="min-h-11"
             >
               Inactive
             </FilterChip>
@@ -230,7 +234,7 @@ export default function FlowsPage() {
           tone={loadStale ? "warning" : "error"}
           title={loadStale ? "Showing last known flows" : "Flows load failed"}
           action={(
-            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 rounded border border-current px-3 py-2 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
               Retry
             </button>
           )}
@@ -267,7 +271,7 @@ export default function FlowsPage() {
                 <Link
                   href="/flows/new"
                   prefetch={false}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <Plus size={14} />
                   New Flow
@@ -285,7 +289,7 @@ export default function FlowsPage() {
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-lg transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-lg transition-colors"
                 >
                   <X size={14} />
                   Clear search
@@ -294,27 +298,32 @@ export default function FlowsPage() {
             />
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-4 py-3 w-10">
-                  <SelectAllCheckbox
-                    checked={selection.isAllSelected}
-                    indeterminate={selection.isIndeterminate}
-                    onChange={selection.toggleAll}
-                    ariaLabel="Select all flows"
-                  />
-                </th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Version</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Nodes</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Updated</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {visibleFlows.map((flow) => {
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" aria-label="Flows list">
+              <caption className="sr-only">
+                Flows list. Use the search and status filters to change the displayed flows.
+              </caption>
+              <thead>
+                <tr className="border-b border-slate-800">
+                  <th scope="col" className="px-4 py-3 w-16">
+                    <SelectAllCheckbox
+                      checked={selection.isAllSelected}
+                      indeterminate={selection.isIndeterminate}
+                      onChange={selection.toggleAll}
+                      ariaLabel="Select all flows"
+                      className="min-h-11 min-w-11"
+                    />
+                  </th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Version</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Nodes</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Updated</th>
+                  <th scope="col" className="px-4 py-3"><span className="sr-only">Quick actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {visibleFlows.map((flow) => {
                 const nodes = flow.definition_json?.nodes ?? [];
                 const nodeCount = nodes.length;
                 // Bucket nodes by type for the tooltip breakdown.
@@ -350,13 +359,14 @@ export default function FlowsPage() {
                         checked={isSelected}
                         onChange={() => selection.toggle(flow.id)}
                         ariaLabel={`Select ${flow.name}`}
+                        className="min-h-11 min-w-11"
                       />
                     </td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/flows/${flow.id}`}
                         prefetch={false}
-                        className="font-medium text-slate-100 group-hover:text-white"
+                        className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white"
                       >
                         {flow.name}
                       </Link>
@@ -417,7 +427,7 @@ export default function FlowsPage() {
                         <Link
                           href={`/flows/${flow.id}`}
                           prefetch={false}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-white rounded transition-colors"
+                          className="inline-flex min-h-11 items-center gap-1 px-2 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
                         >
                           Edit
                           <ArrowRight size={12} />
@@ -431,7 +441,7 @@ export default function FlowsPage() {
                           disabled={deleting === flow.id}
                           title="Delete flow"
                           aria-label={`Delete flow ${flow.name} v${flow.version}`}
-                          className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
+                          className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
                         >
                           <Trash2 size={12} />
                         </button>
@@ -439,9 +449,10 @@ export default function FlowsPage() {
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
