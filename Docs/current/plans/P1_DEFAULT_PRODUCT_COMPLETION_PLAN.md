@@ -170,9 +170,10 @@ external client-language SDK compatibility yet.
   retry re-enters governed dispatch, and unknown run states fail closed. Live
   worker canary/recovery remains open.
 - [x] Make flow retry evidence-preserving: prior node executions are marked
-  `SUPERSEDED` rather than deleted, the new retry attempt becomes the only
-  traversal authority, and original inputs/outputs/errors/timestamps remain
-  queryable. Native DB and live failure/recovery proof remain open.
+  `SUPERSEDED` rather than deleted, including the no-safe-node storage
+  fallback; the new retry attempt becomes the only traversal authority, and
+  original inputs/outputs/errors/timestamps remain queryable. Native DB and
+  live failure/recovery proof remain open.
 - [x] Add `aiat.workflow-watchdog-recovery.v1` deterministic evidence for boot
   grace, downtime-aware watchdog timeout, universal failure transition,
   recorded-safe-state retry, and terminal-state exclusion; native watchdog and
