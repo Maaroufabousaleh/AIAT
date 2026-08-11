@@ -13,12 +13,18 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from mas_core.observability.tracing import (
+    current_trace_id,
+    is_safe_span_id,
+    is_safe_trace_id,
+)
 
 _VERSION = "aiat.identity.v1"
 
@@ -77,7 +83,7 @@ class SignedIdentityClient:
         digest = hashlib.sha256(raw_body).hexdigest()
         canonical = f"{_VERSION}\n{method.upper()}\n{path}\n{timestamp}\n{nonce}\n{digest}".encode()
         signature = base64.b64encode(self._key.sign(canonical)).decode()
-        return {
+        headers = {
             "Content-Type": "application/json",
             "X-AIAT-Signature-Version": _VERSION,
             "X-AIAT-Client-ID": self.config.client_id,
@@ -85,6 +91,10 @@ class SignedIdentityClient:
             "X-AIAT-Nonce": nonce,
             "X-AIAT-Signature": signature,
         }
+        trace_id = current_trace_id()
+        if trace_id:
+            headers["X-AIAT-Trace-ID"] = trace_id
+        return headers
 
     async def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         raw_body = json.dumps(body or {}, separators=(",", ":"), sort_keys=True, default=str).encode()
@@ -155,3 +165,67 @@ class SignedIdentityClient:
             await self.request("POST", "/v1/sync/ack", {"cursor": int(event["sequence"])})
             processed.append(event)
         return processed
+
+    async def list_mail_delivery_observations(
+        self,
+        *,
+        since: datetime | None = None,
+        limit: int = 10_000,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return safe scalar outbound-delivery observations for SLO reads.
+
+        The identity service remains the mail authority.  This method consumes
+        its admin dashboard projection and deliberately drops recipients,
+        subjects, provider IDs, provider correlation IDs, sanitized error text,
+        and any message content before returning a tiny SLO/trace-shaped row.
+        Safe AIAT trace/span IDs are retained only when present so the
+        orchestrator can correlate a mail delivery attempt without importing
+        identity-service payloads.
+        """
+
+        requested_trace_id = str(trace_id or "").strip() or None
+        if requested_trace_id and not is_safe_trace_id(requested_trace_id):
+            return []
+        response = await self.request(
+            "POST",
+            "/v1/dashboard/mail-relay",
+            {"limit": max(1, min(int(limit), 10_000))},
+        )
+        rows = response.get("items") if isinstance(response, dict) else []
+        observations: list[dict[str, Any]] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            row_trace_id = str(row.get("trace_id") or "").strip()
+            if requested_trace_id and row_trace_id != requested_trace_id:
+                continue
+            occurred_at = row.get("attempted_at")
+            if since is not None and occurred_at is not None:
+                try:
+                    parsed = (
+                        occurred_at
+                        if isinstance(occurred_at, datetime)
+                        else datetime.fromisoformat(str(occurred_at).replace("Z", "+00:00"))
+                    )
+                    parsed = parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+                    if parsed < since:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            outcome = str(row.get("outcome") or "").strip().lower()
+            observation = {
+                    "id": str(row.get("outbound_request_id") or "unknown"),
+                    "status": "success"
+                    if outcome in {"success", "submitted", "sent", "delivered", "accepted"}
+                    else "failed",
+                    "occurred_at": occurred_at,
+                    "source": "identity_outbound_delivery_attempts",
+                }
+            if is_safe_trace_id(row_trace_id):
+                observation["trace_id"] = row_trace_id
+            row_span_id = str(row.get("span_id") or "").strip()
+            if is_safe_span_id(row_span_id):
+                observation["span_id"] = row_span_id
+            observations.append(observation)
+        return observations

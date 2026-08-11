@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .models import ApprovalState, ExternalAccountState, IdentityState, UsageHoldState, redact
+from .observability import normalize_span_id, normalize_trace_id, new_span_id
 
 
 class IdentityStore(Protocol):
@@ -55,7 +56,7 @@ class IdentityStore(Protocol):
     async def get_outbound_request(self, request_id: UUID) -> dict[str, Any] | None: ...
     async def claim_outbound_submission(self, request_id: UUID) -> tuple[dict[str, Any] | None, bool]: ...
     async def update_outbound_request(self, request_id: UUID, **values: Any) -> dict[str, Any] | None: ...
-    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None) -> dict[str, Any]: ...
+    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None, trace_id: str | None = None, span_id: str | None = None) -> dict[str, Any]: ...
     async def create_external_account(self, **kwargs: Any) -> tuple[dict[str, Any], bool]: ...
     async def get_external_account(self, account_id: UUID) -> dict[str, Any] | None: ...
     async def bind_external_account(self, account_id: UUID, *, approval_id: UUID, credential_ref: str) -> dict[str, Any] | None: ...
@@ -358,14 +359,17 @@ class InMemoryIdentityStore:
         row["updated_at"] = _now()
         return row
 
-    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None) -> dict[str, Any]:
+    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None, trace_id: str | None = None, span_id: str | None = None) -> dict[str, Any]:
         row = {
             "id": uuid4(), "outbound_request_id": outbound_request_id,
             "attempt_number": sum(1 for item in self.delivery_attempts if item["outbound_request_id"] == outbound_request_id) + 1,
             "provider_correlation_id": provider_correlation_id,
             "provider_message_id": provider_message_id,
             "outcome": outcome, "failure_class": failure_class,
-            "sanitized_reason": sanitized_reason, "attempted_at": _now(),
+            "sanitized_reason": sanitized_reason,
+            "trace_id": normalize_trace_id(trace_id),
+            "span_id": normalize_span_id(span_id) or (new_span_id() if normalize_trace_id(trace_id) else None),
+            "attempted_at": _now(),
         }
         self.delivery_attempts.append(redact(row))
         return row
@@ -930,7 +934,7 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         row = await self._fetchone(f"UPDATE outbound_mail_requests SET {', '.join(assignments)}, updated_at = now() WHERE id = :id RETURNING *", {"id": request_id, **allowed})
         return self._hydrate_outbound(row)
 
-    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None) -> dict[str, Any]:
+    async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None, trace_id: str | None = None, span_id: str | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
             # Lock the parent row so parallel retries receive unique attempt
             # numbers as well as a durable delivery sequence.
@@ -941,17 +945,20 @@ class PostgresIdentityStore(InMemoryIdentityStore):
             result = await conn.execute(
                 sa.text("""INSERT INTO outbound_delivery_attempts
                              (id, outbound_request_id, attempt_number, provider_correlation_id,
-                              provider_message_id, outcome, failure_class, sanitized_reason)
+                              provider_message_id, outcome, failure_class, sanitized_reason,
+                              trace_id, span_id)
                            VALUES (:id, :outbound_request_id,
                              (SELECT COALESCE(MAX(attempt_number), 0) + 1
                                 FROM outbound_delivery_attempts WHERE outbound_request_id = :outbound_request_id),
                              :provider_correlation_id, :provider_message_id, :outcome,
-                             :failure_class, :sanitized_reason)
+                             :failure_class, :sanitized_reason, :trace_id, :span_id)
                            RETURNING *"""),
                 {"id": uuid4(), "outbound_request_id": outbound_request_id,
                  "provider_correlation_id": provider_correlation_id,
                  "provider_message_id": provider_message_id, "outcome": outcome,
-                 "failure_class": failure_class, "sanitized_reason": sanitized_reason},
+                 "failure_class": failure_class, "sanitized_reason": sanitized_reason,
+                 "trace_id": normalize_trace_id(trace_id),
+                 "span_id": normalize_span_id(span_id) or (new_span_id() if normalize_trace_id(trace_id) else None)},
             )
             row = result.mappings().first()
         assert row is not None
@@ -1119,7 +1126,7 @@ class PostgresIdentityStore(InMemoryIdentityStore):
             "identity-approvals": "SELECT * FROM identity_approval_requests ORDER BY created_at DESC LIMIT :limit",
             "identity-audit": "SELECT * FROM identity_audit_events ORDER BY occurred_at DESC LIMIT :limit",
             "mail-domains": "SELECT * FROM email_domains ORDER BY updated_at DESC LIMIT :limit",
-            "mail-relay": """SELECT d.outbound_request_id, d.provider_message_id, d.provider_correlation_id, d.outcome, d.failure_class, d.sanitized_reason, d.attempted_at, i.provider_account_id FROM outbound_delivery_attempts d JOIN outbound_mail_requests r ON r.id = d.outbound_request_id JOIN agent_email_identities i ON i.id = r.identity_id ORDER BY d.attempted_at DESC LIMIT :limit""",
+            "mail-relay": """SELECT d.outbound_request_id, d.provider_message_id, d.provider_correlation_id, d.outcome, d.failure_class, d.sanitized_reason, d.trace_id, d.span_id, d.attempted_at, i.provider_account_id FROM outbound_delivery_attempts d JOIN outbound_mail_requests r ON r.id = d.outbound_request_id JOIN agent_email_identities i ON i.id = r.identity_id ORDER BY d.attempted_at DESC LIMIT :limit""",
         }
         statement = queries.get(resource)
         if statement is None:

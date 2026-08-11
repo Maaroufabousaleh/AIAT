@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
@@ -66,6 +67,113 @@ async def test_signed_outbox_reconciliation_is_cursor_based_and_replay_safe() ->
     assert acknowledgements == [7]
     assert storage.rows[worker_id]["state"] == "IDENTITY_ACTIVE"
     assert storage.rows[worker_id]["identity_address"] == "w-test@agents.aiat.ca"
+
+
+@pytest.mark.anyio
+async def test_mail_delivery_projection_is_scalar_and_windowed() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/dashboard/mail-relay"
+        assert json.loads(request.content) == {"limit": 100}
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "outbound_request_id": "mail-current",
+                        "provider_message_id": "secret-provider-id",
+                        "outcome": "submitted",
+                        "attempted_at": "2026-08-10T00:00:02+00:00",
+                        "sanitized_reason": "never returned",
+                    },
+                    {
+                        "outbound_request_id": "mail-old",
+                        "outcome": "failed",
+                        "attempted_at": "2026-08-01T00:00:00+00:00",
+                    },
+                ]
+            },
+        )
+
+    private = Ed25519PrivateKey.generate().private_bytes_raw()
+    config = IdentityClientConfig(
+        url="https://identity.example",
+        client_id="operator-laptop",
+        private_key_b64=base64.b64encode(private).decode(),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        identity_client = SignedIdentityClient(config, client=http_client)
+        rows = await identity_client.list_mail_delivery_observations(
+            since=datetime(2026, 8, 10, tzinfo=UTC),
+            limit=100,
+        )
+
+    assert rows == [
+        {
+            "id": "mail-current",
+            "status": "success",
+            "occurred_at": "2026-08-10T00:00:02+00:00",
+            "source": "identity_outbound_delivery_attempts",
+        }
+    ]
+    assert "secret-provider-id" not in str(rows)
+    assert "never returned" not in str(rows)
+
+
+@pytest.mark.anyio
+async def test_mail_delivery_projection_can_filter_and_keep_only_safe_trace_ids() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/dashboard/mail-relay"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "outbound_request_id": "mail-match",
+                        "provider_message_id": "must-drop",
+                        "provider_correlation_id": "must-drop-too",
+                        "outcome": "submitted",
+                        "attempted_at": "2026-08-10T00:00:02+00:00",
+                        "trace_id": "trace-mail-001",
+                        "span_id": "span-mail-001",
+                        "recipients": ["recipient@example.net"],
+                    },
+                    {
+                        "outbound_request_id": "mail-other",
+                        "outcome": "failed",
+                        "attempted_at": "2026-08-10T00:00:03+00:00",
+                        "trace_id": "trace-other",
+                        "span_id": "span-other",
+                    },
+                ],
+            },
+        )
+
+    private = Ed25519PrivateKey.generate().private_bytes_raw()
+    config = IdentityClientConfig(
+        url="https://identity.example",
+        client_id="operator-laptop",
+        private_key_b64=base64.b64encode(private).decode(),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        identity_client = SignedIdentityClient(config, client=http_client)
+        rows = await identity_client.list_mail_delivery_observations(
+            trace_id="trace-mail-001",
+            limit=100,
+        )
+
+    assert rows == [
+        {
+            "id": "mail-match",
+            "status": "success",
+            "occurred_at": "2026-08-10T00:00:02+00:00",
+            "source": "identity_outbound_delivery_attempts",
+            "trace_id": "trace-mail-001",
+            "span_id": "span-mail-001",
+        }
+    ]
+    assert "must-drop" not in str(rows)
+    assert "recipient@example.net" not in str(rows)
+    assert await identity_client.list_mail_delivery_observations(trace_id="unsafe trace") == []
 
 
 @pytest.mark.anyio

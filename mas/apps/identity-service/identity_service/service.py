@@ -368,9 +368,9 @@ class IdentityService:
         await self.store.create_audit(actor_id=actor_id, action="mail.send_request", target_type="outbound_mail_request", target_id=str(request["id"]), outcome="pending_approval", metadata={"approval_id": str(approval["id"]), "recipient_count": len(recipients)})
         return request, approval
 
-    async def send_approved(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID, idempotency_key: str) -> dict[str, Any]:
+    async def send_approved(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID, idempotency_key: str, trace_id: str | None = None) -> dict[str, Any]:
         await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
-        request = await self.outbound.send_approved(worker_id=worker_id, outbound_request_id=request_id, idempotency_key=idempotency_key)
+        request = await self.outbound.send_approved(worker_id=worker_id, outbound_request_id=request_id, idempotency_key=idempotency_key, trace_id=trace_id)
         await self.store.create_audit(actor_id=actor_id, action="mail.send_approved", target_type="outbound_mail_request", target_id=str(request_id), outcome="submitted", metadata={"provider_correlation_id": request.get("provider_correlation_id")})
         return request
 
@@ -421,6 +421,21 @@ class IdentityService:
                     # authorization for this worker. New sessions are issued
                     # only after the local broker observes the new reference.
                     await self.store.revoke_browser_sessions(account["worker_id"])
+            elif str(decision.get("kind")) == "external_account_close" and approved:
+                account = await self.store.get_external_account(decision["target_id"])
+                if account is not None:
+                    await self.store.update_external_account(
+                        account["id"], ExternalAccountState.CLOSED
+                    )
+                    revoked_sessions = await self.store.revoke_browser_sessions(account["worker_id"])
+                    await self.store.create_audit(
+                        actor_id=actor_id,
+                        action="identity.external.close",
+                        target_type="external_account",
+                        target_id=str(account["id"]),
+                        outcome="CLOSED",
+                        metadata={"revoked_browser_sessions": revoked_sessions, "approval_id": str(approval_id)},
+                    )
             await self.store.create_audit(actor_id=actor_id, action="identity.approval.decide", target_type="identity_approval", target_id=str(approval_id), outcome="approved" if approved else "rejected", metadata={})
         return decision
 
@@ -492,6 +507,8 @@ class IdentityService:
         return account
 
     async def set_external_account_state(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, account_id: UUID, state: ExternalAccountState) -> dict[str, Any]:
+        if state is ExternalAccountState.CLOSED:
+            raise PermissionError("closing an external account requires a human approval")
         account = await self.external_account_status(client, worker_id=worker_id, actor_id=actor_id, account_id=account_id)
         updated = await self.store.update_external_account(account_id, state)
         if updated is None:
@@ -512,6 +529,42 @@ class IdentityService:
         )
         return updated
 
+    async def request_external_account_close(
+        self,
+        client: AuthenticatedClient,
+        *,
+        worker_id: UUID,
+        actor_id: str,
+        account_id: UUID,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Create the explicit human gate for irreversible account closure."""
+
+        self.external_policy.action_rule("close")
+        account = await self.external_account_status(
+            client, worker_id=worker_id, actor_id=actor_id, account_id=account_id
+        )
+        if str(account.get("state")) == ExternalAccountState.CLOSED:
+            return {"account_id": str(account_id), "state": ExternalAccountState.CLOSED, "approval": None}
+        approval = await self.approvals.request(
+            worker_id=worker_id,
+            kind="external_account_close",
+            target_id=account_id,
+            idempotency_key=f"external-account-close:{idempotency_key}",
+        )
+        await self.store.create_audit(
+            actor_id=actor_id,
+            action="identity.external.close_request",
+            target_type="external_account",
+            target_id=str(account_id),
+            outcome="pending_approval",
+            metadata={"approval_id": str(approval["id"]), "risk": "high"},
+        )
+        return {"account_id": str(account_id), "state": "PENDING_APPROVAL", "approval": approval}
+
+    def external_account_action_catalog(self) -> dict[str, object]:
+        return self.external_policy.action_catalog()
+
     async def request_external_credential_rotation(
         self,
         client: AuthenticatedClient,
@@ -521,6 +574,7 @@ class IdentityService:
         account_id: UUID,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        self.external_policy.action_rule("rotate_credentials")
         account = await self.external_account_status(
             client, worker_id=worker_id, actor_id=actor_id,
             account_id=account_id,

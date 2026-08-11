@@ -38,6 +38,7 @@ from .models import (
     WorkerIdentityActionRequest,
     redact,
 )
+from .observability import normalize_trace_id
 from .service import AuthenticatedClient, IdentityService
 
 
@@ -306,12 +307,12 @@ async def outbound_request(body: OutboundRequest, client: AuthenticatedClient = 
 
 
 @router.post("/outbound/send-approved")
-async def outbound_send_approved(body: SendApprovedRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+async def outbound_send_approved(request: Request, body: SendApprovedRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
-        request = await service.send_approved(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, request_id=body.outbound_request_id, idempotency_key=body.idempotency_key)
+        result = await service.send_approved(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, request_id=body.outbound_request_id, idempotency_key=body.idempotency_key, trace_id=normalize_trace_id(request.headers.get("X-AIAT-Trace-ID")))
     except (PermissionError, ValueError) as exc:
         raise HTTPException(403 if isinstance(exc, PermissionError) else 409, str(exc)) from exc
-    return _safe_outbound(request)
+    return _safe_outbound(result)
 
 
 @router.get("/outbound/{request_id}/delivery-status")
@@ -376,6 +377,13 @@ async def signup_external_account(body: ExternalAccountRequest, client: Authenti
         raise HTTPException(403, str(exc)) from exc
 
 
+@router.get("/external-accounts/action-policy")
+async def external_account_action_policy(client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    """Return the versioned high-risk action taxonomy for operator clients."""
+
+    return service.external_account_action_catalog()
+
+
 @router.get("/external-accounts/{account_id}")
 async def external_account_status(account_id: UUID, worker_id: UUID, actor_id: str, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
@@ -427,7 +435,7 @@ async def suspend_external_account(account_id: UUID, body: ExternalAccountReques
 @router.post("/external-accounts/{account_id}/close")
 async def close_external_account(account_id: UUID, body: ExternalAccountRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
-        return redact(await service.set_external_account_state(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, account_id=account_id, state=ExternalAccountState.CLOSED))
+        return redact(await service.request_external_account_close(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, account_id=account_id, idempotency_key=body.idempotency_key))
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
 

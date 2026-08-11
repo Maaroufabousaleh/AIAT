@@ -39,7 +39,7 @@ class OutboundService:
             await self.outbox.append("outbound_mail.requested", "outbound_mail_request", str(request["id"]), {"worker_id": str(worker_id), "approval_id": str(approval["id"]), "recipient_count": len(recipients)})
         return request, approval, created
 
-    async def send_approved(self, *, worker_id: UUID, outbound_request_id: UUID, idempotency_key: str) -> dict:
+    async def send_approved(self, *, worker_id: UUID, outbound_request_id: UUID, idempotency_key: str, trace_id: str | None = None) -> dict:
         if not self.outbound_relay_certified:
             raise PermissionError("outbound mail is disabled until Resend relay certification passes")
         request = await self.store.get_outbound_request(outbound_request_id)
@@ -93,6 +93,7 @@ class OutboundService:
                 provider_correlation_id=result.get("correlation_id"),
                 provider_message_id=result.get("provider_message_id"),
                 outcome="QUEUED",
+                trace_id=trace_id,
             )
             await self.usage.commit(hold["id"])
             await self.usage.commit(provider_hold["id"])
@@ -117,6 +118,7 @@ class OutboundService:
                 outcome="UNKNOWN" if provider_accepted else "FAILED",
                 failure_class="transient" if bool(getattr(exc, "transient", False)) else "permanent",
                 sanitized_reason=type(exc).__name__,
+                trace_id=trace_id,
             )
             if hold is not None and not provider_accepted and not already_submitted:
                 await self.usage.release(hold["id"])

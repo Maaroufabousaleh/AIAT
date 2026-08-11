@@ -283,7 +283,11 @@ async def test_outbound_requires_human_approval(identity_client):
     assert denied.status_code == 403
     approval = request_payload["approval"]["id"]
     assert (await _post(client, signers["operator"], f"/v1/approvals/{approval}/decision", {"actor": {"actor_id": "operator", "purpose": "human approval"}, "approved": True})).status_code == 200
-    sent = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"})
+    submit_body = {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"}
+    submit_raw = json.dumps(submit_body, separators=(",", ":"), sort_keys=True).encode()
+    submit_headers = signers["worker-a"].sign_headers("POST", "/v1/outbound/send-approved", submit_raw)
+    submit_headers["X-AIAT-Trace-ID"] = "trace-mail-001"
+    sent = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", submit_body, headers=submit_headers)
     assert sent.status_code == 200
     assert sent.json()["state"] == "SUBMITTED"
     repeated = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"})
@@ -292,6 +296,9 @@ async def test_outbound_requires_human_approval(identity_client):
     store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
     assert store.delivery_attempts[-1]["outcome"] == "QUEUED"
     assert store.delivery_attempts[-1]["provider_correlation_id"] == "provider-submit"
+    assert store.delivery_attempts[-1]["trace_id"] == "trace-mail-001"
+    assert len(store.delivery_attempts[-1]["span_id"]) == 16
+    assert "recipient@example.net" not in str(store.delivery_attempts[-1])
 
 
 @pytest.mark.anyio
@@ -367,6 +374,72 @@ async def test_mailbox_grant_and_external_credential_lease_are_durable_and_secre
     assert {event["kind"] for event in store.usage_events} >= {
         "mailbox_provisioning", "mailbox_storage_mb", "signup_attempt", "browser_minute"
     }
+
+
+@pytest.mark.anyio
+async def test_external_account_high_risk_actions_pause_for_human_policy(identity_client):
+    client, signers = identity_client
+    policy_path = "/v1/external-accounts/action-policy"
+    policy = await client.get(policy_path, headers=signers["operator"].sign_headers("GET", policy_path, b""))
+    assert policy.status_code == 200
+    assert policy.json()["schema_version"] == "aiat.external-account-action-policy.v1"
+    actions = {item["action"]: item for item in policy.json()["actions"]}
+    assert actions["rotate_credentials"]["approval_required"] is True
+    assert actions["close"]["approval_kind"] == "external_account_close"
+    assert actions["suspend"]["approval_required"] is False
+
+    company_id, worker = uuid4(), uuid4()
+    provision = await _post(client, signers["operator"], "/v1/worker-identities/provision", {
+        "company_id": str(company_id), "worker_id": str(worker),
+        "actor": {"actor_id": "orchestrator-api", "purpose": "approved hiring"},
+        "idempotency_key": f"mailbox:{company_id}:{worker}",
+    })
+    verify = await _post(client, signers["operator"], f"/v1/worker-identities/{worker}/verify", {
+        "actor": {"actor_id": "orchestrator-api", "purpose": "delivery verification"},
+        "provider_message_id": "high-risk-policy-message",
+    })
+    assert provision.status_code == 200, provision.text
+    assert verify.status_code == 200, verify.text
+    account = await _post(client, signers["worker-a"], "/v1/external-accounts/signup-request", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "approved test account"},
+        "service": "github", "service_category": "development_test",
+        "idempotency_key": f"account:{worker}:high-risk",
+    })
+    assert account.status_code == 200
+    account_id = account.json()["id"]
+    session = await _post(client, signers["worker-a"], "/v1/sessions/create", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "local browser login"},
+        "service": "github", "external_account_id": account_id,
+        "idempotency_key": f"session:{worker}:high-risk",
+    })
+    lease = await _post(client, signers["worker-a"], "/v1/sessions/lease", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "local browser broker"},
+        "session_id": session.json()["id"],
+    })
+
+    close_path = f"/v1/external-accounts/{account_id}/close"
+    pending = await _post(client, signers["worker-a"], close_path, {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "close external account"},
+        "service": "github", "service_category": "development_test",
+        "idempotency_key": f"close:{worker}:high-risk",
+    })
+    assert pending.status_code == 200
+    assert pending.json()["state"] == "PENDING_APPROVAL"
+    approval_id = pending.json()["approval"]["id"]
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    assert str(store.external_accounts[UUID(account_id)]["state"]) == "ACTIVE"
+
+    decided = await _post(client, signers["operator"], f"/v1/approvals/{approval_id}/decision", {
+        "actor": {"actor_id": "operator", "purpose": "human external-account closure approval"},
+        "approved": True,
+    })
+    assert decided.status_code == 200
+    assert str(store.external_accounts[UUID(account_id)]["state"]) == "CLOSED"
+    denied = await _post(client, signers["worker-a"], "/v1/sessions/use", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "closed account must be revoked"},
+        "session_id": session.json()["id"], "lease_token": lease.json()["lease_token"],
+    })
+    assert denied.status_code == 403
 
 
 @pytest.mark.anyio
