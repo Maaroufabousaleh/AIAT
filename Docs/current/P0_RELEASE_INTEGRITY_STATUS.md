@@ -253,7 +253,7 @@ single frozen commit before production claims are made.
   The current WSL manifest passes its static identity check;
   `--require-clean` remains appropriately open until a frozen release worktree
   exists.
-- `scripts/check_docs_index.py --json` passes the canonical target, ten current
+- `scripts/check_docs_index.py --json` passes the canonical target, eleven current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
 - The live profile was exercised after the local Compose recreation. The

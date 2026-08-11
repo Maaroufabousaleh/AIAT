@@ -530,11 +530,13 @@ Required outcomes:
   `aiat.ceo-evidence.v1` references and traces in both synchronous and streamed
   responses; the chat renders them, links bounded project/flow/governance/
   worker/credential/integration/tool/project-evidence/log kinds, and exposes a
-  dedicated evidence-record route. Artifact, integration, model, runtime, tool,
-  usage, worker-run, and trace IDs are citation-only and payload-free. Legacy
-  fallback output accepts only explicit stripped `AIAT_EVIDENCE` markers and
-  labels those citations `unverified` (`f1801bb`); complete governed-flow
-  coverage and resource-specific detail loading remain;
+  dedicated evidence-record route. Scalar `aiat.evidence-detail.v1` summaries
+  now load nine kinds (including trace), while artifact, integration, model,
+  runtime, tool, usage, and worker-run IDs remain payload-free citations unless
+  a bounded detail authority exists. Legacy fallback output accepts only
+  explicit stripped `AIAT_EVIDENCE` markers and labels those citations
+  `unverified` (`f1801bb`); complete governed-flow coverage, broader detail
+  loading, and recovery states remain;
 - model profile, routing, cost, and budget records reconcile (model-override expiry and terminal-settlement replay hardening `63b2db5`, explicit LLM transient-status classification, persisted model/provider cooldown filtering, deterministic runtime/profile catalogue export/reconciliation, fail-closed `--live` catalogue and executive reconciliation verifiers with explicit approval/finding gates, the idempotent conflict-preserving bootstrap `09bdd19` for the shipped `opencode-phase0b-coding` profile and all 93 registered model identities, the `omniroute-coding` alias, bounded `aiat.executive-reconciliation.v1` reporting, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, and reservation/settlement invariant auditing now pass); local live evidence covers 92 approved profile versions out of 94 persisted versions, while one pending registered model and two non-registered rows remain findings; role-scoped `aiat.executive-action.v1` CFO/CTO/CEO write routes, dashboard proxies, and the typed confirmation panel are implemented, while provider-specific live recovery, broader governance forms, and broader chaos/live evidence remain;
 - mobile, themes, WCAG 2.2 AA, stale/conflict/rollback states, and evidence deep links complete;
 - native-Linux Playwright golden paths pass.
