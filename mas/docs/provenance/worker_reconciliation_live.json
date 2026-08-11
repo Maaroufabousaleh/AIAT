@@ -1,0 +1,43 @@
+{
+  "schema_version": "aiat.worker-reconciliation-live-evidence.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-11T00:55:37Z",
+  "mode": "local-live",
+  "status": "pass",
+  "source_command": "scripts/check_worker_reconciliation.py --live --json",
+  "endpoint": "/capabilities/workers",
+  "container": "mas-orchestrator-api-1",
+  "persisted_worker_count": 48,
+  "default_worker_count": 39,
+  "matched_default_worker_count": 39,
+  "missing_default_worker_count": 0,
+  "binding_mismatch_count": 0,
+  "active_default_worker_count": 0,
+  "untracked_active_worker_count": 0,
+  "duplicate_name_count": 0,
+  "pending_security_findings": {
+    "workers": ["coding_worker", "tester"],
+    "finding_count": 316,
+    "status": "findings_review_required"
+  },
+  "runtime_boundary": {
+    "host_import_probe": "advisory_only; host lacks LangGraph/CrewAI",
+    "compose_import_probe_ref": "worker_runtime_readiness_live.json",
+    "compose_locked_adapter_probe_ref": "runtime_adapter_conformance_live.json"
+  },
+  "scope": "read-only persisted default-worker binding reconciliation; no database mutation",
+  "certification_boundary": {
+    "manifest_presence": "checked",
+    "adapter_sandbox_model_source_pin_capability_bindings": "checked",
+    "security_scan": "pending_findings_review",
+    "sandbox": "not_checked",
+    "canary": "not_checked",
+    "live_worker_run": "not_checked",
+    "rollback": "not_checked"
+  },
+  "secret_policy": "credentials, project identifiers, provider payloads, and worker output are omitted",
+  "notices": [
+    "The dashboard E2E cleanup no longer deletes the canonical test_evaluation_worker manifest row.",
+    "Licence and resource metadata remain informational and are not evaluated as a gate."
+  ]
+}
