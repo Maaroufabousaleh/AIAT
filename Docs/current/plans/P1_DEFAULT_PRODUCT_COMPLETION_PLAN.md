@@ -327,6 +327,7 @@ external client-language SDK compatibility yet.
 - [x] Preserve redacted credential metadata (names, placeholders, policy, usage) on refresh failure, label the last known credentials list, keep rows visible while retrying, and expose header Refresh plus banner Retry controls without rendering secret values; `e2e/credentials-states.spec.ts` passes the source-built failure/recovery path 1/1. The render-safe loading/error repair is committed in `e6e6980`; native/live credential expiry/revocation evidence remains separate (`970f09c`).
 - [x] Preserve successful Metrics query series on partial Prometheus refresh failure, label the surface as stale, keep charts and the last-successful timestamp honest, and expose header Refresh plus banner Retry controls; `e2e/metrics-states.spec.ts` passes the source-built partial-failure/recovery path 1/1. Native/live telemetry evidence remains separate (`85596b0`).
 - [x] Preserve Flows list definitions on refresh failure, label the last known definitions, keep rows visible while retrying, and expose header Refresh plus banner Retry controls; `e2e/flows-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live flow evidence remains separate (`a0faf5b`).
+- [x] Harden flow-editor loading and recovery: route-selected canonical fetches now expose an explicit first-load unavailable state with Retry, retain the last-known flow/canvas after a failed refresh, and provide Refresh plus Retry recovery; `e2e/flow-editor-states.spec.ts` passes the source-built failure/recovery path 1/1. Full live flow/runtime recovery remains separate (`b5098e7`).
 - [x] Preserve the Container Logs buffer when an SSE reload emits an error, label the last known lines, keep them visible while retrying, and expose a Retry action; `e2e/logs-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live container log evidence remains separate (`280d363`).
 - [x] Preserve Agent Stream history/messages when reconnect or history refresh fails, label the last known stream data, guard obsolete team connections, and expose Reconnect plus Retry controls; `e2e/streams-states.spec.ts` passes the source-built failure/recovery path 1/1. Native/live Redis/router stream evidence remains separate (`3e8a0ea`).
 - [x] Add explicit stale/partial/offline recovery for system visualisation and PM integrations: independent source failures retain available data, expose a warning and retry action, and preserve open conflicts; the targeted `app-operations.spec.ts` resilience checks pass. Native-Linux and provider-owned evidence remain separate.
@@ -338,8 +339,8 @@ external client-language SDK compatibility yet.
 - Add stale/offline/partial/denied/conflict/rollback designs. System
   visualization, identity tables, PM integrations, project list/detail, the
   combined governance read surface, System Control, Tools catalogue,
-  dead-letter queue, credentials list, Metrics, and the Project evidence
-  package page now expose explicit
+  dead-letter queue, credentials list, Metrics, Project evidence package
+  page, and flow editor now expose explicit
   stale/partial/conflict endpoint failures; the Flows list, Container Logs, and
   Agent Streams now expose explicit stale endpoint failures and retryable
   first-load/offline states;
@@ -351,8 +352,9 @@ external client-language SDK compatibility yet.
   safe detail across a failed refresh; governance, System Control, and Projects
   list, Tools catalogue, dead-letter queue, credentials list, and Metrics read-state recovery are also
   covered by focused 1/1 source-built tests; Flows list, Container Logs, and
-  Agent Streams and Project evidence package recovery are also covered by
-  `flows-states.spec.ts`, `logs-states.spec.ts`, `streams-states.spec.ts`, and
+  Agent Streams, flow editor, and Project evidence package recovery are also
+  covered by `flows-states.spec.ts`, `flow-editor-states.spec.ts`,
+  `logs-states.spec.ts`, `streams-states.spec.ts`, and
   `project-evidence-states.spec.ts`;
   broader stale/offline recovery and
   golden-path coverage remain.
@@ -361,7 +363,9 @@ external client-language SDK compatibility yet.
   recovery, identity stale-record/retry state, PM integration conflict/stale
   retry, project-detail stale/retry state, hierarchy communication-policy/path
   tracing, retained hiring evaluation details, and system-visualization
-  partial/offline retry states. Native-Linux
+  partial/offline retry states. The source-built flow-editor recovery path
+  also passes 1/1 for first-load unavailable, retained-canvas, stale-label,
+  and Retry states. Native-Linux
   Playwright, broader WCAG, mobile-page parity, and visual regression remain
   open.
 
