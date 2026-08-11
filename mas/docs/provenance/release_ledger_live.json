@@ -1,19 +1,19 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T02:34:28Z",
+  "observed_at": "2026-08-11T20:34:31Z",
   "profile": "live",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
     "total": 64,
-    "pass": 55,
+    "pass": 59,
     "fail": 0,
-    "blocked": 9
+    "blocked": 5
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "9 check(s) are externally blocked",
+    "5 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
@@ -40,12 +40,13 @@
   },
   "local_tool_trace_evidence": {
     "status": "pass",
-    "aggregate_current_status": "blocked",
+    "aggregate_current_status": "pass",
     "ref": "tool_trace_live.json",
+    "trace_id": "aiat-live-tool-20260811-phase",
     "tool_name": "time_now",
     "native_tool_span_count": 1,
     "tool_usage_event_count": 1,
-    "note": "The bounded pure-tool probe uses an existing project context and creates only normal usage/native telemetry rows; the host-side Compose alias fallback is recorded by the checker; no project identifier or response payload is retained."
+    "note": "The bounded pure-tool probe uses an existing project context and creates only normal usage/native telemetry rows; the configured local loopback tool-service endpoint is recorded by the checker; no project identifier or response payload is retained."
   },
   "local_runtime_benchmark_evidence": {
     "status": "pass",
@@ -98,17 +99,17 @@
   },
   "local_trace_transport_evidence": {
     "status": "pass",
-    "aggregate_current_status": "blocked",
+    "aggregate_current_status": "pass",
     "ref": "trace_observability_live.json",
-    "trace_id": "aiat-live-trace-20260810-r2",
+    "trace_id": "aiat-live-trace-20260811-phase",
     "api_request_count": 1,
     "native_span_count": 1,
-    "note": "The corrected aggregate live profile now supplies the retained bounded trace ID and observes one /health API request plus one orchestrator_api native span; broader model, worker, mail-edge, and retention coverage remain separate."
+    "note": "The configured local aggregate profile observes one /health API request plus one orchestrator_api native span for the retained bounded trace ID; broader deployment-wide model, worker, mail-edge, and retention coverage remain separate."
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The current configured profile completed with 55 passes, zero failures, and nine externally blocked checks across 64 checks; blockers are trace/API read-back, tool-service configuration, operator-selected worker certification, deployment image identity, gVisor/runtime availability, outbound relay, and self-improvement source.",
-    "The retained local transport and pure-tool evidence remain separate bounded passes; this run recorded the trace-evidence, live-trace, and live-tool children as blocked when their current endpoint/configuration was unavailable.",
+    "The current configured local profile completed with 59 passes, zero failures, and five externally blocked checks across 64 checks; blockers are operator-selected worker certification, deployment image identity, gVisor/runtime availability, outbound relay, and self-improvement source.",
+    "The retained local transport and pure-tool evidence remain separate bounded passes; this run read back one API/native transport pair and one project-usage/native tool pair through configured loopback endpoints.",
     "The runtime_benchmarks:live child passes LangGraph and CrewAI; its detailed bounded result is retained at runtime_benchmarks_live.json.",
     "The model_profile_catalogue:live child passes the explicit approved-coverage requirement and reports 92 covered approved profile versions out of 94 persisted versions, one pending registered model, and two non-registered profile findings; the detailed secret-safe result is retained at model_profile_catalogue_live.json.",
     "The object_store_conformance:live child passes all eight scoped cases through the checked-in Docker-exec private-network MinIO probe; the aggregate no longer times out on the host-only minio alias, and the local deployment evidence remains separate from provider-diverse migration or disaster-recovery proof.",
