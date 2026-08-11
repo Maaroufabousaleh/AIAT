@@ -61,7 +61,8 @@ stale/retry recovery (`52de581`), and System Control stale/retry recovery
 (`f445c17`), Projects list stale/retry recovery (`d3482ab`), Tools catalogue
 stale/retry recovery (`5f4b0eb`), and dead-letter queue stale/retry recovery
 (`823fa6d`), credentials metadata stale/retry recovery (`970f09c`), shared
-identity-resource stale/retry recovery (`46eccee`), Metrics
+identity-resource stale/retry recovery (`46eccee`) and table accessibility
+(`651ad11`), Metrics
 partial/stale/retry recovery (`85596b0`), and Flows list stale/retry recovery
 (`a0faf5b`), the credentials render-state lint repair (`e6e6980`), Container
 Logs stale/retry recovery (`280d363`), Agent Streams reconnect/history

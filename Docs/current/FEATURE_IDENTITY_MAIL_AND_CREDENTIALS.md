@@ -1,7 +1,7 @@
 # Identity, Mail, Credentials, and External Accounts Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1); shared identity-resource refreshes are abort/generation-safe and prove stale-to-recovered retry (`46eccee`, source-built `identity-states.spec.ts` 1/1); production domain and transport certification pending
+**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1); shared identity-resource refreshes are abort/generation-safe, prove stale-to-recovered retry, and expose semantic 44px row actions (`46eccee`, `651ad11`, source-built `identity-states.spec.ts` 1/1); production domain and transport certification pending
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -37,7 +37,7 @@ This boundary gives workers stable identities and tightly controlled access to m
   filter by that trace.
 - Orchestrator credential manager, approval requests, resolution audit, browser identity, and durable worker tool grants/nonces.
 - The dashboard credentials list reads with `cache: "no-store"`, retains the last successful redacted metadata set after a failed refresh, keeps placeholders/policy/usage rows visible while retrying, labels the list as stale, and exposes header Refresh plus banner Retry controls. [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) cover this path 1/1 without putting secret values in the fixture.
-- All identity-resource tables share an abortable, generation-guarded loader: an obsolete refresh cannot overwrite newer data, retained rows remain visible while retrying, and a successful retry clears the stale warning. [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts) prove the failure → retained-data → recovery path 1/1 without rendering sensitive fields (`46eccee`).
+- All identity-resource tables share an abortable, generation-guarded loader: an obsolete refresh cannot overwrite newer data, retained rows remain visible while retrying, and a successful retry clears the stale warning. Tables expose captions/column scopes and explicit, 44px action controls for keyboard and screen-reader use. [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts) prove the failure → retained-data → recovery and semantic-control paths 1/1 without rendering sensitive fields (`46eccee`, `651ad11`).
 - Local Stalwart, direct mail-edge, and SMTP gateway deployment/runbook assets.
 
 ## Code anchors
