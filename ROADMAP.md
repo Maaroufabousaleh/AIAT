@@ -551,9 +551,15 @@ The host-side checker resolves the Compose-only `tool-service:8002` alias to
 the published loopback port only for a loopback orchestrator, so the corrected
 aggregate live profile now passes both trace children without rewriting remote
 service URLs.
-Live model-backed worker/audit/integration source coverage, identity provider
-mail-edge/bounce spans, live retention enforcement, and multi-service/host
-coverage remain open.
+`24c2e35` adds the `aiat.worker-trace-coverage.v1` evaluator and
+[`check_worker_trace_coverage.py`](mas/scripts/check_worker_trace_coverage.py):
+native model/worker source categories are now explicit in trace coverage, the
+fixture and optional integration requirement pass, and live read/dispatch
+paths are fail-closed. Dispatch requires an operator-selected active
+model-backed worker, project, approved profile, bounded budget, and explicit
+confirmation; it does not auto-select or activate a worker. Live worker-run,
+audit/integration, identity provider mail-edge/bounce spans, live retention
+enforcement, and multi-service/host coverage remain open.
 The `aiat.slo-policy.v1`, `aiat.slo-report.v1`, and
 `aiat.capacity-forecast.v1` read models now cover descriptive service targets
 and bounded cost/token projections over durable usage aggregates. PM/SCM

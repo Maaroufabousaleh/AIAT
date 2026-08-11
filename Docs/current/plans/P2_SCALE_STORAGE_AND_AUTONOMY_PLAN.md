@@ -136,6 +136,14 @@
   allow-listed attributes and deterministic redaction fixtures. The API/storage
   writers, live deployment coverage, identity-service mail-edge spans, incident
   views, and retention enforcement remain separate review/live gates.
+- [x] Add the `aiat.worker-trace-coverage.v1` evaluator and fail-closed
+  `scripts/check_worker_trace_coverage.py` (`24c2e35`). The fixture requires
+  model-usage, worker-artifact, native-model, and native-worker source
+  categories; `--require-integration` makes native integration plus durable
+  integration evidence explicit. Read-only live inspection accepts a selected
+  trace, while dispatch requires an explicitly selected active model-backed
+  worker/project/profile and `--confirm-dispatch`; no worker is auto-selected
+  or activated and licence/restriction metadata is not a gate.
 - [x] Define versioned descriptive SLO targets for API, queue age, worker
   startup/run, tool latency, model routing, PM/SCM sync, mail delivery, and
   recovery; expose observed/attention/no-data statuses through the operator
@@ -180,12 +188,12 @@
   and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py) (`eac83ae`); the host-side probe is fail-closed and creates only bounded telemetry rows.
   The probe creates only normal telemetry rows and does not claim worker/model
   execution or provider evidence.
-- [ ] Connect native model/audit/worker/integration observations to a live
-  representative model-backed worker run and persist provider/webhook-level
-  identity-service mail-edge/bounce observations so the remaining SLO targets
-  have deployment evidence; direct model/artifact/integration spans and
-  delivery-attempt correlation are durable and queryable, but their live source
-  coverage remains open.
+- [ ] Run the new checker against a selected live representative model-backed
+  worker and persist provider/webhook-level identity-service mail-edge/bounce
+  observations so the remaining SLO targets have deployment evidence; direct
+  model/artifact/integration spans, the fail-closed source evaluator, and
+  delivery-attempt correlation are durable/queryable, but live source coverage
+  remains open.
 - Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
 - Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
 

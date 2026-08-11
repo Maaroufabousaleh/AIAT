@@ -1,6 +1,6 @@
 # Trace Evidence and Retention Feature Specification
 
-**Baseline:** 2026-08-10  
+**Baseline:** 2026-08-11
 **Status:** the pure trace-context, native-span, and secret-safe trace-evidence
 contracts are reviewed and committed in `77d5494` with deterministic fixtures;
 the bounded API-observation schema/migrations are committed in `9c39919`, and
@@ -59,8 +59,10 @@ strings. API routes are normalized so IDs do not become unbounded dimensions.
 
 The response includes per-source counts, project IDs, first/last observed time,
 and a `PARTIAL_TRACE_SOURCES` notice that distinguishes the now-queryable
-native transport/model/tool/audit/integration spans and optional identity
-delivery-attempt spans from still-missing provider mail-edge observations.
+native transport/model/tool/audit/worker/integration span categories and
+optional identity delivery-attempt spans from still-missing provider mail-edge
+observations. Native category coverage is scalar metadata (`observed` or
+`empty`); it never exposes native span attributes or payloads.
 Empty source coverage is reported explicitly; it is not treated as a clean or
 failed project result.
 
@@ -76,6 +78,17 @@ only the normal project-usage telemetry row, and reads back one
 [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json).
 The `PARTIAL_TRACE_SOURCES` notice is expected because these probes do not run
 a model-backed worker or mail provider.
+
+The model-backed worker source gate is now explicit in
+`aiat.worker-trace-coverage.v1`. Its deterministic checker requires
+`worker_usage_records`, `worker_artifacts`, `native_model_spans`, and
+`native_worker_spans`; integration evidence can be added as an explicit
+`--require-integration` requirement. Read-only live mode accepts a selected
+trace ID. Dispatch mode is fail-closed and requires an explicitly selected
+active model-backed worker, project, approved model profile, bounded budget,
+and `--confirm-dispatch`; it does not auto-select or activate a worker. The
+fixture passes, but no live model-backed run is claimed until an operator
+supplies that selection and retains the resulting source-count report.
 
 ## Sampling and retention metadata
 
@@ -120,6 +133,10 @@ uv run --isolated python scripts/check_live_tool_trace.py --live --json \
   --orchestrator-url http://127.0.0.1:8000 \
   --tool-service-url http://127.0.0.1:8002 \
   --trace-id aiat-live-tool-trace-check
+uv run --isolated pytest packages/mas-core/tests/test_worker_trace_coverage.py -q
+uv run --isolated python scripts/check_worker_trace_coverage.py --json
+uv run --isolated python scripts/check_worker_trace_coverage.py --json \
+  --require-integration
 ```
 
 The fixture command passes without services and mutates no state. The live
@@ -131,6 +148,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 ## Code anchors
 
 - Read model: [`mas/packages/mas-core/mas_core/observability/trace_evidence.py`](../../mas/packages/mas-core/mas_core/observability/trace_evidence.py)
+- Worker source evaluator: [`mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py`](../../mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py)
 - Trace validation/context: [`mas/packages/mas-core/mas_core/observability/tracing.py`](../../mas/packages/mas-core/mas_core/observability/tracing.py)
 - Native span contract/normalizer: [`mas/packages/mas-core/mas_core/observability/native_spans.py`](../../mas/packages/mas-core/mas_core/observability/native_spans.py)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
@@ -141,20 +159,23 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Native span table and migration: [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0036_native_trace_spans.py`](../../mas/migrations/versions/0036_native_trace_spans.py)
 - API route: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py)
 - Fixture/live checker: [`mas/scripts/check_trace_evidence.py`](../../mas/scripts/check_trace_evidence.py)
+- Model-backed worker source checker: [`mas/scripts/check_worker_trace_coverage.py`](../../mas/scripts/check_worker_trace_coverage.py)
 - Local live transport checker/evidence (`eac83ae`): [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py), [`mas/docs/provenance/trace_observability_live.json`](../../mas/docs/provenance/trace_observability_live.json)
 - Local live tool checker/evidence (`eac83ae`): [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py), [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json), and [`mas/apps/tool-service/tool_service/usage.py`](../../mas/apps/tool-service/tool_service/usage.py). Both probes are fail-closed and emit no payloads, credentials, or project identifiers.
 - Core/API tests: [`test_trace_evidence.py`](../../mas/packages/mas-core/tests/test_trace_evidence.py), [`test_trace_evidence.py`](../../mas/apps/orchestrator-api/tests/test_trace_evidence.py)
+- Worker source coverage tests: [`test_worker_trace_coverage.py`](../../mas/packages/mas-core/tests/test_worker_trace_coverage.py)
 - API observation fixture/check: [`test_api_observations.py`](../../mas/packages/mas-core/tests/test_api_observations.py), [`check_api_observability.py`](../../mas/scripts/check_api_observability.py)
 - Native span fixture/check: [`test_native_trace_spans.py`](../../mas/packages/mas-core/tests/test_native_trace_spans.py), [`check_native_trace_spans.py`](../../mas/scripts/check_native_trace_spans.py)
 - Identity delivery correlation: [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py), [`identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`test_identity_service.py`](../../mas/apps/identity-service/tests/test_identity_service.py), and [`test_identity_reconciliation.py`](../../mas/apps/orchestrator-api/tests/test_identity_reconciliation.py)
 
 ## Remaining gates
 
-- Connect native model/audit/worker/integration span writers to a live
-  representative model-backed worker run and add provider/webhook-level
-  identity-service mail-edge/bounce spans. The local transport/API writer and
-  pure tool writer/read-back are now verified; delivery-attempt trace
-  correlation is implemented but provider coverage remains unverified.
+- Use the new fail-closed worker source checker against a selected live
+  model-backed worker run and retain model-usage, artifact, native model, and
+  native worker source counts; add native audit/integration evidence where the
+  run exercises those adapters, plus provider/webhook-level identity-service
+  mail-edge/bounce spans. The deterministic source contract is implemented,
+  but no live worker dispatch or provider coverage is claimed yet.
 - Enforce sampling/retention and project-level narrowing in the live storage
   and recovery workers, including backup/restore parity.
 - Add dashboard deep links and incident views after the API evidence is
