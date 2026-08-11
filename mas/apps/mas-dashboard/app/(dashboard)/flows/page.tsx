@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { formatDistanceToNow } from "date-fns";
@@ -15,30 +15,45 @@ import { FilterChip } from "@/components/ui/FilterChips";
 
 export default function FlowsPage() {
   const [flows, setFlows] = useState<Flow[]>([]);
+  const flowsRef = useRef<Flow[] | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkError, setBulkError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadStale, setLoadStale] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const params = new URLSearchParams({ limit: "1000" });
       if (filter !== "all") params.set("is_active", String(filter === "active"));
-      const res = await fetch(`/api/flows?${params}`);
-      if (!res.ok) { setFlows([]); return; }
+      const res = await fetch(`/api/flows?${params}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setFlows(Array.isArray(data) ? data : []);
-    } catch {
-      setFlows([]);
+      if (!Array.isArray(data)) throw new Error("Invalid flows response");
+      flowsRef.current = data;
+      setFlows(data);
+      setHasLoaded(true);
+      setLoadStale(false);
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : "Failed to load flows");
+      setLoadStale(flowsRef.current !== null);
     } finally {
       setLoading(false);
     }
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  const requestRefresh = () => {
+    if (loading) return;
+    void load();
+  };
 
   async function deleteFlow(id: string) {
     setDeleting(id);
@@ -135,7 +150,7 @@ export default function FlowsPage() {
         actions={
           <>
             <button
-              onClick={load}
+              onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh flows"
@@ -210,6 +225,20 @@ export default function FlowsPage() {
         </div>
       )}
 
+      {loadError && (
+        <ErrorBanner
+          tone={loadStale ? "warning" : "error"}
+          title={loadStale ? "Showing last known flows" : "Flows load failed"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {loadStale ? `${loadError}. The latest flows refresh failed; retained flow definitions remain visible.` : loadError}
+        </ErrorBanner>
+      )}
+
       {bulkError && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
 
       {selection.selectedCount > 0 && (
@@ -224,8 +253,10 @@ export default function FlowsPage() {
       )}
 
       <div className="dashboard-surface overflow-hidden">
-        {loading ? (
+        {loading && !hasLoaded ? (
           <div className="p-8 text-center text-slate-500 text-sm">Loading…</div>
+        ) : loadError && !hasLoaded ? (
+          <div className="p-8 text-center text-slate-400 text-sm">Unable to load flows. Use Retry to try again.</div>
         ) : flows.length === 0 ? (
           <div className="p-6">
             <EmptyState
@@ -303,6 +334,9 @@ export default function FlowsPage() {
                 const hasOlderVersions = flow.version > 1 && siblingCount > 1;
                 const hasNewerSiblings = siblingCount > 1;
                 const isSelected = selection.selected.has(flow.id);
+                const statusClass = flow.is_active
+                  ? "bg-emerald-600/20 text-emerald-100 border border-emerald-600/30"
+                  : "bg-slate-700/40 text-slate-400 border border-slate-600/30";
                 return (
                   <tr
                     key={flow.id}
@@ -360,7 +394,7 @@ export default function FlowsPage() {
                     <td className="px-4 py-3">
                       <span className={clsx(
                         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium",
-                        flow.is_active ? "bg-emerald-600/20 text-emerald-300 border border-emerald-600/30" : "bg-slate-700/40 text-slate-400 border border-slate-600/30"
+                        statusClass
                       )}>
                         <span className={clsx("w-1.5 h-1.5 rounded-full", flow.is_active ? "bg-emerald-400" : "bg-slate-500")} />
                         {flow.is_active ? "Active" : "Inactive"}
