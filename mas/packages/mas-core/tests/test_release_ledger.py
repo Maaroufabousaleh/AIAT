@@ -220,3 +220,32 @@ def test_live_release_ledger_bounds_timed_out_checker(monkeypatch) -> None:
         "reason": "checker timed out after 60s",
         "timeout_seconds": 60.0,
     }
+
+
+def test_release_ledger_runs_independent_checks_in_inventory_order(monkeypatch) -> None:
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    spec = spec_from_file_location("check_release_ledger_parallel", SCRIPT)
+    assert spec and spec.loader
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    specs = [
+        module.CheckSpec(check_id=name, category="static", script="scripts/noop.py", args=())
+        for name in ("first", "second", "third")
+    ]
+    observed: list[str] = []
+
+    def fake_run(check, *, live):
+        assert live is False
+        observed.append(check.check_id)
+        return {"id": check.check_id, "status": "pass", "pending_evidence_count": 0}
+
+    monkeypatch.setattr(module, "_check_worker_count", lambda: 2)
+    monkeypatch.setattr(module, "_run_check", fake_run)
+
+    rows = module._run_checks(specs, live=False)
+
+    assert [row["id"] for row in rows] == ["first", "second", "third"]
+    assert sorted(observed) == ["first", "second", "third"]

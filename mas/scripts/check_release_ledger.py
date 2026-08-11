@@ -21,6 +21,7 @@ no worker evidence is pending, and the worktree is clean.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import platform
@@ -46,6 +47,8 @@ _SAFE_STATUS = {"pass", "passed", "healthy", "observed", "clear"}
 _DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 _DEFAULT_LIVE_CHECK_TIMEOUT_SECONDS = 60.0
 _MAX_CHECK_TIMEOUT_SECONDS = 600.0
+_DEFAULT_CHECK_WORKERS = 4
+_MAX_CHECK_WORKERS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,6 +282,35 @@ def _check_timeout_seconds(*, live: bool) -> float:
     return min(value, _MAX_CHECK_TIMEOUT_SECONDS)
 
 
+def _check_worker_count() -> int:
+    """Return a bounded number of concurrent child-check workers."""
+
+    raw = os.getenv("AIAT_RELEASE_LEDGER_WORKERS", "").strip()
+    if not raw:
+        return _DEFAULT_CHECK_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_CHECK_WORKERS
+    if value <= 0:
+        return _DEFAULT_CHECK_WORKERS
+    return min(value, _MAX_CHECK_WORKERS)
+
+
+def _run_checks(specs: list[CheckSpec], *, live: bool) -> list[dict[str, Any]]:
+    """Run independent child verifiers concurrently while preserving inventory order."""
+
+    if not specs:
+        return []
+    with ThreadPoolExecutor(
+        max_workers=min(_check_worker_count(), len(specs)),
+        thread_name_prefix="aiat-release-check",
+    ) as executor:
+        # executor.map preserves input order, keeping reports deterministic even
+        # though independent child processes finish at different times.
+        return list(executor.map(lambda spec: _run_check(spec, live=live), specs))
+
+
 def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
     args = spec.live_args if live else spec.args
     command = [sys.executable, spec.script, *args]
@@ -324,9 +356,9 @@ def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
 
 def build_report(*, include_live: bool = False) -> dict[str, Any]:
     inventory, specs = _load_inventory()
-    checks = [_run_check(spec, live=False) for spec in specs]
+    checks = _run_checks(specs, live=False)
     if include_live:
-        checks.extend(_run_check(spec, live=True) for spec in specs if spec.live_args)
+        checks.extend(_run_checks([spec for spec in specs if spec.live_args], live=True))
     counts = {status: sum(row["status"] == status for row in checks) for status in ("pass", "blocked", "fail")}
     pending_count = sum(int(row["pending_evidence_count"]) for row in checks)
     overall_status = "fail" if counts["fail"] else ("blocked" if counts["blocked"] else "pass")
