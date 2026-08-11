@@ -7,6 +7,7 @@ team_id: office_chrm
 
 admin:
   agent_id: chrm
+  worker_manifest_ref: chrm
   role: c_suite
   class: CSuiteAgent
   display_name: "Chief Human Resource Manager"
@@ -26,6 +27,7 @@ admin:
 
 workers:
   - agent_id: hr_analyst
+    worker_manifest_ref: hr_analyst
     role: worker
     class: WorkerAgent
     display_name: "HR Analyst"
@@ -41,6 +43,7 @@ workers:
       - kpi.query_history
 
   - agent_id: hiring_agent
+    worker_manifest_ref: hiring_agent
     role: worker
     class: WorkerAgent
     display_name: "Hiring Agent"

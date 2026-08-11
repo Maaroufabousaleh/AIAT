@@ -7,6 +7,7 @@ team_id: office_cto
 
 admin:
   agent_id: cto
+  worker_manifest_ref: cto
   role: c_suite
   class: CSuiteAgent
   display_name: "Chief Technology Officer"
@@ -27,6 +28,7 @@ admin:
 
 workers:
   - agent_id: sprint_planner
+    worker_manifest_ref: sprint_planner
     role: worker
     class: WorkerAgent
     display_name: "Sprint Planner"
@@ -43,6 +45,7 @@ workers:
       - blob.upload
 
   - agent_id: kpi_analyst
+    worker_manifest_ref: kpi_analyst
     role: worker
     class: WorkerAgent
     display_name: "KPI Analyst"

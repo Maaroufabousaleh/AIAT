@@ -6,6 +6,7 @@ team_id: dept_system
 
 admin:
   agent_id: system_pm
+  worker_manifest_ref: system_pm
   role: admin
   class: AdminAgent
   display_name: "System PM"
@@ -27,6 +28,7 @@ admin:
 
 workers:
   - agent_id: system_architect
+    worker_manifest_ref: system_architect
     role: worker
     class: WorkerAgent
     display_name: "System Architect"
@@ -44,6 +46,7 @@ workers:
       - blob.upload
 
   - agent_id: solution_designer
+    worker_manifest_ref: solution_designer
     role: worker
     class: WorkerAgent
     display_name: "Solution Designer"
@@ -60,6 +63,7 @@ workers:
       - blob.upload
 
   - agent_id: tech_writer
+    worker_manifest_ref: tech_writer
     role: worker
     class: WorkerAgent
     display_name: "Technical Writer"

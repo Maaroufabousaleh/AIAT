@@ -6,6 +6,7 @@ team_id: dept_qa
 
 admin:
   agent_id: qa_lead
+  worker_manifest_ref: qa_lead
   role: admin
   class: AdminAgent
   display_name: "QA Lead"
@@ -27,6 +28,7 @@ admin:
 
 workers:
   - agent_id: tester
+    worker_manifest_ref: tester
     role: worker
     class: WorkerAgent
     display_name: "Tester"
@@ -45,6 +47,7 @@ workers:
       - blob.upload
 
   - agent_id: coding_worker
+    worker_manifest_ref: coding_worker
     role: worker
     class: WorkerAgent
     display_name: "Coding Worker"
@@ -61,6 +64,7 @@ workers:
       - blob.upload
 
   - agent_id: test_evaluation_worker
+    worker_manifest_ref: test_evaluation_worker
     role: worker
     class: WorkerAgent
     display_name: "Test Evaluation Worker"
@@ -78,6 +82,7 @@ workers:
       - blob.upload
 
   - agent_id: code_review_worker
+    worker_manifest_ref: code_review_worker
     role: worker
     class: WorkerAgent
     display_name: "Code Review Worker"

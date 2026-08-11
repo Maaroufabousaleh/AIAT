@@ -7,6 +7,7 @@ team_id: exec_ceo
 
 admin:
   agent_id: ceo
+  worker_manifest_ref: ceo
   role: orchestrator
   class: CSuiteAgent           # uses ExecutiveAgent override in Phase 8
   display_name: "Chief Executive Officer"
@@ -33,6 +34,7 @@ admin:
 
 workers:
   - agent_id: human_approval_gate
+    worker_manifest_ref: human_approval_gate
     role: orchestrator
     class: WorkerAgent
     display_name: "Human Approval Gate"
