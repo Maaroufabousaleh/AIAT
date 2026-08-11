@@ -4,8 +4,19 @@
 > historical evidence exactly. Any row that treats licence classification as
 > an approval, release, hiring, or activation gate is superseded by
 > [`../AIAT_TARGET_PROGRAMME.md`](../AIAT_TARGET_PROGRAMME.md). Licence data is
-> metadata only for the personal internal-use programme. Security, sandbox,
-> compatibility, provenance, and recovery evidence remain applicable.
+> metadata only for the personal internal-use programme. Rows that describe
+> distribution-era exclusions or licence-derived defaults are historical and
+> superseded; security, sandbox, compatibility, provenance, and recovery
+> evidence remain applicable.
+
+> **Current-policy overlay (2026-08-11):** Rows `A-003`, `A-006`, `F-012`,
+> `H-007`, `H-008`, and `M-007` retain dated default-profile evidence only.
+> Their words such as *restricted*, *excluded*, or *non-default* describe a
+> historical packaging/deployment snapshot, not a licence decision. The
+> personal/internal instance may use a technically suitable resource normally
+> through an adapter; licence and stated-use terms stay in provenance metadata
+> and never decide discovery, installation, hiring, activation, updating, or
+> execution.
 
 Last ledger update: 2026-07-14
 Current verification run: `RUN-2026-07-14-HN`
@@ -59,15 +70,15 @@ Source codes are used in the feature matrix.
 |---|---|---|---|
 | `SRC-CORE` | `README.md`, `mas/README.md` | Reviewed | Root and `mas/` variants differ by path context; both still reference obsolete `AIAT_PLAN.md`. |
 | `SRC-NEXT` | `next.txt` | Reviewed | Operator-requested features 1-16, including 2.1 and 8.1. |
-| `SRC-AGENTS` | `agents.md` | Reviewed | License-corrected default/optional agent and worker stack. |
-| `SRC-TOOLS` | `tools.md` | Reviewed | License-corrected authority/capability tool split and six tool groups. |
+| `SRC-AGENTS` | `agents.md` | Reviewed | Current personal/internal resource-selection policy and worker stack. |
+| `SRC-TOOLS` | `tools.md` | Reviewed | Current authority/capability tool split and six tool groups. |
 | `SRC-REPORT` | `.github/prompts/deep-research-report.md` | Reviewed | Current corrected research copy; differs from the Docs copy on monitoring defaults. |
 | `SRC-REPORT-OLD` | `Docs/AIAT as a Modular AI Company Operating System.md` and PDF | Reviewed | Older Prometheus/Grafana wording; superseded where it conflicts with `agents.md`, `tools.md`, or current report. |
 | `SRC-ALPHA` | `PLAN_alpha_beta.md` | Reviewed | Historical completion notes require current re-verification. |
 | `SRC-GAMMA` | `PLAN_gamma.md` | Reviewed | Includes explicit unavailable states and deferred integrations. |
 | `SRC-DELTA` | `PLAN_delta.md` | Reviewed | Policy/readiness completion is not proof of real Docling/GitHub-write/n8n execution. |
 | `SRC-EPSILON` | `PLAN_epsilon.md` | Reviewed | Requires real runtime execution when optional packages are installed; old run mostly proves readiness contracts. |
-| `SRC-OLDPLAN` | `obsolete/AIAT_PLAN.md` | Reviewed | Historical context; still useful for unexecuted live/recovery/security checks. |
+| `SRC-OLDPLAN` | `obsolete/AIAT_PLAN.md` | Reviewed | Historical context; still useful for unexecuted live/recovery/security checks, not current resource restrictions. |
 | `SRC-ORG` | `plan-orgArchitecture.prompt.docx` and PDF | Reviewed | Rendered 48 pages; extracted all 528 non-empty paragraphs. Defines 14-step workflow and original verification contract. |
 | `SRC-PAPERCLIP` | Paperclip architecture DOCX/PDF and `Docs/obs/deep-research-report.md` | Reviewed | Defines two-plane alternative and manual/vibe workflows; Paperclip itself is not a current shipped dependency. |
 | `SRC-DB` | `mas/docs/ARCHITECTURE.md` | Reviewed | Postgres/MinIO/project-context/hybrid retrieval contract. |
@@ -77,7 +88,7 @@ Source codes are used in the feature matrix.
 | `SRC-PROMPTS` | all 11 files under `mas/prompts/` | Reviewed | Role authority, tool, escalation, review, and output contracts. |
 | `SRC-SCAFFOLD` | capability/workflow scaffold READMEs | Reviewed | Paths and minimum runtime modules. |
 
-Precedence for conflicts: current user instructions -> `agents.md`/`tools.md` license decisions -> current phase plans -> corrected `.github/prompts/deep-research-report.md` -> subsystem docs -> obsolete/historical documents.
+Precedence for conflicts: current user instructions -> current `agents.md`/`tools.md` policy and architecture -> current phase plans -> corrected `.github/prompts/deep-research-report.md` -> subsystem docs -> obsolete/historical documents.
 
 ## Feature verification matrix
 
@@ -355,7 +366,7 @@ Precedence for conflicts: current user instructions -> `agents.md`/`tools.md` li
 The matrix is intentionally larger than a single test suite. Execute in this order so failures remain attributable:
 
 1. **Wave 0 — Current-state safety:** record git diff, tool/runtime versions, WSL, Docker, ports, and secrets-redacted Compose state.
-2. **Wave 1 — Static drift and fast contracts:** docs/links, license/default dependency audit, schemas, focused pytest, dashboard build/lint/protocol fixtures.
+2. **Wave 1 — Static drift and fast contracts:** docs/links, resource metadata/default dependency audit, schemas, focused pytest, dashboard build/lint/protocol fixtures.
 3. **Wave 2 — Base live stack:** validate/build/migrate/health, seed idempotency, authenticated direct API probes.
 4. **Wave 3 — Operator critical paths:** Playwright for login, company, hiring, projects, flows, approvals, artifacts, credentials, graphs, controls, DLQ.
 5. **Wave 4 — Real agents and tools:** CEO side effects, role review panel, OpenCode, Docling, Semgrep, GitHub, centralized gateway.
