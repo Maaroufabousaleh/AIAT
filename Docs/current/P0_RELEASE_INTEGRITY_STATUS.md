@@ -11,6 +11,9 @@ dependency or licence metadata into a release gate.
 The communication-policy hardening group (`fb39128`) now validates declared
 sender role/team coherence before any router enqueue, closing a worker-to-CEO
 team-spoof path with static and mocked-router evidence.
+The hierarchy visualization group (`8b7d9f1`) adds the corresponding source-built
+dashboard overlay for allowed/denied communication paths; its live Compose image
+evidence remains open because the running image predates the change.
 
 **Plan:** [P0 Release Integrity Plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)  
 **Roadmap:** [ROADMAP.md](../../ROADMAP.md)
@@ -194,7 +197,9 @@ single frozen commit before production claims are made.
 - `test_policy.py`, `test_phase3.py`, and `test_test12_comms_policy.py` cover
   valid worker/admin/sub-agent paths, spoofed worker/admin teams, role-specific
   message types, and mocked-router HTTP 403 behavior. The remaining hierarchy
-  graph item is live dashboard evidence, not an unimplemented policy path.
+  graph item is now implemented by the `HierarchyViz` sender-role overlay and
+  source-built E2E coverage (`8b7d9f1`); live Compose image evidence remains
+  separate because the current image predates the change.
 
 ### Runner network and control-plane storage boundary
 
@@ -443,6 +448,7 @@ single frozen commit before production claims are made.
 | Secret-safe system diagnostics | PASS (static/unit/API) | Commit `2860838`; `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q` covers database, router, tool-service, optional object-store, degraded aggregation, no-storage 503, and dependency-payload redaction. The route is read-only and returns only bounded status/latency/connection facts or exception type |
 | Operator control CLI | PASS (static/unit) | Commits `380daf5` and `f8df50e`; `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six deterministic cases, and `test_test10_ops_scripts.py` verifies the executable `scripts/mas-ctl` wrapper. `bootstrap` requires healthy `/health` plus `ok` diagnostics; error bodies are never returned |
 | Communication-policy sender identity | PASS (static/unit/mocked router) | Commit `fb39128`; `uv run --isolated pytest packages/mas-core/tests/test_policy.py apps/message-router/tests/test_phase3.py apps/message-router/tests/test_publish_auth.py apps/orchestrator-api/tests/test_test12_comms_policy.py -q` covers sender role/team coherence, spoofed worker-to-CEO/admin paths, role-specific message types, and HTTP 403 before enqueue. Live external-router and dashboard hierarchy evidence remain separate |
+| Hierarchy communication-policy overlay | PASS (source type/lint/build; live image pending) | Commit `8b7d9f1`; `npm run typecheck`, focused ESLint, and `npm run build` pass for the dashboard; `app-operations.spec.ts` covers sender-role selection plus allowed/denied path labels. The running Compose dashboard image predates the commit, and a rebuild is blocked by unreadable `.tmp-*` Docker-context paths, so live UI evidence remains open |
 | SLO/capacity suite | PASS (bounded; native/live open) | `uv run --isolated pytest packages/mas-core/tests/test_slo.py apps/orchestrator-api/tests/test_slo_capacity.py -q`; `uv run --isolated python scripts/check_slo_capacity.py --json` passes the deterministic fixture and `--live --json` returns `blocked` without an API; missing service telemetry remains explicit |
 | Provenance inventory | PASS | `uv run --isolated python scripts/check_provenance.py` — 21 components, including the metadata-only operator-supplied SkillSpector record |
 | Python compilation | PASS | isolated `compileall` for changed runtime, API, policy, image-contract, and provenance paths |

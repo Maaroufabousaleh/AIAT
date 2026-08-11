@@ -73,6 +73,12 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   require a known parent team, and spoofed direct worker-to-CEO messages fail
   before Redis dedupe/enqueue. Static policy and mocked-router tests pass;
   live external-router evidence remains separate.
+- [x] Add a hierarchy-graph communication-policy overlay (`8b7d9f1`) so an
+  operator can select a sender role and see allowed/denied team paths without
+  changing policy. Dashboard typecheck, focused lint/build, and source-built
+  E2E coverage pass; the running Compose image predates the change and live
+  image evidence remains open while its Docker context contains unreadable
+  `.tmp-*` paths.
 
 ### Evidence
 
@@ -205,8 +211,9 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 ### Evidence
 
 - `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q`
-  passes the system and diagnostics API suites with only the two pre-existing
-  TODO skips for a standalone bootstrap CLI and per-service restart endpoint.
+  passes the system and diagnostics API suites; the standalone bootstrap
+  wrapper is now implemented, and only the per-service restart boundary remains
+  a documented TODO.
 - `uv run --isolated pytest packages/mas-api-sdk/tests -q` passes the generated
   SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
   236 OpenAPI paths, 130 models, and 269 operations with matching generated
@@ -215,6 +222,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   deterministic CLI cases; the focused operational API suite now verifies the
   executable bootstrap wrapper is present, leaving only the separate
   per-service restart TODO skip.
+- `npm run typecheck`, focused ESLint, and `npm run build` in
+  `apps/mas-dashboard` pass for the hierarchy policy overlay. The source-built
+  E2E interaction is checked in; live Compose verification is blocked by the
+  stale running image and unreadable temporary Docker-context paths.
 
 ### Exit gate
 
