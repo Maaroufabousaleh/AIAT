@@ -1,7 +1,7 @@
 # Dashboard and Operator UX Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, executive reconciliation/action surfaces (`d1b8839`), and the local Compose E2E matrix implemented; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
+**Status:** broad dashboard implemented; API section ACL, distinct caller identities, generated flow-node forms, bounded CEO evidence deep links, executive reconciliation/action surfaces (`d1b8839`), and the local Compose E2E matrix implemented; the ACL middleware and operator credential-proxy hardening are committed in `e9b4da4`; the mobile shell accessibility baseline is now covered by focused Playwright checks; native-Linux accessibility/mobile/visual certification remains
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -40,7 +40,9 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Mermaid organisation definition can be copied as text; Mermaid rendering is not a bundled dashboard capability.
 - Dashboard API proxies attach a bounded `X-AIAT-Dashboard-Section` context. The
   finite section policy and deterministic persisted ACL normalizer are committed
-  as `d405ccb`; the orchestrator applies them for human operator, CEO, service,
+  as `d405ccb`; `e9b4da4` adds fail-closed middleware enforcement, persisted
+  operator-only ACL updates, and strict operator-key credential proxies. The
+  orchestrator applies them for human operator, CEO, service,
   worker, gateway, and PM-gateway principals, with the operator as the only
   full-surface recovery principal.
 - `GET /dashboard/access`, `GET /dashboard/sections/{section}`, and operator-only `PUT /dashboard/sections/{section}/acl` expose the auditable section capability and persistence boundary.
