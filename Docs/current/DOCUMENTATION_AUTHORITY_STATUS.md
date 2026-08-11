@@ -65,7 +65,5 @@ certification, and licence metadata remain separate.
 The focused clean-checkout flow verification at commit `2a41b7b` passed the
 template, node-schema, portability, and migration tests, the generated-schema
 check, and the topology check. The current workspace and a clean Git archive
-both pass `check_docs_index.py`; the generated `mas/uv.lock` is intentionally
-ignored and is documented as a local runtime input rather than a maintained
-documentation link. This keeps the documentation gate reproducible without
-treating the local lock artifact as a licence decision.
+both pass `check_docs_index.py`; the workspace lock is now tracked at
+`mas/uv.lock`, so the default runtime contract is reproducible from source.
