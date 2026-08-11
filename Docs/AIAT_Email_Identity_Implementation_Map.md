@@ -190,7 +190,8 @@ are available.
 
 ## Current migration heads
 
-- Identity Postgres: `0001_identity_control_plane`.
+- Identity Postgres: `0002_mail_trace_correlation` (safe outbound delivery
+  trace/span metadata; provider payloads remain identity-owned).
 - Laptop/control-plane Postgres:
   `0023_durable_browser_identity_and_tool_nonces` (including durable credential
   approvals/rates in `0022` and tool grants in `0021`).
