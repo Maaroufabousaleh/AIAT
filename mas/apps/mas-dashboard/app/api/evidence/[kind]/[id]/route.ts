@@ -7,13 +7,11 @@ const SAFE_SCALAR_KEYS = new Set([
   "id",
   "name",
   "title",
-  "description",
   "kind",
   "type",
   "state",
   "status",
   "outcome",
-  "reason",
   "error_code",
   "gate_type",
   "decision_type",
@@ -26,6 +24,14 @@ const SAFE_SCALAR_KEYS = new Set([
   "runtime_version",
   "provider_id",
   "model_id",
+  "api_style",
+  "profile_state",
+  "max_context_tokens",
+  "cost_per_1m_input",
+  "cost_per_1m_output",
+  "provider_kind",
+  "capability_profile",
+  "display_name",
   "profile_id",
   "task_type",
   "revision",
@@ -42,7 +48,11 @@ const SAFE_SCALAR_KEYS = new Set([
   "last_observed_at",
 ]);
 
+const SAFE_STRING_LIMIT = 256;
+
 const DETAIL_PATHS: Record<string, (id: string) => string> = {
+  integration: () => "/integrations/connections",
+  model: () => "/model-profiles/catalogue",
   project: (id) => `/projects/${encodeURIComponent(id)}`,
   flow: (id) => `/flows/${encodeURIComponent(id)}`,
   flow_instance: (id) => `/flows/instances/${encodeURIComponent(id)}`,
@@ -62,7 +72,13 @@ function projectScalars(value: unknown): JsonRecord {
   const projected: JsonRecord = {};
   for (const [key, candidate] of Object.entries(value)) {
     if (!SAFE_SCALAR_KEYS.has(key)) continue;
-    if (candidate === null || ["string", "number", "boolean"].includes(typeof candidate)) {
+    if (candidate === null) {
+      projected[key] = null;
+    } else if (typeof candidate === "string") {
+      projected[key] = candidate.slice(0, SAFE_STRING_LIMIT);
+    } else if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      projected[key] = candidate;
+    } else if (typeof candidate === "boolean") {
       projected[key] = candidate;
     }
   }
@@ -76,6 +92,19 @@ function selectRuntime(raw: unknown, id: string): unknown {
     if (!isRecord(runtime)) return false;
     return runtime.id === id || runtime.runtime_type === id || runtime.name === id;
   }) ?? null;
+}
+
+function selectListRecord(raw: unknown, id: string): unknown {
+  if (!Array.isArray(raw)) return null;
+  return raw.find((item) => {
+    if (!isRecord(item)) return false;
+    return item.id === id || item.connection_id === id;
+  }) ?? null;
+}
+
+function selectModel(raw: unknown, id: string): unknown {
+  if (!isRecord(raw) || !Array.isArray(raw.entries)) return null;
+  return raw.entries.find((entry) => isRecord(entry) && entry.model_id === id) ?? null;
 }
 
 export async function GET(
@@ -93,7 +122,13 @@ export async function GET(
 
   try {
     const raw = await orchestratorFetch(pathFactory(id));
-    const record = kind === "runtime" ? selectRuntime(raw, id) : raw;
+    const record = kind === "runtime"
+      ? selectRuntime(raw, id)
+      : kind === "integration"
+        ? selectListRecord(raw, id)
+        : kind === "model"
+          ? selectModel(raw, id)
+          : raw;
     if (!record) {
       return NextResponse.json({ error: "evidence record was not found" }, { status: 404 });
     }
