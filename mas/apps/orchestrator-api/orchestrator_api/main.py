@@ -1691,7 +1691,10 @@ class ScheduleRequest(BaseModel):
     enabled: bool = False
     start_hour: int = Field(default=8, ge=0, le=23)
     end_hour: int = Field(default=18, ge=0, le=23)
-    timezone: str = "UTC"
+    # Omitted values inherit the active company-manifest timezone. An explicit
+    # value remains available for a schedule that intentionally differs from
+    # the company display/schedule default.
+    timezone: str | None = None
     days: list[str] = Field(default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"])
     auto_shutdown: bool = True
     auto_resume: bool = True
@@ -7456,16 +7459,21 @@ async def update_schedule(req: ScheduleRequest) -> dict[str, str]:
     G4: Also starts/stops the APScheduler cron jobs.
     """
     storage = _storage()
+    schedule_timezone = req.timezone or await _configured_company_timezone(storage)
+    # Validate even when APScheduler is not installed so an invalid timezone
+    # can never be persisted as if it were a usable schedule.
+    _resolve_schedule_timezone(schedule_timezone)
+    effective_req = req.model_copy(update={"timezone": schedule_timezone})
     await storage.set_config("schedule_enabled", str(req.enabled).lower())
     await storage.set_config("schedule_start_hour", str(req.start_hour))
     await storage.set_config("schedule_end_hour", str(req.end_hour))
-    await storage.set_config("schedule_timezone", req.timezone)
+    await storage.set_config("schedule_timezone", schedule_timezone)
     await storage.set_config("schedule_days", ",".join(req.days))
     await storage.set_config("schedule_auto_shutdown", str(req.auto_shutdown).lower())
     await storage.set_config("schedule_auto_resume", str(req.auto_resume).lower())
 
     # G4: Configure APScheduler cron jobs
-    _configure_schedule_cron(req)
+    _configure_schedule_cron(effective_req)
 
     return {"status": "schedule_updated"}
 
@@ -7538,6 +7546,57 @@ def _resolve_schedule_timezone(name: str) -> ZoneInfo:
         return ZoneInfo(candidate)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(422, f"Unknown timezone: {name}") from exc
+
+
+async def _configured_company_timezone(storage: Any) -> str:
+    """Return the active company timezone for schedule/prompt consumers.
+
+    The active manifest is authoritative. A small config key supports
+    bootstrap/runtime doubles, followed by the deployment environment and UTC
+    as safe fallbacks.
+    """
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if callable(get_manifest):
+        try:
+            record = get_manifest(DEFAULT_COMPANY_ID)
+            if inspect.isawaitable(record):
+                record = await record
+            raw_manifest = record.get("manifest_json") if isinstance(record, dict) else None
+            candidate = raw_manifest.get("timezone") if isinstance(raw_manifest, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                candidate = candidate.strip()
+                try:
+                    _resolve_schedule_timezone(candidate)
+                except HTTPException:
+                    logger.warning("Invalid active-manifest timezone; falling back", extra={"timezone": candidate})
+                else:
+                    return candidate
+        except Exception:
+            logger.debug("Could not read active company manifest timezone", exc_info=True)
+
+    get_config = getattr(storage, "get_config", None)
+    if callable(get_config):
+        try:
+            configured = get_config("company_timezone")
+            if inspect.isawaitable(configured):
+                configured = await configured
+            if isinstance(configured, str) and configured.strip():
+                candidate = configured.strip()
+                try:
+                    _resolve_schedule_timezone(candidate)
+                except HTTPException:
+                    logger.warning("Invalid persisted company timezone; falling back", extra={"timezone": candidate})
+                else:
+                    return candidate
+        except Exception:
+            logger.debug("Could not read persisted company timezone", exc_info=True)
+
+    candidate = os.environ.get("AIAT_COMPANY_TIMEZONE", "UTC").strip() or "UTC"
+    try:
+        _resolve_schedule_timezone(candidate)
+    except HTTPException:
+        return "UTC"
+    return candidate
 
 
 async def _cron_shutdown() -> None:
@@ -14412,6 +14471,7 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
 
     if "schedule" in lowered:
         storage = _storage()
+        company_timezone = await _configured_company_timezone(storage)
         if re.search(r"\b(?:show|status|current|what|inspect|list)\b", lowered) or not re.search(
             r"\b(?:enable|disable|set|update|change|configure)\b", lowered
         ):
@@ -14419,7 +14479,7 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
                 "enabled": (await storage.get_config("schedule_enabled") or "false") == "true",
                 "start_hour": int(await storage.get_config("schedule_start_hour") or 8),
                 "end_hour": int(await storage.get_config("schedule_end_hour") or 18),
-                "timezone": await storage.get_config("schedule_timezone") or "UTC",
+                "timezone": await storage.get_config("schedule_timezone") or company_timezone,
                 "days": (await storage.get_config("schedule_days") or "mon,tue,wed,thu,fri").split(","),
                 "auto_shutdown": (await storage.get_config("schedule_auto_shutdown") or "true") == "true",
                 "auto_resume": (await storage.get_config("schedule_auto_resume") or "true") == "true",
@@ -14449,14 +14509,14 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
             enabled=enabled,
             start_hour=int(start_match.group(1)) if start_match else int(await storage.get_config("schedule_start_hour") or 8),
             end_hour=int(end_match.group(1)) if end_match else int(await storage.get_config("schedule_end_hour") or 18),
-            timezone=timezone_match.group(1) if timezone_match else (await storage.get_config("schedule_timezone") or "UTC"),
+            timezone=timezone_match.group(1) if timezone_match else (await storage.get_config("schedule_timezone") or company_timezone),
             days=current_days,
             auto_shutdown="no auto shutdown" not in lowered,
             auto_resume="no auto resume" not in lowered,
         )
         try:
-            ZoneInfo(req.timezone)
-        except ZoneInfoNotFoundError:
+            _resolve_schedule_timezone(req.timezone)
+        except HTTPException:
             return {
                 "type": "system_schedule",
                 "status": "needs_timezone",

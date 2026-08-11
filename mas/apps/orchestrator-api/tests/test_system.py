@@ -612,6 +612,25 @@ async def test_update_schedule_defaults(client):
 
 
 @pytest.mark.anyio
+async def test_update_schedule_defaults_to_active_company_timezone(client):
+    """An omitted schedule timezone inherits the active manifest policy."""
+    storage = _make_storage()
+    storage.get_company_manifest = AsyncMock(
+        return_value={"manifest_json": {"timezone": "America/Toronto"}}
+    )
+    _patch_state(storage)
+
+    with patch("orchestrator_api.main._configure_schedule_cron"):
+        resp = await client.put("/system/schedule", json={"enabled": True})
+
+    assert resp.status_code == 200
+    assert (
+        "schedule_timezone",
+        "America/Toronto",
+    ) in [call.args for call in storage.set_config.await_args_list]
+
+
+@pytest.mark.anyio
 async def test_update_schedule_invalid_start_hour(client):
     """PUT /system/schedule returns 422 for start_hour > 23."""
     resp = await client.put("/system/schedule", json={"start_hour": 25})
