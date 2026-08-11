@@ -37,6 +37,7 @@ from mas_core.memory.models import (
     issues,
     kpi_snapshots,
     metadata,
+    native_trace_spans,
     project_state_history,
     projects,
     review_comments,
@@ -144,6 +145,8 @@ class TestModelsMetadata:
         "agent_checkpoints",
         "memory",
         "task_log",
+        "api_request_observations",
+        "native_trace_spans",
         "artifacts",
         "infra_events",
         "capabilities",
@@ -252,7 +255,32 @@ class TestModelsMetadata:
         from mas_core.memory.models import integration_evidence_records
 
         cols = {c.name for c in integration_evidence_records.columns}
-        assert {"connection_id", "evidence_type", "payload", "idempotency_key"} <= cols
+        assert {"connection_id", "evidence_type", "payload", "idempotency_key", "trace_id", "span_id"} <= cols
+
+    def test_native_trace_span_columns_are_payload_free(self):
+        cols = {c.name for c in native_trace_spans.columns}
+        assert {
+            "trace_id",
+            "span_id",
+            "parent_span_id",
+            "source_kind",
+            "operation",
+            "service",
+            "status",
+            "started_at",
+            "ended_at",
+            "duration_ms",
+            "sampled",
+            "retention_until",
+            "attributes_json",
+        } <= cols
+        assert "payload" not in cols
+
+    def test_worker_evidence_columns_include_trace_context(self):
+        from mas_core.memory.models import worker_artifacts, worker_usage_records
+
+        assert {"trace_id", "span_id"} <= {c.name for c in worker_artifacts.columns}
+        assert {"trace_id", "span_id"} <= {c.name for c in worker_usage_records.columns}
 
     def test_pm_forensics_columns(self):
         from mas_core.memory.models import (
@@ -377,6 +405,61 @@ class TestAgentStorageCRUD:
         storage._engine = engine
         storage._dsn = "postgresql+asyncpg://test:test@localhost/test"
         return storage, engine
+
+    @pytest.mark.asyncio
+    async def test_compatibility_matrix_writer_persists_bounded_evidence(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        worker_id = uuid4()
+
+        result = await storage.create_compatibility_matrix(
+            worker_id=worker_id,
+            runtime_version="1.17.13",
+            adapter_version="1.0.0",
+            contract_version="aiat.adapter.v1",
+            model_profiles={"worker": "opencode-phase0b-coding"},
+            capabilities={"task_types": ["code"]},
+            fixtures=["worker_contract", "canary"],
+            passed=False,
+        )
+
+        assert result["worker_id"] == worker_id
+        assert result["fixtures"] == ["worker_contract", "canary"]
+        assert result["passed"] is False
+        assert conn.execute.await_count == 1
+        assert compatibility_matrices.name == "compatibility_matrices"
+
+    @pytest.mark.asyncio
+    async def test_native_trace_span_writer_is_payload_free_and_queryable(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        span = await storage.create_native_trace_span(
+            trace_id="trace-storage-001",
+            span_id="span-storage-001",
+            source_kind="tool",
+            operation="clock.now",
+            service="tool_service",
+            status="success",
+            duration_ms=3,
+            attributes={
+                "tool": "clock.now",
+                "request_body": "must-not-persist",
+            },
+        )
+        assert span["trace_id"] == "trace-storage-001"
+        assert span["span_id"] == "span-storage-001"
+        assert span["attributes_json"] == {"tool": "clock.now"}
+        assert conn.execute.await_count == 1
+
+        result_mock = MagicMock()
+        result_mock.mappings.return_value = _mock_mappings(
+            [{"id": span["id"], "trace_id": "trace-storage-001", "span_id": "span-storage-001"}]
+        )
+        conn.execute = AsyncMock(return_value=result_mock)
+        rows = await storage.list_native_trace_spans_by_trace("trace-storage-001", limit=4)
+        assert rows[0]["span_id"] == "span-storage-001"
 
     # ── Projects ──
 

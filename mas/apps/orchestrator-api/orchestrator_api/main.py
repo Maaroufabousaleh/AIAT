@@ -6148,7 +6148,7 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
 @app.post("/tasks")
 async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
     """Publish an ADMIN_TASK to the correct team admin via the router."""
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     team_id = body.get("team_id", "exec_ceo")
@@ -10590,6 +10590,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             checkpoint_policy=req.checkpoint_policy,
             retry_policy=req.retry_policy,
             extensions=req.runtime_extensions,
+            trace_id=current_trace_id(),
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

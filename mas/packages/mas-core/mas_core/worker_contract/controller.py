@@ -221,6 +221,8 @@ class WorkerRunController:
                 sha256=artifact.sha256,
                 size_bytes=artifact.size_bytes,
                 metadata=metadata,
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
         usage = result.usage
         await self.storage.create_worker_usage(
@@ -237,6 +239,8 @@ class WorkerRunController:
                 },
                 "provider_id": usage.provider,
                 "exact_model_id": usage.exact_model_id,
+                "trace_id": request.trace_id,
+                "span_id": request.span_id,
             },
         )
         # The worker-specific record preserves the exact runtime payload;

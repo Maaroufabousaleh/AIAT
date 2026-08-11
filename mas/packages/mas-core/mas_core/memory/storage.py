@@ -7967,6 +7967,52 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
+    async def create_compatibility_matrix(
+        self,
+        *,
+        worker_id: UUID,
+        runtime_version: str,
+        adapter_version: str,
+        contract_version: str,
+        model_profiles: dict[str, Any] | None = None,
+        capabilities: dict[str, Any] | None = None,
+        fixtures: list[str] | None = None,
+        passed: bool = False,
+        matrix_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Persist one steward-owned runtime/adapter compatibility result."""
+        values = {
+            "id": matrix_id or uuid4(),
+            "worker_id": worker_id,
+            "runtime_version": runtime_version,
+            "adapter_version": adapter_version,
+            "contract_version": contract_version,
+            "model_profiles_json": model_profiles or {},
+            "capabilities_json": capabilities or {},
+            "fixtures": fixtures or [],
+            "passed": passed,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.compatibility_matrices.insert().values(**values))
+        return values
+
+    async def list_compatibility_matrices(
+        self,
+        worker_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List compatibility evidence newest-first for operator inspection."""
+        query = (
+            t.compatibility_matrices.select()
+            .where(t.compatibility_matrices.c.worker_id == worker_id)
+            .order_by(t.compatibility_matrices.c.created_at.desc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def create_skill_bundle(self, *, worker_id: UUID, steward_id: UUID, semantic_version: str, format_version: str, upstream_compatibility_range: str, provenance: dict[str, Any], bundle: dict[str, Any], content_hash: str, status: str = "DRAFT") -> dict[str, Any]:
         values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "semantic_version": semantic_version, "format_version": format_version, "upstream_compatibility_range": upstream_compatibility_range, "provenance_json": provenance, "bundle_json": bundle, "content_hash": content_hash, "status": status}
         async with self.engine.begin() as conn:

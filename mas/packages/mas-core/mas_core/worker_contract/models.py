@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 CONTRACT_VERSION = "aiat.worker.v1"
 ADAPTER_API_VERSION = "aiat.adapter.v1"
 SKILL_BUNDLE_FORMAT_VERSION = "aiat.skill-bundle.v1"
+_TRACE_CONTEXT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class ContractError(ValueError):
@@ -255,6 +256,10 @@ class WorkerRunRequest(_ContractModel):
     checkpoint_policy: dict[str, Any] = Field(default_factory=dict)
     retry_policy: dict[str, Any] = Field(default_factory=dict)
     extensions: dict[str, Any] = Field(default_factory=dict)
+    # Safe correlation metadata is carried separately from task input so it
+    # can be persisted on model/artifact evidence without exposing payloads.
+    trace_id: str | None = None
+    span_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("idempotency_key", "worker_id", "task_type")
@@ -264,6 +269,16 @@ class WorkerRunRequest(_ContractModel):
         if not value:
             raise ValueError("request identity values must not be blank")
         return value
+
+    @field_validator("trace_id", "span_id")
+    @classmethod
+    def safe_trace_context(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not _TRACE_CONTEXT_RE.fullmatch(normalized):
+            raise ValueError("trace and span identifiers must be bounded safe values")
+        return normalized
 
 
 class WorkerRunAccepted(_ContractModel):
