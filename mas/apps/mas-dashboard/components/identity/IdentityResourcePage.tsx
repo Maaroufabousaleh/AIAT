@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -21,8 +21,9 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState("");
+  const [stale, setStale] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -30,14 +31,16 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Identity data is unavailable");
       setItems(Array.isArray(data.items) ? data.items : []);
+      setStale(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Identity data is unavailable");
+      setStale(true);
     } finally {
       setLoading(false);
     }
-  }
+  }, [resource]);
 
-  useEffect(() => { void load(); }, [resource]);
+  useEffect(() => { void load(); }, [load]);
   const columns = Array.from(new Set(items.flatMap((item) => Object.keys(item).filter((key) => !SENSITIVE.test(key))))).slice(0, 10);
 
   function itemActions(item: Record<string, unknown>): { action: string; label: string }[] {
@@ -78,7 +81,7 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader title={title} description={description} actions={
-        <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading}>
+        <button type="button" onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading} aria-busy={loading}>
           <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
         </button>
       } />
@@ -86,7 +89,28 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
         <ShieldCheck size={17} className="mt-0.5 flex-none" />
         Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
       </div>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner
+          tone={stale && items.length > 0 ? "warning" : "error"}
+          title={stale && items.length > 0 ? "Showing last known records" : "Identity data unavailable"}
+          action={
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-busy={loading}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+              Retry
+            </button>
+          }
+        >
+          {stale && items.length > 0
+            ? `The latest refresh failed (${error}). The table remains usable but may be out of date.`
+            : error}
+        </ErrorBanner>
+      )}
       {!loading && !error && items.length === 0 && <EmptyState title="No records" description="No identity records are available for this view." />}
       {items.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
         <table className="min-w-full text-left text-sm">
