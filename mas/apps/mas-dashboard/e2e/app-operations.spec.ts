@@ -20,7 +20,9 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "Credentials Manager" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /new secret/i }).click();
+    // The visible label is "New Secret"; the accessible name is the
+    // descriptive action label exposed to keyboard/screen-reader users.
+    await page.getByRole("button", { name: /create new credential/i }).click();
     await page.getByPlaceholder("OPENAI_API_KEY").fill(name);
     await page.getByPlaceholder("sk-...").fill(value);
     await page
@@ -98,7 +100,8 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page
         .getByText("Input Schema")
-        .or(page.getByText(/Circuit Breaker/i).first()),
+        .or(page.getByText(/Circuit Breaker/i).first())
+        .first(),
     ).toBeVisible();
   });
 
