@@ -6874,6 +6874,7 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         CandidateRecord,
         CapabilitySnapshot,
         CertificationRun,
+        CompatibilityMatrix,
         DocumentationSnapshot,
         DocumentationSource,
         ExternalProvenance,
@@ -6942,6 +6943,27 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
                 )
             except (KeyError, ValueError):
                 logger.warning("steward_capability_snapshot_rehydrate_failed", extra={"snapshot_id": str(row.get("id"))})
+    if inspect.iscoroutinefunction(getattr(storage, "list_compatibility_matrices", None)):
+        for row in await storage.list_compatibility_matrices(worker_id):
+            try:
+                steward.record_compatibility_matrix(
+                    CompatibilityMatrix(
+                        matrix_id=UUID(str(row["id"])),
+                        runtime_version=str(row["runtime_version"]),
+                        adapter_version=str(row["adapter_version"]),
+                        contract_version=str(row["contract_version"]),
+                        model_profiles=row.get("model_profiles_json") or {},
+                        capabilities=row.get("capabilities_json") or {},
+                        fixtures=tuple(row.get("fixtures") or []),
+                        passed=bool(row.get("passed", False)),
+                        generated_at=row.get("created_at") or datetime.now(UTC),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    "steward_compatibility_matrix_rehydrate_failed",
+                    extra={"matrix_id": str(row.get("id"))},
+                )
     for row in await storage.list_skill_bundle_candidates(worker_id):
         raw_candidate = (row.get("evidence_json") or {}).get("candidate_record")
         if raw_candidate:

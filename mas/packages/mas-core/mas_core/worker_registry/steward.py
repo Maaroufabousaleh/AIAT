@@ -180,10 +180,44 @@ class CompatibilityMatrix(BaseModel):
     adapter_version: str
     contract_version: str
     model_profiles: dict[str, tuple[str, ...]] = Field(default_factory=dict)
-    capabilities: dict[str, str] = Field(default_factory=dict)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
     fixtures: tuple[str, ...] = ()
     passed: bool = False
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("model_profiles", mode="before")
+    @classmethod
+    def normalize_model_profiles(cls, value: Any) -> dict[str, tuple[str, ...]]:
+        """Accept the storage/API shorthand while keeping the model immutable in shape.
+
+        Certification persistence stores a single profile as ``{"worker": "id"}``,
+        while the domain model represents one or more versions as tuples.  Normalizing
+        at the model boundary keeps rehydration lossless without letting arbitrary
+        scalar or non-object payloads leak into the steward evidence graph.
+        """
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("model_profiles must be an object")
+        normalized: dict[str, tuple[str, ...]] = {}
+        for key, raw in value.items():
+            if isinstance(raw, str):
+                versions = (raw,)
+            elif isinstance(raw, (list, tuple, set, frozenset)):
+                versions = tuple(str(item) for item in raw)
+            else:
+                versions = (str(raw),)
+            normalized[str(key)] = versions
+        return normalized
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def require_capability_object(cls, value: Any) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("capabilities must be an object")
+        return {str(key): item for key, item in value.items()}
 
 
 class SkillBundle(BaseModel):

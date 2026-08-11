@@ -33,6 +33,23 @@ class _RehydrationStorage:
     async def list_capability_snapshots(self, _worker_id, *, steward_id=None):
         return []
 
+    async def list_compatibility_matrices(self, _worker_id):
+        candidate = next(iter(self._steward.candidates.values()))
+        return [
+            {
+                "id": uuid4(),
+                "runtime_version": "1.0.0",
+                "adapter_version": "1.0.0",
+                "contract_version": "aiat.adapter.v1",
+                "model_profiles_json": {"worker": "profile-v1"},
+                "capabilities_json": {"required_model_capabilities": ["tool_calling"]},
+                "fixtures": ["worker_contract"],
+                "passed": True,
+                "created_at": None,
+                "candidate_id": candidate.candidate_id,
+            }
+        ]
+
     async def list_skill_bundle_candidates(self, _worker_id):
         candidate = next(iter(self._steward.candidates.values()))
         return [
@@ -89,6 +106,11 @@ async def test_steward_runtime_rehydrates_durable_active_pointers() -> None:
         assert runtime.active_bundle.bundle_id == candidate.bundle.bundle_id
         assert runtime.active_adapter is not None
         assert runtime.active_adapter.adapter_id == candidate.adapter.adapter_id
+        assert len(runtime.compatibility_matrices) == 1
+        matrix = runtime.compatibility_matrices[0]
+        assert matrix.model_profiles == {"worker": ("profile-v1",)}
+        assert matrix.capabilities == {"required_model_capabilities": ["tool_calling"]}
+        assert matrix.passed is True
     finally:
         main._worker_steward_runtimes.pop(str(worker_id), None)
 
