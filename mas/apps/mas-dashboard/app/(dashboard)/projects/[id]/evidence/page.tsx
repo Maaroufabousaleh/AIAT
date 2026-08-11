@@ -112,7 +112,7 @@ export default function ProjectEvidencePage() {
         )}
       />
 
-      {error && <div className="mt-6"><ErrorBanner message={error} /></div>}
+      {error && <div className="mt-6"><ErrorBanner tone="warning">{error}</ErrorBanner></div>}
       {loading && !packageView && <p className="mt-8 text-sm text-slate-400">Loading evidence package…</p>}
 
       {packageView && (
