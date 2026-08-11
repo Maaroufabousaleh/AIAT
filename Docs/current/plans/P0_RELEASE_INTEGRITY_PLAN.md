@@ -76,7 +76,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - [x] Add a hierarchy-graph communication-policy overlay (`8b7d9f1`) so an
   operator can select a sender role and see allowed/denied team paths without
   changing policy. Dashboard typecheck, focused lint/build, and source-built
-  E2E coverage pass; the running Compose image predates the change and live
+  E2E spec coverage is checked in (execution remains pending); the running Compose image predates the change and live
   image evidence remains open while its Docker context contains unreadable
   `.tmp-*` paths.
 

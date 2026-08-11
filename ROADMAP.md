@@ -323,7 +323,8 @@ Required outcomes:
   external-router and dashboard hierarchy evidence remain separate.
 - [x] hierarchy visualization exposes a sender-role communication-policy
   overlay with color-coded/labeled allowed and denied team paths; dashboard
-  typecheck, focused lint/build, and source-built E2E coverage pass
+  typecheck and focused lint/build pass; the source-built E2E spec is checked in
+  but has not yet executed successfully against a current image
   (`8b7d9f1`). Live Compose image evidence remains open while the deployed
   image predates the commit and its Docker context contains unreadable
   `.tmp-*` paths.
