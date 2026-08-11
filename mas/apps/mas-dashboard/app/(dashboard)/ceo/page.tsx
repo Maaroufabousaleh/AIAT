@@ -8,12 +8,14 @@ import {
   Copy,
   Pause,
   Play,
+  RefreshCw,
   Search,
   Send,
   Trash2,
   X,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { FilterChip } from "@/components/ui/FilterChips";
@@ -42,6 +44,8 @@ export default function CeoPage() {
   const [search, setSearch] = useState("");
   const [activeType, setActiveType] = useState<KnownType>("ALL");
   const [groupByCycle, setGroupByCycle] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
 
   // Message composer state
   const [composerText, setComposerText] = useState("");
@@ -50,35 +54,98 @@ export default function CeoPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
+  const entriesRef = useRef<FeedEntry[]>([]);
+  const esRef = useRef<EventSource | null>(null);
+  const connectionIdRef = useRef(0);
+  const streamFailedRef = useRef(false);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/streams/exec_ceo?history=1&limit=50")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (cancelled || !data?.entries) return;
-        setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
+  const connect = useCallback((preserveEntries: boolean) => {
+    const connectionId = ++connectionIdRef.current;
+    const hadEntries = entriesRef.current.length > 0;
+    const isCurrent = () => connectionIdRef.current === connectionId;
+
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = false;
+    setConnected(false);
+    setLoadError(null);
+    setStale(false);
+    if (!preserveEntries) {
+      entriesRef.current = [];
+      setEntries([]);
+    }
+
+    const reportError = (message: string) => {
+      if (!isCurrent()) return;
+      streamFailedRef.current = true;
+      setConnected(false);
+      setLoadError(message);
+      setStale(entriesRef.current.length > 0 || hadEntries);
+      esRef.current?.close();
+      esRef.current = null;
+    };
+
+    fetch("/api/streams/exec_ceo?history=1&limit=50", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
-      .catch(() => {
-        // The live connection below still reports stream state.
+      .then((data) => {
+        if (!isCurrent() || !data.entries) return;
+        const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
+        const liveEntries = entriesRef.current;
+        const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
+        const next = [...history.filter((entry) => !liveRaw.has(entry.raw)), ...liveEntries].slice(-300);
+        entriesRef.current = next;
+        setEntries(next);
+        if (!streamFailedRef.current) setLoadError(null);
+      })
+      .catch((cause: unknown) => {
+        if (!isCurrent()) return;
+        reportError(cause instanceof Error ? `CEO history unavailable: ${cause.message}` : "CEO history unavailable");
       });
 
     const es = new EventSource("/api/streams/exec_ceo");
-    es.addEventListener("connected", () => setConnected(true));
-    es.addEventListener("error", () => setConnected(false));
+    esRef.current = es;
+    es.addEventListener("connected", () => {
+      if (!isCurrent()) return;
+      setConnected(true);
+    });
+    es.addEventListener("error", (event) => {
+      const raw = (event as MessageEvent<string>).data;
+      let message = "CEO stream disconnected.";
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          message = raw;
+        }
+      }
+      reportError(message);
+    });
     es.onmessage = (e) => {
-      if (pausedRef.current) return;
-      setEntries((prev) => [...prev.slice(-300), entryFromRaw(e.data)]);
-    };
-    return () => {
-      cancelled = true;
-      es.close();
+      if (!isCurrent() || pausedRef.current) return;
+      setEntries((prev) => {
+        const next = [...prev, entryFromRaw(e.data)].slice(-300);
+        entriesRef.current = next;
+        return next;
+      });
     };
   }, []);
+
+  useEffect(() => {
+    connect(false);
+    return () => {
+      connectionIdRef.current += 1;
+      esRef.current?.close();
+      esRef.current = null;
+    };
+  }, [connect]);
 
   // Auto-scroll to bottom while the live feed is unpaused.
   useEffect(() => {
@@ -232,7 +299,11 @@ export default function CeoPage() {
           ts: now,
           outbound: true,
         };
-        setEntries((prev) => [...prev.slice(-299), outboundEntry]);
+        setEntries((prev) => {
+          const next = [...prev.slice(-299), outboundEntry];
+          entriesRef.current = next;
+          return next;
+        });
         setComposerText("");
       }
     } catch (e) {
@@ -268,7 +339,13 @@ export default function CeoPage() {
                   : "bg-slate-800/60 text-slate-400 border-slate-700",
               )}
               aria-live="polite"
-              aria-label={connected ? "Stream connected" : "Stream connecting"}
+              aria-label={
+                connected
+                  ? "Stream connected"
+                  : loadError
+                    ? "Stream disconnected"
+                    : "Stream connecting"
+              }
             >
               <span
                 className={clsx(
@@ -276,7 +353,11 @@ export default function CeoPage() {
                   connected ? "bg-emerald-400 animate-pulse" : "bg-slate-500",
                 )}
               />
-              {connected ? "stream:exec_ceo connected" : "connecting..."}
+              {connected
+                ? "stream:exec_ceo connected"
+                : loadError
+                  ? "stream disconnected"
+                  : "connecting..."}
             </span>
             <span className="text-slate-500">
               {entries.length} buffered · {filteredEntries.length} shown
@@ -318,16 +399,44 @@ export default function CeoPage() {
             </button>
             <button
               type="button"
-              onClick={() => setEntries([])}
+              onClick={() => {
+                entriesRef.current = [];
+                setEntries([]);
+              }}
               aria-label="Clear buffered messages"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
             >
               <Trash2 size={12} />
               Clear
             </button>
+            <button
+              type="button"
+              onClick={() => connect(true)}
+              aria-label="Reconnect CEO feed"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+            >
+              <RefreshCw size={12} />
+              Reconnect
+            </button>
           </>
         }
       />
+
+      {loadError && (
+        <div className="mx-4 mt-3">
+          <ErrorBanner
+            tone={stale ? "warning" : "error"}
+            title={stale ? "Showing last known CEO feed" : "CEO feed unavailable"}
+            action={(
+              <button type="button" onClick={() => connect(true)} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10">
+                Retry
+              </button>
+            )}
+          >
+            {stale ? `${loadError} Retained messages remain visible while the feed is retried.` : loadError}
+          </ErrorBanner>
+        </div>
+      )}
 
       {/* Message composer — talk directly to the CEO */}
       <div className="mx-4 mt-3 mb-1">
@@ -475,7 +584,9 @@ export default function CeoPage() {
                 connected ? "No recent CEO activity" : "Connecting to stream…"
               }
               description={
-                connected
+                loadError
+                  ? "The last CEO feed refresh failed. Use Retry to reconnect while retained messages remain visible."
+                  : connected
                   ? "The live connection is open. CEO messages will appear here immediately, and retained Redis history is loaded when available."
                   : "The dashboard is establishing a Server-Sent Events connection to the orchestrator."
               }
