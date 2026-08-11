@@ -1,0 +1,37 @@
+{
+  "schema_version": "aiat.native-release-preflight-evidence.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-11T21:06:22Z",
+  "mode": "local-preflight",
+  "status": "blocked",
+  "source_command": "scripts/check_release_environment.py --require-native-linux --json",
+  "host": {
+    "system": "Linux",
+    "kernel": "6.6.87.2-microsoft-standard-WSL2",
+    "native_linux": false
+  },
+  "git": {
+    "revision": "d8c51b2e5624c6d9eb5922d0fffecbd3ebc56e31",
+    "working_tree_clean": false
+  },
+  "docker": {
+    "engine_available": true,
+    "compose_v2_available": true,
+    "runtimes_metadata_available": true,
+    "runsc_registered": false
+  },
+  "image_refs": {
+    "configured_count": 0,
+    "digest_pinned_count": 0,
+    "required_count": 10
+  },
+  "blockers": [
+    "host is not a native Linux release host",
+    "gVisor runsc runtime is not registered",
+    "working tree is dirty",
+    "deployment-supplied immutable image refs are absent"
+  ],
+  "scope": "native release-host prerequisite preflight; no deployment mutation or release decision",
+  "licence_metadata_is_gate": false,
+  "secret_policy": "image values, credentials, and environment values are never retained"
+}

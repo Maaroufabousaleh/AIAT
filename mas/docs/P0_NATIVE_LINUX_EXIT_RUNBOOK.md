@@ -20,6 +20,8 @@ Run the commands below from the `mas/` workspace unless a path says otherwise.
 
    ```bash
    uv run python scripts/check_provenance.py
+   uv run python scripts/check_release_environment.py --require-native-linux --json \
+     > /secure/aiat-native-release-preflight.json
    uv run python scripts/check_worker_reconciliation.py --json
    uv run python scripts/check_image_provenance.py --env-file /secure/aiat-image-lock.env
    uv run python scripts/check_image_provenance.py --live --json \
@@ -46,6 +48,11 @@ Run the commands below from the `mas/` workspace unless a path says otherwise.
    The release-ledger command is the aggregation boundary for this run. It
    records static/contract/recovery results, pending evidence, worktree state,
    and the conservative `NO-RELEASE` decision without printing credentials.
+   The native-release preflight must be run before the ledger. It returns exit
+   `0` only on a native Linux host with Docker/Compose v2, registered `runsc`,
+   a clean tree, and all ten digest-bearing deployment image refs. Exit `2`
+   is an explicit prerequisite block; it never substitutes WSL/Docker Desktop
+   observations for native release evidence.
 
 ## 2. Build/pull and reconcile images
 

@@ -175,6 +175,11 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   transport/tool evidence plus any externally blocked checks, pending evidence
   items, and
   `NO-RELEASE` in [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
+- [x] Add the fail-closed `--require-native-linux` release-environment
+  preflight. It checks native-Linux identity, Docker/Compose v2, registered
+  `runsc`, clean-tree state, and all ten digest-bearing deployment image refs
+  without retaining values; the current WSL run is explicitly blocked and is
+  retained at [`native_release_preflight.json`](../../../mas/docs/provenance/native_release_preflight.json).
 - [x] Bound each child checker with a configurable, capped timeout; a timed-out
   live checker is recorded as `blocked` and never upgraded to pass.
 - [x] Run independent release-ledger child checks through a bounded concurrent

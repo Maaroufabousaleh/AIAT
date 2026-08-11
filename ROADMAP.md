@@ -848,7 +848,7 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
    bounded series, retained at [`provenance/metric_series_live.json`](mas/docs/provenance/metric_series_live.json)). [ ] Run the native many-project scrape.
 8. [x] Split the heavyweight tool image and define budgets (`b24ca0c`). [x] Measure both profiles on the current local Linux engine. [x] Validate the minimum CycloneDX artifact shape when an SBOM is supplied (`42b03a3`). [ ] Repeat on a clean native-Linux release host with compressed archive/SBOM/scan evidence.
 9. [x] Codify the static/live network boundary verifier and remove the OpenCode runtime from the runner network (`43bee16`). [x] Recreate the local stack and pass the 11-runner denial/allow matrix; [ ] repeat on a native-Linux release host.
-10. [ ] Run the live network/sandbox/recovery evidence on native Linux.
+10. [x] Add the fail-closed native release-host preflight (`--require-native-linux`) and retain the current WSL blocked result at [`native_release_preflight.json`](mas/docs/provenance/native_release_preflight.json); [ ] run the live network/sandbox/recovery evidence on native Linux.
 11. [x] Publish a current progress ledger.
 12. [ ] Refresh the frozen release ledger after native/live evidence.
 
