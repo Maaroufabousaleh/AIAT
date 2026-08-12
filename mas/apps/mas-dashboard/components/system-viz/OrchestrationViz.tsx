@@ -149,9 +149,10 @@ export function OrchestrationViz({
           <div className="grid grid-cols-2 gap-2">
             {flows.map(flow => (
               <button
+                type="button"
                 key={flow.id}
                 onClick={() => onFlowSelect?.(flow.id)}
-                className="p-3 bg-gray-900 hover:bg-gray-800 rounded-lg text-left transition-colors"
+                className="min-h-11 p-3 bg-gray-900 hover:bg-gray-800 rounded-lg text-left transition-colors"
               >
                 <div className="flex items-center gap-2 mb-1">
                   <GitBranch size={14} className="text-blue-400" />
@@ -171,8 +172,9 @@ export function OrchestrationViz({
       <div className="flex-shrink-0 flex items-center justify-between p-3 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => onFlowSelect?.(null)}
-            className="text-sm text-gray-400 hover:text-white"
+            className="inline-flex min-h-11 items-center text-sm text-gray-400 hover:text-white"
           >
             ← Back
           </button>
@@ -181,19 +183,21 @@ export function OrchestrationViz({
         
         <div className="flex items-center gap-1 bg-gray-900 rounded p-1">
           <button
+            type="button"
             onClick={() => setViewMode("graph")}
             className={clsx(
-              "px-2 py-1 text-xs rounded",
-              viewMode === "graph" ? "bg-blue-600 text-white" : "text-gray-400"
+              "min-h-11 px-2 py-1 text-xs rounded",
+              viewMode === "graph" ? "bg-blue-600 text-white" : "text-white/70"
             )}
           >
             Graph
           </button>
           <button
+            type="button"
             onClick={() => setViewMode("states")}
             className={clsx(
-              "px-2 py-1 text-xs rounded",
-              viewMode === "states" ? "bg-blue-600 text-white" : "text-gray-400"
+              "min-h-11 px-2 py-1 text-xs rounded",
+              viewMode === "states" ? "bg-blue-600 text-white" : "text-white/70"
             )}
           >
             States

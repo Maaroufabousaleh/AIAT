@@ -244,7 +244,7 @@ export function HierarchyViz({
           aria-pressed={policyOverlay}
           onClick={() => setPolicyOverlay((visible) => !visible)}
           disabled={policyRoles.length === 0}
-          className="rounded-md border border-slate-600 px-2 py-1 font-medium text-slate-100 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex min-h-11 items-center rounded-md border border-slate-600 px-2 py-1 font-medium text-slate-100 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {policyOverlay ? "Hide communication policy" : "Show communication policy"}
         </button>
@@ -256,7 +256,7 @@ export function HierarchyViz({
               aria-label="Communication policy sender role"
               value={policySenderRole}
               onChange={(event) => setPolicySenderRole(event.target.value)}
-              className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
+              className="min-h-11 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100"
             >
               {policyRoles.map((role) => (
                 <option key={role} value={role}>

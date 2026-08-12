@@ -286,11 +286,10 @@ export default function SystemVisualizationPage() {
 
   if (loading) {
     return (
-      <div
+      <main
         className="dashboard-page"
-        role="status"
         aria-busy="true"
-        aria-label="Loading system visualization"
+        aria-label="System Visualization"
       >
         {/* Skeleton header */}
         <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-800/80 bg-slate-950/35 px-4 py-4 shadow-sm shadow-black/10">
@@ -340,14 +339,14 @@ export default function SystemVisualizationPage() {
           </div>
         </div>
 
-        <span className="sr-only">Loading system visualization...</span>
-      </div>
+        <span className="sr-only" role="status" aria-live="polite">Loading system visualization...</span>
+      </main>
     );
   }
 
   if (error) {
     return (
-      <div className="dashboard-page">
+      <main className="dashboard-page" aria-label="System Visualization">
         <PageHeader
           icon="alert"
           title="System Visualization"
@@ -358,8 +357,9 @@ export default function SystemVisualizationPage() {
           title="Failed to load system hierarchy"
           action={
             <button
+              type="button"
               onClick={handleRefresh}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-slate-800 hover:bg-slate-700 text-slate-100 transition-colors"
+              className="inline-flex min-h-11 items-center px-3 py-1.5 text-xs font-medium rounded-md bg-slate-800 hover:bg-slate-700 text-slate-100 transition-colors"
             >
               Retry
             </button>
@@ -373,20 +373,21 @@ export default function SystemVisualizationPage() {
           description="We could not reach the system hierarchy endpoint. Retry, or check the System status page if this keeps happening."
           action={
             <button
+              type="button"
               onClick={handleRefresh}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
             >
               <RefreshCw size={14} />
               Retry
             </button>
           }
         />
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="System Visualization">
       {/* Breadcrumbs — keep simple, semantic, keyboard-friendly */}
       <nav
         aria-label="Breadcrumb"
@@ -394,7 +395,7 @@ export default function SystemVisualizationPage() {
       >
         <Link
           href="/"
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
+          className="inline-flex min-h-11 items-center gap-1 rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
         >
           <Home size={12} aria-hidden="true" />
           Dashboard
@@ -402,7 +403,7 @@ export default function SystemVisualizationPage() {
         <ChevronRight size={12} aria-hidden="true" className="text-slate-700" />
         <Link
           href="/system"
-          className="rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
+          className="inline-flex min-h-11 items-center rounded px-1.5 py-0.5 hover:text-slate-200 hover:bg-slate-800/60 focus-visible:ring-2 focus-visible:ring-blue-400/70 transition-colors"
         >
           System
         </Link>
@@ -439,11 +440,12 @@ export default function SystemVisualizationPage() {
           <>
             {viewMode === "orchestration" && (
               <button
+                type="button"
                 onClick={() => setTraceMode(!traceMode)}
                 aria-pressed={traceMode}
                 aria-label="Toggle path trace mode"
                 className={clsx(
-                  "inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                  "inline-flex min-h-11 items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
                   "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                   traceMode
                     ? "bg-amber-600 hover:bg-amber-500 text-white"
@@ -455,9 +457,10 @@ export default function SystemVisualizationPage() {
               </button>
             )}
             <button
+              type="button"
               onClick={handleRefresh}
               aria-label="Refresh visualization data"
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/70 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/70 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
             >
               <RefreshCw size={14} aria-hidden="true" />
               Refresh
@@ -490,6 +493,7 @@ export default function SystemVisualizationPage() {
       <div
         role="tablist"
         aria-label="Visualization views"
+        aria-orientation="horizontal"
         className="dashboard-toolbar inline-flex items-center gap-1 p-1"
       >
         {VIEW_MODES.map((mode) => {
@@ -498,9 +502,11 @@ export default function SystemVisualizationPage() {
           return (
             <button
               key={mode.id}
+              type="button"
               role="tab"
               aria-selected={active}
               aria-controls={`viz-panel-${mode.id}`}
+              id={`viz-tab-${mode.id}`}
               onClick={() => {
                 setViewMode(mode.id);
                 setSelectedTeam(null);
@@ -508,7 +514,7 @@ export default function SystemVisualizationPage() {
                 clearTrace();
               }}
               className={clsx(
-                "inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                "inline-flex min-h-11 items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
                 "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 active
                   ? "bg-blue-600 text-white shadow-sm shadow-blue-950/40"
@@ -590,10 +596,11 @@ export default function SystemVisualizationPage() {
               </pre>
             </div>
             <button
+              type="button"
               onClick={copyMermaid}
               aria-label="Copy mermaid definition to clipboard"
               className={clsx(
-                "self-start inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors",
+                "self-start inline-flex min-h-11 items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors",
                 "focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 mermaidCopied
                   ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-300"
@@ -623,7 +630,7 @@ export default function SystemVisualizationPage() {
             id="trace-start"
             value={traceStart || ""}
             onChange={(e) => setTraceStart(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            className="min-h-11 bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <option value="">Select start node...</option>
             {flows
@@ -642,7 +649,7 @@ export default function SystemVisualizationPage() {
             id="trace-end"
             value={traceEnd || ""}
             onChange={(e) => setTraceEnd(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            className="min-h-11 bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <option value="">Select end node...</option>
             {flows
@@ -654,19 +661,21 @@ export default function SystemVisualizationPage() {
               ))}
           </select>
           <button
+            type="button"
             onClick={() =>
               traceStart && traceEnd && handleTracePath(traceStart, traceEnd)
             }
             disabled={!traceStart || !traceEnd}
             aria-label="Find path between selected nodes"
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            className="min-h-11 px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-white/70 text-white text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             Find Path
           </button>
           {highlightedPath && (
             <button
+              type="button"
               onClick={clearTrace}
-              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+              className="min-h-11 px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
             >
               Clear
             </button>
@@ -687,6 +696,7 @@ export default function SystemVisualizationPage() {
           id={`viz-panel-${viewMode}`}
           role="tabpanel"
           aria-label={`${VIEW_MODES.find((m) => m.id === viewMode)?.label ?? "Visualization"} view`}
+          aria-labelledby={`viz-tab-${viewMode}`}
           className="flex-1 min-w-0 dashboard-surface overflow-hidden"
         >
           {viewMode === "hierarchy" && (
@@ -721,8 +731,9 @@ export default function SystemVisualizationPage() {
               description="The permissions endpoint did not return a response. Refresh to retry, or check the System status page."
               action={
                 <button
+                  type="button"
                   onClick={handleRefresh}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium border border-slate-700 transition-colors"
+                  className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium border border-slate-700 transition-colors"
                 >
                   <RefreshCw size={14} aria-hidden="true" />
                   Retry
@@ -770,12 +781,13 @@ export default function SystemVisualizationPage() {
                   : "Team Details"}
               </h3>
               <button
+                type="button"
                 onClick={() => {
                   setSelectedTeam(null);
                   setSelectedFlow(null);
                 }}
                 aria-label="Close details panel"
-                className="p-1 rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
               >
                 <X size={14} aria-hidden="true" />
               </button>
@@ -999,13 +1011,13 @@ export default function SystemVisualizationPage() {
       <div className="pt-1">
         <a
           href="/system"
-          className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-200 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1 py-0.5"
+          className="inline-flex min-h-11 items-center gap-1.5 text-xs text-slate-500 hover:text-slate-200 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1 py-0.5"
         >
           <ChevronLeft size={12} aria-hidden="true" />
           Back to System Control
         </a>
       </div>
-    </div>
+    </main>
   );
 }
 

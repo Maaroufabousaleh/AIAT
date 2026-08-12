@@ -108,49 +108,247 @@ test.describe("Operational UI smoke flows", () => {
   test("system visualization exposes hierarchy, permissions, orchestration, and path tracing", async ({
     page,
   }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          teams: [
+            {
+              teamId: "team-executive",
+              displayName: "Executive Team",
+              tier: "executive",
+              admin: {
+                agentId: "exec-admin",
+                displayName: "Executive Admin",
+                role: "admin",
+                class: "ExecutiveAdmin",
+                budget: { max_llm_calls: 10, max_tool_calls: 10, max_cost_usd: 1 },
+                tools: ["time_now"],
+              },
+              workers: [],
+            },
+            {
+              teamId: "team-admin",
+              displayName: "Admin Team",
+              tier: "admin",
+              admin: {
+                agentId: "admin-agent",
+                displayName: "Admin Agent",
+                role: "admin",
+                class: "AdminAgent",
+                budget: { max_llm_calls: 10, max_tool_calls: 10, max_cost_usd: 1 },
+                tools: ["time_now"],
+              },
+              workers: [],
+            },
+          ],
+          hierarchy: [
+            {
+              teamId: "team-executive",
+              displayName: "Executive Team",
+              role: "executive",
+              tier: "executive",
+              admin: {
+                agentId: "exec-admin",
+                displayName: "Executive Admin",
+                role: "admin",
+                tools: ["time_now"],
+              },
+              workers: [],
+              children: [
+                {
+                  teamId: "team-admin",
+                  displayName: "Admin Team",
+                  role: "admin",
+                  tier: "admin",
+                  admin: {
+                    agentId: "admin-agent",
+                    displayName: "Admin Agent",
+                    role: "admin",
+                    tools: ["time_now"],
+                  },
+                  workers: [],
+                  children: [],
+                },
+              ],
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/system/permissions**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          policy: { worker: { allowed_tools: ["time_now"] } },
+          teamTiers: { "team-executive": "executive", "team-admin": "admin" },
+          messageTypes: { core: ["TASK", "RESULT"] },
+          communicationMatrix: {
+            worker: {
+              "team-executive": { allowed: true, msgTypes: ["TASK"] },
+              "team-admin": { allowed: false, msgTypes: [] },
+            },
+            executive: {
+              "team-executive": { allowed: true, msgTypes: ["DIRECTIVE"] },
+              "team-admin": { allowed: true, msgTypes: ["TASK"] },
+            },
+          },
+        }),
+      });
+    });
+    await page.route("**/api/system/orchestration**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          states: [
+            { id: "pending", label: "Pending", description: "Waiting" },
+            { id: "complete", label: "Complete", description: "Finished" },
+          ],
+          transitions: { pending: ["complete"] },
+          flows: [
+            {
+              id: "flow-review",
+              name: "Document Review Flow",
+              description: "Review a document",
+              nodes: [
+                { id: "start", type: "start", label: "Start", state: "pending" },
+                { id: "review", type: "task", label: "Review", state: "pending" },
+                { id: "end", type: "end", label: "End", state: "complete" },
+              ],
+              edges: [
+                { source: "start", target: "review" },
+                { source: "review", target: "end" },
+              ],
+            },
+          ],
+          dbFlows: [],
+        }),
+      });
+    });
+    await page.route("**/api/system/org-graph**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nodes: [{ id: "team-executive" }, { id: "team-admin" }],
+          edges: [{ source: "team-executive", target: "team-admin" }],
+          capability_edges: [],
+          mermaid: "graph TD\n  team-executive --> team-admin",
+        }),
+      });
+    });
     await page.goto("/system-viz");
     await expect(
       page.getByRole("heading", { name: "System Visualization" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("main", { name: "System Visualization" }),
+    ).toBeVisible();
+    const breadcrumbs = page.getByRole("navigation", { name: "Breadcrumb" });
+    for (const breadcrumb of ["Dashboard", "System"]) {
+      await expect(
+        breadcrumbs.getByRole("link", { name: breadcrumb, exact: true }),
+      ).toHaveCSS("min-height", "44px");
+    }
+    await expect(
+      page.getByRole("button", { name: "Refresh visualization data" }),
+    ).toHaveCSS("min-height", "44px");
+    const visualizationTabs = page.getByRole("tablist", {
+      name: "Visualization views",
+    });
+    await expect(visualizationTabs).toHaveAttribute(
+      "aria-orientation",
+      "horizontal",
+    );
+    for (const [tabName, tabId] of [
+      ["Team Hierarchy", "hierarchy"],
+      ["Permissions", "permissions"],
+      ["Orchestration", "orchestration"],
+    ] as const) {
+      const tab = page.getByRole("tab", { name: tabName, exact: true });
+      await expect(tab).toHaveCSS("min-height", "44px");
+      await expect(tab).toHaveAttribute(
+        "aria-controls",
+        `viz-panel-${tabId}`,
+      );
+    }
     await expect(page.getByText("Mermaid Export")).toBeVisible();
     await expect(page.getByLabel("Mermaid export source")).toContainText(
       "graph TD",
     );
+    await expect(
+      page.getByRole("button", { name: "Copy mermaid definition to clipboard" }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(
+      page.getByRole("link", { name: "Back to System Control" }),
+    ).toHaveCSS("min-height", "44px");
 
     await page.getByRole("tab", { name: /team hierarchy/i }).click();
     const policyToggle = page.getByRole("button", {
       name: "Toggle communication policy overlay",
     });
+    await expect(policyToggle).toHaveCSS("min-height", "44px");
     await policyToggle.click();
     await expect(policyToggle).toHaveAttribute("aria-pressed", "true");
     await expect(
       page.getByRole("region", { name: "Communication policy overlay controls" }),
     ).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "Communication policy sender role" })
-      .selectOption("worker");
+    const policyRole = page.getByRole("combobox", {
+      name: "Communication policy sender role",
+    });
+    await expect(policyRole).toHaveCSS("min-height", "44px");
+    await policyRole.selectOption("worker");
     await expect(page.getByText("Allowed path").first()).toBeVisible();
     await expect(page.getByText("Denied path").first()).toBeVisible();
     await policyToggle.click();
     await expect(policyToggle).toHaveAttribute("aria-pressed", "false");
 
     await page.getByRole("tab", { name: /permissions/i }).click();
+    await expect(
+      page.getByRole("combobox", { name: "Permission sender role" }),
+    ).toHaveCSS("min-height", "44px");
     await expect(page.getByText(/communication/i).first()).toBeVisible();
 
     await page.getByRole("tab", { name: /orchestration/i }).click();
     await expect(page.getByText(/select a flow/i)).toBeVisible();
-    await page
+    const flowChoice = page
+      .getByRole("button")
+      .filter({
+        hasText: /Document Review Flow|Escalation Flow|Simple Product Build Flow/i,
+      })
+      .first();
+    await expect(flowChoice).toHaveCSS("min-height", "44px");
+    await flowChoice
       .getByText(
         /Document Review Flow|Escalation Flow|Simple Product Build Flow/i,
       )
-      .first()
       .click();
     await expect(page.getByText("Flow Details")).toBeVisible();
+    for (const controlName of ["Graph", "States"]) {
+      await expect(
+        page.getByRole("button", { name: controlName, exact: true }),
+      ).toHaveCSS("min-height", "44px");
+    }
 
-    await page.getByRole("button", { name: /toggle path trace mode/i }).click();
+    const traceModeToggle = page.getByRole("button", {
+      name: /toggle path trace mode/i,
+    });
+    await expect(traceModeToggle).toHaveCSS("min-height", "44px");
+    await traceModeToggle.click();
+    await expect(page.locator("#trace-start")).toHaveCSS("min-height", "44px");
+    await expect(page.locator("#trace-end")).toHaveCSS("min-height", "44px");
     await page.locator("#trace-start").selectOption({ index: 1 });
     await page.locator("#trace-end").selectOption({ index: 2 });
-    await page.getByRole("button", { name: /find path/i }).click();
+    const findPath = page.getByRole("button", { name: /find path/i });
+    await expect(findPath).toHaveCSS("min-height", "44px");
+    await findPath.click();
+    await expect(page.getByRole("button", { name: /clear/i })).toHaveCSS(
+      "min-height",
+      "44px",
+    );
     await expect(page.getByRole("button", { name: /clear/i })).toBeVisible();
   });
 
