@@ -65,7 +65,11 @@ Its source-built partial/stale/retry test covers the focused baseline 1/1
 
 The Container Logs page now has named main/filter/legend/output/status regions,
 44px stream/filter/recovery targets, and an `aria-busy` log output. Its
-source-built stale/retry test covers the focused baseline 1/1 (`993b1cb`).
+source-built stale/retry test covers the focused baseline 1/1 (`993b1cb`). A
+401/403 SSE response now exposes a named access-denied region, preserves only
+previously loaded lines, invalidates obsolete stream generations, and hides
+load/retry, filter, clear, copy, and download controls; its focused denial
+matrix passes 3/3 (`156597c`).
 
 The Agent Streams page now has a named main/filter/feed/status structure, a
 captioned message table, keyboard-accessible expandable rows, 44px
@@ -259,7 +263,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Metrics partial/stale/retry and accessibility state: [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>), [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) (`85596b0`, `da113af`)
 - Flows list stale/retry and accessibility state: [`flows/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/page.tsx>), [`flows-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flows-states.spec.ts) (`6b0413b`)
 - Flow editor load/stale/retry and accessibility state: [`flows/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/[id]/page.tsx>), [`flow-store.ts`](../../mas/apps/mas-dashboard/lib/flow-store.ts), [`flow-editor-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flow-editor-states.spec.ts) (`140af1c`)
-- Container Logs stale/retry and accessibility state: [`logs/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/logs/page.tsx>), [`logs-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/logs-states.spec.ts) (`280d363`, `993b1cb`)
+- Container Logs stale/retry, accessibility, and access-denied state: [`logs/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/logs/page.tsx>), [`app/api/logs/[container]/route.ts`](<../../mas/apps/mas-dashboard/app/api/logs/[container]/route.ts>), [`logs-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/logs-states.spec.ts) (`280d363`, `993b1cb`, `156597c`)
 - Agent Streams stale/retry, accessibility, and access-denied state: [`streams/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/streams/page.tsx>), [`app/api/streams/[team_id]/route.ts`](../../mas/apps/mas-dashboard/app/api/streams/[team_id]/route.ts), [`streams-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/streams-states.spec.ts) (`3e8a0ea`, `d320383`, `118ff18`)
 - Hiring Board stale/retry, accessibility, and access-denied state: [`workers/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/workers/page.tsx>), [`workers-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/workers-states.spec.ts) (`7541b84`, `826b4c5`, `553f196`)
 - CEO Live Feed stale/retry, accessibility, and access-denied state: [`ceo/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/ceo/page.tsx>), [`app/api/streams/[team_id]/route.ts`](<../../mas/apps/mas-dashboard/app/api/streams/[team_id]/route.ts>), [`ceo-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/ceo-states.spec.ts) (`1761429`, `1f947a9`, `a3cbd99`)
