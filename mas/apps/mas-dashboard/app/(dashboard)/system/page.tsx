@@ -56,13 +56,13 @@ function ConfirmDialog({
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+            className="min-h-11 px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={clsx('px-4 py-2 text-sm text-white rounded-lg transition-colors font-medium', confirmClass)}
+            className={clsx('min-h-11 px-4 py-2 text-sm text-white rounded-lg transition-colors font-medium', confirmClass)}
           >
             {confirmLabel}
           </button>
@@ -259,15 +259,17 @@ export default function SystemPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64" role="status" aria-live="polite">
-        <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
-        <span className="sr-only">Loading system status</span>
-      </div>
+      <main className="dashboard-page" aria-label="System Control">
+        <div className="flex items-center justify-center h-64" role="status" aria-live="polite" aria-label="Loading system status">
+          <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
+          <span className="sr-only">Loading system status</span>
+        </div>
+      </main>
     );
   }
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="System Control">
       <PageHeader
         icon="settings"
         title="System Control"
@@ -276,7 +278,7 @@ export default function SystemPage() {
           <button
             onClick={requestRefresh}
             aria-label="Refresh system status"
-            className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm border border-slate-700/80 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm border border-slate-700/80 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
@@ -289,7 +291,7 @@ export default function SystemPage() {
           tone="warning"
           title={stale ? "Showing last known system status" : "Could not reach the orchestrator"}
           action={(
-            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10 disabled:opacity-50">
               Retry
             </button>
           )}
@@ -307,6 +309,7 @@ export default function SystemPage() {
               statusColor
             )}
             role="status"
+            aria-label="System runtime status"
             aria-live="polite"
           >
             <StatusIcon className="w-8 h-8 flex-shrink-0" />
@@ -394,9 +397,9 @@ export default function SystemPage() {
           )}
 
           {/* Control Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" role="region" aria-label="System runtime controls">
             {/* Shutdown */}
-            <div className="dashboard-surface p-5">
+            <div className="dashboard-surface p-5" role="region" aria-label="Shutdown system">
               <div className="flex items-start gap-3 mb-4">
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-rose-900/60 bg-rose-950/30 flex items-center justify-center">
                   <Power className="w-5 h-5 text-rose-300" />
@@ -416,7 +419,7 @@ export default function SystemPage() {
                 disabled={status.status === 'shutdown' || actionState.shutdown === 'loading'}
                 aria-label="Shutdown the MAS runtime"
                 className={clsx(
-                  'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'w-full min-h-11 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   actionState.shutdown === 'success'
                     ? 'bg-emerald-700 text-white'
                     : status.status === 'shutdown'
@@ -435,7 +438,7 @@ export default function SystemPage() {
             </div>
 
             {/* Resume */}
-            <div className="dashboard-surface p-5">
+            <div className="dashboard-surface p-5" role="region" aria-label="Resume system">
               <div className="flex items-start gap-3 mb-4">
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-emerald-900/60 bg-emerald-950/30 flex items-center justify-center">
                   <PlayCircle className="w-5 h-5 text-emerald-300" />
@@ -455,7 +458,7 @@ export default function SystemPage() {
                 disabled={status.status === 'running' || actionState.resume === 'loading'}
                 aria-label="Resume the MAS runtime"
                 className={clsx(
-                  'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'w-full min-h-11 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   actionState.resume === 'success'
                     ? 'bg-emerald-700 text-white'
                     : status.status === 'running'
@@ -475,7 +478,7 @@ export default function SystemPage() {
           </div>
 
           {/* Schedule Form */}
-          <div className="dashboard-surface p-5">
+          <div className="dashboard-surface p-5" role="region" aria-label="System schedule">
             <div className="flex items-center gap-2 mb-1">
               <Clock className="w-5 h-5 text-blue-400" />
               <h3 className="font-semibold text-white">Schedule (Cron)</h3>
@@ -505,7 +508,7 @@ export default function SystemPage() {
                   placeholder="e.g. 0 22 * * *"
                   title={CRON_HELP}
                   aria-describedby="cron-help"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
+                  className="w-full min-h-11 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
                 />
               </div>
               <div>
@@ -520,7 +523,7 @@ export default function SystemPage() {
                   placeholder="e.g. 0 8 * * *"
                   title={CRON_HELP}
                   aria-describedby="cron-help"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
+                  className="w-full min-h-11 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
                 />
               </div>
             </div>
@@ -531,7 +534,7 @@ export default function SystemPage() {
                 disabled={scheduleSaving || (!scheduleShutdown && !scheduleResume)}
                 aria-label="Save cron schedule"
                 className={clsx(
-                  'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'flex min-h-11 items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   scheduleSaveResult === 'ok'
                     ? 'bg-emerald-700 text-white'
                     : scheduleSaveResult === 'err'
@@ -574,6 +577,6 @@ export default function SystemPage() {
           onCancel={() => setShowResumeConfirm(false)}
         />
       )}
-    </div>
+    </main>
   );
 }
