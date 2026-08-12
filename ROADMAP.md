@@ -116,6 +116,13 @@ Flow, search/status filters, selection, editing, and deletion controls.
 Source-built stale, first-load-denial, retained-read-denial, and mutation-denial
 fixture coverage passes 4/4 (`3108b02`).
 
+The latest bounded dashboard increment is flow-editor denial-state recovery:
+401/403 canonical flow reads and saves now expose a named access-denied region,
+retain only the last successfully loaded canvas as read-only, and hide
+refresh/retry, palette, editing, undo/redo, and save controls. Source-built
+stale, first-load-denial, retained-read-denial, and mutation-denial fixture
+coverage passes 4/4 (`392d264`).
+
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
 relay, mailboxes, and outbound mail all pass the shared accessible metadata
@@ -319,6 +326,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Dashboard dead-letter queue access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); dead-letter queue read/replay boundary `e6ab3a1`, source-built `dlq-states.spec.ts` 3/3; native/live ACL and DLQ evidence remain open |
 | Dashboard Tools catalogue access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); Tools catalogue read boundary `b418f8a`, source-built `tools-states.spec.ts` 3/3; native/live ACL and tool-service evidence remain open |
 | Dashboard Flows list access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); Flows list read/delete boundary `3108b02`, source-built `flows-states.spec.ts` 4/4; native/live ACL and flow evidence remain open |
+| Dashboard flow-editor access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); flow-editor read/save boundary `392d264`, source-built `flow-editor-states.spec.ts` 4/4; native/live ACL and flow/runtime evidence remain open |
 | Local dashboard E2E evidence | [`dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json) — 58/59 Playwright tests pass on the WSL2 Compose stack, including hierarchy communication-policy/path tracing, retained hiring evaluation details, skip-link/mobile navigation focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage; native-Linux and provider-owned paths remain separate gates |
 | Tool authority catalogue and adapter boundary | [Tool Catalogue](tools.md) |
 | Worker/runtime declaration, persisted-binding reconciliation, run-lifecycle fixture, and selected run-readiness preflight | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [`check_worker_reconciliation.py`](mas/scripts/check_worker_reconciliation.py) (static/`--live`), [`check_worker_run_lifecycle.py`](mas/scripts/check_worker_run_lifecycle.py), [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py) (fixture/read-only `--live`), [`generate_worker_certification_matrix.py`](mas/scripts/generate_worker_certification_matrix.py), [`test_worker_certification_matrix.py`](mas/packages/mas-core/tests/test_worker_certification_matrix.py), [matrix](mas/docs/provenance/worker_certification_matrix.yaml) |
@@ -573,8 +581,11 @@ The flow editor's bounded UI recovery is now source-built proven: a failed
 first load is explicit and retryable, and a failed refresh retains the last
 known canvas before successful Retry (`b5098e7`). Its focused accessibility
 baseline now adds semantic editor landmarks and 44px toolbar/palette/config/
-generated-form controls (`140af1c`). This does not certify live flow
-execution, worker recovery, or provider integrations.
+generated-form controls (`140af1c`). It now also fails closed on 401/403 flow
+reads and saves, preserving only the last successfully loaded canvas as
+read-only and hiding mutation controls (`392d264`, source-built matrix 4/4).
+This does not certify live flow execution, worker recovery, or provider
+integrations.
 
 The project-detail route's bounded UI recovery is also source-built proven: a
 failed first project read is explicit, retains backend error detail, and
@@ -751,7 +762,7 @@ Required outcomes:
 **Plan:** [P1 Default Programme Completion](Docs/current/plans/P1_DEFAULT_PRODUCT_COMPLETION_PLAN.md)  
 **Depends on:** R2 for real worker task nodes
 
-Project-detail refresh failures are covered by the existing project workspace golden path: canonical project data remains visible, the page labels it stale, and an operator can retry without losing workspace context. Project-detail first-load failures now also show an explicit unavailable state with backend error detail and Retry before recovering into the workspace (`f364763`). The flow editor now has the same bounded load/recovery contract: first-load failures are explicit and retryable, while refresh failures retain the last-known canvas (`b5098e7`).
+Project-detail refresh failures are covered by the existing project workspace golden path: canonical project data remains visible, the page labels it stale, and an operator can retry without losing workspace context. Project-detail first-load failures now also show an explicit unavailable state with backend error detail and Retry before recovering into the workspace (`f364763`). The flow editor now has the same bounded load/recovery contract: first-load failures are explicit and retryable, while refresh failures retain the last-known canvas (`b5098e7`); its 401/403 canonical read/save boundary preserves only that canvas as read-only and hides editor mutations (`392d264`).
 
 The project workspace sub-surface now retains activity, resources, cost, and the
 last repository snapshot through failed `/workspace` or `/repository` refreshes,
@@ -886,7 +897,8 @@ headers, responsive wrapper, and 44px interaction targets in the same style of
 source-built stale/retry test (`6b0413b`).
 The flow editor now separately proves its semantic editor landmarks and 44px
 toolbar/palette/config/generated-form targets in the source-built recovery test
-(`140af1c`).
+(`140af1c`), and its read/save denial boundary passes the source-built 4/4
+matrix (`392d264`).
 The dead-letter queue now separately proves named queue/disclosure regions,
 `aria-pressed` severity filters, keyboard-visible envelope inspection, and
 44px recovery/selection/replay/inspection targets in its source-built recovery

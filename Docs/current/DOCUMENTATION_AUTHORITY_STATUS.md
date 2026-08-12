@@ -104,6 +104,10 @@ The Flows list denial-state recovery group `3108b02` now applies the same
 boundary to list reads and deletes; its source-built fixture matrix passes 4/4,
 covering stale retention, initial denial, retained-read denial, and mutation
 denial while keeping retained definitions read-only.
+The flow-editor denial-state recovery group `392d264` now applies the same
+boundary to canonical flow reads and saves; its source-built fixture matrix
+passes 4/4, covering stale recovery, initial denial, retained-read denial, and
+mutation denial while keeping the retained canvas read-only.
 
 ## Clean-checkout verification
 
