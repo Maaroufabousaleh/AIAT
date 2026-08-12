@@ -16,7 +16,6 @@ export interface FilterChipProps<T extends string> {
   activeTone?: "blue" | "gray" | "indigo" | "emerald" | "amber" | "violet";
   className?: string;
 }
-
 const ACTIVE_TONES: Record<"blue" | "gray" | "indigo" | "emerald" | "amber" | "violet", string> = {
   blue: "bg-blue-500/20 text-blue-100 border-blue-400/45 shadow-sm shadow-blue-950/20",
   gray: "bg-slate-600/25 text-white border-slate-500/60",
@@ -43,6 +42,7 @@ export function FilterChip<T extends string>({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={clsx(
         "px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors",
         active
