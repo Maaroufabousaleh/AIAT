@@ -82,7 +82,7 @@ export async function GET(req: Request, props: Params) {
           const body = await initial.text();
           controller.enqueue(
             encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${initial.status}` })}\n\n`,
+              `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${initial.status}`, status: initial.status })}\n\n`,
             ),
           );
           close();
@@ -123,7 +123,7 @@ export async function GET(req: Request, props: Params) {
               const body = await res.text();
               controller.enqueue(
                 encoder.encode(
-                  `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${res.status}` })}\n\n`,
+                  `event: error\ndata: ${JSON.stringify({ error: body || `HTTP ${res.status}`, status: res.status })}\n\n`,
                 ),
               );
               break;

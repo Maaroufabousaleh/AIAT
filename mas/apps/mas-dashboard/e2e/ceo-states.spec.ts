@@ -145,3 +145,112 @@ test("CEO live feed retains messages when reconnect fails", async ({ page }) => 
   await expect(page.getByText("Showing last known CEO feed")).toHaveCount(0);
   await expect(page.getByText("REPORT", { exact: true }).first()).toBeVisible();
 });
+
+test("CEO live feed access denial on first load hides read and send controls", async ({ page }) => {
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "CEO feed access denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 403,
+      contentType: "text/event-stream",
+      body: "",
+    });
+  });
+
+  await authenticate(page, "/ceo");
+  const ceo = page.getByRole("main", { name: "CEO live feed" });
+  await expect(
+    ceo.getByRole("region", { name: "CEO feed access status" }),
+  ).toBeVisible();
+  await expect(
+    ceo.getByRole("heading", { name: "CEO feed access denied" }),
+  ).toBeVisible();
+  await expect(
+    ceo.getByText("No live feed state is inferred or displayed."),
+  ).toBeVisible();
+  await expect(ceo.getByRole("region", { name: "CEO message composer" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Reconnect CEO feed" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(ceo.getByRole("searchbox", { name: "Search CEO feed" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Copy raw envelope to clipboard" })).toHaveCount(0);
+  await expect(
+    ceo.getByText("No live CEO feed state is inferred while authorization is unavailable."),
+  ).toBeVisible();
+});
+
+test("CEO live feed access denial after a successful read retains messages without controls", async ({ page }) => {
+  await page.addInitScript(() => {
+    class QuietEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readyState = QuietEventSource.OPEN;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+      }
+
+      close() {
+        this.readyState = QuietEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: QuietEventSource,
+    });
+  });
+
+  let historyReads = 0;
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      historyReads += 1;
+      if (historyReads > 1) {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "CEO feed authorization expired" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(HISTORY_FIXTURE),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "",
+    });
+  });
+
+  await authenticate(page, "/ceo");
+  const ceo = page.getByRole("main", { name: "CEO live feed" });
+  await expect(ceo.getByText("DIRECTIVE", { exact: true }).first()).toBeVisible();
+  await ceo.getByRole("button", { name: "Reconnect CEO feed" }).click();
+
+  await expect(
+    ceo.getByRole("region", { name: "CEO feed access status" }),
+  ).toBeVisible();
+  await expect(ceo.getByText("DIRECTIVE", { exact: true }).first()).toBeVisible();
+  await expect(ceo.getByText(/retained directive/)).toBeVisible();
+  await expect(ceo.getByRole("region", { name: "CEO message composer" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Reconnect CEO feed" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Clear buffered messages" })).toHaveCount(0);
+  await expect(ceo.getByRole("searchbox", { name: "Search CEO feed" })).toHaveCount(0);
+  await expect(ceo.getByRole("button", { name: "Copy raw envelope to clipboard" })).toHaveCount(0);
+});

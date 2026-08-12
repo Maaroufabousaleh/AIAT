@@ -46,6 +46,8 @@ export default function CeoPage() {
   const [groupByCycle, setGroupByCycle] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
 
   // Message composer state
   const [composerText, setComposerText] = useState("");
@@ -58,6 +60,19 @@ export default function CeoPage() {
   const esRef = useRef<EventSource | null>(null);
   const connectionIdRef = useRef(0);
   const streamFailedRef = useRef(false);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    connectionIdRef.current += 1;
+    setAccessDenied(true);
+    setHasReadContext(hasReadContextRef.current || entriesRef.current.length > 0);
+    setLoadError(null);
+    setStale(false);
+    setSendError(null);
+    setConnected(false);
+    esRef.current?.close();
+    esRef.current = null;
+  }, []);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -91,11 +106,17 @@ export default function CeoPage() {
 
     fetch("/api/streams/exec_ceo?history=1&limit=50", { cache: "no-store" })
       .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return null;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
       .then((data) => {
-        if (!isCurrent() || !data.entries) return;
+        if (!isCurrent() || !data?.entries) return;
+        hasReadContextRef.current = true;
+        setHasReadContext(true);
         const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
         const liveEntries = entriesRef.current;
         const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
@@ -113,18 +134,26 @@ export default function CeoPage() {
     esRef.current = es;
     es.addEventListener("connected", () => {
       if (!isCurrent()) return;
+      hasReadContextRef.current = true;
+      setHasReadContext(true);
       setConnected(true);
     });
     es.addEventListener("error", (event) => {
       const raw = (event as MessageEvent<string>).data;
       let message = "CEO stream disconnected.";
+      let status: number | undefined;
       if (raw) {
         try {
-          const parsed = JSON.parse(raw) as { error?: string };
+          const parsed = JSON.parse(raw) as { error?: string; status?: number };
           if (parsed.error) message = parsed.error;
+          status = parsed.status;
         } catch {
           message = raw;
         }
+      }
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
       }
       reportError(message);
     });
@@ -136,7 +165,7 @@ export default function CeoPage() {
         return next;
       });
     };
-  }, []);
+  }, [handleAccessDenied]);
 
   useEffect(() => {
     connect(false);
@@ -279,6 +308,10 @@ export default function CeoPage() {
         body: JSON.stringify({ message: text }),
       });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         setSendError(err.error ?? `HTTP ${res.status}`);
       } else {
@@ -311,7 +344,7 @@ export default function CeoPage() {
     } finally {
       setSending(false);
     }
-  }, [composerText, sending]);
+  }, [composerText, sending, handleAccessDenied]);
 
   // Handle Enter+Shift for newlines, Enter alone to send.
   const handleComposerKeyDown = useCallback(
@@ -368,7 +401,7 @@ export default function CeoPage() {
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -422,10 +455,25 @@ export default function CeoPage() {
               Reconnect
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {loadError && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="CEO feed access status"
+          className="mx-4 mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">CEO feed access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or send CEO feed messages. Previously loaded messages remain visible, but reconnect, retry, copy, clear, filters, and the composer are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or send CEO feed messages. No live feed state is inferred or displayed."}
+          </p>
+        </section>
+      )}
+
+      {loadError && !accessDenied && (
         <div className="mx-4 mt-3">
           <ErrorBanner
             tone={stale ? "warning" : "error"}
@@ -442,7 +490,7 @@ export default function CeoPage() {
       )}
 
       {/* Message composer — talk directly to the CEO */}
-      <section className="mx-4 mt-3 mb-1" aria-label="CEO message composer">
+      {!accessDenied && <section className="mx-4 mt-3 mb-1" aria-label="CEO message composer">
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <Send
@@ -491,10 +539,10 @@ export default function CeoPage() {
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
       {/* KPI summary row — quick at-a-glance counts per message type. */}
-      {entries.length > 0 && (
+      {entries.length > 0 && !accessDenied && (
         <section
           className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2"
           aria-label="CEO feed summary"
@@ -531,7 +579,7 @@ export default function CeoPage() {
       )}
 
       {/* Search + filter chips */}
-      {entries.length > 0 && (
+      {entries.length > 0 && !accessDenied && (
         <section
           className="flex flex-col gap-2 px-4 mt-2"
           aria-label="CEO feed filters"
@@ -591,7 +639,11 @@ export default function CeoPage() {
         aria-label="CEO message feed"
         aria-busy={!connected && !loadError}
       >
-        {entries.length === 0 ? (
+        {accessDenied && entries.length === 0 ? (
+          <div className="py-12 text-center text-sm text-slate-400">
+            No live CEO feed state is inferred while authorization is unavailable.
+          </div>
+        ) : entries.length === 0 ? (
           <div className="py-12">
             <EmptyState
               icon="radio"
@@ -703,7 +755,7 @@ export default function CeoPage() {
                             queued
                           </span>
                         )}
-                        <button
+                        {!accessDenied && <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -732,7 +784,7 @@ export default function CeoPage() {
                               Copy raw
                             </>
                           )}
-                        </button>
+                        </button>}
                       </div>
 
                       {/* Tool call / result summary */}
