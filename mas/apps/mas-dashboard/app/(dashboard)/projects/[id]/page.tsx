@@ -91,6 +91,8 @@ interface StateHistoryEntry {
   payload?: Record<string, unknown>;
 }
 
+type HttpError = Error & { status?: number };
+
 type WorkspaceSubTab = "activity" | "resources" | "cost";
 
 const WORKSPACE_SUB_TABS: readonly WorkspaceSubTab[] = [
@@ -306,6 +308,8 @@ export default function ProjectDetailPage() {
   );
   const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const hasProjectRef = useRef(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const accessDeniedRef = useRef(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
 
@@ -394,6 +398,20 @@ export default function ProjectDetailPage() {
     [contextItems],
   );
   const contextSelection = useBulkSelection(contextItemIds);
+  const clearContextSelection = contextSelection.clear;
+  const handleAccessDenied = useCallback(() => {
+    accessDeniedRef.current = true;
+    setAccessDenied(true);
+    setProjectStale(false);
+    setProjectRefreshError(null);
+    setProjectLoadError(null);
+    setActionLoading(null);
+    setShowFlowSwitch(false);
+    setShowFlowActionsMenu(false);
+    setShowContextUpload(false);
+    setBulkContextError("");
+    clearContextSelection();
+  }, [clearContextSelection]);
   const generatedDocumentCount = useMemo(
     () => contextItems.filter((item) => item.read_only).length,
     [contextItems],
@@ -404,6 +422,7 @@ export default function ProjectDetailPage() {
   }, [contextItemIds.join(",")]);
 
   const load = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setLoading(true);
     setProjectRefreshError(null);
     try {
@@ -421,11 +440,13 @@ export default function ProjectDetailPage() {
                 "Project was not found. It may have been deleted, archived, or this link may be stale.",
               );
             }
-            throw new Error(
+            const error = new Error(
               typeof detail === "string" && detail.trim()
                 ? `Project request failed: ${detail}`
                 : `Project request failed (HTTP ${r.status})`,
-            );
+            ) as HttpError;
+            error.status = r.status;
+            throw error;
           }
           return payload;
         }),
@@ -446,6 +467,15 @@ export default function ProjectDetailPage() {
         setProjectRefreshError(null);
         setProjectLoadError(null);
       } else {
+        if (
+          proj.status === "rejected" &&
+          proj.reason instanceof Error &&
+          ((proj.reason as HttpError).status === 401 ||
+            (proj.reason as HttpError).status === 403)
+        ) {
+          handleAccessDenied();
+          return;
+        }
         const failure =
           proj.status === "rejected" && proj.reason instanceof Error
             ? proj.reason.message
@@ -486,9 +516,10 @@ export default function ProjectDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [handleAccessDenied, id]);
 
   const loadFlowData = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setFlowLoading(true);
     try {
       const instanceRes = await fetch(`/api/projects/${id}/flow-instance`);
@@ -549,6 +580,7 @@ export default function ProjectDetailPage() {
   }, [id, setNodes, setEdges]);
 
   const loadContextData = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setContextLoading(true);
     try {
       const res = await fetch(`/api/projects/${id}/context`);
@@ -566,6 +598,7 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   const loadEvidence = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setEvidenceLoading(true);
     try {
       const [response, packageResponse] = await Promise.all([
@@ -585,6 +618,7 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   const loadWorkspace = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setWorkspaceLoading(true);
     try {
       const [res, repositoryRes] = await Promise.all([
@@ -677,7 +711,16 @@ export default function ProjectDetailPage() {
     }
   }, [id]);
 
+  function handleDeniedResponse(response: Response) {
+    if (response.status === 401 || response.status === 403) {
+      handleAccessDenied();
+      return true;
+    }
+    return false;
+  }
+
   async function handleRepositoryAction(operation: "sync" | "status") {
+    if (accessDeniedRef.current) return;
     setActionLoading(`repository-${operation}`);
     setRepositoryError(null);
     try {
@@ -687,6 +730,7 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({ operation }),
       });
       if (!res.ok) {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setRepositoryError(data.error || `Git ${operation} failed`);
       } else {
@@ -801,10 +845,11 @@ export default function ProjectDetailPage() {
     decisionId: string,
     decision: "APPROVED" | "REJECTED" | "EDITS",
   ) {
+    if (accessDeniedRef.current) return;
     const loadingKey = `${decisionId}-${decision}`;
     setActionLoading(loadingKey);
     try {
-      await fetch(`/api/projects/${id}/decisions`, {
+      const res = await fetch(`/api/projects/${id}/decisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -813,6 +858,7 @@ export default function ProjectDetailPage() {
           comments: `Submitted from project workspace: ${decision.toLowerCase()}`,
         }),
       });
+      if (handleDeniedResponse(res)) return;
       await Promise.all([load(), loadWorkspace()]);
     } finally {
       setActionLoading(null);
@@ -820,9 +866,11 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAction(action: "retry" | "archive") {
+    if (accessDeniedRef.current) return;
     setActionLoading(action);
     try {
-      await fetch(`/api/projects/${id}/${action}`, { method: "POST" });
+      const res = await fetch(`/api/projects/${id}/${action}`, { method: "POST" });
+      if (handleDeniedResponse(res)) return;
       await load();
     } finally {
       setActionLoading(null);
@@ -830,13 +878,15 @@ export default function ProjectDetailPage() {
   }
 
   async function handleTransition(event: string) {
+    if (accessDeniedRef.current) return;
     setActionLoading(event);
     try {
-      await fetch(`/api/projects/${id}/transition`, {
+      const res = await fetch(`/api/projects/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event }),
       });
+      if (handleDeniedResponse(res)) return;
       await load();
     } finally {
       setActionLoading(null);
@@ -844,14 +894,15 @@ export default function ProjectDetailPage() {
   }
 
   async function handleFlowAction(action: string) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading(action);
     try {
-      await fetch(`/api/flows/instances/${flowInstance.id}/action`, {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
+      if (handleDeniedResponse(res)) return;
       await loadFlowData();
     } finally {
       setActionLoading(null);
@@ -863,7 +914,7 @@ export default function ProjectDetailPage() {
     action: string,
     options?: { approved?: boolean; decision?: string; error?: string },
   ) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading(`node-${nodeId}`);
     try {
       const res = await fetch(
@@ -877,6 +928,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await Promise.all([loadFlowData(), load()]);
       } else {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setFlowError(data.error || `Failed to ${action} node`);
       }
@@ -886,7 +938,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleSwitchFlow(newFlowId: string) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading("switch-flow");
     try {
       const res = await fetch(
@@ -901,6 +953,7 @@ export default function ProjectDetailPage() {
         await loadFlowData();
         setShowFlowSwitch(false);
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to switch flow");
       }
@@ -910,7 +963,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleRetry() {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading("retry");
     try {
       const res = await fetch(`/api/flows/instances/${flowInstance.id}/retry`, {
@@ -919,6 +972,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await loadFlowData();
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to retry flow");
       }
@@ -928,12 +982,15 @@ export default function ProjectDetailPage() {
   }
 
   async function openFlowSwitchModal() {
+    if (accessDeniedRef.current) return;
     setActionLoading("load-flows");
     try {
       const res = await fetch("/api/flows?is_active=true");
       if (res.ok) {
         const flows = await res.json();
         setAvailableFlows(flows || []);
+      } else if (handleDeniedResponse(res)) {
+        return;
       }
     } catch {
       setAvailableFlows([]);
@@ -944,6 +1001,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAssignFlow(flowId: string) {
+    if (accessDeniedRef.current) return;
     setActionLoading("assign-flow");
     try {
       const res = await fetch(`/api/projects/${id}/flow-instance`, {
@@ -954,6 +1012,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await loadFlowData();
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to assign flow");
       }
@@ -965,7 +1024,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleOverrideFlowNode() {
-    if (!flowInstance || !overrideNodeId) return;
+    if (!flowInstance || !overrideNodeId || accessDeniedRef.current) return;
     setActionLoading("override-flow-node");
     setFlowError(null);
     try {
@@ -986,6 +1045,7 @@ export default function ProjectDetailPage() {
         await Promise.all([loadFlowData(), load()]);
         setOverrideReason("");
       } else {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setFlowError(data.error || "Failed to override flow node");
       }
@@ -995,7 +1055,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAddContextItem() {
-    if (!newContextName.trim()) return;
+    if (!newContextName.trim() || accessDeniedRef.current) return;
     setActionLoading("add-context");
     try {
       const body: Record<string, unknown> = {
@@ -1023,6 +1083,8 @@ export default function ProjectDetailPage() {
         setNewContextText("");
         setNewContextTags("");
         setShowContextUpload(false);
+      } else {
+        handleDeniedResponse(res);
       }
     } finally {
       setActionLoading(null);
@@ -1030,6 +1092,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleDeleteContextItem(itemId: string) {
+    if (accessDeniedRef.current) return;
     if (!confirm("Delete this context item?")) return;
     setActionLoading(`delete-${itemId}`);
     try {
@@ -1038,6 +1101,8 @@ export default function ProjectDetailPage() {
       });
       if (res.ok) {
         await loadContextData();
+      } else {
+        handleDeniedResponse(res);
       }
     } finally {
       setActionLoading(null);
@@ -1045,7 +1110,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleBulkDeleteContextItems() {
-    if (contextSelection.selectedCount === 0) return;
+    if (accessDeniedRef.current || contextSelection.selectedCount === 0) return;
     const ids = Array.from(contextSelection.selected);
     setBulkContextDeleting(true);
     setBulkContextError("");
@@ -1056,9 +1121,27 @@ export default function ProjectDetailPage() {
           const res = await fetch(`/api/projects/${id}/context/${itemId}`, {
             method: "DELETE",
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) {
+              throw Object.assign(new Error("Authorization denied"), {
+                status: res.status,
+              });
+            }
+            throw new Error(`HTTP ${res.status}`);
+          }
         }),
       );
+      const denied = results.some(
+        (result) =>
+          result.status === "rejected" &&
+          (result.reason as HttpError)?.status !== undefined &&
+          ((result.reason as HttpError).status === 401 ||
+            (result.reason as HttpError).status === 403),
+      );
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       for (const r of results) if (r.status === "rejected") failed++;
       if (failed > 0) {
         setBulkContextError(
@@ -1086,6 +1169,33 @@ export default function ProjectDetailPage() {
         >
           Loading project…
         </div>
+      </main>
+    );
+  }
+
+  if (accessDenied && !project) {
+    return (
+      <main aria-label="Project detail" className="dashboard-page">
+        <section
+          role="region"
+          aria-label="Project access status"
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-100"
+        >
+          <h1 className="text-lg font-medium text-amber-50">
+            Project access denied
+          </h1>
+          <p className="mt-1 text-amber-100/80">
+            The project definition cannot be read while authorization is
+            unavailable. Refresh and project controls remain hidden until
+            access is restored.
+          </p>
+        </section>
+        <Link
+          href="/projects"
+          className="mt-4 inline-flex min-h-11 items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
+        >
+          <ArrowLeft size={14} aria-hidden="true" /> Back to projects
+        </Link>
       </main>
     );
   }
@@ -1132,6 +1242,7 @@ export default function ProjectDetailPage() {
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
   const handleRefresh = () => {
+    if (accessDeniedRef.current) return Promise.resolve();
     const surfaceRefresh =
       activeTab === "flow"
         ? loadFlowData()
@@ -1174,7 +1285,7 @@ export default function ProjectDetailPage() {
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <span
               className={clsx(
@@ -1201,10 +1312,26 @@ export default function ProjectDetailPage() {
               />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {projectStale && projectRefreshError && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Project access status"
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+        >
+          <h2 className="font-medium text-amber-50">Project access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            This last-known project header is retained for reference only.
+            Refresh, retry, workflow, flow, context, evidence, repository,
+            approval, transition, and other mutation controls are hidden until
+            authorization is restored.
+          </p>
+        </section>
+      )}
+
+      {projectStale && projectRefreshError && !accessDenied && (
         <ErrorBanner
           tone="warning"
           title="Showing last known project state"
@@ -1230,7 +1357,7 @@ export default function ProjectDetailPage() {
         </ErrorBanner>
       )}
 
-      <div
+      {!accessDenied && <div
         className="flex flex-wrap gap-1 border-b border-slate-800"
         role="tablist"
         aria-label="Project views"
@@ -1350,9 +1477,9 @@ export default function ProjectDetailPage() {
             </span>
           )}
         </button>
-      </div>
+      </div>}
 
-      {activeTab === "workspace" && (
+      {!accessDenied && activeTab === "workspace" && (
         <div
           id="project-panel-workspace"
           role="tabpanel"
@@ -1899,7 +2026,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {activeTab === "evidence" && (
+      {!accessDenied && activeTab === "evidence" && (
         <div
           id="project-panel-evidence"
           role="tabpanel"
@@ -2057,7 +2184,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {activeTab === "workflow" && (
+      {!accessDenied && activeTab === "workflow" && (
         <>
           <div className="flex flex-wrap gap-2">
             {allowedTransitions.map((event) => (
@@ -2294,7 +2421,7 @@ export default function ProjectDetailPage() {
         </>
       )}
 
-      {activeTab === "flow" && (
+      {!accessDenied && activeTab === "flow" && (
         <div className="space-y-4">
           {flowError && (
             <div className="rounded-xl border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
@@ -2810,7 +2937,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {activeTab === "context" && (
+      {!accessDenied && activeTab === "context" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">

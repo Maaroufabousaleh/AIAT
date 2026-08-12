@@ -149,3 +149,166 @@ test("project detail exposes first-load unavailability and recovers on retry", a
     page.getByRole("tab", { name: "Workspace", exact: true }),
   ).toBeVisible();
 });
+
+test("project detail fails closed when the initial project read is denied", async ({
+  page,
+}) => {
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "project access denied" }),
+    });
+  });
+  await page.route(
+    `**/api/projects/${PROJECT_ID}/state-history`,
+    async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    },
+  );
+  await page.route(`**/api/projects/${PROJECT_ID}/decisions`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(WORKSPACE_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ workspace: null }),
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+
+  await expect(
+    page.getByRole("region", { name: "Project access status" }),
+  ).toContainText("The project definition cannot be read");
+  await expect(page.getByRole("heading", { name: "Project access denied" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh project data" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Project views" })).toHaveCount(0);
+});
+
+test("project detail retains the last-known header but hides controls after read denial", async ({
+  page,
+}) => {
+  let projectReads = 0;
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    projectReads += 1;
+    if (projectReads > 1) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "project authorization expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(PROJECT_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/state-history`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/decisions`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(WORKSPACE_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ workspace: null }),
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await expect(page.getByRole("heading", { name: PROJECT_FIXTURE.name })).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh project data" }).click();
+  await expect(
+    page.getByRole("region", { name: "Project access status" }),
+  ).toContainText("last-known project header");
+  await expect(page.getByRole("heading", { name: PROJECT_FIXTURE.name })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh project data" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Project views" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});
+
+test("project detail enters the same denied state when a workflow mutation loses authorization", async ({
+  page,
+}) => {
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(PROJECT_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/state-history`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/decisions`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "transition authorization denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(["PAUSE"]),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(WORKSPACE_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ workspace: null }),
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("tab", { name: "Workflow", exact: true }).click();
+  await page.getByRole("button", { name: "PAUSE", exact: true }).click();
+
+  await expect(
+    page.getByRole("region", { name: "Project access status" }),
+  ).toContainText("last-known project header");
+  await expect(page.getByRole("heading", { name: PROJECT_FIXTURE.name })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "Project views" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh project data" })).toHaveCount(0);
+});
