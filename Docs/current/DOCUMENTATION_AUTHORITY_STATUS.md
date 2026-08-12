@@ -83,7 +83,9 @@ the static contract currently passes 11 team files and
 39 exact agent-to-manifest bindings. The Credentials denial-state recovery
 group `982c9c0` now preserves only previously loaded redacted metadata and
 hides read/mutation controls on 401/403 access loss; its source-built fixture
-matrix passes 3/3. These checks establish technical identity
+matrix passes 3/3. The CEO Live Feed denial-state recovery group `a3cbd99`
+now applies the same boundary to history, SSE, and composer responses; its
+source-built fixture matrix passes 3/3. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain
 separate.
 
