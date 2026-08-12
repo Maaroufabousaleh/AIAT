@@ -174,7 +174,15 @@ function PolicyEditor({
   );
 }
 
-function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateModal({
+  onClose,
+  onCreated,
+  onAccessDenied,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  onAccessDenied: () => void;
+}) {
   const [form, setForm] = useState({
     name: "",
     value: "",
@@ -208,6 +216,10 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         body: JSON.stringify({ ...form, policy }),
       });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          onAccessDenied();
+          return;
+        }
         const d = await res.json();
         setError(d.detail ?? "Failed to create credential");
         return;
@@ -369,30 +381,49 @@ export default function CredentialsPage() {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loadStale, setLoadStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const credentialIds = useMemo(() => credentials.map((c) => c.id), [credentials]);
   const selection = useBulkSelection(credentialIds);
+  const clearSelection = selection.clear;
+  const handleAccessDenied = useCallback(() => {
+    setAccessDenied(true);
+    setLoadError("This operator identity is not authorized to read or change credentials.");
+    setLoadStale(credentialsRef.current !== null);
+    setError("");
+    setShowCreate(false);
+    clearSelection();
+  }, [clearSelection]);
   useEffect(() => {
     selection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialIds.join(",")]);
 
   async function handleBulkDelete() {
-    if (selection.selectedCount === 0) return;
+    if (accessDenied || selection.selectedCount === 0) return;
     const targets = credentials.filter((c) => selection.selected.has(c.id));
     setBulkDeleting(true);
     let failed = 0;
+    let denied = false;
     try {
       const results = await Promise.allSettled(
         targets.map(async (c) => {
           const res = await fetch(`/api/credentials/${encodeURIComponent(c.name)}`, { method: "DELETE" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) denied = true;
+            throw new Error(`HTTP ${res.status}`);
+          }
         })
       );
       for (const r of results) if (r.status === "rejected") failed++;
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       if (failed > 0) {
         setError(`Deleted ${targets.length - failed} of ${targets.length} credentials (${failed} failed).`);
       }
@@ -408,36 +439,48 @@ export default function CredentialsPage() {
     setLoadError("");
     try {
       const res = await fetch("/api/credentials", { cache: "no-store" });
+      if (res.status === 401 || res.status === 403) {
+        handleAccessDenied();
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const next = await res.json();
       if (!Array.isArray(next)) throw new Error("Invalid credentials response");
       credentialsRef.current = next;
       setCredentials(next);
       setHasLoaded(true);
+      setHasReadContext(true);
+      setAccessDenied(false);
       setLoadStale(false);
     } catch (e: unknown) {
+      setAccessDenied(false);
       setLoadError(e instanceof Error ? e.message : "Failed to load credentials");
       setLoadStale(credentialsRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleAccessDenied]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const requestRefresh = () => {
-    if (loading) return;
+    if (loading || accessDenied) return;
     void load();
   };
 
   async function deleteCredential(name: string) {
+    if (accessDenied) return;
     if (!confirm(`Delete credential "${name}"? This cannot be undone.`)) return;
     setDeleting(name);
     try {
       const res = await fetch(`/api/credentials/${name}`, { method: "DELETE" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const msg = await res.text().catch(() => `HTTP ${res.status}`);
         setError(`Failed to delete "${name}": ${msg}`);
         return;
@@ -454,7 +497,7 @@ export default function CredentialsPage() {
         icon="lock"
         title="Credentials Manager"
         description={`${credentials.length} secrets · Centralised store with policy gates`}
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -476,8 +519,23 @@ export default function CredentialsPage() {
               New Secret
             </button>
           </>
-        }
+        ) : undefined}
       />
+
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Credentials access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Credentials access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change credentials. Previously loaded redacted metadata remains visible, but Refresh, Retry, creation, deletion, placeholder copy, selection, and audit navigation are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change credentials. No live credential metadata is inferred or displayed."}
+          </p>
+        </section>
+      )}
 
       <section aria-label="Credential security model" className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
         <Shield className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
@@ -489,19 +547,21 @@ export default function CredentialsPage() {
             {"<OPENAI_API_KEY>"}
           </code>
           ). The credentials manager resolves values only inside approved execution contexts.
-          <a
-            href="/audit"
-            className="mt-2 inline-flex min-h-11 items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
-            aria-label="View credential resolve audit log"
-          >
-            <ScrollText className="w-3.5 h-3.5" />
-            View resolve audit log
-            <ExternalLink className="w-3 h-3 opacity-70" />
-          </a>
+          {!accessDenied && (
+            <a
+              href="/audit"
+              className="mt-2 inline-flex min-h-11 items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
+              aria-label="View credential resolve audit log"
+            >
+              <ScrollText className="w-3.5 h-3.5" />
+              View resolve audit log
+              <ExternalLink className="w-3 h-3 opacity-70" />
+            </a>
+          )}
         </div>
       </section>
 
-      {loadError && (
+      {loadError && !accessDenied && (
         <ErrorBanner
           tone={loadStale ? "warning" : "error"}
           title={loadStale ? "Showing last known credentials" : "Credentials load failed"}
@@ -515,14 +575,14 @@ export default function CredentialsPage() {
         </ErrorBanner>
       )}
 
-      {error && (
+      {error && !accessDenied && (
         <ErrorBanner tone="error" title="Credential action failed">
           {error}
         </ErrorBanner>
       )}
 
       {/* Bulk action bar */}
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={credentials.length}
@@ -542,12 +602,14 @@ export default function CredentialsPage() {
           <thead>
             <tr className="border-b border-slate-800 text-slate-500">
               <th scope="col" className="px-4 py-3 w-10">
-                <SelectAllCheckbox
-                  checked={selection.isAllSelected}
-                  indeterminate={selection.isIndeterminate}
-                  onChange={selection.toggleAll}
-                  ariaLabel="Select all credentials"
-                />
+                {!accessDenied && (
+                  <SelectAllCheckbox
+                    checked={selection.isAllSelected}
+                    indeterminate={selection.isIndeterminate}
+                    onChange={selection.toggleAll}
+                    ariaLabel="Select all credentials"
+                  />
+                )}
               </th>
               <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Name</th>
               <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Type</th>
@@ -564,6 +626,12 @@ export default function CredentialsPage() {
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                   Loading…
+                </td>
+              </tr>
+            ) : accessDenied && credentials.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  No live credential metadata is inferred while authorization is unavailable.
                 </td>
               </tr>
             ) : loadError && !hasLoaded ? (
@@ -606,11 +674,13 @@ export default function CredentialsPage() {
                     )}
                   >
                     <td className="px-4 py-3">
-                      <RowCheckbox
-                        checked={isSelected}
-                        onChange={() => selection.toggle(c.id)}
-                        ariaLabel={`Select ${c.name}`}
-                      />
+                      {!accessDenied && (
+                        <RowCheckbox
+                          checked={isSelected}
+                          onChange={() => selection.toggle(c.id)}
+                          ariaLabel={`Select ${c.name}`}
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-white font-medium">{c.name}</td>
                     <td className="px-4 py-3">
@@ -618,7 +688,13 @@ export default function CredentialsPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-300 max-w-xs truncate">{c.description || "—"}</td>
                     <td className="px-4 py-3">
-                      <CopyButton value={c.placeholder} />
+                      {accessDenied ? (
+                        <code className="bg-slate-800 px-2 py-0.5 rounded text-blue-300 text-xs font-mono">
+                          {c.placeholder}
+                        </code>
+                      ) : (
+                        <CopyButton value={c.placeholder} />
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {c.policy.enabled ? (
@@ -640,21 +716,23 @@ export default function CredentialsPage() {
                         : "Never"}
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => deleteCredential(c.name)}
-                        disabled={isDeleting}
-                        aria-label={`Delete ${c.name}`}
-                        className={clsx(
-                          "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
-                          isDeleting
-                            ? "text-red-400 bg-red-500/10"
-                            : "text-white/80 hover:text-red-100 hover:bg-red-500/10"
-                        )}
-                        title={isDeleting ? "Deleting…" : "Delete"}
-                      >
-                        <Trash2 className={clsx("w-4 h-4", isDeleting && "animate-pulse")} />
-                      </button>
+                      {!accessDenied && (
+                        <button
+                          type="button"
+                          onClick={() => deleteCredential(c.name)}
+                          disabled={isDeleting}
+                          aria-label={`Delete ${c.name}`}
+                          className={clsx(
+                            "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
+                            isDeleting
+                              ? "text-red-400 bg-red-500/10"
+                              : "text-white/80 hover:text-red-100 hover:bg-red-500/10"
+                          )}
+                          title={isDeleting ? "Deleting…" : "Delete"}
+                        >
+                          <Trash2 className={clsx("w-4 h-4", isDeleting && "animate-pulse")} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -668,6 +746,7 @@ export default function CredentialsPage() {
         <CreateModal
           onClose={() => setShowCreate(false)}
           onCreated={load}
+          onAccessDenied={handleAccessDenied}
         />
       )}
     </main>
