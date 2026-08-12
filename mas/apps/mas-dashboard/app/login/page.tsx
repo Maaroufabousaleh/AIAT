@@ -42,7 +42,11 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--aiat-bg)] text-slate-100 lg:grid lg:grid-cols-[minmax(0,1fr)_460px]">
+    <main
+      className="min-h-screen bg-[var(--aiat-bg)] text-slate-100 lg:grid lg:grid-cols-[minmax(0,1fr)_460px]"
+      aria-label="AIAT MAS sign-in"
+      aria-busy={loading}
+    >
       <section
         className="relative hidden overflow-hidden lg:block"
         style={{
@@ -91,7 +95,7 @@ export default function LoginPage() {
         </div>
       </section>
 
-      <div className="flex min-h-screen items-center justify-center px-6 py-10">
+      <section className="flex min-h-screen items-center justify-center px-6 py-10" aria-label="Operator sign-in">
         <div className="w-full max-w-sm">
         {/* Logo / Title */}
         <div className="mb-8 lg:hidden">
@@ -145,7 +149,7 @@ export default function LoginPage() {
                   onClick={() => setShowPassword((prev) => !prev)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   aria-pressed={showPassword}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-300
+                  className="min-h-11 min-w-11 text-xs font-medium text-slate-500 hover:text-slate-300
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70
                              rounded px-1.5 py-0.5 transition-colors"
                 >
@@ -175,7 +179,7 @@ export default function LoginPage() {
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   aria-pressed={showPassword}
                   tabIndex={-1}
-                  className="absolute inset-y-0 right-0 flex items-center justify-center w-9
+                  className="absolute inset-y-0 right-0 flex min-h-11 min-w-11 items-center justify-center
                              text-slate-500 hover:text-slate-200
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70
                              rounded-r-lg transition-colors"
@@ -206,13 +210,17 @@ export default function LoginPage() {
             </div>
           )}
 
+          <p className="sr-only" role="status" aria-live="polite">
+            {loading ? "Signing in…" : "Ready to sign in"}
+          </p>
+
           <button
             type="submit"
             disabled={loading}
             aria-busy={loading}
             className="mt-6 w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700
                        disabled:bg-blue-900 disabled:cursor-not-allowed
-                       text-white font-medium rounded-lg px-4 py-2.5 text-sm
+                       min-h-11 text-white font-medium rounded-lg px-4 py-2.5 text-sm
                        transition-colors duration-150
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
@@ -225,7 +233,7 @@ export default function LoginPage() {
           AIAT MAS v{APP_VERSION}
         </div>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
