@@ -123,6 +123,10 @@ the same boundary to canonical evidence-package reads; its source-built
 fixture matrix passes 3/3, covering stale recovery, initial denial, and
 retained-package denial while keeping the retained package read-only and
 preserving safe Back to project navigation.
+The Evidence Detail denial-state recovery group `23e2db9` now applies the same
+boundary to bounded scalar reads; its source-built fixture matrix passes 11/11,
+covering scalar redaction, stale recovery, initial denial, and retained-read
+denial while keeping citation identity and safe navigation available.
 
 ## Clean-checkout verification
 
