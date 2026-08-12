@@ -35,7 +35,84 @@ test("credentials list retains metadata when a refresh fails", async ({ page }) 
   });
 
   await authenticate(page, "/credentials");
-  await expect(page.getByRole("heading", { name: "Credentials Manager" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Credentials Manager", exact: true }),
+  ).toBeVisible();
+  const credentials = page.getByRole("main", { name: "Credentials manager" });
+  await expect(credentials).toBeVisible();
+  await expect(
+    credentials.getByRole("region", { name: "Credential security model" }),
+  ).toBeVisible();
+  await expect(
+    credentials.getByRole("button", { name: "Refresh credentials" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    credentials.getByRole("button", { name: "Create new credential" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    credentials.getByRole("link", { name: "View credential resolve audit log" }),
+  ).toHaveCSS("min-height", "44px");
+  const table = credentials.getByRole("table", { name: "Credentials" });
+  await expect(table.locator("caption")).toHaveText(
+    /redacted placeholders, policy status, and usage metadata/i,
+  );
+  for (const heading of [
+    "Select all credentials",
+    "Name",
+    "Type",
+    "Description",
+    "Placeholder",
+    "Status",
+    "Uses",
+    "Last Used",
+    "Actions",
+  ]) {
+    await expect(
+      table.getByRole("columnheader", { name: heading }),
+    ).toHaveAttribute("scope", "col");
+  }
+  await expect(
+    credentials.getByRole("checkbox", { name: "Select all credentials" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    credentials.getByRole("checkbox", { name: "Select E2E_READ_TOKEN" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    credentials.getByRole("button", {
+      name: "Copy placeholder <E2E_READ_TOKEN>",
+    }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(
+    credentials.getByRole("button", { name: "Delete E2E_READ_TOKEN" }),
+  ).toHaveCSS("min-height", "44px");
+
+  await credentials
+    .getByRole("button", { name: "Create new credential" })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "New Credential" });
+  await expect(dialog).toBeVisible();
+  for (const label of [
+    "Name *",
+    "Type",
+    "Value *",
+    "Description",
+    "Allowed Requesters (comma-separated, empty = any)",
+    "Allowed Contexts (comma-separated, empty = any)",
+    "Rate limit / min (0 = unlimited)",
+  ]) {
+    await expect(dialog.getByLabel(label)).toBeVisible();
+  }
+  await expect(
+    dialog.getByRole("button", { name: "Show secret value" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Save Credential" }),
+  ).toHaveCSS("min-height", "44px");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByText("E2E_READ_TOKEN", { exact: true })).toBeVisible();
   await expect(page.getByText("<E2E_READ_TOKEN>", { exact: true })).toBeVisible();
 

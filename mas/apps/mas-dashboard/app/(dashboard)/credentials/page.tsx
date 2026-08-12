@@ -96,11 +96,12 @@ function PolicyEditor({
   return (
     <div className="space-y-3">
       <div>
-        <label className="block text-xs text-slate-400 mb-1">
+        <label htmlFor="credential-allowed-requesters" className="block text-xs text-slate-400 mb-1">
           Allowed Requesters (comma-separated, empty = any)
         </label>
         <input
-          className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+          id="credential-allowed-requesters"
+          className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
           value={policy.allowed_requesters.join(", ")}
           onChange={(e) =>
             onChange({
@@ -115,11 +116,12 @@ function PolicyEditor({
         />
       </div>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">
+        <label htmlFor="credential-allowed-contexts" className="block text-xs text-slate-400 mb-1">
           Allowed Contexts (comma-separated, empty = any)
         </label>
         <input
-          className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+          id="credential-allowed-contexts"
+          className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
           value={policy.allowed_contexts.join(", ")}
           onChange={(e) =>
             onChange({
@@ -135,18 +137,20 @@ function PolicyEditor({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Rate limit / min (0 = unlimited)</label>
+          <label htmlFor="credential-rate-limit" className="block text-xs text-slate-400 mb-1">Rate limit / min (0 = unlimited)</label>
           <input
+            id="credential-rate-limit"
             type="number"
             min={0}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
             value={policy.rate_limit_per_minute}
             onChange={(e) => onChange({ ...policy, rate_limit_per_minute: Number(e.target.value) })}
           />
         </div>
         <div className="flex flex-col justify-end gap-2">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label htmlFor="credential-enabled" className="flex min-h-11 items-center gap-2 cursor-pointer">
             <input
+              id="credential-enabled"
               type="checkbox"
               checked={policy.enabled}
               onChange={(e) => onChange({ ...policy, enabled: e.target.checked })}
@@ -154,8 +158,9 @@ function PolicyEditor({
             />
             <span className="text-sm text-slate-300">Enabled</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label htmlFor="credential-require-approval" className="flex min-h-11 items-center gap-2 cursor-pointer">
             <input
+              id="credential-require-approval"
               type="checkbox"
               checked={policy.require_approval}
               onChange={(e) => onChange({ ...policy, require_approval: e.target.checked })}
@@ -218,31 +223,38 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="dashboard-surface-strong w-full max-w-lg shadow-xl">
+      <div
+        className="dashboard-surface-strong w-full max-w-lg shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-credential-title"
+      >
         <div className="p-5 border-b border-slate-700 flex items-center gap-3">
           <Key className="w-5 h-5 text-blue-400" />
-          <h2 className="text-white font-semibold">New Credential</h2>
+          <h2 id="create-credential-title" className="text-white font-semibold">New Credential</h2>
         </div>
         <div className="p-5 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-red-400 text-sm">
+            <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-red-400 text-sm">
               {error}
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Name *</label>
+              <label htmlFor="credential-name" className="block text-xs text-slate-400 mb-1">Name *</label>
               <input
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+                id="credential-name"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value.toUpperCase().replace(/\s/g, "_") })}
                 placeholder="OPENAI_API_KEY"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Type</label>
+              <label htmlFor="credential-type" className="block text-xs text-slate-400 mb-1">Type</label>
               <select
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+                id="credential-type"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
                 value={form.secret_type}
                 onChange={(e) => setForm({ ...form, secret_type: e.target.value })}
               >
@@ -253,11 +265,12 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Value *</label>
+            <label htmlFor="credential-value" className="block text-xs text-slate-400 mb-1">Value *</label>
             <div className="relative">
               <input
+                id="credential-value"
                 type={showValue ? "text" : "password"}
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white pr-10 focus-visible:border-blue-500 transition-colors"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white pr-12 focus-visible:border-blue-500 transition-colors"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
                 placeholder="sk-..."
@@ -265,7 +278,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
               <button
                 type="button"
                 aria-label={showValue ? "Hide secret value" : "Show secret value"}
-                className="absolute right-2 top-1.5 text-slate-400 hover:text-white p-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
                 onClick={() => setShowValue(!showValue)}
               >
                 {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -273,30 +286,33 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Description</label>
+            <label htmlFor="credential-description" className="block text-xs text-slate-400 mb-1">Description</label>
             <input
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+              id="credential-description"
+              className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               placeholder="OpenAI API key for LLM gateway"
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-2 flex items-center gap-2">
+            <div className="block text-xs text-slate-400 mb-2 flex items-center gap-2">
               <Shield className="w-3.5 h-3.5" /> Access Policy
-            </label>
+            </div>
             <PolicyEditor policy={policy} onChange={setPolicy} />
           </div>
         </div>
         <div className="p-5 border-t border-slate-700 flex justify-end gap-3">
           <button
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            type="button"
+            className="inline-flex min-h-11 items-center px-4 py-2 text-sm text-slate-300 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+            type="button"
+            className="inline-flex min-h-11 items-center px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             onClick={submit}
             disabled={loading}
           >
@@ -332,7 +348,7 @@ function CopyButton({ value }: { value: string }) {
         aria-label={copied ? `Copied ${value}` : `Copy placeholder ${value}`}
         title={copied ? "Copied" : "Copy placeholder"}
         className={clsx(
-          "inline-flex items-center justify-center w-6 h-6 rounded transition-all duration-150",
+          "inline-flex items-center justify-center min-h-11 min-w-11 rounded transition-all duration-150",
           "focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900",
           copied
             ? "bg-emerald-500/15 text-emerald-300"
@@ -433,7 +449,7 @@ export default function CredentialsPage() {
   }
 
   return (
-    <div className="dashboard-page">
+    <main aria-label="Credentials manager" className="dashboard-page">
       <PageHeader
         icon="lock"
         title="Credentials Manager"
@@ -441,18 +457,20 @@ export default function CredentialsPage() {
         actions={
           <>
             <button
+              type="button"
               onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh credentials"
-              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
             </button>
             <button
+              type="button"
               onClick={() => setShowCreate(true)}
               aria-label="Create new credential"
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             >
               <Plus className="w-4 h-4" />
               New Secret
@@ -461,7 +479,7 @@ export default function CredentialsPage() {
         }
       />
 
-      <div className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
+      <section aria-label="Credential security model" className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
         <Shield className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
         <div className="flex-1 text-sm text-blue-200/90">
           <strong className="text-blue-100">Security model:</strong> Real secret values are never
@@ -473,7 +491,7 @@ export default function CredentialsPage() {
           ). The credentials manager resolves values only inside approved execution contexts.
           <a
             href="/audit"
-            className="mt-2 inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
+            className="mt-2 inline-flex min-h-11 items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
             aria-label="View credential resolve audit log"
           >
             <ScrollText className="w-3.5 h-3.5" />
@@ -481,14 +499,14 @@ export default function CredentialsPage() {
             <ExternalLink className="w-3 h-3 opacity-70" />
           </a>
         </div>
-      </div>
+      </section>
 
       {loadError && (
         <ErrorBanner
           tone={loadStale ? "warning" : "error"}
           title={loadStale ? "Showing last known credentials" : "Credentials load failed"}
           action={(
-            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={requestRefresh} disabled={loading} className="inline-flex min-h-11 items-center rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
               Retry
             </button>
           )}
@@ -516,11 +534,14 @@ export default function CredentialsPage() {
       )}
 
       {/* Table */}
-      <div className="dashboard-surface overflow-hidden">
-        <table className="dashboard-table">
+      <section aria-label="Credential records" className="dashboard-surface overflow-hidden">
+        <table className="dashboard-table" aria-label="Credentials">
+          <caption className="sr-only">
+            Credential records with redacted placeholders, policy status, and usage metadata.
+          </caption>
           <thead>
             <tr className="border-b border-slate-800 text-slate-500">
-              <th className="px-4 py-3 w-10">
+              <th scope="col" className="px-4 py-3 w-10">
                 <SelectAllCheckbox
                   checked={selection.isAllSelected}
                   indeterminate={selection.isIndeterminate}
@@ -528,14 +549,14 @@ export default function CredentialsPage() {
                   ariaLabel="Select all credentials"
                 />
               </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Name</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Type</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Description</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Placeholder</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Uses</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Last Used</th>
-              <th className="px-4 py-3" />
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Name</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Type</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Description</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Placeholder</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Status</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Uses</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Last Used</th>
+              <th scope="col" className="px-4 py-3"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -560,8 +581,9 @@ export default function CredentialsPage() {
                     description="Add a secret to give agents scoped access to external systems. The dashboard never exposes the raw value."
                     action={
                       <button
+                        type="button"
                         onClick={() => setShowCreate(true)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                        className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                       >
                         <Plus size={14} />
                         New Secret
@@ -619,11 +641,12 @@ export default function CredentialsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <button
+                        type="button"
                         onClick={() => deleteCredential(c.name)}
                         disabled={isDeleting}
                         aria-label={`Delete ${c.name}`}
                         className={clsx(
-                          "p-1.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
+                          "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
                           isDeleting
                             ? "text-red-400 bg-red-500/10"
                             : "text-white/80 hover:text-red-100 hover:bg-red-500/10"
@@ -639,7 +662,7 @@ export default function CredentialsPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </section>
 
       {showCreate && (
         <CreateModal
@@ -647,6 +670,6 @@ export default function CredentialsPage() {
           onCreated={load}
         />
       )}
-    </div>
+    </main>
   );
 }
