@@ -130,6 +130,13 @@ canvas as read-only context, and hide templates, palette, node configuration,
 validation, activation, and creation controls. Source-built initial-catalogue,
 create-denial, and readiness-denial coverage passes 3/3 (`b07299b`).
 
+The latest bounded dashboard increment is CEO Command Center chat access-denied
+recovery: 401/403 history, SSE, and message-submission responses now expose a
+named access-status region, retain any loaded transcript as read-only context,
+invalidate in-flight stream callbacks, and hide Clear/retry, quick commands,
+composer, and confirmation controls. The source-built history-denial,
+message-denial, and stream-recovery matrix passes 3/3 (`038d5f2`).
+
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
 relay, mailboxes, and outbound mail all pass the shared accessible metadata
@@ -338,7 +345,9 @@ keyboard-expandable messages (`1f947a9`).
 The CEO Command Center chat now adds a named main/workspace/transcript/composer
 structure, a live transcript log with busy state, 44px navigation/composer/
 quick-command/recovery targets, explicit chat guidance regions, and a
-mobile-safe accessible activity link (`8ffb5df`).
+mobile-safe accessible activity link (`8ffb5df`). Its access-denied state now
+retains the transcript read-only and hides message/confirmation controls
+(`038d5f2`).
 
 The Governance page now adds a named main/read-surface structure, explicit
 executive/model-profile/WorkerRun/steward/catalogue regions, a captioned/scoped

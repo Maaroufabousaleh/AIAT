@@ -69,7 +69,8 @@ partial/stale/retry recovery (`85596b0`), and Flows list stale/retry recovery
 Logs stale/retry recovery (`280d363`), Agent Streams reconnect/history
 recovery (`3e8a0ea`), Hiring Board stale/retry recovery (`7541b84`), CEO
 Live Feed reconnect/history recovery (`1761429`), and CEO Command Center chat
-stream/history recovery (`beabb95`), and the secret-safe system diagnostics
+stream/history recovery (`beabb95`), CEO Command Center chat access-denied
+recovery (`038d5f2`), and the secret-safe system diagnostics
 route/API contract group (`2860838`) and the API-facing operator CLI group
 (`380daf5`, executable-mode follow-up `f8df50e`), and the message-router
 sender role/team coherence group (`fb39128`), the hierarchy communication-policy
@@ -137,6 +138,11 @@ access-status region retains available overview values as read-only context,
 hides retry and first-run seed actions, and its isolated local 403 fixture
 passes 1/1. This is a source-built dashboard boundary, not native/live ACL or
 full WCAG evidence.
+The CEO Command Center chat access-denied group `038d5f2` extends the same
+boundary to history, SSE, and message submission: its named access-status
+region retains loaded transcript context read-only, hides Clear/retry and all
+message/confirmation controls, and its source-built denial/recovery matrix
+passes 3/3. Native/live ACL and full WCAG evidence remain separate.
 
 ## Clean-checkout verification
 
