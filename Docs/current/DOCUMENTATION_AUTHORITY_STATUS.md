@@ -100,6 +100,10 @@ same boundary to reads and replay responses; its source-built fixture matrix
 passes 3/3.
 The Tools catalogue denial-state recovery group `b418f8a` now applies the same
 boundary to catalogue reads; its source-built fixture matrix passes 3/3.
+The Flows list denial-state recovery group `3108b02` now applies the same
+boundary to list reads and deletes; its source-built fixture matrix passes 4/4,
+covering stale retention, initial denial, retained-read denial, and mutation
+denial while keeping retained definitions read-only.
 
 ## Clean-checkout verification
 
