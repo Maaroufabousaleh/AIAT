@@ -85,9 +85,11 @@ group `982c9c0` now preserves only previously loaded redacted metadata and
 hides read/mutation controls on 401/403 access loss; its source-built fixture
 matrix passes 3/3. The CEO Live Feed denial-state recovery group `a3cbd99`
 now applies the same boundary to history, SSE, and composer responses; its
-source-built fixture matrix passes 3/3. These checks establish technical identity
-only; registration, activation, certification, and licence metadata remain
-separate.
+source-built fixture matrix passes 3/3. The Agent Streams denial-state recovery
+group `118ff18` now applies the same boundary to history and SSE responses; its
+source-built fixture matrix passes 3/3. These checks establish technical
+identity only; registration, activation, certification, and licence metadata
+remain separate.
 
 ## Clean-checkout verification
 
