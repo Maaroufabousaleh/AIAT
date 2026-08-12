@@ -118,6 +118,11 @@ boundary to canonical project reads and workflow/mutation responses; its
 source-built fixture matrix passes 4/4, covering transient recovery, initial
 denial, retained-header denial, and workflow-mutation denial while retaining
 only the last-known project header and hiding all tabs and mutation surfaces.
+The Project Evidence package denial-state recovery group `00f81b5` now applies
+the same boundary to canonical evidence-package reads; its source-built
+fixture matrix passes 3/3, covering stale recovery, initial denial, and
+retained-package denial while keeping the retained package read-only and
+preserving safe Back to project navigation.
 
 ## Clean-checkout verification
 
