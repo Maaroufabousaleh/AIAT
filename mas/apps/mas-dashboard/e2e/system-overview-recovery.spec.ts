@@ -14,17 +14,29 @@ test.describe("System Overview source recovery baseline", () => {
   }) => {
     await authenticate(page);
 
-    const status = page.getByRole("region", { name: "Overview data status" });
+    const denied = expectedState === "denied";
+    const status = page.getByRole("region", {
+      name: denied ? "Overview access status" : "Overview data status",
+    });
     await expect(status).toBeVisible();
     await expect(
       status.getByRole("heading", {
-        name: expectedState === "offline" ? "Overview data unavailable" : "Overview data is partial",
+        name: denied
+          ? "Overview access denied"
+          : expectedState === "offline"
+            ? "Overview data unavailable"
+            : "Overview data is partial",
       }),
     ).toBeVisible();
     await expect(status.getByRole("status")).toBeVisible();
-    await expect(
-      status.getByRole("button", { name: "Retry overview data" }),
-    ).toHaveCSS("min-height", "44px");
+    if (denied) {
+      await expect(status.getByRole("button", { name: "Retry overview data" })).toHaveCount(0);
+      await expect(status).toContainText("Access was denied for");
+    } else {
+      await expect(
+        status.getByRole("button", { name: "Retry overview data" }),
+      ).toHaveCSS("min-height", "44px");
+    }
     if (expectedState === "offline") {
       const unavailable = page.getByText("Company overview unavailable");
       await expect(unavailable).toBeVisible();

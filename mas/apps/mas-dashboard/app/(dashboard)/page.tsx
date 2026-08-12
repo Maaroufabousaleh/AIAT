@@ -50,7 +50,7 @@ interface ExecutiveReconciliation {
   };
 }
 
-type OverviewDataState = "healthy" | "partial" | "offline";
+type OverviewDataState = "healthy" | "partial" | "offline" | "denied";
 
 const STATE_VISUAL: Record<string, StateVisual> = {
   CREATED: { bg: "bg-slate-500/20", text: "text-slate-300", dot: "bg-slate-400" },
@@ -71,14 +71,31 @@ const STATE_VISUAL: Record<string, StateVisual> = {
  */
 async function timedPromQuery(
   query: string
-): Promise<{ results: Awaited<ReturnType<typeof promQuery>>; durationMs: number; ok: boolean }> {
+): Promise<{
+  results: Awaited<ReturnType<typeof promQuery>>;
+  durationMs: number;
+  ok: boolean;
+  status: number | null;
+}> {
   const started = Date.now();
   try {
     const results = await promQuery(query);
-    return { results, durationMs: Date.now() - started, ok: true };
-  } catch {
-    return { results: [], durationMs: Date.now() - started, ok: false };
+    return { results, durationMs: Date.now() - started, ok: true, status: null };
+  } catch (error) {
+    const status = getErrorStatus(error);
+    return { results: [], durationMs: Date.now() - started, ok: false, status };
   }
+}
+
+function getErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function isAccessDenied(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  return status === 401 || status === 403;
 }
 
 async function getOverviewData() {
@@ -142,21 +159,36 @@ async function getOverviewData() {
 
   const company = companyOverview.status === "fulfilled" ? companyOverview.value : null;
   const executive = executiveReport.status === "fulfilled" ? executiveReport.value : null;
+  const deniedSources = [
+    projects.status === "rejected" && isAccessDenied(projects.reason) ? "projects" : null,
+    systemStatus.status === "rejected" && isAccessDenied(systemStatus.reason) ? "system status" : null,
+    companyOverview.status === "rejected" && isAccessDenied(companyOverview.reason) ? "company" : null,
+    dlq.status === "rejected" && isAccessDenied(dlq.reason) ? "dead-letter queue" : null,
+    llmTimed?.status === 401 || llmTimed?.status === 403 ? "LLM metrics" : null,
+    dlqTimed?.status === 401 || dlqTimed?.status === 403 ? "queue metrics" : null,
+    executiveReport.status === "rejected" && isAccessDenied(executiveReport.reason)
+      ? "executive reconciliation"
+      : null,
+  ].filter((source): source is string => source !== null);
   const failedSources = [
-    projects.status !== "fulfilled" ? "projects" : null,
-    systemStatus.status !== "fulfilled" ? "system status" : null,
-    companyOverview.status !== "fulfilled" ? "company" : null,
-    dlq.status !== "fulfilled" ? "dead-letter queue" : null,
-    llmTimed?.ok === false ? "LLM metrics" : null,
-    dlqTimed?.ok === false ? "queue metrics" : null,
-    executiveReport.status !== "fulfilled" ? "executive reconciliation" : null,
+    projects.status !== "fulfilled" && !isAccessDenied(projects.reason) ? "projects" : null,
+    systemStatus.status !== "fulfilled" && !isAccessDenied(systemStatus.reason) ? "system status" : null,
+    companyOverview.status !== "fulfilled" && !isAccessDenied(companyOverview.reason) ? "company" : null,
+    dlq.status !== "fulfilled" && !isAccessDenied(dlq.reason) ? "dead-letter queue" : null,
+    llmTimed?.ok === false && ![401, 403].includes(llmTimed.status ?? 0) ? "LLM metrics" : null,
+    dlqTimed?.ok === false && ![401, 403].includes(dlqTimed.status ?? 0) ? "queue metrics" : null,
+    executiveReport.status !== "fulfilled" && !isAccessDenied(executiveReport.reason)
+      ? "executive reconciliation"
+      : null,
   ].filter((source): source is string => source !== null);
   const overviewState: OverviewDataState =
-    failedSources.length === 0
+    deniedSources.length > 0
+      ? "denied"
+      : failedSources.length === 0
       ? "healthy"
       : failedSources.length === 7
-        ? "offline"
-        : "partial";
+          ? "offline"
+          : "partial";
 
   return {
     projectList,
@@ -171,6 +203,7 @@ async function getOverviewData() {
     executive,
     overviewState,
     failedSources,
+    deniedSources,
     lastRefreshedAt,
   };
 }
@@ -366,6 +399,7 @@ export default async function HomePage() {
     executive,
     overviewState,
     failedSources,
+    deniedSources,
     lastRefreshedAt,
   } = await getOverviewData().catch(() => ({
     projectList: [] as Array<{ state: string }>,
@@ -380,6 +414,7 @@ export default async function HomePage() {
     executive: null as ExecutiveReconciliation | null,
     overviewState: "offline" as OverviewDataState,
     failedSources: ["overview data"],
+    deniedSources: [] as string[],
     lastRefreshedAt: new Date(),
   }));
 
@@ -399,6 +434,7 @@ export default async function HomePage() {
   const llmEmpty = llmPerMin === null;
   const llmDisplay = llmEmpty ? "x" : llmPerMin;
   const overviewUnavailable = overviewState !== "healthy";
+  const overviewAccessDenied = overviewState === "denied";
 
   return (
     <main className="dashboard-page" aria-label="System Overview">
@@ -424,27 +460,35 @@ export default async function HomePage() {
         <section
           className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10"
           role="region"
-          aria-label="Overview data status"
+          aria-label={overviewAccessDenied ? "Overview access status" : "Overview data status"}
         >
           <div className="min-w-0">
             <h2 className="text-sm font-medium text-amber-100">
-              {overviewState === "offline" ? "Overview data unavailable" : "Overview data is partial"}
+              {overviewAccessDenied
+                ? "Overview access denied"
+                : overviewState === "offline"
+                  ? "Overview data unavailable"
+                  : "Overview data is partial"}
             </h2>
             <p className="mt-1 text-xs text-amber-200/70" role="status" aria-live="polite">
-              {overviewState === "offline"
-                ? "The control plane and metrics sources are unavailable. No live overview state is being inferred."
-                : `Some overview sources failed: ${failedSources.join(", ")}. Showing available values only.`}
+              {overviewAccessDenied
+                ? `Access was denied for ${deniedSources.join(", ")}. Showing available values only; retry after authorization is restored.${failedSources.length > 0 ? ` Other sources failed: ${failedSources.join(", ")}.` : ""}`
+                : overviewState === "offline"
+                  ? "The control plane and metrics sources are unavailable. No live overview state is being inferred."
+                  : `Some overview sources failed: ${failedSources.join(", ")}. Showing available values only.`}
             </p>
           </div>
-          <form method="get" action="/">
-            <button
-              type="submit"
-              aria-label="Retry overview data"
-              className="inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-400/10"
-            >
-              Retry overview
-            </button>
-          </form>
+          {!overviewAccessDenied && (
+            <form method="get" action="/">
+              <button
+                type="submit"
+                aria-label="Retry overview data"
+                className="inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-400/10"
+              >
+                Retry overview
+              </button>
+            </form>
+          )}
         </section>
       )}
 
@@ -557,7 +601,7 @@ export default async function HomePage() {
       )}
 
       {/* First run callout — quiet, not alarming */}
-      {firstRun !== "seeded" && (
+      {firstRun !== "seeded" && !overviewAccessDenied && (
         <section className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10" aria-label="First-run status">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex-shrink-0 w-8 h-8 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-300">
