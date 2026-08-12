@@ -377,22 +377,24 @@ export default async function HomePage() {
   const llmDisplay = llmEmpty ? "x" : llmPerMin;
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="System Overview">
       {/* Hero */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className="flex flex-wrap items-start justify-between gap-3" aria-labelledby="system-overview-heading">
         <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-400/25 flex items-center justify-center text-blue-300 shadow-sm shadow-blue-950/40">
-            <Activity size={20} />
+          <div aria-hidden="true" className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-400/25 flex items-center justify-center text-blue-300 shadow-sm shadow-blue-950/40">
+            <Activity size={20} aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white tracking-tight">System Overview</h1>
+            <h1 id="system-overview-heading" className="text-xl font-semibold text-white tracking-tight">System Overview</h1>
             <p className="text-sm text-slate-400 mt-0.5">Operator-ready summary of projects, workers, approvals, queues, and runtime health.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <SystemStatusPill status={systemStatusStr} />
+          <div role="status" aria-label={`System status: ${systemStatusStr}`}>
+            <SystemStatusPill status={systemStatusStr} />
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* System health card: prometheus query time + last refresh timestamp */}
       <SystemHealthCard
@@ -404,7 +406,7 @@ export default async function HomePage() {
       />
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Overview metrics">
         <KpiCard
           label="Active Projects"
           value={activeCount}
@@ -440,7 +442,7 @@ export default async function HomePage() {
           icon="inbox"
           tone={dlqCount > 0 ? "negative" : "positive"}
         />
-      </div>
+      </section>
 
       {executive && (
         <section className="dashboard-surface p-4" aria-label="Executive reconciliation">
@@ -504,10 +506,10 @@ export default async function HomePage() {
 
       {/* First run callout — quiet, not alarming */}
       {firstRun !== "seeded" && (
-        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10">
+        <section className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10" aria-label="First-run status">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex-shrink-0 w-8 h-8 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-300">
-              <AlertCircle size={16} />
+              <AlertCircle size={16} aria-hidden="true" />
             </div>
             <div className="min-w-0">
               <div className="text-sm font-medium text-amber-100">
@@ -521,11 +523,11 @@ export default async function HomePage() {
             </div>
           </div>
           {firstRun === "not_seeded" && <SeedDefaultCompanyButton />}
-        </div>
+        </section>
       )}
 
       {/* Company + state distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4" aria-label="Company and project state">
         {company ? (
           <div className="lg:col-span-2 dashboard-surface p-4">
             <div className="flex items-center justify-between gap-4 mb-4">
@@ -535,8 +537,8 @@ export default async function HomePage() {
                   {company.totals.active_workers}/{company.totals.workers} workers active · {company.totals.pending_approvals} approvals pending
                 </p>
               </div>
-              <Link href="/system-viz" prefetch={false} className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
-                Open graph <ArrowUpRight size={12} />
+              <Link href="/system-viz" prefetch={false} className="inline-flex min-h-11 items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
+                Open graph <ArrowUpRight size={12} aria-hidden="true" />
               </Link>
             </div>
             {company.departments.length === 0 ? (
@@ -627,17 +629,17 @@ export default async function HomePage() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
       {/* Quick links */}
-      <div className="dashboard-surface p-4">
-        <h2 className="text-sm font-medium text-white mb-3">Quick Links</h2>
+      <section className="dashboard-surface p-4" aria-labelledby="quick-links-heading">
+        <h2 id="quick-links-heading" className="text-sm font-medium text-white mb-3">Quick Links</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
           {QUICK_LINKS.map((q) => (
             <QuickLinkCard key={q.href} {...q} />
           ))}
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
