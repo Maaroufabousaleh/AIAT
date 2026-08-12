@@ -222,7 +222,7 @@ export default function LogsPage() {
   };
 
   return (
-    <div className="dashboard-page flex flex-col min-h-0">
+    <main className="dashboard-page flex flex-col min-h-0" aria-label="Container logs">
       <PageHeader
         icon="scroll"
         title="Container Logs"
@@ -234,7 +234,7 @@ export default function LogsPage() {
               <span className="sr-only sm:not-sr-only">Container</span>
               <select
                 aria-label="Container"
-                className="bg-slate-950/70 text-slate-200 border border-slate-700 rounded-md px-2 py-1 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors disabled:opacity-50"
+                className="min-h-11 bg-slate-950/70 text-slate-200 border border-slate-700 rounded-md px-2 py-1 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors disabled:opacity-50"
                 value={container}
                 onChange={(e) => setContainer(e.target.value)}
                 disabled={streaming}
@@ -252,7 +252,7 @@ export default function LogsPage() {
               <span className="sr-only sm:not-sr-only">Tail</span>
               <select
                 aria-label="Tail lines"
-                className="bg-slate-950/70 text-slate-200 border border-slate-700 rounded-md px-2 py-1 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors disabled:opacity-50"
+                className="min-h-11 bg-slate-950/70 text-slate-200 border border-slate-700 rounded-md px-2 py-1 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors disabled:opacity-50"
                 value={tail}
                 onChange={(e) => setTail(Number(e.target.value))}
                 disabled={streaming}
@@ -266,14 +266,14 @@ export default function LogsPage() {
             </label>
 
             {/* Follow toggle */}
-            <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none px-1.5">
+            <label className="flex min-h-11 items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none px-1.5">
               <input
                 type="checkbox"
                 aria-label="Follow live output"
                 checked={follow}
                 onChange={(e) => setFollow(e.target.checked)}
                 disabled={streaming}
-                className="accent-blue-500"
+                className="min-h-11 min-w-11 accent-blue-500"
               />
               Follow
             </label>
@@ -283,7 +283,7 @@ export default function LogsPage() {
               <button
                 type="button"
                 onClick={startStream}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-medium shadow-sm shadow-blue-500/10 transition-colors"
+                className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-medium shadow-sm shadow-blue-500/10 transition-colors"
               >
                 <Play size={12} />
                 Load
@@ -292,7 +292,7 @@ export default function LogsPage() {
               <button
                 type="button"
                 onClick={stopStream}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-md text-xs font-medium shadow-sm shadow-rose-500/10 transition-colors"
+                className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-md text-xs font-medium shadow-sm shadow-rose-500/10 transition-colors"
               >
                 <Square size={12} />
                 Stop
@@ -304,7 +304,7 @@ export default function LogsPage() {
               type="button"
               onClick={() => setLines([])}
               disabled={lines.length === 0}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Clear log buffer"
             >
               <Eraser size={12} />
@@ -317,7 +317,7 @@ export default function LogsPage() {
               onClick={handleCopy}
               disabled={filteredLines.length === 0}
               className={clsx(
-                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                "inline-flex min-h-11 items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                 copyState === "copied"
                   ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-500/10"
                   : "bg-slate-800 hover:bg-slate-700 text-slate-200"
@@ -333,7 +333,7 @@ export default function LogsPage() {
               type="button"
               onClick={handleDownload}
               disabled={filteredLines.length === 0}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Download visible log lines"
             >
               <Download size={12} />
@@ -344,7 +344,7 @@ export default function LogsPage() {
       />
 
       {/* Search + level filter row */}
-      <div className="dashboard-surface flex flex-wrap items-center gap-3 px-4 py-3">
+      <section className="dashboard-surface flex flex-wrap items-center gap-3 px-4 py-3" aria-label="Log filters">
         {/* Search input */}
         <div className="relative flex-1 min-w-[220px]">
           <Search
@@ -358,7 +358,7 @@ export default function LogsPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter log text (case-insensitive)"
             aria-label="Filter log text"
-            className="w-full bg-slate-950/70 text-slate-200 placeholder:text-slate-500 border border-slate-700 rounded-md pl-8 pr-2 py-1.5 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors"
+            className="w-full min-h-11 bg-slate-950/70 text-slate-200 placeholder:text-slate-500 border border-slate-700 rounded-md pl-8 pr-2 py-1.5 text-xs hover:border-slate-500 focus:border-blue-400 transition-colors"
           />
         </div>
 
@@ -369,6 +369,7 @@ export default function LogsPage() {
             onClick={() => setLevel("all")}
             count={lines.length}
             activeTone="blue"
+            className="min-h-11"
           >
             All
           </FilterChip>
@@ -377,6 +378,7 @@ export default function LogsPage() {
             onClick={() => setLevel("error")}
             count={levelCounts.error}
             activeTone="amber"
+            className="min-h-11"
           >
             Error
           </FilterChip>
@@ -385,6 +387,7 @@ export default function LogsPage() {
             onClick={() => setLevel("warn")}
             count={levelCounts.warn}
             activeTone="amber"
+            className="min-h-11"
           >
             Warn
           </FilterChip>
@@ -393,6 +396,7 @@ export default function LogsPage() {
             onClick={() => setLevel("info")}
             count={levelCounts.info}
             activeTone="emerald"
+            className="min-h-11"
           >
             Info
           </FilterChip>
@@ -401,16 +405,18 @@ export default function LogsPage() {
             onClick={() => setLevel("debug")}
             count={levelCounts.debug}
             activeTone="gray"
+            className="min-h-11"
           >
             Debug
           </FilterChip>
         </div>
-      </div>
+      </section>
 
       {/* Color legend — small, semantic, hidden on very small screens */}
-      <div
+      <section
         className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-xxs text-slate-500 border-b border-slate-800/60"
         aria-label="Log level color legend"
+        role="region"
       >
         <span className="font-semibold uppercase tracking-wider">Legend:</span>
         {LEVEL_LEGEND.map((l) => (
@@ -422,14 +428,14 @@ export default function LogsPage() {
             {l.label}
           </span>
         ))}
-      </div>
+      </section>
 
       {error && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known logs" : "Log stream error"}
           action={(
-            <button type="button" onClick={startStream} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10">
+            <button type="button" onClick={startStream} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">
               Retry
             </button>
           )}
@@ -443,6 +449,7 @@ export default function LogsPage() {
         className="flex-1 overflow-auto rounded-xl border border-slate-800 bg-black/55 font-mono text-xs p-3 min-h-0 shadow-inner shadow-black/40"
         role="log"
         aria-live="polite"
+        aria-busy={streaming}
         aria-label={`Log output for ${container}`}
       >
         {lines.length === 0 && !streaming && (
@@ -474,7 +481,7 @@ export default function LogsPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="text-xs text-slate-500 flex items-center gap-3 flex-wrap">
+      <section className="text-xs text-slate-500 flex items-center gap-3 flex-wrap" aria-label="Log status">
         <span>
           Showing <span className="text-slate-300 font-medium">{filteredLines.length}</span> of{" "}
           {lines.length} line{lines.length !== 1 ? "s" : ""} (max {MAX_LINES} retained)
@@ -492,12 +499,12 @@ export default function LogsPage() {
               setSearch("");
               setLevel("all");
             }}
-            className="text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline transition-colors"
+            className="min-h-11 px-2 text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline transition-colors"
           >
             Clear filters
           </button>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
