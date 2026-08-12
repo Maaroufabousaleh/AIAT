@@ -513,6 +513,80 @@ test.describe("Operational UI smoke flows", () => {
     );
   });
 
+  test("PM integrations expose a first-load access-denied state without retry or mutations", async ({
+    page,
+  }) => {
+    await page.route("**/api/integrations/pm**", async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "PM integrations access denied" }),
+      });
+    });
+
+    await page.goto("/integrations");
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    const access = integrations.getByRole("region", { name: "PM integrations access status" });
+    await expect(access).toBeVisible();
+    await expect(access.getByRole("heading", { name: "PM integrations access denied" })).toBeVisible();
+    await expect(access.getByText(/not authorized to read or change PM integrations/i)).toBeVisible();
+    await expect(access.getByRole("link", { name: "Return to dashboard" })).toHaveCSS("min-height", "44px");
+    await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+      await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
+    }
+  });
+
+  test("PM integrations hide lifecycle mutations when access is lost after a successful read", async ({
+    page,
+  }) => {
+    let requestCount = 0;
+    await page.route("**/api/integrations/pm**", async (route) => {
+      requestCount += 1;
+      if (requestCount > 1) {
+        await route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "PM integrations access revoked" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          connections: [{ id: "connection-denial-001", display_name: "Denial fixture", provider_kind: "youtrack", base_url: "https://example.invalid", status: "ACTIVE" }],
+          conflicts: [{ id: "conflict-denial-001", status: "OPEN" }],
+          outbox: [],
+          runs: [],
+          lifecyclePlans: [{ id: "plan-denial-001", status: "PLANNED", plan_digest: "digest-denial-001", plan: { plan_id: "plan-denial-001", status: "PLANNED", operations: [], rollback_operations: [], blockers: [] } }],
+        }),
+      });
+    });
+
+    await page.goto("/integrations");
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("conflict-denial-001")).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await integrations.getByRole("button", { name: "Refresh", exact: true }).click();
+
+    const access = integrations.getByRole("region", { name: "PM integrations access status" });
+    await expect(access).toBeVisible();
+    await expect(access.getByText(/last-known reconciliation context remains visible/i)).toBeVisible();
+    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await expect(integrations.getByRole("textbox", { name: "Connection UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("textbox", { name: "Binding UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("checkbox")).toHaveCount(0);
+    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+      await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
+    }
+  });
+
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
     page,
   }) => {

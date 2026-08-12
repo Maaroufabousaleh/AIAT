@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -22,6 +23,8 @@ export default function IntegrationsPage() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const hasData = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -29,12 +32,21 @@ export default function IntegrationsPage() {
     setError(null);
     try {
       const response = await fetch("/api/integrations/pm", { cache: "no-store" });
+      if (response.status === 401 || response.status === 403) {
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read or change PM integrations.");
+        setStale(hasData.current);
+        return;
+      }
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "Integration API failed");
       setData(payload);
       hasData.current = true;
       setStale(false);
+      setAccessDenied(false);
+      setHasReadContext(true);
     } catch (reason) {
+      setAccessDenied(false);
       setError(reason instanceof Error ? reason.message : "Integration API failed");
       setStale(hasData.current);
     } finally {
@@ -49,7 +61,7 @@ export default function IntegrationsPage() {
       <PageHeader
         title="PM integrations"
         description="Provider connections, synchronization health, reconciliation runs, and conflicts."
-        actions={(
+        actions={!accessDenied ? (
           <button
             type="button"
             onClick={() => void refresh()}
@@ -60,9 +72,29 @@ export default function IntegrationsPage() {
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
             Refresh
           </button>
-        )}
+        ) : undefined}
       />
-      {error && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="PM integrations access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">PM integrations access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change PM integrations. Last-known reconciliation context remains visible, but Refresh, Retry, and lifecycle mutations are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change PM integrations. No live integration state is being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale && data ? "warning" : "error"}
           title={stale && data ? "Showing last known integration state" : "Integration data unavailable"}
@@ -130,7 +162,7 @@ export default function IntegrationsPage() {
               <h2 id="integration-lifecycle-heading" className="text-sm font-semibold text-cyan-100">Governed lifecycle plans</h2>
               <p className="mt-1 text-xs text-cyan-200/70">Plans are generated and persisted by the control plane. This dashboard only submits explicit operator actions.</p>
             </div>
-            <div className="grid gap-2 md:grid-cols-3">
+            {!accessDenied && <div className="grid gap-2 md:grid-cols-3">
               <input aria-label="Connection UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Connection UUID" value={connectionId} onChange={(event) => setConnectionId(event.target.value)} />
               <input aria-label="Binding UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Binding UUID" value={bindingId} onChange={(event) => setBindingId(event.target.value)} />
               <button
@@ -157,7 +189,8 @@ export default function IntegrationsPage() {
                   }
                 }}
               >Generate READ_ONLY plan</button>
-            </div>
+            </div>}
+            {accessDenied && <p className="text-sm text-amber-200/80" role="status">Lifecycle mutation controls are hidden until authorization is restored.</p>}
             <div className="space-y-3">
               {data.lifecyclePlans.map((entry) => {
                 const plan = (entry.plan || {}) as Record<string, unknown>;
@@ -172,11 +205,11 @@ export default function IntegrationsPage() {
                     </div>
                     <div className="mt-2 break-all font-mono text-cyan-200">Digest: {digest}</div>
                     <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify({ operations: plan.operations, rollback_operations: plan.rollback_operations, blockers: plan.blockers, expires_at: plan.expires_at }, null, 2)}</pre>
-                    <label className="mt-2 flex items-center gap-2 text-slate-400">
+                    {!accessDenied && <label className="mt-2 flex items-center gap-2 text-slate-400">
                       <input type="checkbox" checked={reviewedDigest === digest} onChange={(event) => setReviewedDigest(event.target.checked ? digest : "")} />
                       I reviewed this exact digest
-                    </label>
-                    <div className="mt-2 flex gap-2">
+                    </label>}
+                    {!accessDenied && <div className="mt-2 flex gap-2">
                       <button
                         type="button"
                         className="min-h-11 rounded border border-emerald-700 px-2 py-1 text-emerald-300 disabled:opacity-50"
@@ -208,7 +241,7 @@ export default function IntegrationsPage() {
                           finally { setBusy(false); }
                         }}
                       >Apply exact plan</button>
-                    </div>
+                    </div>}
                   </div>
                 );
               })}
