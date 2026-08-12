@@ -139,3 +139,118 @@ test("flow editor exposes first-load and stale refresh recovery", async ({
   await expect(nodeConfiguration).toHaveCount(0);
   expect(requestCount).toBe(4);
 });
+
+test("flow editor fails closed when the initial flow read is denied", async ({
+  page,
+}) => {
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/flow-editor-recovery", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "flow editor access denied" }),
+    });
+  });
+
+  await authenticate(page, "/flows/flow-editor-recovery");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Flow editor access denied" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Flow editor access status" }),
+  ).toContainText("cannot be read while authorization is unavailable");
+  await expect(page.getByRole("link", { name: "Back to flows" })).toBeVisible();
+  await expect(page.getByTestId("flow-load-retry")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh flow" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+});
+
+test("flow editor preserves the last canvas but hides controls after read denial", async ({
+  page,
+}) => {
+  let denyNextRead = false;
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/flow-editor-recovery", async (route) => {
+    if (denyNextRead && route.request().method() === "GET") {
+      denyNextRead = false;
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "flow editor authorization expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/flows/flow-editor-recovery");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+
+  denyNextRead = true;
+  await page.getByRole("button", { name: "Refresh flow" }).click();
+  await expect(
+    page.getByRole("region", { name: "Flow editor access status" }),
+  ).toContainText("last successfully loaded flow remains visible");
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(page.getByTestId("flow-name-input")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh flow" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save As New Version" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Undo last change" })).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: "Mark flow as active" })).toHaveCount(0);
+});
+
+test("flow editor enters the same denied state when saving loses authorization", async ({
+  page,
+}) => {
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/flow-editor-recovery", async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "flow editor save denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/flows/flow-editor-recovery");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(
+    page.getByRole("region", { name: "Flow editor access status" }),
+  ).toContainText("last successfully loaded flow remains visible");
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save As New Version" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+});

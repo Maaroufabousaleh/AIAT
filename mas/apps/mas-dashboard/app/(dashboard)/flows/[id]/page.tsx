@@ -118,10 +118,28 @@ export default function FlowEditorPage() {
   const [flowLoaded, setFlowLoaded] = useState(id === "new");
   const [flowLoadStale, setFlowLoadStale] = useState(false);
   const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const hasFlowRef = useRef(false);
   const flowLoadGenerationRef = useRef(0);
+  const hasReadContextRef = useRef(false);
 
   const isNew = id === "new";
+
+  const handleAccessDenied = useCallback(() => {
+    const current = useFlowStore.getState().currentFlow;
+    const hadReadContext = hasReadContextRef.current || hasFlowRef.current || current !== null;
+    flowLoadGenerationRef.current += 1;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setFlowLoading(false);
+    setFlowLoadError(null);
+    setFlowLoadStale(false);
+    setSaving(false);
+    setValidationError(null);
+    setSelectedNode(null);
+    setShowConfig(false);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -153,6 +171,7 @@ export default function FlowEditorPage() {
   }, []);
 
   const loadFlow = useCallback(async (flowId: string) => {
+    if (accessDenied) return;
     const generation = flowLoadGenerationRef.current + 1;
     flowLoadGenerationRef.current = generation;
     setFlowLoading(true);
@@ -160,6 +179,11 @@ export default function FlowEditorPage() {
     const flow = await fetchFlow(flowId);
     if (generation !== flowLoadGenerationRef.current) return;
     if (!flow) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       const message = useFlowStore.getState().error || "The flow could not be loaded from the canonical API.";
       if (hasFlowRef.current) {
         setFlowLoadStale(true);
@@ -193,11 +217,13 @@ export default function FlowEditorPage() {
     setSaveStatus("saved");
     setLastSavedAt(new Date(flow.updated_at));
     hasFlowRef.current = true;
+    hasReadContextRef.current = true;
+    setHasReadContext(true);
     setFlowLoaded(true);
     setFlowLoadStale(false);
     setFlowLoadError(null);
     setFlowLoading(false);
-  }, [fetchFlow, setNodes, setEdges]);
+  }, [accessDenied, fetchFlow, handleAccessDenied, setNodes, setEdges]);
 
   useEffect(() => {
     if (!isNew && id) void loadFlow(id);
@@ -214,6 +240,7 @@ export default function FlowEditorPage() {
   }, [historyVersion]);
 
   const undo = useCallback(() => {
+    if (accessDenied) return;
     setHistory((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
@@ -223,9 +250,10 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       return prev.slice(0, -1);
     });
-  }, [nodes, edges, setNodes, setEdges]);
+  }, [accessDenied, nodes, edges, setNodes, setEdges]);
 
   const redo = useCallback(() => {
+    if (accessDenied) return;
     setRedoStack((prev) => {
       if (prev.length === 0) return prev;
       const next = prev[prev.length - 1];
@@ -235,7 +263,7 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       return prev.slice(0, -1);
     });
-  }, [nodes, edges, setNodes, setEdges]);
+  }, [accessDenied, nodes, edges, setNodes, setEdges]);
 
   // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo.
   useEffect(() => {
@@ -275,11 +303,12 @@ export default function FlowEditorPage() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (accessDenied) return;
       setEdges((eds) => addEdge({ ...connection, id: `e${Date.now()}`, markerEnd: { type: MarkerType.ArrowClosed } }, eds));
       setSaveStatus("dirty");
       setHistoryVersion((v) => v + 1);
     },
-    [setEdges]
+    [accessDenied, setEdges]
   );
 
   useEffect(() => {
@@ -306,6 +335,7 @@ export default function FlowEditorPage() {
       pendingConnectionSource = null;
     };
     const handleQuickConnect = (event: Event) => {
+      if (accessDenied) return;
       const { source, target } = (event as CustomEvent<{ source: string; target: string }>).detail;
       setEdges((eds) => {
         if (eds.some((edge) => edge.source === source && edge.target === target)) return eds;
@@ -322,16 +352,18 @@ export default function FlowEditorPage() {
       document.removeEventListener("mouseup", handleMouseUp, true);
       window.removeEventListener("flow-quick-connect", handleQuickConnect);
     };
-  }, [setEdges]);
+  }, [accessDenied, setEdges]);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => {
+    if (accessDenied) return;
     setSelectedNode(node);
     setShowConfig(true);
     setNodeConfig((node.data?.config as Record<string, unknown>) || {});
     setRawSwitchCases(JSON.stringify((node.data?.config as Record<string, unknown>)?.switch_cases || {}, null, 2));
-  }, []);
+  }, [accessDenied]);
 
   const addNode = useCallback((type: FlowNodeType) => {
+    if (accessDenied) return;
     const index = nodes.length;
     const id = `${type}_${Date.now()}`;
     const label = NODE_TYPE_LABELS[type] || type;
@@ -344,17 +376,19 @@ export default function FlowEditorPage() {
     setNodes((nds) => [...nds, newNode]);
     setSaveStatus("dirty");
     setHistoryVersion((v) => v + 1);
-  }, [nodes.length, setNodes]);
+  }, [accessDenied, nodes.length, setNodes]);
 
   const updateNodeLabel = useCallback((nodeId: string, label: string) => {
+    if (accessDenied) return;
     setNodes((nds) =>
       nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, label } } : n))
     );
     setSelectedNode((node) => (node?.id === nodeId ? { ...node, data: { ...node.data, label } } : node));
     setSaveStatus("dirty");
-  }, [setNodes]);
+  }, [accessDenied, setNodes]);
 
   const updateNodeConfig = useCallback((config: Record<string, unknown>) => {
+    if (accessDenied) return;
     setNodeConfig(config);
     if (selectedNode) {
       setNodes((nds) =>
@@ -363,7 +397,7 @@ export default function FlowEditorPage() {
       setSelectedNode((node) => (node ? { ...node, data: { ...node.data, config } } : node));
       setSaveStatus("dirty");
     }
-  }, [selectedNode, setNodes]);
+  }, [accessDenied, selectedNode, setNodes]);
 
   const switchCases = useMemo(() => (
     nodeConfig.switch_cases && typeof nodeConfig.switch_cases === "object" && !Array.isArray(nodeConfig.switch_cases)
@@ -398,7 +432,7 @@ export default function FlowEditorPage() {
   }, [setSwitchCases, switchCaseEntries.length, switchCases]);
 
   const deleteSelectedNode = useCallback(() => {
-    if (selectedNode) {
+    if (!accessDenied && selectedNode) {
       setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
       setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
       setSelectedNode(null);
@@ -406,7 +440,7 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       setHistoryVersion((v) => v + 1);
     }
-  }, [selectedNode, setNodes, setEdges]);
+  }, [accessDenied, selectedNode, setNodes, setEdges]);
 
   const validateFlow = useCallback((): string | null => {
     if (!name.trim()) return "Flow name is required";
@@ -422,6 +456,7 @@ export default function FlowEditorPage() {
   }, [name, nodes]);
 
   const handleSave = async () => {
+    if (accessDenied) return;
     const validation = validateFlow();
     if (validation) {
       setValidationError(validation);
@@ -446,6 +481,11 @@ export default function FlowEditorPage() {
           setLastSavedAt(new Date());
           router.push(`/flows/${created.id}`);
         } else {
+          const status = useFlowStore.getState().errorStatus;
+          if (status === 401 || status === 403) {
+            handleAccessDenied();
+            return;
+          }
           setSaveStatus("error");
         }
       } else {
@@ -459,10 +499,20 @@ export default function FlowEditorPage() {
           setSaveStatus("saved");
           setLastSavedAt(new Date());
         } else {
+          const status = useFlowStore.getState().errorStatus;
+          if (status === 401 || status === 403) {
+            handleAccessDenied();
+            return;
+          }
           setSaveStatus("error");
         }
       }
     } catch (err) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setSaveStatus("error");
     } finally {
       setSaving(false);
@@ -470,6 +520,7 @@ export default function FlowEditorPage() {
   };
 
   const handleSaveAsNewVersion = async () => {
+    if (accessDenied) return;
     const validation = validateFlow();
     if (validation || !currentFlow) {
       setValidationError(validation);
@@ -492,14 +543,57 @@ export default function FlowEditorPage() {
         setLastSavedAt(new Date());
         router.push(`/flows/${created.id}`);
       } else {
+        const status = useFlowStore.getState().errorStatus;
+        if (status === 401 || status === 403) {
+          handleAccessDenied();
+          return;
+        }
         setSaveStatus("error");
       }
     } catch (err) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setSaveStatus("error");
     } finally {
       setSaving(false);
     }
   };
+
+  if (!isNew && accessDenied && !flowLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">
+          <Link
+            href="/flows"
+            aria-label="Back to flows"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <h1 className="text-lg font-semibold">Flow editor access denied</h1>
+        </header>
+        <main
+          aria-label="Flow editor access denied"
+          className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6"
+        >
+          <section
+            role="region"
+            aria-label="Flow editor access status"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-100"
+          >
+            <h2 className="font-medium text-amber-50">Flow editor access denied</h2>
+            <p className="mt-1 text-amber-100/80">
+              This flow cannot be read while authorization is unavailable. Retry,
+              editing, and save controls remain hidden until access is restored.
+            </p>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   if (!isNew && !flowLoaded) {
     return (
@@ -555,17 +649,23 @@ export default function FlowEditorPage() {
             <ArrowLeft size={18} />
           </Link>
           <div className="min-w-0">
-            <input
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setSaveStatus("dirty");
-              }}
-              placeholder="Flow name..."
-              aria-label="Flow name"
-              data-testid="flow-name-input"
-              className="min-h-11 text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
-            />
+            {accessDenied ? (
+              <span className="inline-flex min-h-11 items-center text-lg font-semibold text-white">
+                {name || "Flow"}
+              </span>
+            ) : (
+              <input
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setSaveStatus("dirty");
+                }}
+                placeholder="Flow name..."
+                aria-label="Flow name"
+                data-testid="flow-name-input"
+                className="min-h-11 text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
+              />
+            )}
             {currentFlow && (
               <p className="text-xs text-slate-500 mt-0.5">
                 v{currentFlow.version} · Updated {formatDistanceToNow(new Date(currentFlow.updated_at), { addSuffix: true })}
@@ -577,7 +677,7 @@ export default function FlowEditorPage() {
           <SaveStatusBadge status={saveStatus} lastSavedAt={lastSavedAt} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {!isNew && (
+          {!accessDenied && !isNew && (
             <button
               type="button"
               onClick={() => void loadFlow(id)}
@@ -593,7 +693,7 @@ export default function FlowEditorPage() {
             </button>
           )}
           {/* Undo / Redo buttons + keyboard shortcut hints */}
-          <div className="flex items-center gap-1 mr-1">
+          {!accessDenied && <div className="flex items-center gap-1 mr-1">
             <button
               type="button"
               onClick={undo}
@@ -616,8 +716,8 @@ export default function FlowEditorPage() {
             >
               <Redo2 size={14} />
             </button>
-          </div>
-          <label className="flex min-h-11 items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
+          </div>}
+          {!accessDenied && <label className="flex min-h-11 items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
             <input
               type="checkbox"
               checked={isActive}
@@ -629,8 +729,8 @@ export default function FlowEditorPage() {
               className="min-h-11 min-w-11 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-400/60"
             />
             Active
-          </label>
-          <button
+          </label>}
+          {!accessDenied && <button
             type="button"
             onClick={handleSave}
             disabled={saving || loading}
@@ -639,8 +739,8 @@ export default function FlowEditorPage() {
           >
             <Save size={14} />
             {saving ? "Saving..." : "Save"}
-          </button>
-          {currentFlow && (
+          </button>}
+          {!accessDenied && currentFlow && (
             <button
               type="button"
               onClick={handleSaveAsNewVersion}
@@ -654,6 +754,21 @@ export default function FlowEditorPage() {
           )}
         </div>
       </header>
+
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Flow editor access status"
+          className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+        >
+          <h2 className="font-medium text-amber-50">Flow editor access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {hasReadContext
+              ? "The last successfully loaded flow remains visible as a read-only canvas. Refresh, retry, palette, editing, and save controls are hidden until authorization is restored."
+              : "No live flow definition is available while authorization is unavailable. Editing and save controls remain hidden until access is restored."}
+          </p>
+        </section>
+      )}
 
       {/* Node count summary strip — total / edges / undo depth, with KPI tiles
           for each node type so the user can see composition at a glance. */}
@@ -709,7 +824,7 @@ export default function FlowEditorPage() {
         </div>
       </section>
 
-      {validationError && (
+      {validationError && !accessDenied && (
         <div className="px-4 py-2 border-b border-slate-800">
           <ErrorBanner tone="error" title="Cannot save flow" icon={AlertTriangle}>
             {validationError}
@@ -717,7 +832,7 @@ export default function FlowEditorPage() {
         </div>
       )}
 
-      {flowLoadStale && flowLoadError && (
+      {flowLoadStale && flowLoadError && !accessDenied && (
         <div className="px-4 py-2 border-b border-slate-800" data-testid="flow-editor-stale">
           <ErrorBanner
             tone="warning"
@@ -743,36 +858,49 @@ export default function FlowEditorPage() {
 
       <main aria-label="Flow editor" className="flex-1 flex min-h-0">
         <aside aria-label="Flow node palette" className="w-48 border-r border-slate-800 bg-slate-900/60 p-3 space-y-2">
-          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</h2>
-          {NODE_TYPES_OPTIONS.map((type) => (
-            <button
-              type="button"
-              key={type}
-              onClick={() => addNode(type)}
-              data-testid={`add-node-${type}`}
-              aria-label={`Add ${NODE_TYPE_LABELS[type]} node`}
-              className={clsx(
-                "w-full min-h-11 px-2 py-2 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
-                FLOW_NODE_COLORS[type]
-              )}
-            >
-              {NODE_TYPE_LABELS[type]}
-            </button>
-          ))}
-          <div className="pt-2 mt-2 border-t border-slate-800/80 text-xxs text-slate-500 leading-snug flex items-start gap-1.5">
-            <Info size={12} className="flex-shrink-0 mt-0.5 text-slate-600" />
-            <span>Drag from a node&apos;s bottom handle to another node to connect them.</span>
-          </div>
+          {accessDenied ? (
+            <div className="space-y-2 text-xs text-slate-500">
+              <h2 className="text-xs font-medium uppercase tracking-wider text-slate-400">Read-only canvas</h2>
+              <p>Node creation and connections are hidden until authorization is restored.</p>
+            </div>
+          ) : (
+            <>
+              <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</h2>
+              {NODE_TYPES_OPTIONS.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  onClick={() => addNode(type)}
+                  data-testid={`add-node-${type}`}
+                  aria-label={`Add ${NODE_TYPE_LABELS[type]} node`}
+                  className={clsx(
+                    "w-full min-h-11 px-2 py-2 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
+                    FLOW_NODE_COLORS[type]
+                  )}
+                >
+                  {NODE_TYPE_LABELS[type]}
+                </button>
+              ))}
+              <div className="pt-2 mt-2 border-t border-slate-800/80 text-xxs text-slate-500 leading-snug flex items-start gap-1.5">
+                <Info size={12} className="flex-shrink-0 mt-0.5 text-slate-600" />
+                <span>Drag from a node&apos;s bottom handle to another node to connect them.</span>
+              </div>
+            </>
+          )}
         </aside>
 
         <section aria-label="Flow canvas" className="flex-1 relative min-w-0">
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
+            onNodesChange={accessDenied ? undefined : onNodesChange}
+            onEdgesChange={accessDenied ? undefined : onEdgesChange}
+            onConnect={accessDenied ? undefined : onConnect}
+            onNodeClick={accessDenied ? undefined : onNodeClick}
+            nodesDraggable={!accessDenied}
+            nodesConnectable={!accessDenied}
+            elementsSelectable={!accessDenied}
+            nodesFocusable={!accessDenied}
             nodeTypes={CUSTOM_NODE_TYPES}
             fitView
             className="bg-slate-950"
@@ -795,7 +923,7 @@ export default function FlowEditorPage() {
           )}
         </section>
 
-        {showConfig && selectedNode && (
+        {showConfig && selectedNode && !accessDenied && (
           <aside aria-label="Node configuration" className="w-72 border-l border-slate-800 bg-slate-900/60 p-4 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-white">Node Config</h3>

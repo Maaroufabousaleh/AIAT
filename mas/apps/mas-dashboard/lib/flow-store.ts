@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { Flow, FlowDefinition, FlowInstance, FlowNodeExecution, FlowTemplate } from "./flow-types";
 
+type FlowError = Error & { status?: number };
+
 interface FlowState {
   flows: Flow[];
   currentFlow: Flow | null;
@@ -9,6 +11,7 @@ interface FlowState {
   activeInstances: FlowInstance[];
   loading: boolean;
   error: string | null;
+  errorStatus: number | null;
   
   setFlows: (flows: Flow[]) => void;
   setCurrentFlow: (flow: Flow | null) => void;
@@ -56,6 +59,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   activeInstances: [],
   loading: false,
   error: null,
+  errorStatus: null,
 
   setFlows: (flows) => set({ flows }),
   setCurrentFlow: (flow) => set({ currentFlow: flow }),
@@ -90,25 +94,31 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   },
 
   fetchFlow: async (id) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, errorStatus: null });
     try {
       const res = await fetch(`/api/flows/${id}`);
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
         const detail = payload && typeof payload.error === "string" ? payload.error : `HTTP ${res.status}`;
-        throw new Error(`Failed to fetch flow: ${detail}`);
+        const error = new Error(`Failed to fetch flow: ${detail}`) as FlowError;
+        error.status = res.status;
+        throw error;
       }
       const data = payload;
-      set({ currentFlow: data, loading: false });
+      set({ currentFlow: data, loading: false, errorStatus: null });
       return data;
     } catch (e) {
-      set({ error: (e as Error).message, loading: false });
+      set({
+        error: (e as Error).message,
+        errorStatus: (e as FlowError).status ?? null,
+        loading: false,
+      });
       return null;
     }
   },
 
   createFlow: async (data) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, errorStatus: null });
     try {
       const res = await fetch("/api/flows", {
         method: "POST",
@@ -117,35 +127,50 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       });
       if (!res.ok) {
         const d = await res.json();
-        throw new Error(d.error || "Failed to create flow");
+        const error = new Error(d.error || `Failed to create flow: HTTP ${res.status}`) as FlowError;
+        error.status = res.status;
+        throw error;
       }
       const created = await res.json();
-      set((state) => ({ flows: [created, ...state.flows], loading: false }));
+      set((state) => ({ flows: [created, ...state.flows], loading: false, errorStatus: null }));
       return created;
     } catch (e) {
-      set({ error: (e as Error).message, loading: false });
+      set({
+        error: (e as Error).message,
+        errorStatus: (e as FlowError).status ?? null,
+        loading: false,
+      });
       return null;
     }
   },
 
   updateFlow: async (id, data) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, errorStatus: null });
     try {
       const res = await fetch(`/api/flows/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to update flow");
+      if (!res.ok) {
+        const error = new Error(`Failed to update flow: HTTP ${res.status}`) as FlowError;
+        error.status = res.status;
+        throw error;
+      }
       const updated = await res.json();
       set((state) => ({
         flows: state.flows.map((f) => (f.id === id ? updated : f)),
         currentFlow: state.currentFlow?.id === id ? updated : state.currentFlow,
         loading: false,
+        errorStatus: null,
       }));
       return updated;
     } catch (e) {
-      set({ error: (e as Error).message, loading: false });
+      set({
+        error: (e as Error).message,
+        errorStatus: (e as FlowError).status ?? null,
+        loading: false,
+      });
       return null;
     }
   },
