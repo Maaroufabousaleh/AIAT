@@ -86,6 +86,10 @@ function parseCsv(value: string): string[] {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
+function isAccessDeniedStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   software_delivery: GitBranch,
   research: Sparkles,
@@ -207,6 +211,16 @@ export default function NewFlowPage() {
   const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
   const [governanceLoading, setGovernanceLoading] = useState(true);
   const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [accessDeniedSource, setAccessDeniedSource] = useState<string | null>(null);
+
+  const markAccessDenied = useCallback((source: string) => {
+    setAccessDenied(true);
+    setAccessDeniedSource((current) => current ?? source);
+    setSelectedNode(null);
+    setShowConfig(false);
+    setDryRunResult(null);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -217,6 +231,10 @@ export default function NewFlowPage() {
           fetch("/api/workers", { signal: controller.signal }),
           fetch("/api/governance/model-profiles", { signal: controller.signal }),
         ]);
+        if (isAccessDeniedStatus(workersResponse.status) || isAccessDeniedStatus(profilesResponse.status)) {
+          markAccessDenied("governed worker or Model Profile catalogue");
+          return;
+        }
         if (!workersResponse.ok || !profilesResponse.ok) {
           throw new Error("The worker registry or Model Profile catalog is unavailable");
         }
@@ -235,7 +253,7 @@ export default function NewFlowPage() {
     }
     void loadGovernanceOptions();
     return () => controller.abort();
-  }, []);
+  }, [markAccessDenied]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -243,6 +261,10 @@ export default function NewFlowPage() {
       setTemplatesLoading(true);
       try {
         const response = await fetch("/api/flow-templates", { signal: controller.signal });
+        if (isAccessDeniedStatus(response.status)) {
+          markAccessDenied("canonical flow-template catalogue");
+          return;
+        }
         if (!response.ok) throw new Error("The canonical flow-template catalogue is unavailable");
         const payload = await response.json();
         const templates = Array.isArray(payload?.templates)
@@ -263,7 +285,7 @@ export default function NewFlowPage() {
     }
     void loadCanonicalTemplates();
     return () => controller.abort();
-  }, []);
+  }, [markAccessDenied]);
 
   /**
    * Apply a template by replacing the current canvas with the template's
@@ -463,6 +485,9 @@ export default function NewFlowPage() {
       if (res.ok) {
         const created = await res.json();
         router.push(`/flows/${created.id}`);
+      } else if (isAccessDeniedStatus(res.status)) {
+        markAccessDenied("flow creation");
+        setValidationError("Flow creation is unavailable while authorization is unavailable.");
       } else {
         const err = await res.json().catch(() => ({}));
         setValidationError(err.detail || err.error || "Failed to create flow");
@@ -490,6 +515,11 @@ export default function NewFlowPage() {
         body: JSON.stringify({ definition_json: definition }),
       });
       const payload = await response.json().catch(() => null);
+      if (isAccessDeniedStatus(response.status)) {
+        markAccessDenied("flow readiness validation");
+        setValidationError("Flow readiness validation is unavailable while authorization is unavailable.");
+        return;
+      }
       if (!response.ok || !payload) {
         setValidationError(payload?.error || payload?.detail || "Could not validate the flow");
         return;
@@ -551,62 +581,80 @@ export default function NewFlowPage() {
                 <ArrowLeft size={14} />
                 Back
               </Link>
-              <label className="inline-flex items-center gap-2 text-sm text-slate-300 px-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                  aria-label="Activate flow on save"
-                  className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-0 transition-colors"
-                />
-                Active
-              </label>
-              <button
-                onClick={handleDryRun}
-                disabled={dryRunning}
-                aria-busy={dryRunning}
-                data-testid="flow-dry-run-button"
-                className={clsx(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
-                  dryRunning
-                    ? "border-slate-700 text-slate-500 cursor-wait"
-                    : "border-slate-600 text-slate-200 hover:text-white hover:border-slate-400 hover:bg-slate-800"
-                )}
-              >
-                <ShieldCheck size={14} aria-hidden="true" />
-                {dryRunning ? "Validating…" : "Validate readiness"}
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                aria-busy={saving}
-                data-testid="flow-save-button"
-                className={clsx(
-                  "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors shadow-sm",
-                  "focus:outline-none focus:ring-2 focus:ring-blue-500/50",
-                  saving
-                    ? "bg-blue-700/60 text-blue-100 cursor-wait"
-                    : "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-blue-500/10"
-                )}
-              >
-                {saving ? (
-                  <>
-                    <span
-                      className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
-                      aria-hidden="true"
+              {!accessDenied && (
+                <>
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-300 px-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={(e) => setIsActive(e.target.checked)}
+                      aria-label="Activate flow on save"
+                      className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-0 transition-colors"
                     />
-                    Creating…
-                  </>
-                ) : (
-                  <>
-                    <Save size={14} aria-hidden="true" />
-                    Create Flow
-                  </>
-                )}
-              </button>
+                    Active
+                  </label>
+                  <button
+                    onClick={handleDryRun}
+                    disabled={dryRunning}
+                    aria-busy={dryRunning}
+                    data-testid="flow-dry-run-button"
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+                      dryRunning
+                        ? "border-slate-700 text-slate-500 cursor-wait"
+                        : "border-slate-600 text-slate-200 hover:text-white hover:border-slate-400 hover:bg-slate-800"
+                    )}
+                  >
+                    <ShieldCheck size={14} aria-hidden="true" />
+                    {dryRunning ? "Validating…" : "Validate readiness"}
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    aria-busy={saving}
+                    data-testid="flow-save-button"
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors shadow-sm",
+                      "focus:outline-none focus:ring-2 focus:ring-blue-500/50",
+                      saving
+                        ? "bg-blue-700/60 text-blue-100 cursor-wait"
+                        : "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-blue-500/10"
+                    )}
+                  >
+                    {saving ? (
+                      <>
+                        <span
+                          className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+                          aria-hidden="true"
+                        />
+                        Creating…
+                      </>
+                    ) : (
+                      <>
+                        <Save size={14} aria-hidden="true" />
+                        Create Flow
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
             </>
           }
         />
+
+        {accessDenied && (
+          <section
+            data-testid="flow-builder-access-denied"
+            role="region"
+            aria-label="Flow creation access status"
+            className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10"
+          >
+            <h2 className="text-sm font-medium text-amber-100">Flow creation access denied</h2>
+            <p className="mt-1 text-xs text-amber-200/75" role="status" aria-live="polite">
+              The {accessDeniedSource ?? "flow"} boundary denied access. The current draft remains visible as read-only context; template, canvas, validation, and creation controls are hidden until authorization is restored.
+            </p>
+          </section>
+        )}
 
         {/* Name + description strip — sits inside the page header band */}
         <div className="mt-3 rounded-xl border border-slate-800/80 bg-slate-950/35 px-4 py-3 shadow-sm shadow-black/10">
@@ -622,6 +670,8 @@ export default function NewFlowPage() {
                 id="flow-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                readOnly={accessDenied}
+                aria-readonly={accessDenied}
                 placeholder="e.g. Customer onboarding v2"
                 data-testid="flow-name-input"
                 aria-label="Flow name"
@@ -639,6 +689,8 @@ export default function NewFlowPage() {
                 id="flow-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                readOnly={accessDenied}
+                aria-readonly={accessDenied}
                 placeholder="What does this flow do and who owns it?"
                 aria-label="Flow description"
                 className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors"
@@ -648,7 +700,7 @@ export default function NewFlowPage() {
         </div>
 
         {/* Template suggestions — collapsible, hidden once a template is applied */}
-        {showTemplates && (
+        {!accessDenied && showTemplates && (
           <div
             className="mt-3 rounded-xl border border-slate-800/80 bg-slate-950/35 px-4 py-3 shadow-sm shadow-black/10"
             aria-label="Flow template suggestions"
@@ -735,7 +787,7 @@ export default function NewFlowPage() {
           </div>
         )}
 
-        {!showTemplates && (
+        {!accessDenied && !showTemplates && (
           <button
             onClick={() => setShowTemplates(true)}
             className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 rounded px-1 py-0.5"
@@ -767,7 +819,7 @@ export default function NewFlowPage() {
 
       <div className="flex-1 flex">
         {/* Left panel: node palette */}
-        <div className="w-48 border-r border-slate-800 bg-slate-900 p-3 space-y-2">
+        {!accessDenied && <div className="w-48 border-r border-slate-800 bg-slate-900 p-3 space-y-2">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Node Types</p>
           {NODE_TYPES_OPTIONS.map((type) => (
             <button
@@ -787,17 +839,20 @@ export default function NewFlowPage() {
               Click a node type to add it. Drag nodes to position. Connect nodes by dragging from the bottom handle.
             </p>
           </div>
-        </div>
+        </div>}
 
         {/* Canvas */}
         <div className="flex-1">
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
+            onNodesChange={accessDenied ? undefined : onNodesChange}
+            onEdgesChange={accessDenied ? undefined : onEdgesChange}
+            onConnect={accessDenied ? undefined : onConnect}
+            onNodeClick={accessDenied ? undefined : onNodeClick}
+            nodesDraggable={!accessDenied}
+            nodesConnectable={!accessDenied}
+            elementsSelectable={!accessDenied}
             nodeTypes={CUSTOM_NODE_TYPES}
             fitView
             className="bg-slate-950"
@@ -809,7 +864,7 @@ export default function NewFlowPage() {
         </div>
 
         {/* Right panel: node config */}
-        {showConfig && selectedNode && (
+        {!accessDenied && showConfig && selectedNode && (
           <div className="w-72 border-l border-slate-800 bg-slate-900 p-4 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
