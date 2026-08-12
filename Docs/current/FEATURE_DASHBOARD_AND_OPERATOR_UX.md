@@ -93,6 +93,15 @@ schedule/control/dialog regions, scheduled-event semantics, and 44px refresh,
 retry, shutdown/resume, schedule-input/save, and confirmation controls. Its
 source-built stale/retry test covers the focused baseline 1/1 (`543f392`).
 
+System Overview now has a focused home accessibility baseline: a named main and
+hero/status surface, explicit health, overview-metrics, first-run,
+company/project-state, and Quick Links regions, decorative icons hidden from
+assistive technology, and 44px graph, Quick Links, and seed controls. The
+source-built first-run test covers the landmark and target assertions 1/1
+against a local deterministic orchestrator fixture (`c07b4a6`). The live
+orchestrator was unavailable during this run, so control-plane availability and
+full WCAG/native-Linux visual certification remain separate gates.
+
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -133,6 +142,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - System visualisation fetches each source independently, retains responding sections when another source is unavailable, labels partial data as stale, and offers a retry action; PM integrations use the same last-known/conflict-preserving pattern for refresh failures. The targeted resilience checks live in [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts).
 - System visualisation now also has a focused accessibility baseline: named loading/error/ready page landmarks, horizontal visualization tabs with semantic tab/tabpanel links, and 44px breadcrumb, refresh, Mermaid-copy, path-trace, graph/detail, policy, retry, and back-link targets. The deterministic fixture-backed hierarchy/path-tracing test covers these semantics 1/1 (`ed5e551`). Full WCAG/native-Linux visual certification remains open.
 - PM integrations now also have a focused accessibility baseline: a named busy main landmark, explicit summary/connections/reconciliation/lifecycle regions, labeled lifecycle inputs, and 44px refresh/retry/generation/approval/apply controls. The existing fixture-backed conflict/stale-retry test covers these semantics 1/1 (`bbd6ba3`). Full WCAG/native-Linux visual certification and provider-owned evidence remain open.
+- System Overview now also has a focused accessibility baseline: a named main and hero/status surface, explicit health/overview-metrics/first-run/company-project-state/Quick Links regions, decorative-icon suppression, and 44px graph/Quick Links/seed controls. The source-built first-run test covers these semantics and target sizes 1/1 with a local deterministic orchestrator fixture (`c07b4a6`). Full WCAG/native-Linux visual certification and live control-plane availability remain open.
 - Project creation reads the active flow catalogue with `cache: "no-store"`, so a newly saved/versioned flow is selectable immediately after navigation instead of waiting for a stale browser response; the full flow-builder golden path now passes again.
 - Flow editors render the generated node-schema contract and editable form (version, descriptions, required-any rules, field types, defaults, enums, CSV/JSON fields, governed workers, and approved Model Profiles). Deprecated `team_id`/`action` assignments are identified in the contract and remain editable only in the collapsed compatibility controls, which also preserve adapter extension keys.
 - New-flow starter cards consume the canonical `/flow-templates` catalogue through the dashboard proxy, preserve template configs/evidence metadata, remap branch references, and retain a blank-canvas fallback for catalogue outages.
@@ -197,6 +207,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Project workspace: [`mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>)
 - System visualisation: [`mas/apps/mas-dashboard/components/system-viz/`](../../mas/apps/mas-dashboard/components/system-viz/)
 - System-visualisation accessibility state: [`system-viz/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/system-viz/page.tsx>), [`HierarchyViz.tsx`](../../mas/apps/mas-dashboard/components/system-viz/HierarchyViz.tsx), [`PermissionsViz.tsx`](../../mas/apps/mas-dashboard/components/system-viz/PermissionsViz.tsx), [`OrchestrationViz.tsx`](../../mas/apps/mas-dashboard/components/system-viz/OrchestrationViz.tsx), and [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts) (`ed5e551`)
+- System Overview accessibility state: [`page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/page.tsx>), [`QuickLinkCard.tsx`](../../mas/apps/mas-dashboard/components/ui/QuickLinkCard.tsx), [`SeedDefaultCompanyButton.tsx`](../../mas/apps/mas-dashboard/components/SeedDefaultCompanyButton.tsx), and [`first-run-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/first-run-states.spec.ts) (`c07b4a6`)
 - PM-integrations accessibility state: [`integrations/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/integrations/page.tsx>) and [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts) (`bbd6ba3`)
 - Dashboard shell accessibility: [`DashboardShell.tsx`](../../mas/apps/mas-dashboard/components/DashboardShell.tsx), [`Sidebar.tsx`](../../mas/apps/mas-dashboard/components/Sidebar.tsx), [`dashboard-shell-accessibility.spec.ts`](../../mas/apps/mas-dashboard/e2e/dashboard-shell-accessibility.spec.ts)
 - Theme preference and palette foundation: [`ThemeProvider.tsx`](../../mas/apps/mas-dashboard/components/ThemeProvider.tsx), [`ThemeToggle.tsx`](../../mas/apps/mas-dashboard/components/ThemeToggle.tsx), [`globals.css`](../../mas/apps/mas-dashboard/app/globals.css), [`dashboard-theme.spec.ts`](../../mas/apps/mas-dashboard/e2e/dashboard-theme.spec.ts)
@@ -281,6 +292,9 @@ baseline; native/live Redis/router and full WCAG evidence remain open
 - Consolidate legacy flow compatibility aliases into an explicit extension editor after migration coverage is complete.
 - Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`.
 - Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.
+- Extend the focused System Overview home baseline into stale/offline/partial
+  recovery and page-level visual/mobile certification; its named landmarks,
+  first-run state, and 44px operator targets are covered by `c07b4a6`.
 - Improve stale/conflict/rollback and partial-evidence experiences; system
   visualization, identity tables, PM integrations, project list/detail/workspace, the
   combined governance read surface, System Control, Tools catalogue,
