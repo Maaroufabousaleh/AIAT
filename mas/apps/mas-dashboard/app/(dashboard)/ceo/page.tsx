@@ -325,7 +325,10 @@ export default function CeoPage() {
   );
 
   return (
-    <div className="dashboard-page flex flex-col h-full">
+    <main
+      className="dashboard-page flex flex-col h-full"
+      aria-label="CEO live feed"
+    >
       <PageHeader
         icon="brain"
         title="CEO Live Feed"
@@ -373,7 +376,7 @@ export default function CeoPage() {
               aria-pressed={groupByCycle}
               aria-label="Group entries by think cycle"
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 groupByCycle
                   ? "bg-indigo-500/15 text-indigo-200 border-indigo-500/40 hover:bg-indigo-500/25"
                   : "bg-slate-900/60 text-slate-400 border-slate-700 hover:bg-slate-800 hover:text-slate-200",
@@ -388,7 +391,7 @@ export default function CeoPage() {
               aria-pressed={paused}
               aria-label={paused ? "Resume live feed" : "Pause live feed"}
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 paused
                   ? "bg-amber-500/15 text-amber-200 border-amber-500/40 hover:bg-amber-500/25"
                   : "bg-slate-900/60 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-slate-100",
@@ -404,7 +407,7 @@ export default function CeoPage() {
                 setEntries([]);
               }}
               aria-label="Clear buffered messages"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
+              className="flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
             >
               <Trash2 size={12} />
               Clear
@@ -413,7 +416,7 @@ export default function CeoPage() {
               type="button"
               onClick={() => connect(true)}
               aria-label="Reconnect CEO feed"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+              className="flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
             >
               <RefreshCw size={12} />
               Reconnect
@@ -428,7 +431,7 @@ export default function CeoPage() {
             tone={stale ? "warning" : "error"}
             title={stale ? "Showing last known CEO feed" : "CEO feed unavailable"}
             action={(
-              <button type="button" onClick={() => connect(true)} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10">
+              <button type="button" onClick={() => connect(true)} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">
                 Retry
               </button>
             )}
@@ -439,7 +442,7 @@ export default function CeoPage() {
       )}
 
       {/* Message composer — talk directly to the CEO */}
-      <div className="mx-4 mt-3 mb-1">
+      <section className="mx-4 mt-3 mb-1" aria-label="CEO message composer">
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <Send
@@ -459,7 +462,7 @@ export default function CeoPage() {
               placeholder="Send a directive, question, or request to the CEO… (Enter to send, Shift+Enter for newline)"
               rows={2}
               aria-label="Message to CEO"
-              className="flex-1 rounded-lg bg-slate-950/80 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none focus:border-violet-500/60 focus:outline-none transition-colors"
+              className="flex-1 min-h-11 rounded-lg bg-slate-950/80 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none focus:border-violet-500/60 focus:outline-none transition-colors"
             />
             <button
               type="button"
@@ -467,7 +470,7 @@ export default function CeoPage() {
               disabled={!composerText.trim() || sending}
               aria-label="Send message to CEO"
               className={clsx(
-                "flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
+                "flex-shrink-0 flex min-h-11 items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
                 composerText.trim() && !sending
                   ? "bg-violet-600 hover:bg-violet-500 text-white border-violet-500/60 hover:border-violet-400"
                   : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed",
@@ -488,11 +491,14 @@ export default function CeoPage() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
       {/* KPI summary row — quick at-a-glance counts per message type. */}
       {entries.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2">
+        <section
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2"
+          aria-label="CEO feed summary"
+        >
           <KpiCard
             label="Buffered"
             value={entries.length}
@@ -521,12 +527,15 @@ export default function CeoPage() {
             icon="alert-triangle"
             tone={typeCounts.VETO > 0 ? "negative" : "neutral"}
           />
-        </div>
+        </section>
       )}
 
       {/* Search + filter chips */}
       {entries.length > 0 && (
-        <div className="flex flex-col gap-2 px-4 mt-2">
+        <section
+          className="flex flex-col gap-2 px-4 mt-2"
+          aria-label="CEO feed filters"
+        >
           <div className="relative">
             <Search
               size={13}
@@ -539,14 +548,14 @@ export default function CeoPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search message type, sender, project_id, payload..."
               aria-label="Search CEO feed"
-              className="w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:border-blue-500/60 focus:bg-slate-900 transition-colors"
+              className="w-full min-h-11 pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:border-blue-500/60 focus:bg-slate-900 transition-colors"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch("")}
                 aria-label="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors"
+                className="absolute right-2 top-1/2 min-h-11 min-w-11 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors"
               >
                 <X size={12} />
               </button>
@@ -566,16 +575,22 @@ export default function CeoPage() {
                   onClick={() => setActiveType(type)}
                   count={typeCounts[type]}
                   activeTone={getChipToneForType(type)}
+                  className="min-h-11"
                 >
                   {type === "ALL" ? "All" : type.replace(/_/g, " ")}
                 </FilterChip>
               );
             })}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="dashboard-surface flex-1 overflow-y-auto p-4 space-y-3">
+      <section
+        className="dashboard-surface flex-1 overflow-y-auto p-4 space-y-3"
+        role="region"
+        aria-label="CEO message feed"
+        aria-busy={!connected && !loadError}
+      >
         {entries.length === 0 ? (
           <div className="py-12">
             <EmptyState
@@ -700,7 +715,7 @@ export default function CeoPage() {
                               : "Copy raw envelope to clipboard"
                           }
                           className={clsx(
-                            "ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xxs font-medium border transition-colors",
+                            "ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-1 px-1.5 py-0.5 rounded text-xxs font-medium border transition-colors",
                             copiedIndex === originalIndex
                               ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
                               : "bg-slate-900/60 text-slate-400 border-slate-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-slate-800 hover:text-slate-100",
@@ -781,11 +796,12 @@ export default function CeoPage() {
           ))
         )}
         <div ref={bottomRef} />
-      </div>
+      </section>
 
-      <div
+      <section
         className="dashboard-toolbar flex items-center justify-between text-xxs text-slate-500"
         aria-live="polite"
+        aria-label="CEO feed status"
       >
         <span>
           {filteredEntries.length}
@@ -803,7 +819,7 @@ export default function CeoPage() {
             search: &ldquo;{search}&rdquo;
           </span>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
