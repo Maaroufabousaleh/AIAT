@@ -108,6 +108,11 @@ The flow-editor denial-state recovery group `392d264` now applies the same
 boundary to canonical flow reads and saves; its source-built fixture matrix
 passes 4/4, covering stale recovery, initial denial, retained-read denial, and
 mutation denial while keeping the retained canvas read-only.
+The Projects list denial-state recovery group `17d25b0` now applies the same
+boundary to paired project/active-flow reads and create/archive/delete
+mutations; its source-built fixture matrix passes 4/4, covering stale
+recovery, initial denial, retained-read denial, and deletion denial while
+keeping retained definitions read-only.
 
 ## Clean-checkout verification
 
