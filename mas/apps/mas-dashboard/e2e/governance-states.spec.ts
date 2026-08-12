@@ -158,3 +158,101 @@ test("governance retains the last known state when a refresh fails", async ({
   await expect(page.getByText("Showing last known governance state")).toHaveCount(0);
   await expect(page.getByText("governance-e2e-profile")).toBeVisible();
 });
+
+test("governance exposes a first-load access-denied state without retry or mutations", async ({
+  page,
+}) => {
+  await page.route("**/api/governance/**", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "governance access denied" }),
+    });
+  });
+
+  await authenticate(page, "/governance");
+  const governance = page.getByRole("main", { name: "Governance" });
+  const access = governance.getByRole("region", { name: "Governance access status" });
+  await expect(access).toBeVisible();
+  await expect(access.getByRole("heading", { name: "Governance access denied" })).toBeVisible();
+  await expect(access.getByText(/not authorized to read or change governance/i)).toBeVisible();
+  await expect(access.getByRole("link", { name: "Return to dashboard" })).toHaveCSS("min-height", "44px");
+  await expect(governance.getByRole("button", { name: "Refresh governance" })).toHaveCount(0);
+  await expect(governance.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  for (const action of ["Request override", "Dispatch governed run", "Request privileged action"]) {
+    await expect(governance.getByRole("button", { name: action })).toHaveCount(0);
+  }
+  await expect(governance.getByText(/executive action forms are hidden/i)).toBeVisible();
+});
+
+test("governance hides mutations when access is lost after a successful read", async ({
+  page,
+}) => {
+  let catalogueRequestCount = 0;
+  await page.route(
+    (url) => url.pathname.startsWith("/api/governance/"),
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/catalogue")) {
+        catalogueRequestCount += 1;
+        if (catalogueRequestCount > 1) {
+          await route.fulfill({
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "governance access revoked" }),
+          });
+          return;
+        }
+      }
+      if (path.endsWith("/model-profiles")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              profile_id: "governance-denial-profile",
+              purpose: "Denial fixture profile",
+              status: "APPROVED",
+            },
+          ]),
+        });
+        return;
+      }
+      if (path.endsWith("/catalogue")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            schema_version: "governance-denial-v1",
+            registry_model_count: 1,
+            profile_count: 1,
+            profile_version_count: 1,
+            covered_profile_version_count: 1,
+            profile_pending_model_count: 0,
+          }),
+        });
+        return;
+      }
+      if (path.endsWith("/runs")) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+    },
+  );
+
+  await authenticate(page, "/governance");
+  const governance = page.getByRole("main", { name: "Governance" });
+  await expect(governance.getByText("governance-denial-profile")).toBeVisible();
+  await governance.getByRole("button", { name: "Refresh governance" }).click();
+
+  const access = governance.getByRole("region", { name: "Governance access status" });
+  await expect(access).toBeVisible();
+  await expect(access.getByText(/last-known read context remains visible/i)).toBeVisible();
+  await expect(governance.getByText("governance-denial-profile")).toBeVisible();
+  await expect(governance.getByRole("button", { name: "Refresh governance" })).toHaveCount(0);
+  await expect(governance.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  for (const action of ["Request override", "Dispatch governed run", "Request privileged action"]) {
+    await expect(governance.getByRole("button", { name: action })).toHaveCount(0);
+  }
+});

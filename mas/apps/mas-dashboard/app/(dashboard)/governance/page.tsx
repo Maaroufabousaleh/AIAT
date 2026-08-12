@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ShieldCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -52,6 +53,8 @@ export default function GovernancePage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
 
   async function refresh() {
     const hadData = profiles.length > 0 || catalogue !== null || runs.length > 0 || stewards.length > 0;
@@ -64,6 +67,12 @@ export default function GovernancePage() {
         fetch("/api/governance/runs?limit=50", { cache: "no-store" }),
         fetch("/api/governance/stewards", { cache: "no-store" }),
       ]);
+      if ([profileResponse, catalogueResponse, runResponse, stewardResponse].some((response) => response.status === 401 || response.status === 403)) {
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read or change Governance.");
+        setStale(hadData);
+        return;
+      }
       if (!profileResponse.ok || !catalogueResponse.ok || !runResponse.ok || !stewardResponse.ok) {
         throw new Error("Governance data is unavailable from the control plane");
       }
@@ -73,7 +82,10 @@ export default function GovernancePage() {
       setRuns(Array.isArray(runData) ? runData : []);
       setStewards(Array.isArray(stewardData) ? stewardData : []);
       setStale(false);
+      setAccessDenied(false);
+      setHasReadContext(true);
     } catch (cause) {
+      setAccessDenied(false);
       setError(cause instanceof Error ? cause.message : String(cause));
       setStale(hadData);
     } finally {
@@ -89,13 +101,33 @@ export default function GovernancePage() {
         icon="shield-check"
         title="Governance"
         description="Immutable model policy and worker-run evidence owned by the AIAT control plane."
-        actions={(
+        actions={!accessDenied ? (
           <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Refresh governance" title="Refresh governance" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
           </button>
-        )}
+        ) : undefined}
       />
-      {error && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Governance access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Governance access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change governance. Last-known read context remains visible, but Refresh, Retry, and executive action forms are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change governance. No live governance state is being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known governance state" : "Governance data unavailable"}
@@ -109,7 +141,7 @@ export default function GovernancePage() {
         </ErrorBanner>
       )}
       <div className="mt-6 grid gap-6 xl:grid-cols-2" role="region" aria-label="Governance read surfaces" aria-busy={loading}>
-        <ExecutiveActionPanel />
+        <ExecutiveActionPanel accessDenied={accessDenied} />
         <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="model-profiles-heading">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-emerald-400" /><h2 id="model-profiles-heading">Model Profiles</h2></div>
           {profiles.length === 0 ? <p className="text-sm text-slate-500">No persisted profiles are available.</p> : (

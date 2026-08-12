@@ -49,7 +49,7 @@ async function submit(path: string, body: unknown): Promise<unknown> {
   return data;
 }
 
-export function ExecutiveActionPanel() {
+export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: boolean }) {
   const [projectId, setProjectId] = useState("");
   const [profileId, setProfileId] = useState("");
   const [reason, setReason] = useState("");
@@ -110,6 +110,18 @@ export function ExecutiveActionPanel() {
     } catch (error) {
       setResult({ label: "CEO privileged action", error: true, body: error instanceof Error ? error.message : "Payload JSON must be an object" });
     }
+  }
+
+  if (accessDenied) {
+    return (
+      <section className="rounded-xl border border-amber-900/60 bg-slate-900/70 p-5 xl:col-span-2" aria-labelledby="executive-actions-heading">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 id="executive-actions-heading" className="text-sm font-semibold text-white">Executive actions</h2>
+          <span className="font-mono text-[11px] text-slate-500">aiat.executive-action.v1</span>
+        </div>
+        <p className="text-sm text-amber-200/80">Executive action forms are hidden because this operator identity is not authorized to read or change governance.</p>
+      </section>
+    );
   }
 
   return (
