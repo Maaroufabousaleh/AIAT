@@ -127,6 +127,10 @@ The Evidence Detail denial-state recovery group `23e2db9` now applies the same
 boundary to bounded scalar reads; its source-built fixture matrix passes 11/11,
 covering scalar redaction, stale recovery, initial denial, and retained-read
 denial while keeping citation identity and safe navigation available.
+The new-flow builder denial-state recovery group `b07299b` now applies the same
+boundary to governed catalogue reads and create/readiness mutations; its
+source-built matrix passes 3/3 for initial catalogue denial, create denial, and
+readiness-validation denial while retaining the local draft canvas read-only.
 The System Overview access-denied recovery group `b0ab779` now distinguishes
 401/403 control-plane or metrics responses from ordinary outages; its named
 access-status region retains available overview values as read-only context,
