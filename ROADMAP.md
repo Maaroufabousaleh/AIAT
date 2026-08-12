@@ -16,7 +16,13 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, and project-workspace stale/retry recovery is recorded in `cb1c665`. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
-The latest bounded dashboard increment is the CEO Command Center chat
+The latest bounded dashboard increment is the Governance accessibility group:
+a named main/read-surface structure, explicit executive/model-profile/
+WorkerRun/steward/catalogue regions, a captioned/scoped WorkerRun table,
+accessible catalogue status, and 44px refresh, retry, executive-form, and
+confirmation controls (`f4ae7eb`) in the existing source-built recovery test.
+
+The preceding bounded dashboard increment is the CEO Command Center chat
 accessibility group: named main/workspace/transcript/composer regions, a live
 transcript log with busy state, 44px navigation/composer/quick-command/recovery
 targets, explicit chat guidance regions, and a mobile-safe accessible activity
@@ -126,6 +132,11 @@ The CEO Command Center chat now adds a named main/workspace/transcript/composer
 structure, a live transcript log with busy state, 44px navigation/composer/
 quick-command/recovery targets, explicit chat guidance regions, and a
 mobile-safe accessible activity link (`8ffb5df`).
+
+The Governance page now adds a named main/read-surface structure, explicit
+executive/model-profile/WorkerRun/steward/catalogue regions, a captioned/scoped
+WorkerRun table, accessible catalogue status, and 44px refresh, retry,
+executive-form, and confirmation controls (`f4ae7eb`).
 
 ## 1. How to use this documentation
 
@@ -1102,7 +1113,7 @@ an explicit open gate.
    keyboard-expandable rows, associated registration-dialog fields, and 44px
    refresh/register/filter/selection/row-action/dialog controls (`826b4c5`);
    broader stale/offline recovery remains.
-6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 58/59 with one explicit safe-fixture skip, including hierarchy communication-policy/path tracing and retained hiring evaluation details. Focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, identity-resource, Metrics, Flows, flow editor, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat read-surface stale/recovery tests pass 1/1; Projects, Flows list, flow-editor, Tools catalogue, dead-letter queue, credentials, Metrics, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat focused accessibility baselines also pass 1/1 (`7828b48`, `6b0413b`, `140af1c`, `83e39e6`, `99a19a2`, `93fdfbc`, `da113af`, `993b1cb`, `d320383`, `826b4c5`, `1f947a9`, `8ffb5df`), and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
+6. Complete accessible, mobile, evidence-linked operator UX; the local WSL2 Compose Playwright suite passes 58/59 with one explicit safe-fixture skip, including hierarchy communication-policy/path tracing and retained hiring evaluation details. Focused shell/identity regressions pass 2/2 and 1/1 for skip-link/mobile focus recovery and stale-record/retry preservation, and source-built theme preference tests pass 2/2 for persisted light/dark and system-media switching. A targeted system/PM resilience filter passes 4/4 for partial/offline visualization and conflict-preserving integration refresh, source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, identity-resource, Metrics, Flows, flow editor, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat read-surface stale/recovery tests pass 1/1; Governance, Projects, Flows list, flow-editor, Tools catalogue, dead-letter queue, credentials, Metrics, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, and CEO Command Center chat focused accessibility baselines also pass 1/1 (`f4ae7eb`, `7828b48`, `6b0413b`, `140af1c`, `83e39e6`, `99a19a2`, `93fdfbc`, `da113af`, `993b1cb`, `d320383`, `826b4c5`, `1f947a9`, `8ffb5df`), and the flow-builder golden path is restored by disabling stale project flow-list caching. Page-by-page parity, native-Linux WCAG/mobile/visual evidence remains open.
 The dashboard matrix's project-detail stale/retry path is an extension of the
 project workspace test and is included in the current 58/59 evidence count.
 The source-built project-detail state test additionally covers a failed first
@@ -1146,6 +1157,10 @@ the CEO Command Center chat also has a focused main/workspace/transcript/
 composer baseline with live status, 44px navigation/composer/quick-command/
 recovery targets, guidance regions, and a mobile-safe accessible activity link
 (`8ffb5df`);
+the Governance page also has a focused main/read-surface baseline with explicit
+executive/model-profile/WorkerRun/steward/catalogue regions, a captioned/scoped
+WorkerRun table, accessible catalogue status, and 44px refresh, retry,
+executive-form, and confirmation controls (`f4ae7eb`);
 native-Linux and broader WCAG/mobile/visual evidence remain open.
 
 ### Later — R6 to R7/P2
