@@ -71,3 +71,62 @@ test("container logs retain the last buffer when a reload fails", async ({
   await expect(page.getByText("Showing last known logs")).toHaveCount(0);
   await expect(page.getByText("recovered log line", { exact: true })).toBeVisible();
 });
+
+test("container logs access denial on first load hides log controls", async ({ page }) => {
+  await page.route("**/api/logs/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: `data: ${JSON.stringify({ error: "HTTP 403", status: 403 })}\n\n`,
+    });
+  });
+
+  await authenticate(page, "/logs");
+  const logs = page.getByRole("main", { name: "Container logs" });
+  await logs.getByRole("button", { name: "Load", exact: true }).click();
+
+  await expect(logs.getByRole("region", { name: "Log access status" })).toBeVisible();
+  await expect(logs.getByText("Log access denied", { exact: true })).toBeVisible();
+  await expect(
+    logs.getByText("No live log data is available while authorization is unavailable."),
+  ).toBeVisible();
+  await expect(logs.getByRole("combobox", { name: "Container" })).toHaveCount(0);
+  await expect(logs.getByRole("combobox", { name: "Tail lines" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Load", exact: true })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(logs.getByRole("searchbox", { name: "Filter log text" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Copy visible log lines to clipboard" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Download visible log lines" })).toHaveCount(0);
+  await expect(logs.getByRole("log", { name: /Last known log output for/ })).toBeVisible();
+});
+
+test("container logs access denial after a successful read retains lines without controls", async ({ page }) => {
+  let requestCount = 0;
+  await page.route("**/api/logs/**", async (route) => {
+    requestCount += 1;
+    const body = requestCount === 1
+      ? `data: ${NORMAL_LOG}\n\n`
+      : `data: ${JSON.stringify({ error: "HTTP 401", status: 401 })}\n\n`;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body,
+    });
+  });
+
+  await authenticate(page, "/logs");
+  const logs = page.getByRole("main", { name: "Container logs" });
+  await logs.getByRole("button", { name: "Load", exact: true }).click();
+  await expect(page.getByText("retained log line", { exact: true })).toBeVisible();
+
+  await logs.getByRole("button", { name: "Load", exact: true }).click();
+  await expect(logs.getByRole("region", { name: "Log access status" })).toBeVisible();
+  await expect(page.getByText("retained log line", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Previously loaded log lines remain visible/)).toBeVisible();
+  await expect(logs.getByRole("combobox", { name: "Container" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Load", exact: true })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Clear log buffer" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Copy visible log lines to clipboard" })).toHaveCount(0);
+  await expect(logs.getByRole("button", { name: "Download visible log lines" })).toHaveCount(0);
+  await expect(logs.getByRole("searchbox", { name: "Filter log text" })).toHaveCount(0);
+});

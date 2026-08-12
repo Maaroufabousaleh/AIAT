@@ -49,11 +49,16 @@ export default function LogsPage() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const counterRef = useRef(0);
   const pendingBufferResetRef = useRef(false);
   const streamHadDataRef = useRef(false);
+  const linesRef = useRef<LogLine[]>([]);
+  const hasReadContextRef = useRef(false);
+  const streamGenerationRef = useRef(0);
 
   // UI-only filter state
   const [search, setSearch] = useState("");
@@ -68,8 +73,22 @@ export default function LogsPage() {
     setStreaming(false);
   };
 
+  const handleAccessDenied = () => {
+    streamGenerationRef.current += 1;
+    stopStream();
+    const hadReadContext = hasReadContextRef.current || linesRef.current.length > 0;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setError(null);
+    setStale(false);
+    setSearch("");
+    setLevel("all");
+  };
+
   const startStream = () => {
+    if (accessDenied) return;
     const hadRetainedData = lines.length > 0;
+    const generation = ++streamGenerationRef.current;
     stopStream();
     setError(null);
     setStale(false);
@@ -83,11 +102,16 @@ export default function LogsPage() {
     setStreaming(true);
 
     es.onmessage = (ev) => {
+      if (streamGenerationRef.current !== generation) return;
       const text: string = ev.data;
       // Check for error payload
       try {
         const parsed = JSON.parse(text);
         if (parsed.error) {
+          if (parsed.status === 401 || parsed.status === 403 || /HTTP (401|403)\b/.test(parsed.error)) {
+            handleAccessDenied();
+            return;
+          }
           setError(parsed.error);
           setStale(streamHadDataRef.current);
           stopStream();
@@ -107,15 +131,19 @@ export default function LogsPage() {
       const resetBuffer = pendingBufferResetRef.current;
       pendingBufferResetRef.current = false;
       streamHadDataRef.current = true;
+      hasReadContextRef.current = true;
+      setHasReadContext(true);
       setError(null);
       setStale(false);
       setLines((prev) => {
         const next = resetBuffer ? [nextLine] : [...prev, nextLine];
+        linesRef.current = next;
         return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
       });
     };
 
     es.onerror = () => {
+      if (streamGenerationRef.current !== generation) return;
       if (!follow) {
         // Non-follow streams will close naturally
         stopStream();
@@ -227,7 +255,7 @@ export default function LogsPage() {
         icon="scroll"
         title="Container Logs"
         description="Tail containers, follow live output, and keep recent lines readable."
-        actions={
+        actions={!accessDenied ? (
           <div className="dashboard-toolbar flex flex-wrap items-center gap-2">
             {/* Container select */}
             <label className="flex items-center gap-1.5 text-xxs font-semibold uppercase tracking-wider text-slate-500">
@@ -340,11 +368,11 @@ export default function LogsPage() {
               Download
             </button>
           </div>
-        }
+        ) : undefined}
       />
 
       {/* Search + level filter row */}
-      <section className="dashboard-surface flex flex-wrap items-center gap-3 px-4 py-3" aria-label="Log filters">
+      {!accessDenied && <section className="dashboard-surface flex flex-wrap items-center gap-3 px-4 py-3" aria-label="Log filters">
         {/* Search input */}
         <div className="relative flex-1 min-w-[220px]">
           <Search
@@ -410,7 +438,7 @@ export default function LogsPage() {
             Debug
           </FilterChip>
         </div>
-      </section>
+      </section>}
 
       {/* Color legend — small, semantic, hidden on very small screens */}
       <section
@@ -430,7 +458,23 @@ export default function LogsPage() {
         ))}
       </section>
 
-      {error && (
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Log access status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-amber-200">Log access denied</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded log lines remain visible for reference. Load, retry, filter, clear, copy, and download controls are hidden until authorization is restored."
+              : "No live log data is available while authorization is unavailable. Log controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known logs" : "Log stream error"}
@@ -449,17 +493,26 @@ export default function LogsPage() {
         className="flex-1 overflow-auto rounded-xl border border-slate-800 bg-black/55 font-mono text-xs p-3 min-h-0 shadow-inner shadow-black/40"
         role="log"
         aria-live="polite"
-        aria-busy={streaming}
-        aria-label={`Log output for ${container}`}
+        aria-busy={!accessDenied && streaming}
+        aria-label={accessDenied ? `Last known log output for ${container}` : `Log output for ${container}`}
       >
         {lines.length === 0 && !streaming && (
           <div className="h-full flex items-center justify-center">
-            <EmptyState
-              icon="scroll"
-              title="No logs loaded"
-              description="Pick a container above, choose how many lines to tail, and click Load. Toggle Follow to live-stream new entries."
-              className="!border-0 !bg-transparent"
-            />
+            {accessDenied ? (
+              <EmptyState
+                icon="key"
+                title="No live log data is available"
+                description="Authorization is required before container logs can be loaded."
+                className="!border-0 !bg-transparent"
+              />
+            ) : (
+              <EmptyState
+                icon="scroll"
+                title="No logs loaded"
+                description="Pick a container above, choose how many lines to tail, and click Load. Toggle Follow to live-stream new entries."
+                className="!border-0 !bg-transparent"
+              />
+            )}
           </div>
         )}
         {lines.length > 0 && filteredLines.length === 0 && (
@@ -492,7 +545,7 @@ export default function LogsPage() {
             streaming
           </span>
         )}
-        {(search.trim() !== "" || level !== "all") && (
+        {!accessDenied && (search.trim() !== "" || level !== "all") && (
           <button
             type="button"
             onClick={() => {
