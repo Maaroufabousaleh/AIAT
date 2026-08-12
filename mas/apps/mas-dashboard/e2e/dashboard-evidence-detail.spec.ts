@@ -23,9 +23,15 @@ test.describe("CEO evidence detail", () => {
     });
     await authenticate(page, "/evidence/project/demo-project");
 
+    await expect(page.getByRole("main", { name: "Evidence detail" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Canonical citation" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "CEO chat" })).toHaveCSS("min-height", "44px");
+    await expect(page.getByRole("button", { name: "Refresh evidence detail" })).toHaveCSS("min-height", "44px");
+    await expect(page.getByTestId("ceo-evidence-detail")).toHaveAttribute("aria-busy", "false");
     await expect(page.getByTestId("ceo-evidence-detail")).toContainText("Demo project");
     await expect(page.getByTestId("ceo-evidence-detail")).toContainText("ACTIVE");
     await expect(page.getByTestId("ceo-evidence-detail")).not.toContainText("payload");
+    await expect(page.getByRole("link", { name: "Open owning section" })).toHaveCSS("min-height", "44px");
   });
 
   test("keeps unsupported kinds as identity-only citations", async ({ page }) => {

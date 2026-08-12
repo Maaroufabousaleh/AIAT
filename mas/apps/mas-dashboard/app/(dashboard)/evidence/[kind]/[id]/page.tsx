@@ -140,19 +140,20 @@ export default function EvidenceRecordPage() {
   }, [detailAttempt, detailSupported, id, kind]);
 
   return (
-    <div className="min-h-full p-6 lg:p-8">
+    <main aria-label="Evidence detail" className="min-h-full p-6 lg:p-8">
       <PageHeader
         title="Evidence record"
         description="A stable, secret-safe deep link for a canonical CEO citation."
         actions={(
-          <Link href="/ceo/chat" className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
-            <ArrowLeft size={14} /> CEO chat
+          <Link href="/ceo/chat" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
+            <ArrowLeft size={14} aria-hidden="true" /> CEO chat
           </Link>
         )}
       />
-      <section className="mt-6 max-w-2xl rounded-xl border border-slate-800 bg-slate-900/70 p-6" data-testid="ceo-evidence-record">
+      <section className="mt-6 max-w-2xl rounded-xl border border-slate-800 bg-slate-900/70 p-6" data-testid="ceo-evidence-record" aria-labelledby="evidence-record-heading">
         <div className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
-          <ShieldCheck size={16} /> Canonical citation
+          <ShieldCheck size={16} aria-hidden="true" />
+          <h2 id="evidence-record-heading">Canonical citation</h2>
         </div>
         {supported ? (
           <>
@@ -166,11 +167,11 @@ export default function EvidenceRecordPage() {
               This page preserves the evidence identity while you move between the CEO transcript and the owning dashboard section. It never displays secret values or arbitrary model payloads.
             </p>
             {detailSupported && (
-              <div className="mt-5 border-t border-slate-800 pt-5" data-testid="ceo-evidence-detail">
+              <section className="mt-5 border-t border-slate-800 pt-5" data-testid="ceo-evidence-detail" aria-labelledby="evidence-detail-heading" aria-busy={detailState === "loading"}>
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bounded record detail</h2>
+                  <h2 id="evidence-detail-heading" className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bounded record detail</h2>
                   <div className="flex items-center gap-3">
-                    <button type="button" onClick={() => setDetailAttempt((attempt) => attempt + 1)} className="rounded-md border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800" data-testid="ceo-evidence-retry">Refresh</button>
+                    <button type="button" onClick={() => setDetailAttempt((attempt) => attempt + 1)} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-slate-700 px-2 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800" aria-label="Refresh evidence detail" data-testid="ceo-evidence-retry">Refresh</button>
                     <span className="font-mono text-[11px] text-slate-500">aiat.evidence-detail.v1</span>
                   </div>
                 </div>
@@ -191,10 +192,10 @@ export default function EvidenceRecordPage() {
                     ))}
                   </dl>
                 )}
-              </div>
+              </section>
             )}
-            <Link href={canonicalHref!} className="mt-5 inline-flex items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-400/20" data-testid="ceo-evidence-canonical-link">
-              Open owning section <ExternalLink size={14} />
+            <Link href={canonicalHref!} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-200 hover:bg-cyan-400/20" data-testid="ceo-evidence-canonical-link">
+              Open owning section <ExternalLink size={14} aria-hidden="true" />
             </Link>
           </>
         ) : (
@@ -203,6 +204,6 @@ export default function EvidenceRecordPage() {
           </p>
         )}
       </section>
-    </div>
+    </main>
   );
 }
