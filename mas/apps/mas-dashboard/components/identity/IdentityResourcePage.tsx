@@ -97,16 +97,19 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <main className="space-y-6" aria-label={title} aria-busy={loading}>
+      <div role="status" aria-live="polite" className="sr-only">
+        {loading ? `Loading ${title.toLowerCase()} records` : `${title} records loaded`}
+      </div>
       <PageHeader title={title} description={description} actions={
         <button type="button" onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading} aria-busy={loading}>
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
+          <RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin" : ""} /> Refresh
         </button>
       } />
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100 flex gap-2">
-        <ShieldCheck size={17} className="mt-0.5 flex-none" />
+      <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100 flex gap-2" aria-label="Identity resource notice">
+        <ShieldCheck size={17} aria-hidden="true" className="mt-0.5 flex-none" />
         Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
-      </div>
+      </section>
       {error && (
         <ErrorBanner
           tone={stale && items.length > 0 ? "warning" : "error"}
@@ -130,13 +133,13 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
         </ErrorBanner>
       )}
       {!loading && !error && items.length === 0 && <EmptyState title="No records" description="No identity records are available for this view." />}
-      {items.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50" aria-busy={loading}>
+      {items.length > 0 && <section className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50" aria-label={`${title} records`} aria-busy={loading}>
         <table className="min-w-full text-left text-sm">
           <caption className="sr-only">{title} records</caption>
           <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} scope="col" className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th scope="col" className="px-4 py-3">Actions</th></tr></thead>
           <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex flex-wrap gap-2">{itemActions(item).map(({ action, label }) => <button key={action} type="button" onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} aria-label={`${label} ${String(item.id ?? "record")}`} className="inline-flex min-h-11 items-center rounded border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
         </table>
-      </div>}
-    </div>
+      </section>}
+    </main>
   );
 }
