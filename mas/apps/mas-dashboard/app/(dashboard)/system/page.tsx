@@ -16,6 +16,7 @@ import {
 import clsx from 'clsx';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import Link from 'next/link';
 
 interface SystemStatus {
   status: string;           // "running" | "shutdown" | "degraded"
@@ -146,6 +147,7 @@ export default function SystemPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [showShutdownConfirm, setShowShutdownConfirm] = useState(false);
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [actionState, setActionState] = useState<Record<string, ActionState>>({});
@@ -160,13 +162,21 @@ export default function SystemPage() {
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/system/status', { cache: 'no-store' });
+      if (res.status === 401 || res.status === 403) {
+        setAccessDenied(true);
+        setError('This operator identity is not authorized to read System Control.');
+        setStale(statusRef.current !== null);
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: SystemStatus = await res.json();
       statusRef.current = json;
       setStatus(json);
       setError(null);
       setStale(false);
+      setAccessDenied(false);
     } catch (e) {
+      setAccessDenied(false);
       setError(e instanceof Error ? e.message : 'Failed to fetch system status');
       setStale(statusRef.current !== null);
     } finally {
@@ -241,6 +251,7 @@ export default function SystemPage() {
   );
 
   const requestRefresh = () => {
+    if (accessDenied) return;
     if (status === null) setLoading(true);
     void fetchStatus();
   };
@@ -274,7 +285,7 @@ export default function SystemPage() {
         icon="settings"
         title="System Control"
         description="Monitor and control MAS runtime state"
-        actions={
+        actions={!accessDenied ? (
           <button
             onClick={requestRefresh}
             aria-label="Refresh system status"
@@ -283,10 +294,31 @@ export default function SystemPage() {
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
-        }
+        ) : undefined}
       />
 
-      {error && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="System Control access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">System Control access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {status
+              ? 'The current operator identity can no longer read or control the runtime. The last known status remains visible for context, but shutdown, resume, scheduling, and retry actions are hidden until authorization is restored.'
+              : 'The current operator identity is not authorized to read or control the runtime. No live system state is being inferred or displayed.'}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+
+      {error && !accessDenied && (
         <ErrorBanner
           tone="warning"
           title={stale ? "Showing last known system status" : "Could not reach the orchestrator"}
@@ -309,7 +341,7 @@ export default function SystemPage() {
               statusColor
             )}
             role="status"
-            aria-label="System runtime status"
+            aria-label={accessDenied ? 'Last known system runtime status' : 'System runtime status'}
             aria-live="polite"
           >
             <StatusIcon className="w-8 h-8 flex-shrink-0" />
@@ -341,7 +373,7 @@ export default function SystemPage() {
           {/* Schedule Info — shows pending shutdown/resume plus a live countdown
               when the orchestrator returns an absolute date; falls back to the
               raw cron expression otherwise. */}
-          {(status.scheduled_shutdown || status.scheduled_resume) && (
+          {!accessDenied && (status.scheduled_shutdown || status.scheduled_resume) && (
             <div
               className="dashboard-surface p-4 space-y-3"
               role="region"
@@ -397,7 +429,7 @@ export default function SystemPage() {
           )}
 
           {/* Control Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" role="region" aria-label="System runtime controls">
+          {!accessDenied && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" role="region" aria-label="System runtime controls">
             {/* Shutdown */}
             <div className="dashboard-surface p-5" role="region" aria-label="Shutdown system">
               <div className="flex items-start gap-3 mb-4">
@@ -475,10 +507,10 @@ export default function SystemPage() {
                 )}
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Schedule Form */}
-          <div className="dashboard-surface p-5" role="region" aria-label="System schedule">
+          {!accessDenied && <div className="dashboard-surface p-5" role="region" aria-label="System schedule">
             <div className="flex items-center gap-2 mb-1">
               <Clock className="w-5 h-5 text-blue-400" />
               <h3 className="font-semibold text-white">Schedule (Cron)</h3>
@@ -552,12 +584,12 @@ export default function SystemPage() {
                 }
               </button>
             </div>
-          </div>
+          </div>}
         </>
       )}
 
       {/* Confirm Dialogs */}
-      {showShutdownConfirm && (
+      {!accessDenied && showShutdownConfirm && (
         <ConfirmDialog
           title="Shutdown System?"
           message="This will gracefully halt all running workflows and stop task processing. Active projects will be paused and can be resumed later."
@@ -567,7 +599,7 @@ export default function SystemPage() {
           onCancel={() => setShowShutdownConfirm(false)}
         />
       )}
-      {showResumeConfirm && (
+      {!accessDenied && showResumeConfirm && (
         <ConfirmDialog
           title="Resume System?"
           message="This will restart task processing and resume all paused workflows."

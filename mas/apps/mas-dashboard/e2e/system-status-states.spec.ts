@@ -66,3 +66,70 @@ test("system status retains the last known state when a refresh fails", async ({
   await expect(page.getByText("Showing last known system status")).toHaveCount(0);
   await expect(page.getByText("running", { exact: true })).toBeVisible();
 });
+
+test("system control exposes a first-load access-denied state without retry", async ({
+  page,
+}) => {
+  await page.route("**/api/system/status", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "system control access denied" }),
+    });
+  });
+
+  await authenticate(page, "/system");
+  const system = page.getByRole("main", { name: "System Control" });
+  const status = system.getByRole("region", {
+    name: "System Control access status",
+  });
+  await expect(status).toBeVisible();
+  await expect(
+    status.getByRole("heading", { name: "System Control access denied" }),
+  ).toBeVisible();
+  await expect(status.getByText(/not authorized to read or control the runtime/i)).toBeVisible();
+  await expect(
+    status.getByRole("link", { name: "Return to dashboard" }),
+  ).toHaveCSS("min-height", "44px");
+  await expect(system.getByRole("button", { name: "Refresh system status" })).toHaveCount(0);
+  await expect(system.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(system.getByRole("region", { name: "System runtime controls" })).toHaveCount(0);
+  await expect(system.getByRole("region", { name: "System schedule" })).toHaveCount(0);
+});
+
+test("system control hides mutations when access is lost after a successful read", async ({
+  page,
+}) => {
+  let requestCount = 0;
+  await page.route("**/api/system/status", async (route) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "running", uptime_seconds: 42, active_projects: 1 }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "system control access revoked" }),
+    });
+  });
+
+  await authenticate(page, "/system");
+  const system = page.getByRole("main", { name: "System Control" });
+  await expect(system.getByText("running", { exact: true })).toBeVisible();
+  await expect(system.getByRole("region", { name: "System runtime controls" })).toBeVisible();
+
+  await system.getByRole("button", { name: "Refresh system status" }).click();
+  const status = system.getByRole("region", { name: "System Control access status" });
+  await expect(status).toBeVisible();
+  await expect(status.getByText(/last known status remains visible/i)).toBeVisible();
+  await expect(system.getByText("running", { exact: true })).toBeVisible();
+  await expect(system.getByRole("button", { name: "Refresh system status" })).toHaveCount(0);
+  await expect(system.getByRole("button", { name: "Shutdown the MAS runtime" })).toHaveCount(0);
+  await expect(system.getByRole("button", { name: "Resume the MAS runtime" })).toHaveCount(0);
+  await expect(system.getByRole("region", { name: "System schedule" })).toHaveCount(0);
+});
