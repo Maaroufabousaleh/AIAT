@@ -106,11 +106,48 @@ test("governance retains the last known state when a refresh fails", async ({
 
   await authenticate(page, "/governance");
   await expect(page.getByRole("heading", { name: "Governance" })).toBeVisible();
+  const governance = page.getByRole("main", { name: "Governance" });
+  await expect(governance).toBeVisible();
+  for (const region of [
+    governance.getByRole("region", { name: "Governance read surfaces" }),
+    governance.getByRole("region", { name: "Executive actions" }),
+    governance.getByRole("region", { name: "Model Profiles" }),
+    governance.getByRole("region", { name: "Recent WorkerRuns" }),
+    governance.getByRole("region", { name: "External Worker Stewards" }),
+    governance.getByRole("region", { name: "Runtime Model Catalogue" }),
+  ]) {
+    await expect(region).toBeVisible();
+  }
+  for (const control of [
+    governance.getByRole("button", { name: "Refresh governance" }),
+    governance.getByLabel("Project ID"),
+    governance.getByLabel("Requested profile ID"),
+    governance.getByLabel("Reason"),
+    governance.getByLabel("Dispatch JSON"),
+    governance.getByLabel("Action", { exact: true }),
+    governance.getByLabel("Payload JSON"),
+    governance.getByRole("checkbox"),
+  ]) {
+    await expect(control).toHaveCSS("min-height", "44px");
+  }
+  const executiveActions = governance.getByRole("region", { name: "Executive actions" });
+  for (const action of [
+    executiveActions.getByRole("button", { name: "Request override" }),
+    executiveActions.getByRole("button", { name: "Dispatch governed run" }),
+    executiveActions.getByRole("button", { name: "Request privileged action" }),
+  ]) {
+    await expect(action).toHaveCSS("min-height", "44px");
+  }
+  const workerRunsTable = governance.getByRole("table", { name: "Recent governed worker runs" });
+  await expect(workerRunsTable).toBeVisible();
+  for (const header of await workerRunsTable.getByRole("columnheader").all()) {
+    await expect(header).toHaveAttribute("scope", "col");
+  }
   await expect(page.getByText("governance-e2e-profile")).toBeVisible();
   await expect(page.getByText("e2e-governance-v1")).toBeVisible();
   await expect(page.getByText("governance-e2e-worker").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await governance.getByRole("button", { name: "Refresh governance" }).click();
   await expect(page.getByText("Showing last known governance state")).toBeVisible();
   await expect(page.getByText(/latest refresh failed/i)).toBeVisible();
   await expect(page.getByText("governance-e2e-profile")).toBeVisible();

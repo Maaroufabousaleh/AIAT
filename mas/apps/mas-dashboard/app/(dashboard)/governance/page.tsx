@@ -84,12 +84,13 @@ export default function GovernancePage() {
   useEffect(() => { void refresh(); }, []);
 
   return (
-    <div className="min-h-full p-6 lg:p-8">
+    <main className="dashboard-page min-h-full p-6 lg:p-8" aria-label="Governance">
       <PageHeader
+        icon="shield-check"
         title="Governance"
         description="Immutable model policy and worker-run evidence owned by the AIAT control plane."
         actions={(
-          <button type="button" onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
+          <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Refresh governance" title="Refresh governance" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
           </button>
         )}
@@ -99,7 +100,7 @@ export default function GovernancePage() {
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known governance state" : "Governance data unavailable"}
           action={(
-            <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={() => void refresh()} disabled={loading} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10 disabled:opacity-50">
               Retry
             </button>
           )}
@@ -107,14 +108,14 @@ export default function GovernancePage() {
           {stale ? `${error}. The latest refresh failed; retained governance data remains visible.` : error}
         </ErrorBanner>
       )}
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <div className="mt-6 grid gap-6 xl:grid-cols-2" role="region" aria-label="Governance read surfaces" aria-busy={loading}>
         <ExecutiveActionPanel />
-        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-          <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-emerald-400" /> Model Profiles</div>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="model-profiles-heading">
+          <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-emerald-400" /><h2 id="model-profiles-heading">Model Profiles</h2></div>
           {profiles.length === 0 ? <p className="text-sm text-slate-500">No persisted profiles are available.</p> : (
-            <div className="space-y-3">
+            <div className="space-y-3" role="list" aria-label="Governed model profiles">
               {profiles.map((profile) => (
-                <div key={profile.profile_id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                <div key={profile.profile_id} role="listitem" className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
                   <div className="flex items-center justify-between gap-3"><span className="font-mono text-sm text-white">{profile.profile_id}</span><span className="text-xs uppercase text-emerald-300">{profile.status}</span></div>
                   <p className="mt-1 text-xs text-slate-400">{profile.purpose}</p>
                   <div className="mt-2 space-y-1 text-xs text-slate-500">
@@ -125,29 +126,29 @@ export default function GovernancePage() {
             </div>
           )}
         </section>
-        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-          <div className="mb-4 flex items-center justify-between"><span className="text-sm font-semibold text-white">Recent WorkerRuns</span><span className="text-xs text-slate-500">authoritative runtime state</span></div>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="worker-runs-heading">
+          <div className="mb-4 flex items-center justify-between"><h2 id="worker-runs-heading" className="text-sm font-semibold text-white">Recent WorkerRuns</h2><span className="text-xs text-slate-400">authoritative runtime state</span></div>
           {runs.length === 0 ? <p className="text-sm text-slate-500">No worker runs are available.</p> : (
-            <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="text-slate-500"><tr><th className="pb-2">Worker</th><th className="pb-2">Task</th><th className="pb-2">State</th><th className="pb-2">Model snapshot</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id} className="border-t border-slate-800"><td className="py-2 font-mono text-slate-300">{run.worker_id}</td><td className="py-2 text-slate-400">{run.task_type}</td><td className="py-2 text-emerald-300">{run.state}</td><td className="py-2 font-mono text-slate-500">{run.model_resolution_snapshot_id ? "pinned" : "none"}</td></tr>)}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-xs"><caption className="sr-only">Recent governed worker runs</caption><thead className="text-slate-400"><tr><th scope="col" className="pb-2">Worker</th><th scope="col" className="pb-2">Task</th><th scope="col" className="pb-2">State</th><th scope="col" className="pb-2">Model snapshot</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id} className="border-t border-slate-800"><td className="py-2 font-mono text-slate-300">{run.worker_id}</td><td className="py-2 text-slate-400">{run.task_type}</td><td className="py-2 text-emerald-300">{run.state}</td><td className="py-2 font-mono text-slate-400">{run.model_resolution_snapshot_id ? "pinned" : "none"}</td></tr>)}</tbody></table></div>
           )}
         </section>
-        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-          <div className="mb-4 flex items-center justify-between"><span className="text-sm font-semibold text-white">External Worker Stewards</span><span className="text-xs text-slate-500">one steward per worker</span></div>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="worker-stewards-heading">
+          <div className="mb-4 flex items-center justify-between"><h2 id="worker-stewards-heading" className="text-sm font-semibold text-white">External Worker Stewards</h2><span className="text-xs text-slate-400">one steward per worker</span></div>
           {stewards.length === 0 ? <p className="text-sm text-slate-500">No external worker stewards are registered.</p> : (
-            <div className="space-y-2">
+            <div className="space-y-2" role="list" aria-label="External worker stewards">
               {stewards.map((steward) => {
                 const monitor = steward.monitoring?.[0];
-                return <div key={steward.id} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs">
+                return <div key={steward.id} role="listitem" className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs">
                   <div className="flex items-center justify-between gap-3"><span className="font-mono text-slate-200">{steward.worker_id}</span><span className={steward.status === "READY" ? "text-emerald-300" : "text-amber-300"}>{steward.status}</span></div>
-                  <div className="mt-1 text-slate-500">{steward.candidate_count ?? 0} candidate(s) · {steward.monitoring_cadence ?? "daily"} monitoring</div>
+                  <div className="mt-1 text-slate-400">{steward.candidate_count ?? 0} candidate(s) · {steward.monitoring_cadence ?? "daily"} monitoring</div>
                   {monitor?.last_error ? <div className="mt-1 text-rose-300">Monitor: {monitor.last_error}</div> : monitor?.last_checked_at ? <div className="mt-1 text-slate-500">Last check: {new Date(monitor.last_checked_at).toLocaleString()}</div> : <div className="mt-1 text-slate-500">Awaiting first monitor run</div>}
                 </div>;
               })}
             </div>
           )}
         </section>
-        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 xl:col-span-2">
-          <div className="mb-4 flex items-center justify-between"><span className="text-sm font-semibold text-white">Runtime Model Catalogue</span><span className="font-mono text-xs text-slate-500">{catalogue?.schema_version ?? "unavailable"}</span></div>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 xl:col-span-2" aria-labelledby="runtime-catalogue-heading">
+          <div className="mb-4 flex items-center justify-between"><h2 id="runtime-catalogue-heading" className="text-sm font-semibold text-white">Runtime Model Catalogue</h2><span className="font-mono text-xs text-slate-400" aria-label={`Catalogue schema ${catalogue?.schema_version ?? "unavailable"}`}>{catalogue?.schema_version ?? "unavailable"}</span></div>
           {!catalogue ? <p className="text-sm text-slate-500">The runtime catalogue is unavailable.</p> : <>
             <div className="grid gap-3 sm:grid-cols-4">
               <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-2xl font-semibold text-white">{catalogue.registry_model_count}</div><div className="text-xs text-slate-500">registered models</div></div>
@@ -160,6 +161,6 @@ export default function GovernancePage() {
           </>}
         </section>
       </div>
-    </div>
+    </main>
   );
 }
