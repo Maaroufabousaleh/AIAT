@@ -38,7 +38,11 @@ async function fetchMetric(
 ): Promise<PrometheusResult[]> {
   const url = `/api/metrics?type=range&query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${step}`;
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
   const { results } = await res.json();
   return results ?? [];
 }
@@ -46,7 +50,11 @@ async function fetchMetric(
 async function fetchInstant(query: string): Promise<PrometheusResult[]> {
   const url = `/api/metrics?query=${encodeURIComponent(query)}`;
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
   const { results } = await res.json();
   return results ?? [];
 }
@@ -67,6 +75,16 @@ function toTimeSeries(results: PrometheusResult[], labelKey = "model"): DataPoin
 
 function seriesKeys(results: PrometheusResult[], labelKey = "model"): string[] {
   return Array.from(new Set(results.map((r) => r.metric[labelKey] ?? r.metric.team ?? r.metric.tool_name ?? "value")));
+}
+
+function isAccessDenied(reason: unknown): boolean {
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "status" in reason &&
+    (((reason as { status?: unknown }).status === 401) ||
+      (reason as { status?: unknown }).status === 403)
+  );
 }
 
 // Chart palette — slate-friendly with high contrast on dark surfaces.
@@ -136,6 +154,8 @@ export default function MetricsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const hasLoadedRef = useRef(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [llmData, setLlmData] = useState<DataPoint[]>([]);
@@ -151,6 +171,7 @@ export default function MetricsPage() {
   const range = RANGES[rangeIdx];
 
   const load = useCallback(async () => {
+    if (accessDenied) return;
     setLoading(true);
     const now = Math.floor(Date.now() / 1000);
     const start = now - range.minutes * 60;
@@ -165,6 +186,16 @@ export default function MetricsPage() {
         fetchInstant(`increase(mas_budget_exhausted_total[${range.minutes}m])`),
         fetchInstant(`mas_tool_circuit_state`),
       ]);
+
+      if ([llm, tools, msgs, dlq, budget, circuits].some(
+        (result) => result.status === "rejected" && isAccessDenied(result.reason),
+      )) {
+        setAccessDenied(true);
+        setHasReadContext(hasLoadedRef.current);
+        setError(null);
+        setStale(false);
+        return;
+      }
 
       if (llm.status === "fulfilled") {
         hasLoadedRef.current = true;
@@ -224,7 +255,7 @@ export default function MetricsPage() {
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [accessDenied, range]);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { load(); }, [load]);
@@ -234,7 +265,7 @@ export default function MetricsPage() {
   }, [load]);
 
   const requestRefresh = () => {
-    if (loading) return;
+    if (loading || accessDenied) return;
     void load();
   };
 
@@ -273,7 +304,7 @@ export default function MetricsPage() {
             )}
           </>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             {/* Time-range segmented control */}
             <div
@@ -310,10 +341,26 @@ export default function MetricsPage() {
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {error && (
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Metrics access status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-amber-200">Metrics access denied</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded metric series remain visible for reference. Refresh, retry, range, and reconnect controls are hidden until authorization is restored."
+              : "No live metric state is available while authorization is unavailable. Metrics controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known metrics" : "Metrics unavailable"}
@@ -358,7 +405,14 @@ export default function MetricsPage() {
         />
       </section>
 
-      {noData && (
+      {accessDenied && noData && (
+        <EmptyState
+          icon="key"
+          title="No live metrics are available"
+          description="Authorization is required before metric series can be loaded."
+        />
+      )}
+      {noData && !accessDenied && (
         <EmptyState
           icon="alert"
           tone="neutral"

@@ -27,6 +27,16 @@ export interface PrometheusResponse {
   error?: string;
 }
 
+export class PrometheusHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Prometheus request failed: ${status}`);
+    this.name = "PrometheusHttpError";
+    this.status = status;
+  }
+}
+
 async function fetchPrometheusJson(url: string): Promise<PrometheusResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROMETHEUS_TIMEOUT_MS);
@@ -36,7 +46,7 @@ async function fetchPrometheusJson(url: string): Promise<PrometheusResponse> {
       signal: controller.signal,
     });
     if (!response.ok) {
-      throw new Error(`Prometheus request failed: ${response.status}`);
+      throw new PrometheusHttpError(response.status);
     }
     // Keep the abort timer active while the response body is consumed too;
     // a healthy TCP connection must not be able to hold SSR indefinitely.

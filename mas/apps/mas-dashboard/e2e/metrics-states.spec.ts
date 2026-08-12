@@ -94,3 +94,62 @@ test("metrics retains the last known series when a refresh partially fails", asy
   await expect(page.getByText("Showing last known metrics")).toHaveCount(0);
   await expect(page.getByText("metrics-e2e-model", { exact: true })).toBeVisible();
 });
+
+test("metrics access denial on first load hides metric controls", async ({ page }) => {
+  await page.route("**/api/metrics**", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "metrics access denied", status: 403 }),
+    });
+  });
+
+  await authenticate(page, "/metrics");
+  const metrics = page.getByRole("main", { name: "Metrics dashboard" });
+  await expect(
+    metrics.getByRole("region", { name: "Metrics access status" }),
+  ).toBeVisible();
+  await expect(metrics.getByText("Metrics access denied", { exact: true })).toBeVisible();
+  await expect(
+    metrics.getByText("No live metric state is available while authorization is unavailable."),
+  ).toBeVisible();
+  await expect(metrics.getByRole("group", { name: "Time range" })).toHaveCount(0);
+  await expect(metrics.getByRole("button", { name: "Refresh metrics" })).toHaveCount(0);
+  await expect(metrics.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(metrics.getByText("No live metrics are available", { exact: true })).toBeVisible();
+  await expect(metrics.getByRole("region", { name: "Metric summaries" })).toBeVisible();
+  await expect(metrics.getByRole("region", { name: "Metric charts" })).toBeVisible();
+});
+
+test("metrics access denial after a successful read retains series without controls", async ({ page }) => {
+  await page.route("**/api/metrics**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(METRICS_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/metrics");
+  const metrics = page.getByRole("main", { name: "Metrics dashboard" });
+  await expect(page.getByText("metrics-e2e-model", { exact: true })).toBeVisible();
+
+  await page.unroute("**/api/metrics**");
+  await page.route("**/api/metrics**", async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "metrics authorization expired", status: 401 }),
+    });
+  });
+  await metrics.getByRole("button", { name: "Refresh metrics" }).click();
+
+  await expect(
+    metrics.getByRole("region", { name: "Metrics access status" }),
+  ).toBeVisible();
+  await expect(page.getByText("metrics-e2e-model", { exact: true })).toBeVisible();
+  await expect(metrics.getByText(/Previously loaded metric series remain visible/)).toBeVisible();
+  await expect(metrics.getByRole("group", { name: "Time range" })).toHaveCount(0);
+  await expect(metrics.getByRole("button", { name: "Refresh metrics" })).toHaveCount(0);
+  await expect(metrics.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});
