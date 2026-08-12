@@ -9,6 +9,7 @@
 - The Tools catalogue now has named main/search/group regions, captioned/scoped group tables, keyboard-visible tool expansion, and 44px refresh/group/search/copy/retry/empty-state targets (`83e39e6`, source-built `tools-states.spec.ts` 1/1); full native-Linux/page-level visual certification remains separate.
 - The dead-letter queue now has named main/summary/filter/list/disclosure regions, `aria-pressed` severity filters, keyboard-visible envelope inspection, and 44px recovery/selection/replay/inspection targets (`99a19a2`, source-built `dlq-states.spec.ts` 1/1); full native-Linux/page-level visual certification remains separate.
 - The Credentials page now has named main/security/data regions, a captioned/scoped credentials table, a labeled creation dialog with explicit field associations, and 44px refresh/audit/selection/copy/delete/dialog targets (`93fdfbc`, source-built `credentials-states.spec.ts` 1/1); full native-Linux/page-level visual certification remains separate.
+- The Metrics page now has named main/summary/chart regions, a semantic time-range control, and 44px range/refresh/retry/empty-state targets (`da113af`, source-built `metrics-states.spec.ts` 1/1); full native-Linux/page-level visual certification remains separate.
 
 The secret-safe operational diagnostics group (`2860838`) and API-facing
 operator wrapper (`380daf5`) are implemented and covered by focused
