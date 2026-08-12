@@ -1,6 +1,6 @@
 # Documentation Authority Status
 
-**Updated:** 2026-08-11
+**Updated:** 2026-08-12
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
@@ -80,7 +80,10 @@ separate documentation updates. The storage
 safety group `93bf755` now rejects
 non-empty restore prefixes before copy and records clean-target verification;
 the static contract currently passes 11 team files and
-39 exact agent-to-manifest bindings. These checks establish technical identity
+39 exact agent-to-manifest bindings. The Credentials denial-state recovery
+group `982c9c0` now preserves only previously loaded redacted metadata and
+hides read/mutation controls on 401/403 access loss; its source-built fixture
+matrix passes 3/3. These checks establish technical identity
 only; registration, activation, certification, and licence metadata remain
 separate.
 
