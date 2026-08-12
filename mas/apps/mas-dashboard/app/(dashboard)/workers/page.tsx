@@ -292,10 +292,19 @@ function WorkerRow({
     <>
       <tr
         className={clsx(
-          "border-b border-slate-800 hover:bg-slate-800/35 cursor-pointer transition-colors",
+          "border-b border-slate-800 hover:bg-slate-800/35 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/70",
           selected && "bg-blue-950/30 hover:bg-blue-950/40",
         )}
+        tabIndex={0}
+        aria-label={`${worker.worker_id} worker row`}
+        aria-expanded={expanded}
         onClick={() => void toggleExpanded()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void toggleExpanded();
+          }
+        }}
       >
         <td className="px-4 py-3 w-10" onClick={(e) => e.stopPropagation()}>
           <RowCheckbox
@@ -346,7 +355,7 @@ function WorkerRow({
                 disabled={evaluating}
                 title="Evaluate"
                 aria-label={`Evaluate ${worker.worker_id}`}
-                className="p-1.5 rounded text-blue-300/70 hover:text-blue-200 hover:bg-blue-500/10 transition-colors disabled:opacity-40"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-blue-300/70 hover:text-blue-200 hover:bg-blue-500/10 transition-colors disabled:opacity-40"
               >
                 <ClipboardCheck size={14} />
               </button>
@@ -361,7 +370,7 @@ function WorkerRow({
                   : `Activate ${worker.worker_id}`
               }
               className={clsx(
-                "p-1.5 rounded transition-colors disabled:opacity-40",
+                "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors disabled:opacity-40",
                 worker.status === "ACTIVE"
                   ? "text-emerald-400 hover:text-rose-300 hover:bg-rose-500/10"
                   : "text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-500/10",
@@ -374,7 +383,7 @@ function WorkerRow({
               disabled={transitioning || worker.status !== "ACTIVE"}
               title="Drain"
               aria-label={`Drain ${worker.worker_id}`}
-              className="p-1.5 rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors disabled:opacity-30"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors disabled:opacity-30"
             >
               <RefreshCw size={14} />
             </button>
@@ -694,11 +703,13 @@ function RegisterWorkerModal({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-id" className="block text-xs text-slate-400 mb-1">
                 Worker ID *
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-id"
+                required
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.worker_id}
                 onChange={(e) =>
                   setForm({ ...form, worker_id: e.target.value })
@@ -707,11 +718,13 @@ function RegisterWorkerModal({
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-name" className="block text-xs text-slate-400 mb-1">
                 Name *
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-name"
+                required
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="My Worker Agent"
@@ -719,11 +732,12 @@ function RegisterWorkerModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-description" className="block text-xs text-slate-400 mb-1">
               Description
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-description"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.description}
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
@@ -733,22 +747,24 @@ function RegisterWorkerModal({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-team" className="block text-xs text-slate-400 mb-1">
                 Team ID
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-team"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.team_id}
                 onChange={(e) => setForm({ ...form, team_id: e.target.value })}
                 placeholder="office_chrm"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-transport" className="block text-xs text-slate-400 mb-1">
                 Transport Mode
               </label>
               <select
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-transport"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.transport_mode}
                 onChange={(e) =>
                   setForm({ ...form, transport_mode: e.target.value })
@@ -763,11 +779,13 @@ function RegisterWorkerModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-repository" className="block text-xs text-slate-400 mb-1">
               GitHub Repository URL
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-repository"
+              type="url"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.source_repo}
               onChange={(e) =>
                 setForm({ ...form, source_repo: e.target.value })
@@ -780,11 +798,12 @@ function RegisterWorkerModal({
             </p>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-version-pin" className="block text-xs text-slate-400 mb-1">
               Immutable Version Pin
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-version-pin"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.version_pin}
               onChange={(e) =>
                 setForm({ ...form, version_pin: e.target.value })
@@ -799,11 +818,12 @@ function RegisterWorkerModal({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-adapter" className="block text-xs text-slate-400 mb-1">
                 Adapter Entrypoint
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-adapter"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.adapter_entrypoint}
                 onChange={(e) =>
                   setForm({ ...form, adapter_entrypoint: e.target.value })
@@ -812,11 +832,12 @@ function RegisterWorkerModal({
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-sandbox" className="block text-xs text-slate-400 mb-1">
                 Sandbox Profile
               </label>
               <select
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-sandbox"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.sandbox_profile}
                 onChange={(e) =>
                   setForm({ ...form, sandbox_profile: e.target.value })
@@ -835,13 +856,15 @@ function RegisterWorkerModal({
         </div>
         <div className="p-5 border-t border-slate-700 flex justify-end gap-3">
           <button
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white"
+            type="button"
+            className="min-h-11 px-4 py-2 text-sm text-slate-300 hover:text-white"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+            type="button"
+            className="min-h-11 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors"
             onClick={submit}
             disabled={loading}
           >
@@ -962,7 +985,10 @@ function IntegrationReadinessPanel() {
     ["ansible", "Available CLI adapter"],
   ];
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+    <section
+      className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+      aria-label="Hiring board integration readiness"
+    >
       <div className="flex flex-wrap gap-2">
         {checks.map(([name, status]) => (
           <span
@@ -1166,7 +1192,7 @@ export default function WorkersPage() {
   ).length;
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="Hiring Board">
       <PageHeader
         icon="users"
         title="Hiring Board"
@@ -1174,19 +1200,21 @@ export default function WorkersPage() {
         actions={
           <>
             <button
+              type="button"
               onClick={load}
               title="Refresh (R)"
               aria-label="Refresh workers"
-              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors"
             >
               <RefreshCw
                 className={clsx("w-4 h-4", loading && "animate-spin")}
               />
             </button>
             <button
+              type="button"
               onClick={() => setShowRegister(true)}
               title="Register Worker (N)"
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors"
             >
               <Plus className="w-4 h-4" />
               Register Worker
@@ -1195,7 +1223,10 @@ export default function WorkersPage() {
         }
       />
 
-      <div className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
+      <section
+        className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5"
+        aria-label="Hiring board adapter policy"
+      >
         <Settings className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
         <div className="text-sm text-blue-200/90 space-y-1">
           <p>
@@ -1232,13 +1263,13 @@ export default function WorkersPage() {
             clear search
           </p>
         </div>
-      </div>
+      </section>
 
       <IntegrationReadinessPanel />
       <RuntimeStatusPanel />
 
       {/* Stats — use KpiCard for visual consistency with the rest of the dashboard */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Hiring board summary">
         <KpiCard
           label="Candidates"
           value={workers.length}
@@ -1270,7 +1301,7 @@ export default function WorkersPage() {
           tone={errorCount > 0 ? "negative" : "neutral"}
           hint={errorCount > 0 ? "Investigate before drain" : "All healthy"}
         />
-      </div>
+      </section>
 
       {error && (
         <ErrorBanner
@@ -1280,7 +1311,7 @@ export default function WorkersPage() {
             <button
               type="button"
               onClick={() => void load()}
-              className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10"
+              className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10"
             >
               Retry
             </button>
@@ -1308,23 +1339,23 @@ export default function WorkersPage() {
       )}
 
       {/* Filters */}
-      <div className="dashboard-toolbar flex flex-col sm:flex-row gap-3">
+      <section className="dashboard-toolbar flex flex-col sm:flex-row gap-3" aria-label="Hiring board filters">
         <div className="relative flex-1 min-w-0">
           <input
             ref={searchRef}
-            type="text"
+            type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search workers by id, name, or team…"
             aria-label="Search workers"
-            className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+            className="w-full min-h-11 px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
           />
           {search && (
             <button
               type="button"
               onClick={() => setSearch("")}
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              className="absolute right-2 top-1/2 min-h-11 min-w-11 -translate-y-1/2 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
             >
               <XCircle size={14} />
             </button>
@@ -1342,20 +1373,27 @@ export default function WorkersPage() {
               onClick={() => setStatusFilter(s.id)}
               activeTone={s.tone}
               count={statusCounts[s.id] ?? 0}
+              className="min-h-11"
             >
               {s.label}
             </FilterChip>
           ))}
         </div>
-      </div>
+      </section>
 
       {/* Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section
+        className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden"
+        role="region"
+        aria-label="Registered workers"
+        aria-busy={loading}
+      >
         <div className="overflow-x-auto">
           <table className="dashboard-table">
+            <caption className="sr-only">Registered AIAT workers</caption>
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
-                <th className="w-10 px-4 py-3">
+                <th scope="col" className="w-10 px-4 py-3">
                   <SelectAllCheckbox
                     checked={selection.isAllSelected}
                     indeterminate={selection.isIndeterminate}
@@ -1363,14 +1401,14 @@ export default function WorkersPage() {
                     ariaLabel="Select all workers"
                   />
                 </th>
-                <th className="w-8 px-4 py-3" aria-label="Expand" />
-                <th className="text-left px-4 py-3">Worker ID</th>
-                <th className="text-left px-4 py-3">Name</th>
-                <th className="text-left px-4 py-3">Team</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-left px-4 py-3">Evaluation</th>
-                <th className="text-left px-4 py-3">Version</th>
-                <th className="w-12 px-4 py-3">
+                <th scope="col" className="w-8 px-4 py-3" aria-label="Expand" />
+                <th scope="col" className="text-left px-4 py-3">Worker ID</th>
+                <th scope="col" className="text-left px-4 py-3">Name</th>
+                <th scope="col" className="text-left px-4 py-3">Team</th>
+                <th scope="col" className="text-left px-4 py-3">Status</th>
+                <th scope="col" className="text-left px-4 py-3">Evaluation</th>
+                <th scope="col" className="text-left px-4 py-3">Version</th>
+                <th scope="col" className="w-12 px-4 py-3">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -1402,8 +1440,9 @@ export default function WorkersPage() {
                         description="Workers are seeded from YAML manifests on startup, or you can register one manually."
                         action={
                           <button
+                            type="button"
                             onClick={() => setShowRegister(true)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                            className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                           >
                             <Plus size={14} />
                             Register Worker
@@ -1418,11 +1457,12 @@ export default function WorkersPage() {
                         description="Try a broader status filter or clear the search."
                         action={
                           <button
+                            type="button"
                             onClick={() => {
                               setStatusFilter("ALL");
                               setSearch("");
                             }}
-                            className="text-xs text-blue-400 hover:text-blue-300"
+                            className="min-h-11 px-3 text-xs text-blue-400 hover:text-blue-300"
                           >
                             Clear filters
                           </button>
@@ -1448,7 +1488,7 @@ export default function WorkersPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
       {showRegister && (
         <RegisterWorkerModal
@@ -1456,6 +1496,6 @@ export default function WorkersPage() {
           onCreated={load}
         />
       )}
-    </div>
+    </main>
   );
 }
