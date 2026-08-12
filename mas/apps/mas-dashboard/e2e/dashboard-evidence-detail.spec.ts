@@ -232,6 +232,66 @@ test.describe("CEO evidence detail", () => {
     );
   });
 
+  test("fails closed when the initial scalar detail read is denied", async ({ page }) => {
+    await page.route("**/api/evidence/model/model-denied", async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "evidence detail access denied" }),
+      });
+    });
+
+    await authenticate(page, "/evidence/model/model-denied");
+
+    await expect(
+      page.getByRole("region", { name: "Evidence detail access status" }),
+    ).toContainText("Safe record fields cannot be read");
+    await expect(
+      page.getByRole("heading", { name: "Evidence detail access denied" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh evidence detail" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "CEO chat" })).toBeVisible();
+    await expect(page.getByTestId("ceo-evidence-record")).toContainText("model-denied");
+  });
+
+  test("retains the last safe scalar projection after detail read denial", async ({ page }) => {
+    let requestCount = 0;
+    await page.route("**/api/evidence/model/model-denied-after-load", async (route) => {
+      requestCount += 1;
+      if (requestCount > 1) {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "evidence authorization expired" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema_version: "aiat.evidence-detail.v1",
+          kind: "model",
+          id: "model-denied-after-load",
+          source: "control-plane",
+          record: { model_id: "model-denied-after-load", profile_state: "approved_profile_present" },
+        }),
+      });
+    });
+
+    await authenticate(page, "/evidence/model/model-denied-after-load");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("approved_profile_present");
+
+    await page.getByRole("button", { name: "Refresh evidence detail" }).click();
+
+    await expect(
+      page.getByRole("region", { name: "Evidence detail access status" }),
+    ).toContainText("last successful scalar projection");
+    await expect(page.getByTestId("ceo-evidence-detail")).toContainText("approved_profile_present");
+    await expect(page.getByRole("button", { name: "Refresh evidence detail" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Open owning section" })).toBeVisible();
+  });
+
   test("renders tool catalogue scalars without schemas or credential requirements", async ({ page }) => {
     await page.route("**/api/evidence/tool/tool-001", async (route) => {
       await route.fulfill({
