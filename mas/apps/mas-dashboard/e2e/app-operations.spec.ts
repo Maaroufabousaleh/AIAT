@@ -439,6 +439,33 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "PM integrations" }),
     ).toBeVisible();
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    await expect(integrations).toBeVisible();
+    await expect(integrations).toHaveAttribute("aria-busy", "false");
+    await expect(
+      page.getByRole("button", { name: "Refresh", exact: true }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(
+      page.getByRole("region", { name: "Integration summary" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Connections", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Reconciliation state" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Governed lifecycle plans" }),
+    ).toBeVisible();
+    for (const fieldName of ["Connection UUID", "Binding UUID"]) {
+      await expect(page.getByRole("textbox", { name: fieldName })).toHaveCSS(
+        "min-height",
+        "44px",
+      );
+    }
+    await expect(
+      page.getByRole("button", { name: "Generate READ_ONLY plan" }),
+    ).toHaveCSS("min-height", "44px");
     await expect(page.getByText("E2E YouTrack")).toBeVisible();
     await expect(page.getByText("conflict-e2e-001")).toBeVisible();
 
@@ -449,6 +476,10 @@ test.describe("Operational UI smoke flows", () => {
     await expect(page.getByText(/latest integration refresh failed/i)).toBeVisible();
     await expect(page.getByText("conflict-e2e-001")).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCSS(
+      "min-height",
+      "44px",
+    );
   });
 
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({

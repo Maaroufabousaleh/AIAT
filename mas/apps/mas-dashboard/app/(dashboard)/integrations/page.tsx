@@ -45,7 +45,7 @@ export default function IntegrationsPage() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   return (
-    <main className="p-6 space-y-6">
+    <main className="p-6 space-y-6" aria-label="PM integrations" aria-busy={loading}>
       <PageHeader
         title="PM integrations"
         description="Provider connections, synchronization health, reconciliation runs, and conflicts."
@@ -84,10 +84,10 @@ export default function IntegrationsPage() {
             : error}
         </ErrorBanner>
       )}
-      {!data && !error && <p className="text-sm text-slate-400">Loading integration state…</p>}
+      {!data && !error && <p className="text-sm text-slate-400" role="status" aria-live="polite">Loading integration state…</p>}
       {data && (
         <>
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-4" role="region" aria-label="Integration summary">
             {[
               ["Connections", data.connections.length],
               ["Open conflicts", data.conflicts.length],
@@ -100,8 +100,8 @@ export default function IntegrationsPage() {
               </div>
             ))}
           </div>
-          <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
-            <h2 className="text-sm font-semibold text-white">Connections</h2>
+          <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4" aria-labelledby="integration-connections-heading">
+            <h2 id="integration-connections-heading" className="text-sm font-semibold text-white">Connections</h2>
             <div className="mt-3 divide-y divide-slate-800">
               {data.connections.map((connection) => (
                 <div key={String(connection.id)} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
@@ -115,26 +115,27 @@ export default function IntegrationsPage() {
               {!data.connections.length && <p className="py-3 text-sm text-slate-500">No provider connections configured.</p>}
             </div>
           </section>
-          <section className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-              <h2 className="text-sm font-semibold text-amber-100">Open conflicts</h2>
-              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-amber-200/80">{JSON.stringify(data.conflicts, null, 2)}</pre>
+          <section className="grid gap-4 lg:grid-cols-2" aria-label="Reconciliation state">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4" aria-labelledby="integration-conflicts-heading">
+              <h2 id="integration-conflicts-heading" className="text-sm font-semibold text-amber-100">Open conflicts</h2>
+              <pre aria-label="Open integration conflicts" className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-amber-200/80">{JSON.stringify(data.conflicts, null, 2)}</pre>
             </div>
-            <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-              <h2 className="text-sm font-semibold text-blue-100">Outbox and reconciliation</h2>
-              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-blue-200/80">{JSON.stringify({ outbox: data.outbox, runs: data.runs }, null, 2)}</pre>
+            <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="integration-reconciliation-heading">
+              <h2 id="integration-reconciliation-heading" className="text-sm font-semibold text-blue-100">Outbox and reconciliation</h2>
+              <pre aria-label="Integration outbox and reconciliation" className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-blue-200/80">{JSON.stringify({ outbox: data.outbox, runs: data.runs }, null, 2)}</pre>
             </div>
           </section>
-          <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4">
+          <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4" aria-labelledby="integration-lifecycle-heading">
             <div>
-              <h2 className="text-sm font-semibold text-cyan-100">Governed lifecycle plans</h2>
+              <h2 id="integration-lifecycle-heading" className="text-sm font-semibold text-cyan-100">Governed lifecycle plans</h2>
               <p className="mt-1 text-xs text-cyan-200/70">Plans are generated and persisted by the control plane. This dashboard only submits explicit operator actions.</p>
             </div>
             <div className="grid gap-2 md:grid-cols-3">
-              <input className="rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Connection UUID" value={connectionId} onChange={(event) => setConnectionId(event.target.value)} />
-              <input className="rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Binding UUID" value={bindingId} onChange={(event) => setBindingId(event.target.value)} />
+              <input aria-label="Connection UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Connection UUID" value={connectionId} onChange={(event) => setConnectionId(event.target.value)} />
+              <input aria-label="Binding UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200" placeholder="Binding UUID" value={bindingId} onChange={(event) => setBindingId(event.target.value)} />
               <button
-                className="rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                type="button"
+                className="min-h-11 rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 disabled={busy || !connectionId || !bindingId}
                 onClick={async () => {
                   setBusy(true);
@@ -177,7 +178,8 @@ export default function IntegrationsPage() {
                     </label>
                     <div className="mt-2 flex gap-2">
                       <button
-                        className="rounded border border-emerald-700 px-2 py-1 text-emerald-300 disabled:opacity-50"
+                        type="button"
+                        className="min-h-11 rounded border border-emerald-700 px-2 py-1 text-emerald-300 disabled:opacity-50"
                         disabled={busy || reviewedDigest !== digest || status !== "PLANNED"}
                         onClick={async () => {
                           setBusy(true);
@@ -191,7 +193,8 @@ export default function IntegrationsPage() {
                         }}
                       >Approve</button>
                       <button
-                        className="rounded border border-amber-700 px-2 py-1 text-amber-300 disabled:opacity-50"
+                        type="button"
+                        className="min-h-11 rounded border border-amber-700 px-2 py-1 text-amber-300 disabled:opacity-50"
                         disabled={busy || reviewedDigest !== digest || status !== "APPROVED"}
                         onClick={async () => {
                           if (!window.confirm("Apply only this exact persisted lifecycle plan?")) return;
