@@ -54,3 +54,31 @@ test("identity tables label stale records and preserve a retry path", async ({
   await expect(page.getByText("RECOVERED")).toBeVisible();
   await expect(page.getByText(/latest refresh failed/i)).toHaveCount(0);
 });
+
+test("identity tables expose an access-denied state without retry", async ({
+  page,
+}) => {
+  await page.route("**/api/identity/identities**", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "identity access denied" }),
+    });
+  });
+
+  await authenticate(page, "/identities");
+  const status = page.getByRole("region", { name: "Identity access status" });
+  await expect(status).toBeVisible();
+  await expect(
+    status.getByRole("heading", { name: "Identity access denied" }),
+  ).toBeVisible();
+  await expect(
+    status.getByText(/not authorized to read this resource/i),
+  ).toBeVisible();
+  await expect(status.getByRole("link", { name: "Return to dashboard" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(status.getByRole("button", { name: /retry/i })).toHaveCount(0);
+});

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -22,6 +23,7 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState("");
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
   const itemsRef = useRef<Record<string, unknown>[]>([]);
   const requestIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -35,6 +37,13 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
     setError((previous) => (itemsRef.current.length > 0 ? previous : ""));
     try {
       const response = await fetch(`/api/identity/${resource}`, { cache: "no-store", signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        if (requestId !== requestIdRef.current) return;
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read this identity resource.");
+        setStale(itemsRef.current.length > 0);
+        return;
+      }
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Identity data is unavailable");
       if (requestId !== requestIdRef.current) return;
@@ -43,8 +52,10 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
       setItems(nextItems);
       setError("");
       setStale(false);
+      setAccessDenied(false);
     } catch (cause) {
       if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+      setAccessDenied(false);
       setError(cause instanceof Error ? cause.message : "Identity data is unavailable");
       setStale(true);
     } finally {
@@ -99,18 +110,44 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   return (
     <main className="space-y-6" aria-label={title} aria-busy={loading}>
       <div role="status" aria-live="polite" className="sr-only">
-        {loading ? `Loading ${title.toLowerCase()} records` : `${title} records loaded`}
+        {loading
+          ? `Loading ${title.toLowerCase()} records`
+          : accessDenied
+            ? `${title} access denied`
+            : `${title} records loaded`}
       </div>
       <PageHeader title={title} description={description} actions={
-        <button type="button" onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading} aria-busy={loading}>
-          <RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin" : ""} /> Refresh
-        </button>
+        !accessDenied ? (
+          <button type="button" onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading} aria-busy={loading}>
+            <RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+        ) : undefined
       } />
       <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100 flex gap-2" aria-label="Identity resource notice">
         <ShieldCheck size={17} aria-hidden="true" className="mt-0.5 flex-none" />
         Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
       </section>
-      {error && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Identity access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Identity access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {items.length > 0
+              ? "The current operator identity can no longer read this resource. Showing the last known metadata-only records; no new identity state is being inferred."
+              : "The current operator identity is not authorized to read this resource. No identity records are being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale && items.length > 0 ? "warning" : "error"}
           title={stale && items.length > 0 ? "Showing last known records" : "Identity data unavailable"}
