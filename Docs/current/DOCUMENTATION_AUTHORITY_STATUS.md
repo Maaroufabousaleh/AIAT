@@ -95,6 +95,9 @@ boundary to SSE responses; its source-built fixture matrix passes 3/3.
 The Metrics denial-state recovery group `b64b15e` now applies the same boundary
 across six Prometheus query families; its source-built fixture matrix passes
 3/3.
+The dead-letter queue denial-state recovery group `e6ab3a1` now applies the
+same boundary to reads and replay responses; its source-built fixture matrix
+passes 3/3.
 
 ## Clean-checkout verification
 

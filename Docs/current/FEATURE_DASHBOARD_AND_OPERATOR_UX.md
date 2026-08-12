@@ -52,6 +52,11 @@ The dead-letter queue now has a named main/entry-list structure, semantic
 envelope disclosure regions, `aria-pressed` severity filters, and 44px targets
 for refresh, retry, selection, replay, filtering, and envelope inspection. Its
 source-built stale/retry test covers the focused baseline 1/1 (`99a19a2`).
+Its 401/403 read or replay responses now expose a named access-denied region,
+retain only previously loaded messages, clear selection/replay state, and hide
+refresh, retry, filters, selection, and replay controls while leaving retained
+envelope inspection read-only; the focused denial matrix passes 3/3
+(`e6ab3a1`).
 
 The Credentials page now has a named main/security/data structure, a
 captioned/scoped credentials table, explicit associations for creation dialog
@@ -261,7 +266,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - System status stale/retry and accessibility state: [`system/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/system/page.tsx>), [`system-status-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/system-status-states.spec.ts) (`f445c17`, `543f392`)
 - Projects list stale/retry and accessibility state: [`projects/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/page.tsx>), [`projects-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/projects-states.spec.ts) (`7828b48`)
 - Tools catalogue stale/retry and accessibility state: [`tools/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/tools/page.tsx>), [`tools-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/tools-states.spec.ts) (`5f4b0eb`, `83e39e6`)
-- Dead-letter queue stale/retry and accessibility state: [`dlq/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/dlq/page.tsx>), [`FilterChips.tsx`](../../mas/apps/mas-dashboard/components/ui/FilterChips.tsx), [`dlq-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/dlq-states.spec.ts) (`823fa6d`, `99a19a2`)
+- Dead-letter queue stale/retry, accessibility, and access-denied state: [`dlq/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/dlq/page.tsx>), [`app/api/dlq/route.ts`](../../mas/apps/mas-dashboard/app/api/dlq/route.ts), [`app/api/dlq/[id]/replay/route.ts`](<../../mas/apps/mas-dashboard/app/api/dlq/[id]/replay/route.ts>), [`FilterChips.tsx`](../../mas/apps/mas-dashboard/components/ui/FilterChips.tsx), [`dlq-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/dlq-states.spec.ts) (`823fa6d`, `99a19a2`, `e6ab3a1`)
 - Credentials stale/retry, accessibility, and access-denied state: [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>), [`BulkActionBar.tsx`](../../mas/apps/mas-dashboard/components/ui/BulkActionBar.tsx), [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) (`970f09c`, `e6e6980`, `93fdfbc`, `982c9c0`)
 - Metrics partial/stale/retry, accessibility, and access-denied state: [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>), [`app/api/metrics/route.ts`](<../../mas/apps/mas-dashboard/app/api/metrics/route.ts>), [`lib/prometheus.ts`](../../mas/apps/mas-dashboard/lib/prometheus.ts), [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) (`85596b0`, `da113af`, `b64b15e`)
 - Flows list stale/retry and accessibility state: [`flows/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/page.tsx>), [`flows-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flows-states.spec.ts) (`6b0413b`)
