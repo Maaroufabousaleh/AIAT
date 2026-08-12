@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent, useMemo } from "react";
+import { useState, useEffect, FormEvent, useMemo, useRef } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, type WorkflowState } from "@/lib/constants";
@@ -22,6 +22,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { FilterChip } from "@/components/ui/FilterChips";
+
+type HttpError = Error & { status?: number };
 
 interface Project {
   id: string;
@@ -83,6 +85,11 @@ export default function ProjectsPage() {
   const [bulkArchiving, setBulkArchiving] = useState(false);
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
   const [bulkError, setBulkError] = useState("");
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const projectsRef = useRef<Project[] | null>(null);
+  const flowsRef = useRef<Flow[] | null>(null);
+  const hasReadContextRef = useRef(false);
   // Sort controls: which field to sort by and which direction.
   // Defaults to "Recently updated" — the most common intent on a project list.
   const [sortKey, setSortKey] = useState<SortKey>("updated_at");
@@ -101,8 +108,22 @@ export default function ProjectsPage() {
     }
   };
 
+  function handleAccessDenied() {
+    const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null;
+    setAccessDenied(true);
+    setHasReadContext(hadData);
+    setLoadError("");
+    setLoadStale(false);
+    setError("");
+    setBulkError("");
+    setShowCreate(false);
+    setFilter("non-archived");
+    setExpandedId(null);
+  }
+
   async function load() {
-    const hadData = projects.length > 0 || flows.length > 0;
+    if (accessDenied) return;
+    const hadData = projectsRef.current !== null || flowsRef.current !== null;
     if (!hadData) setLoading(true);
     setLoadError("");
     try {
@@ -111,13 +132,27 @@ export default function ProjectsPage() {
         fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
       ]);
       if (!projRes.ok || !flowRes.ok) {
-        throw new Error("Project and flow data are unavailable from the control plane");
+        const denied = [projRes, flowRes].find((response) => response.status === 401 || response.status === 403);
+        const error = new Error("Project and flow data are unavailable from the control plane") as HttpError;
+        error.status = denied?.status;
+        throw error;
       }
       const [projData, flowData] = await Promise.all([projRes.json(), flowRes.json()]);
-      setProjects(Array.isArray(projData) ? projData : projData.projects ?? []);
-      setFlows(Array.isArray(flowData) ? flowData : []);
+      const nextProjects = Array.isArray(projData) ? projData : projData.projects ?? [];
+      const nextFlows = Array.isArray(flowData) ? flowData : [];
+      projectsRef.current = nextProjects;
+      flowsRef.current = nextFlows;
+      hasReadContextRef.current = true;
+      setProjects(nextProjects);
+      setFlows(nextFlows);
+      setHasReadContext(true);
       setLoadStale(false);
     } catch (cause) {
+      const status = cause instanceof Error ? (cause as HttpError).status : undefined;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setLoadError(cause instanceof Error ? cause.message : String(cause));
       setLoadStale(hadData);
     } finally {
@@ -140,6 +175,7 @@ export default function ProjectsPage() {
   }
 
   async function handleCreate(e: FormEvent) {
+    if (accessDenied) return;
     e.preventDefault();
     setCreating(true);
     setError("");
@@ -202,6 +238,10 @@ export default function ProjectsPage() {
         resetCreateForm();
         await load();
       } else {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const d = await res.json().catch(() => null);
         setError(projectActionError(d, "Failed to create project"));
       }
@@ -247,9 +287,14 @@ export default function ProjectsPage() {
     selection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredIds.join(",")]);
+  useEffect(() => {
+    if (accessDenied) selection.clear();
+    // Selection is intentionally cleared only when the authority boundary is entered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessDenied]);
 
   async function handleBulkArchive() {
-    if (selection.selectedCount === 0) return;
+    if (accessDenied || selection.selectedCount === 0) return;
     const ids = Array.from(selection.selected);
     setBulkArchiving(true);
     setBulkError("");
@@ -259,6 +304,15 @@ export default function ProjectsPage() {
       const results = await Promise.allSettled(
         ids.map((id) => fetch(`/api/projects/${id}/archive`, { method: "POST" }))
       );
+      const denied = results.some(
+        (result) =>
+          result.status === "fulfilled" &&
+          (result.value.status === 401 || result.value.status === 403),
+      );
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       for (const r of results) {
         if (r.status === "rejected" || !r.value.ok) failed++;
       }
@@ -275,11 +329,16 @@ export default function ProjectsPage() {
   }
 
   async function archiveProject(project: Project) {
+    if (accessDenied) return;
     setBulkArchiving(true);
     setBulkError("");
     try {
       const res = await fetch(`/api/projects/${project.id}/archive`, { method: "POST" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const detail = await res.json().catch(() => null);
         const message = projectActionError(detail, res.statusText);
         setBulkError(`Failed to archive "${project.name}": ${message}`);
@@ -292,11 +351,16 @@ export default function ProjectsPage() {
   }
 
   async function deleteProject(project: Project) {
+    if (accessDenied) return;
     setBulkDeleteLoading(true);
     setBulkError("");
     try {
       const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const detail = await res.json().catch(() => null);
         const message = projectActionError(detail, res.statusText);
         setBulkError(`Failed to delete "${project.name}": ${message}`);
@@ -316,7 +380,7 @@ export default function ProjectsPage() {
         icon="folder-kanban"
         title="Projects"
         description={`${projects.length} total · ${activeCount} active`}
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -337,10 +401,25 @@ export default function ProjectsPage() {
               New Project
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {loadError && (
+      {accessDenied && (
+        <section
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+          role="region"
+          aria-label="Projects access status"
+        >
+          <h2 className="font-medium text-amber-50">Projects access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {hasReadContext
+              ? "Previously loaded project and active-flow definitions remain visible for reference. Refresh, retry, New Project, filters, sorting, selection, and archive/delete controls are hidden until authorization is restored."
+              : "No live project definitions are available while authorization is unavailable. Project controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {loadError && !accessDenied && (
         <ErrorBanner
           tone={loadStale ? "warning" : "error"}
           title={loadStale ? "Showing last known project list" : "Project list unavailable"}
@@ -355,7 +434,7 @@ export default function ProjectsPage() {
       )}
 
       {/* Filter + sort toolbar */}
-      {projects.length > 0 && (
+      {projects.length > 0 && !accessDenied && (
         <div className="dashboard-toolbar flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter projects by state">
             <FilterChip
@@ -427,7 +506,7 @@ export default function ProjectsPage() {
       )}
 
       {/* Bulk action bar */}
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={sorted.length}
@@ -439,14 +518,22 @@ export default function ProjectsPage() {
         />
       )}
 
-      {bulkError && (
+      {bulkError && !accessDenied && (
         <ErrorBanner tone="warning">{bulkError}</ErrorBanner>
       )}
 
       {/* Table */}
       <div className="dashboard-surface overflow-hidden">
-        {loading ? (
+        {loading && !accessDenied ? (
           <div className="p-8 text-center text-slate-500 text-sm">Loading…</div>
+        ) : accessDenied && projects.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon="key"
+              title="No live project definitions are available"
+              description="Project definitions cannot be read while authorization is unavailable. Controls remain hidden until access is restored."
+            />
+          </div>
         ) : filtered.length === 0 ? (
           projects.length === 0 ? (
             <div className="p-6">
@@ -494,13 +581,15 @@ export default function ProjectsPage() {
               <thead>
                 <tr className="border-b border-slate-800">
                   <th scope="col" className="px-4 py-3 w-16">
-                    <SelectAllCheckbox
-                      checked={selection.isAllSelected}
-                      indeterminate={selection.isIndeterminate}
-                      onChange={selection.toggleAll}
-                      ariaLabel="Select all projects"
-                      className="min-h-11 min-w-11"
-                    />
+                    {!accessDenied && (
+                      <SelectAllCheckbox
+                        checked={selection.isAllSelected}
+                        indeterminate={selection.isIndeterminate}
+                        onChange={selection.toggleAll}
+                        ariaLabel="Select all projects"
+                        className="min-h-11 min-w-11"
+                      />
+                    )}
                   </th>
                   <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
                   <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">State</th>
@@ -530,6 +619,7 @@ export default function ProjectsPage() {
                       onArchive={() => archiveProject(p)}
                       onDelete={() => deleteProject(p)}
                       actionsDisabled={bulkArchiving || bulkDeleteLoading}
+                      readOnly={accessDenied}
                     />
                   );
                 })}
@@ -540,7 +630,7 @@ export default function ProjectsPage() {
       </div>
 
       {/* Create modal */}
-      {showCreate && (
+      {showCreate && !accessDenied && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="dashboard-surface-strong p-6 w-full max-w-xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4">
@@ -707,6 +797,7 @@ interface ProjectRowProps {
   onArchive: () => void;
   onDelete: () => void;
   actionsDisabled: boolean;
+  readOnly: boolean;
 }
 
 /**
@@ -724,6 +815,7 @@ function ProjectRow({
   onArchive,
   onDelete,
   actionsDisabled,
+  readOnly,
 }: ProjectRowProps) {
   // Quick-action buttons stay hidden by default to keep the row calm, but they
   // become visible on hover/focus and stay visible while the row is selected
@@ -741,12 +833,14 @@ function ProjectRow({
         )}
       >
         <td className="px-4 py-3">
-          <RowCheckbox
-            checked={isSelected}
-            onChange={onToggleSelect}
-            ariaLabel={`Select ${p.name}`}
-            className="min-h-11 min-w-11"
-          />
+          {!readOnly && (
+            <RowCheckbox
+              checked={isSelected}
+              onChange={onToggleSelect}
+              ariaLabel={`Select ${p.name}`}
+              className="min-h-11 min-w-11"
+            />
+          )}
         </td>
         <td className="px-4 py-3">
           <div className="flex items-start gap-1.5">
@@ -774,13 +868,19 @@ function ProjectRow({
               <span className="w-4 inline-block" aria-hidden="true" />
             )}
             <div className="min-w-0 flex-1">
-              <Link
-                href={`/projects/${p.id}`}
-                prefetch={false}
-                className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white transition-colors"
-              >
-                {p.name}
-              </Link>
+              {readOnly ? (
+                <span className="inline-flex min-h-11 items-center font-medium text-slate-100">
+                  {p.name}
+                </span>
+              ) : (
+                <Link
+                  href={`/projects/${p.id}`}
+                  prefetch={false}
+                  className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white transition-colors"
+                >
+                  {p.name}
+                </Link>
+              )}
               {hasDescription && !isExpanded && (
                 <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">
                   {p.description}
@@ -816,41 +916,45 @@ function ProjectRow({
                 "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100"
             )}
           >
-            <Link
-              href={`/projects/${p.id}`}
-              prefetch={false}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
-              aria-label={`Open ${p.name}`}
-            >
-              Open
-              <ArrowRight size={12} aria-hidden="true" />
-            </Link>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!window.confirm(`Archive project "${p.name}"? This removes it from active work.`)) return;
-                onArchive();
-              }}
-              disabled={actionsDisabled}
-              title="Archive project"
-              aria-label={`Archive project ${p.name}`}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-amber-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Archive size={12} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!window.confirm(`Permanently delete project "${p.name}"? This cannot be undone.`)) return;
-                onDelete();
-              }}
-              disabled={actionsDisabled}
-              title="Delete project"
-              aria-label={`Delete project ${p.name}`}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Trash2 size={12} aria-hidden="true" />
-            </button>
+            {!readOnly && (
+              <>
+                <Link
+                  href={`/projects/${p.id}`}
+                  prefetch={false}
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 px-3 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
+                  aria-label={`Open ${p.name}`}
+                >
+                  Open
+                  <ArrowRight size={12} aria-hidden="true" />
+                </Link>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm(`Archive project "${p.name}"? This removes it from active work.`)) return;
+                    onArchive();
+                  }}
+                  disabled={actionsDisabled}
+                  title="Archive project"
+                  aria-label={`Archive project ${p.name}`}
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-amber-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Archive size={12} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm(`Permanently delete project "${p.name}"? This cannot be undone.`)) return;
+                    onDelete();
+                  }}
+                  disabled={actionsDisabled}
+                  title="Delete project"
+                  aria-label={`Delete project ${p.name}`}
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                </button>
+              </>
+            )}
           </div>
         </td>
       </tr>

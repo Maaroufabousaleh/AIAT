@@ -52,7 +52,7 @@ test("projects list retains the last known state when a refresh fails", async ({
   });
 
   await authenticate(page, "/projects");
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "projects-e2e-retained", exact: true }),
   ).toBeVisible();
@@ -138,4 +138,119 @@ test("projects list retains the last known state when a refresh fails", async ({
   await expect(
     page.getByRole("link", { name: "projects-e2e-retained", exact: true }),
   ).toBeVisible();
+});
+
+test("projects list fails closed when the initial project read is denied", async ({
+  page,
+}) => {
+  await page.route("**/api/projects**", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "projects access denied" }),
+    });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/projects");
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Projects access status" }),
+  ).toContainText("No live project definitions are available");
+  await expect(
+    page.getByText("No live project definitions are available", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh projects" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Project" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Non archived/ })).toHaveCount(0);
+});
+
+test("projects list preserves retained rows but hides controls after read denial", async ({
+  page,
+}) => {
+  let denyNextProjectRead = false;
+  await page.route("**/api/projects**", async (route) => {
+    if (denyNextProjectRead && route.request().method() === "GET") {
+      denyNextProjectRead = false;
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "projects authorization expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(PROJECT_FIXTURE),
+    });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/projects");
+  await expect(page.getByRole("link", { name: "projects-e2e-retained", exact: true })).toBeVisible();
+
+  denyNextProjectRead = true;
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await expect(
+    page.getByRole("region", { name: "Projects access status" }),
+  ).toContainText("Previously loaded project and active-flow definitions remain visible");
+  await expect(page.getByText("projects-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "projects-e2e-retained", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh projects" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Project" })).toHaveCount(0);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Archive project/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Delete project/ })).toHaveCount(0);
+});
+
+test("projects list enters the same denied state when deletion loses authorization", async ({
+  page,
+}) => {
+  await page.route("**/api/projects**", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "project deletion denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(PROJECT_FIXTURE),
+    });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/projects");
+  await expect(page.getByRole("button", { name: "Delete project projects-e2e-retained" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete project projects-e2e-retained" }).click();
+
+  await expect(
+    page.getByRole("region", { name: "Projects access status" }),
+  ).toContainText("Previously loaded project and active-flow definitions remain visible");
+  await expect(page.getByText("projects-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New Project" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh projects" })).toHaveCount(0);
 });
