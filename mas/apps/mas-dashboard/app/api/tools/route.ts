@@ -13,6 +13,18 @@ export async function GET() {
       fetch(`${TOOL_SERVICE_URL}/health`, { cache: "no-store" }),
     ]);
 
+    const denied = [toolsRes, healthRes].find(
+      (result) =>
+        result.status === "fulfilled" &&
+        (result.value.status === 401 || result.value.status === 403),
+    );
+    if (denied && denied.status === "fulfilled") {
+      return NextResponse.json(
+        { error: "Tools access denied", status: denied.value.status },
+        { status: denied.value.status },
+      );
+    }
+
     const rawTools = toolsRes.status === "fulfilled" && toolsRes.value.ok
       ? await toolsRes.value.json()
       : null;

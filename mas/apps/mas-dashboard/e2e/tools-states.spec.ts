@@ -112,3 +112,67 @@ test("tools catalogue retains the last known state when a refresh fails", async 
   );
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
 });
+
+test("tools catalogue access denial on first load hides catalogue controls", async ({
+  page,
+}) => {
+  await page.route("**/api/tools", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "tools access denied" }),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  const tools = page.getByRole("main", { name: "Tools catalogue" });
+  await expect(
+    tools.getByRole("region", { name: "Tools access status" }),
+  ).toBeVisible();
+  await expect(
+    tools.getByRole("heading", { name: "Tools access denied" }),
+  ).toBeVisible();
+  await expect(
+    tools.getByText("No live tool catalogue is available", { exact: true }),
+  ).toBeVisible();
+  await expect(tools.getByRole("button", { name: "Refresh tools" })).toHaveCount(0);
+  await expect(tools.getByRole("button", { name: /all groups/i })).toHaveCount(0);
+  await expect(tools.getByRole("searchbox", { name: "Search tools" })).toHaveCount(0);
+});
+
+test("tools catalogue access denial after a successful read retains metadata without controls", async ({
+  page,
+}) => {
+  let reads = 0;
+  await page.route("**/api/tools", async (route) => {
+    reads += 1;
+    if (reads > 1) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "tools access expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(TOOLS_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  const tools = page.getByRole("main", { name: "Tools catalogue" });
+  await expect(tools.getByText("tools-e2e-read", { exact: true })).toBeVisible();
+  await tools.getByRole("button", { name: "Refresh tools" }).click();
+
+  await expect(
+    tools.getByRole("region", { name: "Tools access status" }),
+  ).toBeVisible();
+  await expect(tools.getByText("tools-e2e-read", { exact: true })).toBeVisible();
+  await expect(tools.getByRole("button", { name: "Refresh tools" })).toHaveCount(0);
+  await expect(tools.getByRole("button", { name: /all groups/i })).toHaveCount(0);
+  await expect(tools.getByRole("searchbox", { name: "Search tools" })).toHaveCount(0);
+  await expect(tools.getByRole("button", { name: /Expand|Collapse|Copy/ })).toHaveCount(0);
+  await expect(tools.getByRole("table", { name: "General tools" })).toBeVisible();
+});

@@ -45,6 +45,8 @@ interface ToolsResponse {
   health?: { tools_registered?: number };
 }
 
+type HttpError = Error & { status?: number };
+
 const CB_BADGE: Record<string, { label: string; cls: string }> = {
   CLOSED: { label: 'CLOSED', cls: 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30' },
   OPEN: { label: 'OPEN', cls: 'bg-rose-500/10 text-rose-300 border border-rose-500/30' },
@@ -102,20 +104,53 @@ export default function ToolsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [copiedTool, setCopiedTool] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+    const current = dataRef.current;
+    const hadReadContext = hasReadContextRef.current || current !== null;
+    const groups = Object.keys(
+      groupTools((current?.tools ?? []).filter((tool) => !tool.deprecated_alias_of)),
+    );
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setError(null);
+    setStale(false);
+    setSearch('');
+    setCopiedTool(null);
+    setExpandedGroups(new Set(groups));
+  }, []);
 
   const fetchTools = useCallback(async () => {
+    if (accessDenied) return;
     try {
       const res = await fetch('/api/tools', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const error = new Error(`HTTP ${res.status}`) as HttpError;
+        error.status = res.status;
+        throw error;
+      }
       const json: ToolsResponse = await res.json();
       dataRef.current = json;
+      hasReadContextRef.current = true;
       setData(json);
+      setHasReadContext(true);
       setError(null);
       setStale(false);
       // Default: expand all groups on first load
@@ -125,23 +160,36 @@ export default function ToolsPage() {
         return prev;
       });
     } catch (e) {
+      const status = e instanceof Error ? (e as HttpError).status : undefined;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Failed to fetch tools');
       setStale(dataRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accessDenied, handleAccessDenied]);
 
   useEffect(() => {
-    fetchTools();
+    if (accessDenied) return;
+    void fetchTools();
     intervalRef.current = setInterval(fetchTools, 30_000);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
     };
-  }, [fetchTools]);
+  }, [accessDenied, fetchTools]);
 
   const toggleTool = (name: string) => {
+    if (accessDenied) return;
     setExpanded(prev => {
       const next = new Set(prev);
       next.has(name) ? next.delete(name) : next.add(name);
@@ -150,6 +198,7 @@ export default function ToolsPage() {
   };
 
   const toggleGroup = (group: string) => {
+    if (accessDenied) return;
     setExpandedGroups(prev => {
       const next = new Set(prev);
       next.has(group) ? next.delete(group) : next.add(group);
@@ -159,7 +208,7 @@ export default function ToolsPage() {
 
   /** Expand or collapse every group in one go. */
   const setAllGroups = (open: boolean) => {
-    if (!data) return;
+    if (accessDenied || !data) return;
     const allGroups = Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of)));
     setExpandedGroups(open ? new Set(allGroups) : new Set());
   };
@@ -171,12 +220,14 @@ export default function ToolsPage() {
       expandedGroups.size > 0;
 
   const requestRefresh = () => {
+    if (accessDenied) return;
     if (dataRef.current === null) setLoading(true);
     void fetchTools();
   };
 
   /** Copy a tool's fully qualified name to the clipboard with brief feedback. */
   const copyToolName = async (name: string) => {
+    if (accessDenied) return;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(name);
@@ -200,7 +251,7 @@ export default function ToolsPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !accessDenied) {
     return (
       <div className="flex items-center justify-center h-64" role="status" aria-live="polite">
         <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
@@ -244,7 +295,7 @@ export default function ToolsPage() {
             <span className="text-slate-500">auto-refresh 30s</span>
           </>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -267,8 +318,25 @@ export default function ToolsPage() {
               {allExpanded ? 'Collapse all' : 'Expand all'}
             </button>
           </>
-        }
+        ) : undefined}
       />
+
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Tools access status"
+        >
+          <h2 className="text-base font-semibold text-amber-100">
+            Tools access denied
+          </h2>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded tool metadata remains visible for reference. Refresh, retry, search, group, expansion, and copy controls are hidden until authorization is restored."
+              : "No live tool catalogue is available while authorization is unavailable. Tool controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
 
       {/* Stats row */}
       <section aria-label="Tool catalogue summary" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -295,7 +363,7 @@ export default function ToolsPage() {
         />
       </section>
 
-      {error && (
+      {error && !accessDenied && (
         <ErrorBanner tone="warning" title={stale ? "Showing last known tool catalogue" : "Could not load tools"} action={
           <button
             type="button"
@@ -312,7 +380,7 @@ export default function ToolsPage() {
       )}
 
       {/* Search */}
-      <section aria-label="Tool search" className="dashboard-toolbar relative">
+      {!accessDenied && <section aria-label="Tool search" className="dashboard-toolbar relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
         <input
           type="search"
@@ -332,7 +400,7 @@ export default function ToolsPage() {
             <X className="w-3.5 h-3.5" />
           </button>
         )}
-      </section>
+      </section>}
 
       {/* Groups */}
       <section aria-label="Tool groups" className="space-y-3">
@@ -342,30 +410,46 @@ export default function ToolsPage() {
           const isExpanded = expandedGroups.has(group);
           const headerId = `group-header-${group.replace(/\s+/g, '-')}`;
           const panelId = `group-panel-${group.replace(/\s+/g, '-')}`;
+          const groupHeaderContent = (
+            <>
+              {isExpanded
+                ? <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+              }
+              <span className="font-semibold text-white flex-1 truncate">{group}</span>
+              <span className="text-xs text-slate-500 mr-3 whitespace-nowrap">{groupTools.length} tool{groupTools.length === 1 ? '' : 's'}</span>
+              {groupOpen > 0 && (
+                <span className="text-xs px-2 py-0.5 bg-rose-500/10 text-rose-300 border border-rose-500/30 rounded-full whitespace-nowrap">
+                  {groupOpen} open
+                </span>
+              )}
+            </>
+          );
 
           return (
             <section key={group} aria-labelledby={headerId} className="dashboard-surface overflow-hidden">
               {/* Group header */}
-              <button
-                id={headerId}
-                type="button"
-                onClick={() => toggleGroup(group)}
-                aria-expanded={isExpanded}
-                aria-controls={panelId}
-                className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 active:bg-slate-800/60 transition-colors text-left"
-              >
-                {isExpanded
-                  ? <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                  : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                }
-                <span className="font-semibold text-white flex-1 truncate">{group}</span>
-                <span className="text-xs text-slate-500 mr-3 whitespace-nowrap">{groupTools.length} tool{groupTools.length === 1 ? '' : 's'}</span>
-                {groupOpen > 0 && (
-                  <span className="text-xs px-2 py-0.5 bg-rose-500/10 text-rose-300 border border-rose-500/30 rounded-full whitespace-nowrap">
-                    {groupOpen} open
-                  </span>
-                )}
-              </button>
+              {accessDenied ? (
+                <div
+                  id={headerId}
+                  role="heading"
+                  aria-level={2}
+                  className="w-full min-h-11 flex items-center gap-3 px-4 py-3 text-left"
+                >
+                  {groupHeaderContent}
+                </div>
+              ) : (
+                <button
+                  id={headerId}
+                  type="button"
+                  onClick={() => toggleGroup(group)}
+                  aria-expanded={isExpanded}
+                  aria-controls={panelId}
+                  className="w-full min-h-11 flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 active:bg-slate-800/60 transition-colors text-left"
+                >
+                  {groupHeaderContent}
+                </button>
+              )}
 
               {/* Tools table */}
               {isExpanded && (
@@ -403,48 +487,52 @@ export default function ToolsPage() {
                                 'hover:bg-slate-800/35 active:bg-slate-800/50 transition-colors cursor-pointer',
                                 cb?.state === 'OPEN' && 'bg-rose-950/15'
                               )}
-                              onClick={() => toggleTool(tool.name)}
+                              onClick={accessDenied ? undefined : () => toggleTool(tool.name)}
                             >
                               <td className="px-4 py-2.5 text-slate-500">
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    toggleTool(tool.name);
-                                  }}
-                                  aria-label={`${isToolExpanded ? "Collapse" : "Expand"} ${tool.name} details`}
-                                  aria-expanded={isToolExpanded}
-                                  aria-controls={`${rowId}-details`}
-                                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-400 hover:bg-slate-800/70 hover:text-slate-200 focus-visible:ring-1 focus-visible:ring-blue-400/70"
-                                >
-                                  {isToolExpanded
-                                    ? <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
-                                    : <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
-                                  }
-                                </button>
+                                {!accessDenied && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      toggleTool(tool.name);
+                                    }}
+                                    aria-label={`${isToolExpanded ? "Collapse" : "Expand"} ${tool.name} details`}
+                                    aria-expanded={isToolExpanded}
+                                    aria-controls={`${rowId}-details`}
+                                    className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-400 hover:bg-slate-800/70 hover:text-slate-200 focus-visible:ring-1 focus-visible:ring-blue-400/70"
+                                  >
+                                    {isToolExpanded
+                                      ? <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+                                      : <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                                    }
+                                  </button>
+                                )}
                               </td>
                               <td className="px-4 py-2.5 font-mono text-blue-300 text-xs whitespace-nowrap">
                                 <span className="inline-flex items-center gap-1.5">
                                   <span title={tool.name}>
                                     {hasSearch ? highlightMatches(tool.name, search) : tool.name}
                                   </span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      copyToolName(tool.name);
-                                    }}
-                                    aria-label={isCopied ? `Copied ${tool.name}` : `Copy ${tool.name} to clipboard`}
-                                    title={isCopied ? 'Copied!' : 'Copy tool name'}
-                                    className={clsx(
-                                      'inline-flex items-center justify-center min-h-11 min-w-11 rounded transition-colors',
-                                      'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70',
-                                      'focus-visible:ring-1 focus-visible:ring-blue-400/70',
-                                      isCopied && 'text-emerald-400 hover:text-emerald-300'
-                                    )}
-                                  >
-                                    {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                  </button>
+                                  {!accessDenied && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        copyToolName(tool.name);
+                                      }}
+                                      aria-label={isCopied ? `Copied ${tool.name}` : `Copy ${tool.name} to clipboard`}
+                                      title={isCopied ? 'Copied!' : 'Copy tool name'}
+                                      className={clsx(
+                                        'inline-flex items-center justify-center min-h-11 min-w-11 rounded transition-colors',
+                                        'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70',
+                                        'focus-visible:ring-1 focus-visible:ring-blue-400/70',
+                                        isCopied && 'text-emerald-400 hover:text-emerald-300'
+                                      )}
+                                    >
+                                      {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                    </button>
+                                  )}
                                 </span>
                               </td>
                               <td
@@ -521,7 +609,14 @@ export default function ToolsPage() {
           );
         })}
 
-        {noMatches && !error && (
+        {accessDenied && visibleTools.length === 0 ? (
+          <EmptyState
+            icon="key"
+            tone="muted"
+            title="No live tool catalogue is available"
+            description="The tool catalogue cannot be read while authorization is unavailable. Previously loaded metadata, if any, remains retained only for reference."
+          />
+        ) : noMatches && !error ? (
           <EmptyState
             icon={hasSearch ? "inbox" : "package"}
             tone={hasSearch ? "neutral" : "muted"}
@@ -553,7 +648,7 @@ export default function ToolsPage() {
               )
             }
           />
-        )}
+        ) : null}
       </section>
     </main>
   );
