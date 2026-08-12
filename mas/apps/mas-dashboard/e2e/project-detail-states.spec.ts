@@ -93,16 +93,57 @@ test("project detail exposes first-load unavailability and recovers on retry", a
 
   await authenticate(page, `/projects/${PROJECT_ID}`);
 
+  await expect(
+    page.getByRole("main", { name: "Project detail" }),
+  ).toBeVisible();
   await expect(page.getByText("Project unavailable")).toBeVisible();
   await expect(page.getByText(/project fixture unavailable/i)).toBeVisible();
   await expect(page.getByText("Project not found")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  const firstLoadRetry = page.getByRole("button", { name: "Retry" });
+  await expect(firstLoadRetry).toBeVisible();
+  await expect(firstLoadRetry).toHaveCSS("min-height", "44px");
+  await expect(
+    page.getByRole("link", { name: "Back to projects" }),
+  ).toHaveCSS("min-height", "44px");
 
   await page.getByRole("button", { name: "Retry" }).click();
 
   await expect(
     page.getByRole("heading", { name: PROJECT_FIXTURE.name }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("main", { name: "Project detail" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status", { name: "Project state: ACTIVE" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh project data" }),
+  ).toHaveCSS("min-height", "44px");
+  const projectViews = page.getByRole("tablist", { name: "Project views" });
+  await expect(projectViews).toHaveAttribute("aria-orientation", "horizontal");
+  const projectTabs = ["Workspace", "Workflow", "Flow", "Context", "Evidence"];
+  for (const tabName of projectTabs) {
+    const tab = page.getByRole("tab", { name: tabName, exact: true });
+    await expect(tab).toHaveCSS("min-height", "44px");
+    await expect(tab).toHaveAttribute(
+      "aria-controls",
+      `project-panel-${tabName.toLowerCase()}`,
+    );
+  }
+  await expect(page.locator("#project-panel-workspace")).toHaveAttribute(
+    "role",
+    "tabpanel",
+  );
+  const workspaceSections = page.getByRole("tablist", {
+    name: "Workspace sections",
+  });
+  await expect(workspaceSections).toBeVisible();
+  for (const sectionName of ["Activity", "Resources", "Cost"]) {
+    await expect(
+      workspaceSections.getByRole("tab", { name: sectionName, exact: true }),
+    ).toHaveCSS("min-height", "44px");
+  }
   await expect(page.getByText("Project unavailable")).toHaveCount(0);
   await expect(
     page.getByRole("tab", { name: "Workspace", exact: true }),

@@ -1074,15 +1074,25 @@ export default function ProjectDetailPage() {
 
   if (loading && !project) {
     return (
-      <div className="dashboard-page flex items-center justify-center h-full">
-        <div className="text-slate-500 text-sm">Loading project…</div>
-      </div>
+      <main
+        aria-label="Project detail"
+        className="dashboard-page flex items-center justify-center h-full"
+      >
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label="Loading project"
+          className="text-slate-500 text-sm"
+        >
+          Loading project…
+        </div>
+      </main>
     );
   }
 
   if (!project) {
     return (
-      <div className="dashboard-page">
+      <main aria-label="Project detail" className="dashboard-page">
         <ErrorBanner
           tone="error"
           title="Project unavailable"
@@ -1108,11 +1118,11 @@ export default function ProjectDetailPage() {
         </ErrorBanner>
         <Link
           href="/projects"
-          className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+          className="inline-flex min-h-11 items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
         >
           <ArrowLeft size={14} /> Back to projects
         </Link>
-      </div>
+      </main>
     );
   }
 
@@ -1142,7 +1152,7 @@ export default function ProjectDetailPage() {
     evidenceLoading;
 
   return (
-    <div className="dashboard-page">
+    <main aria-label="Project detail" className="dashboard-page">
       <PageHeader
         icon="folder-kanban"
         title={project.name}
@@ -1171,20 +1181,23 @@ export default function ProjectDetailPage() {
                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-white border border-white/10",
                 STATE_COLORS[project.state] ?? "bg-slate-600",
               )}
+              role="status"
               aria-label={`Project state: ${project.state.replace(/_/g, " ")}`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
               {project.state?.replace(/_/g, " ")}
             </span>
             <button
+              type="button"
               onClick={handleRefresh}
               title="Refresh"
               aria-label="Refresh project data"
-              className="p-2 rounded-lg border border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-100 hover:border-slate-600 hover:bg-slate-900 transition-colors disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-100 hover:border-slate-600 hover:bg-slate-900 transition-colors disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
                 className={isRefreshing ? "animate-spin" : ""}
+                aria-hidden="true"
               />
             </button>
           </>
@@ -1221,15 +1234,17 @@ export default function ProjectDetailPage() {
         className="flex flex-wrap gap-1 border-b border-slate-800"
         role="tablist"
         aria-label="Project views"
+        aria-orientation="horizontal"
       >
         <button
+          type="button"
           onClick={() => setActiveTab("workspace")}
           data-testid="project-tab-workspace"
           role="tab"
           aria-selected={activeTab === "workspace"}
           aria-controls="project-panel-workspace"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "workspace"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1238,13 +1253,14 @@ export default function ProjectDetailPage() {
           Workspace
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("workflow")}
           data-testid="project-tab-workflow"
           role="tab"
           aria-selected={activeTab === "workflow"}
           aria-controls="project-panel-workflow"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "workflow"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1258,13 +1274,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("flow")}
           data-testid="project-tab-flow"
           role="tab"
           aria-selected={activeTab === "flow"}
           aria-controls="project-panel-flow"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "flow"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1284,13 +1301,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("context")}
           data-testid="project-tab-context"
           role="tab"
           aria-selected={activeTab === "context"}
           aria-controls="project-panel-context"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "context"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1305,13 +1323,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("evidence")}
           data-testid="project-tab-evidence"
           role="tab"
           aria-selected={activeTab === "evidence"}
           aria-controls="project-panel-evidence"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "evidence"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1338,6 +1357,7 @@ export default function ProjectDetailPage() {
           id="project-panel-workspace"
           role="tabpanel"
           aria-labelledby="project-tab-workspace"
+          aria-busy={workspaceLoading}
           className="space-y-4"
         >
           {workspaceStale && workspaceError && (
@@ -3127,7 +3147,7 @@ export default function ProjectDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }
 
