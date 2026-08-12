@@ -26,7 +26,7 @@ and `1761429`, `beabb95`, `46eccee`, `651ad11`, `a260e04`, `2860838`, `380daf5`,
 and `cb1c665`, `fcb0f4b`, `7828b48`, `6b0413b`, `140af1c`, `89091c1`, `83e39e6`,
 `99a19a2`, `93fdfbc`, `da113af`, `993b1cb`, `d320383`, `826b4c5`,
 `8ffb5df`, `f4ae7eb`, `543f392`, `40b87dd`, `32f3a76`, `ed5e551`, `bbd6ba3`, and
-`1f947a9`, `c07b4a6`, `d928834`, `50cee61` are
+`1f947a9`, `c07b4a6`, `d928834`, `50cee61`, `485dfd2` are
 also recorded
 in the rows below with separate documentation commits. The focused
 worker-registry policy group `d8cafbb` is recorded below as well; aggregate
@@ -188,6 +188,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Sprint retrospective/profile lineage | focused API/unit (preparatory P1) | PASS | Commit `1112d5e`; `uv run --isolated pytest apps/orchestrator-api/tests/test_test7_operator_ui.py -k 'completed_issue_updates_agent_profile_once or completed_sprint_persists_retrospective_lineage' -q`; terminal issue completion observes the assigned profile exactly once and persists a `sprint_retrospective` KPI snapshot whose raw data names source/completed issue IDs and assigned-agent lineage; live transition/recovery remains open |
 
 | Operator sign-in accessibility baseline | static/build/source-built Playwright (preparatory P1) | PASS | Commit `d928834`; targeted ESLint, `npm run typecheck`, `npm run build`, and `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4143 npx playwright test login-accessibility.spec.ts --workers=1 --reporter=line` pass 1/1. The unauthenticated route exposes a named main/operator-sign-in structure, explicit busy/status announcements, labeled credential fields, password-visibility state, and 44px password/sign-in targets; the Impeccable detector returned no warnings for the changed page/test. Full WCAG/native-Linux visual certification remains open |
+| Shared identity-resource route matrix | source-built Playwright (preparatory P1) | PASS | Commit `485dfd2`; `PLAYWRIGHT_BASE_URL=http://127.0.0.1:4145 npx playwright test identity-resource-matrix.spec.ts --workers=1 --reporter=line` passes 9/9 with safe metadata-only fixtures across identities, approvals, audit, sessions, external accounts, domains, relay, mailboxes, and outbound mail; provider/live identity certification remains open |
 ## Licence metadata assertion
 
 The evaluator and steward tests deliberately include missing, restricted, and
