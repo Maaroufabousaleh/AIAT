@@ -47,6 +47,8 @@ interface DLQResponse {
   total: number;
 }
 
+type HttpError = Error & { status?: number };
+
 /**
  * Severity buckets used for sorting and visual hierarchy.
  *  - critical: many retries — likely a poison message
@@ -101,6 +103,8 @@ export default function DLQPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [replaying, setReplaying] = useState<Set<string>>(new Set());
@@ -113,32 +117,63 @@ export default function DLQPage() {
   const [sortMode, setSortMode] = useState<SortMode>("severity");
   const [lastFetchedAt, setLastFetchedAt] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    const hadReadContext = hasReadContextRef.current || dataRef.current !== null;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setError(null);
+    setStale(false);
+    setSelected(new Set());
+    setReplaying(new Set());
+  }, []);
 
   const fetchDLQ = useCallback(async () => {
+    if (accessDenied) return;
     try {
       const res = await fetch("/api/dlq", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const error = new Error(`HTTP ${res.status}`) as HttpError;
+        error.status = res.status;
+        throw error;
+      }
       const json: DLQResponse = await res.json();
       dataRef.current = json;
+      hasReadContextRef.current = true;
       setData(json);
+      setHasReadContext(true);
       setLastFetchedAt(Date.now());
       setError(null);
       setStale(false);
     } catch (e) {
+      const status = e instanceof Error ? (e as HttpError).status : undefined;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setError(e instanceof Error ? e.message : "Failed to fetch DLQ");
       setStale(dataRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accessDenied, handleAccessDenied]);
 
   useEffect(() => {
-    fetchDLQ();
+    if (accessDenied) return;
+    void fetchDLQ();
     intervalRef.current = setInterval(fetchDLQ, 30_000);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
-  }, [fetchDLQ]);
+  }, [accessDenied, fetchDLQ]);
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
@@ -149,6 +184,7 @@ export default function DLQPage() {
   };
 
   const toggleSelect = (id: string) => {
+    if (accessDenied) return;
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -157,7 +193,7 @@ export default function DLQPage() {
   };
 
   const toggleSelectAll = () => {
-    if (!data) return;
+    if (accessDenied || !data) return;
     if (selected.size === data.dead_letters.length) {
       setSelected(new Set());
     } else {
@@ -166,13 +202,20 @@ export default function DLQPage() {
   };
 
   const replayOne = async (id: string) => {
+    if (accessDenied) return;
     setReplaying((prev) => new Set(prev).add(id));
     try {
       const res = await fetch(`/api/dlq/${id}/replay`, { method: "POST" });
-      setReplayResults((prev) => ({ ...prev, [id]: res.ok ? "ok" : "err" }));
-      if (res.ok) {
-        setTimeout(() => fetchDLQ(), 1000);
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
+        setReplayResults((prev) => ({ ...prev, [id]: "err" }));
+        return;
       }
+      setReplayResults((prev) => ({ ...prev, [id]: "ok" }));
+      setTimeout(() => fetchDLQ(), 1000);
     } catch {
       setReplayResults((prev) => ({ ...prev, [id]: "err" }));
     } finally {
@@ -185,6 +228,7 @@ export default function DLQPage() {
   };
 
   const replaySelected = async () => {
+    if (accessDenied) return;
     const ids = Array.from(selected);
     await Promise.all(ids.map((id) => replayOne(id)));
     setSelected(new Set());
@@ -229,7 +273,7 @@ export default function DLQPage() {
     return sorted;
   }, [letters, severityFilter, sortMode]);
 
-  if (loading) {
+  if (loading && !accessDenied) {
     return (
       <div
         className="flex items-center justify-center h-64"
@@ -248,6 +292,7 @@ export default function DLQPage() {
   ).length;
 
   const requestRefresh = () => {
+    if (accessDenied) return;
     if (dataRef.current === null) setLoading(true);
     void fetchDLQ();
   };
@@ -258,7 +303,7 @@ export default function DLQPage() {
         icon="inbox"
         title="Dead Letter Queue"
         description={`${data?.total ?? 0} message${data?.total !== 1 ? "s" : ""} in queue · auto-refresh every 30s`}
-        actions={
+        actions={!accessDenied ? (
           <>
             {selected.size > 0 && (
               <button
@@ -282,8 +327,25 @@ export default function DLQPage() {
               Refresh
             </button>
           </>
-        }
+        ) : undefined}
       />
+
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Dead-letter queue access status"
+        >
+          <h2 className="text-base font-semibold text-amber-100">
+            Dead-letter queue access denied
+          </h2>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded dead letters remain visible for reference. Refresh, retry, filters, selection, and replay controls are hidden until authorization is restored; retained envelopes remain inspectable."
+              : "No live dead-letter data is available while authorization is unavailable. Queue controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
 
       {/* KPI summary — gives the page a quick at-a-glance health read. */}
       {letters.length > 0 && (
@@ -331,7 +393,7 @@ export default function DLQPage() {
       )}
 
       {/* Toolbar — severity filter chips and sort selector. */}
-      {letters.length > 0 && (
+      {letters.length > 0 && !accessDenied && (
         <div
           className="dashboard-toolbar flex flex-wrap items-center gap-3"
           role="toolbar"
@@ -410,7 +472,7 @@ export default function DLQPage() {
         </div>
       )}
 
-      {error && (
+      {error && !accessDenied && (
         <ErrorBanner
           tone="warning"
           title={stale ? "Showing last known dead-letter queue" : "Could not reach the dead-letter queue"}
@@ -426,17 +488,26 @@ export default function DLQPage() {
 
       {letters.length === 0 && !error ? (
         <div className="py-8">
-          <EmptyState
-            icon="sparkles"
-            tone="positive"
-            title="Queue is empty"
-            description="No dead letters — all messages processed successfully. This page auto-refreshes every 30 seconds."
-          />
+          {accessDenied ? (
+            <EmptyState
+              icon="key"
+              tone="muted"
+              title="No live dead-letter data is available"
+              description="The queue cannot be read while authorization is unavailable. Previously loaded messages, if any, are retained only for reference."
+            />
+          ) : (
+            <EmptyState
+              icon="sparkles"
+              tone="positive"
+              title="Queue is empty"
+              description="No dead letters — all messages processed successfully. This page auto-refreshes every 30 seconds."
+            />
+          )}
         </div>
       ) : (
         <>
           {/* Selection bar — only when items are checked. */}
-          {selected.size > 0 && (
+          {!accessDenied && selected.size > 0 && (
             <div
               role="region"
               aria-label="Bulk selection"
@@ -523,20 +594,22 @@ export default function DLQPage() {
                   >
                     {/* Card header — selector, severity, identity, age, replay action. */}
                     <header className="flex flex-wrap items-center gap-3 px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => toggleSelect(letter.id)}
-                        role="checkbox"
-                        aria-checked={isSelected}
-                        aria-label={`Select dead letter ${letter.id}`}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-400 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                      >
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4 text-blue-400" />
-                        ) : (
-                          <Square className="w-4 h-4" />
-                        )}
-                      </button>
+                      {!accessDenied && (
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(letter.id)}
+                          role="checkbox"
+                          aria-checked={isSelected}
+                          aria-label={`Select dead letter ${letter.id}`}
+                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-400 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4 text-blue-400" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
 
                       <span
                         className={clsx(
@@ -618,7 +691,7 @@ export default function DLQPage() {
                           >
                             Replay failed
                           </span>
-                        ) : (
+                        ) : !accessDenied ? (
                           <button
                             type="button"
                             onClick={() => replayOne(letter.id)}
@@ -636,7 +709,7 @@ export default function DLQPage() {
                             )}
                             {isReplaying ? "Replaying…" : "Replay"}
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     </header>
 

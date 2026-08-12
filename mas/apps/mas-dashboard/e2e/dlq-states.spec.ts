@@ -104,3 +104,78 @@ test("dead-letter queue retains the last known state when a refresh fails", asyn
   await expect(page.getByText("Showing last known dead-letter queue")).toHaveCount(0);
   await expect(page.getByText("dlq-e2e-", { exact: true })).toBeVisible();
 });
+
+test("dead-letter queue access denial on first load hides queue controls", async ({
+  page,
+}) => {
+  await page.route("**/api/dlq", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "dead-letter queue access denied" }),
+    });
+  });
+
+  await authenticate(page, "/dlq");
+  const queue = page.getByRole("main", { name: "Dead-letter queue" });
+  await expect(
+    queue.getByRole("region", { name: "Dead-letter queue access status" }),
+  ).toBeVisible();
+  await expect(
+    queue.getByRole("heading", { name: "Dead-letter queue access denied" }),
+  ).toBeVisible();
+  await expect(
+    queue.getByText("No live dead-letter data is available", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    queue.getByRole("button", { name: "Refresh dead letter queue" }),
+  ).toHaveCount(0);
+  await expect(
+    queue.getByRole("toolbar", { name: "Queue filters and sorting" }),
+  ).toHaveCount(0);
+  await expect(queue.getByRole("checkbox")).toHaveCount(0);
+  await expect(queue.getByRole("button", { name: /Replay/ })).toHaveCount(0);
+});
+
+test("dead-letter queue access denial after a successful read retains messages without mutation controls", async ({
+  page,
+}) => {
+  let reads = 0;
+  await page.route("**/api/dlq", async (route) => {
+    reads += 1;
+    if (reads > 1) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "dead-letter queue access expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(DLQ_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/dlq");
+  const queue = page.getByRole("main", { name: "Dead-letter queue" });
+  await expect(queue.getByText("dlq-e2e-", { exact: true })).toBeVisible();
+  await queue.getByRole("button", { name: "Refresh dead letter queue" }).click();
+
+  await expect(
+    queue.getByRole("region", { name: "Dead-letter queue access status" }),
+  ).toBeVisible();
+  await expect(queue.getByText("dlq-e2e-", { exact: true })).toBeVisible();
+  await expect(
+    queue.getByRole("button", { name: "Refresh dead letter queue" }),
+  ).toHaveCount(0);
+  await expect(
+    queue.getByRole("toolbar", { name: "Queue filters and sorting" }),
+  ).toHaveCount(0);
+  await expect(queue.getByRole("checkbox")).toHaveCount(0);
+  await expect(queue.getByRole("button", { name: /Replay/ })).toHaveCount(0);
+  await expect(
+    queue.getByRole("button", { name: "Inspect envelope" }),
+  ).toBeVisible();
+});
