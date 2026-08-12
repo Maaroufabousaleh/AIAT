@@ -400,6 +400,32 @@ test.describe("Operational UI smoke flows", () => {
     ).toBeVisible();
   });
 
+  test("system visualization exposes an access-denied hierarchy state", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "hierarchy access denied" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    const status = page.getByRole("region", {
+      name: "Visualization access status",
+    });
+    await expect(status).toBeVisible();
+    await expect(
+      status.getByRole("heading", { name: "Visualization access denied" }),
+    ).toBeVisible();
+    await expect(status.getByText(/not authorized to read the system hierarchy/i)).toBeVisible();
+    await expect(
+      status.getByRole("link", { name: "Return to dashboard" }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(status.getByRole("button", { name: /retry/i })).toHaveCount(0);
+  });
+
   test("PM integrations preserve conflicts and expose a stale refresh retry", async ({
     page,
   }) => {

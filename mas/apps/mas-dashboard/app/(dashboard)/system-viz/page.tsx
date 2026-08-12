@@ -112,6 +112,7 @@ export default function SystemVisualizationPage() {
   const [orgGraph, setOrgGraph] = useState<OrgGraphSummary | null>(null);
   const [mermaidCopied, setMermaidCopied] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [accessDenied, setAccessDenied] = useState<string[]>([]);
   // Local refetch key increments on every refresh; used to force child
   // visualization components to re-mount and pick up fresh data.
   const [refetchKey, setRefetchKey] = useState(0);
@@ -136,10 +137,14 @@ export default function SystemVisualizationPage() {
     let orchData: OrchestrationData | null = null;
     let orgGraphData: OrgGraphSummary | null = null;
     const errors: string[] = [];
+    const denied: string[] = [];
 
     // Helper to safely parse JSON - handles both HTTP errors and JSON parsing errors
     const parseJson = async (res: Response | null, name: string): Promise<unknown> => {
       if (!res || !res.ok) {
+        if (res?.status === 401 || res?.status === 403) {
+          denied.push(name);
+        }
         errors.push(name);
         return null;
       }
@@ -168,8 +173,13 @@ export default function SystemVisualizationPage() {
     // hierarchy exists, retain it and expose the failed refresh as a stale
     // partial state instead of discarding the operator's current context.
     const existingSystemData = useSystemVizStore.getState().systemData;
-    setPartialErrors(errors);
-    if (!sysData && !existingSystemData && errors.length > 0) {
+    setAccessDenied(denied);
+    setPartialErrors(
+      errors.map((name) =>
+        denied.includes(name) ? `${name} access denied` : name,
+      ),
+    );
+    if (!sysData && !existingSystemData && errors.length > 0 && !denied.includes("hierarchy")) {
       setError(`Failed to load ${errors.join(", ")}`);
     } else {
       setError(null);
@@ -222,6 +232,13 @@ export default function SystemVisualizationPage() {
     () => orchestrationData?.flows || [],
     [orchestrationData],
   );
+  const partialErrorSummary = partialErrors
+    .map((source) =>
+      source.endsWith(" access denied")
+        ? source
+        : `${source} failed to refresh`,
+    )
+    .join("; ");
 
   const findPath = useCallback(
     (start: string, end: string): string[] => {
@@ -386,6 +403,39 @@ export default function SystemVisualizationPage() {
     );
   }
 
+  if (accessDenied.includes("hierarchy") && !systemData) {
+    return (
+      <main className="dashboard-page" aria-label="System Visualization">
+        <PageHeader
+          icon="alert"
+          title="System Visualization"
+          description="The control-plane graph is restricted for this operator identity"
+        />
+        <section
+          role="region"
+          aria-label="Visualization access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">
+            Visualization access denied
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            Your current operator identity is not authorized to read the system
+            hierarchy. No graph state is being inferred or displayed. Check
+            the dashboard credentials or ask an authorized operator to grant
+            the governance section before returning here.
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="dashboard-page" aria-label="System Visualization">
       {/* Breadcrumbs — keep simple, semantic, keyboard-friendly */}
@@ -484,8 +534,7 @@ export default function SystemVisualizationPage() {
             </button>
           }
         >
-          {partialErrors.join(", ")} failed to refresh. Existing data remains
-          visible where available.
+          {partialErrorSummary}. Existing data remains visible where available.
         </ErrorBanner>
       )}
 
