@@ -96,16 +96,35 @@ export default function StreamsPage() {
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
   const entriesRef = useRef<FeedEntry[]>([]);
   const connectionIdRef = useRef(0);
   const streamFailedRef = useRef(false);
+  const hasReadContextRef = useRef(false);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  const handleAccessDenied = useCallback(() => {
+    connectionIdRef.current += 1;
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = true;
+    const hadReadContext = hasReadContextRef.current || entriesRef.current.length > 0;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setConnected(false);
+    setLoadError(null);
+    setStale(false);
+    setQuery("");
+    setTypeFilter("all");
+    setGroupByType(false);
+  }, []);
 
   const connect = useCallback((preserveEntries: boolean) => {
     const connectionId = ++connectionIdRef.current;
@@ -118,6 +137,7 @@ export default function StreamsPage() {
     setConnected(false);
     setLoadError(null);
     setStale(false);
+    setAccessDenied(false);
     if (!preserveEntries) {
       entriesRef.current = [];
       setEntries([]);
@@ -135,11 +155,18 @@ export default function StreamsPage() {
 
     fetch(`/api/streams/${teamId}?history=1&limit=50`, { cache: "no-store" })
       .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return null;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
       .then((data) => {
-        if (!isCurrent() || !data.entries) return;
+        if (!data || !isCurrent()) return;
+        hasReadContextRef.current = true;
+        setHasReadContext(true);
+        if (!data.entries) return;
         const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
         const liveEntries = entriesRef.current;
         const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
@@ -158,6 +185,8 @@ export default function StreamsPage() {
 
     es.addEventListener("connected", () => {
       if (!isCurrent()) return;
+      hasReadContextRef.current = true;
+      setHasReadContext(true);
       setConnected(true);
     });
     es.addEventListener("error", (event) => {
@@ -165,7 +194,11 @@ export default function StreamsPage() {
       let message = "Stream disconnected.";
       if (raw) {
         try {
-          const parsed = JSON.parse(raw) as { error?: string };
+          const parsed = JSON.parse(raw) as { error?: string; status?: number };
+          if (parsed.status === 401 || parsed.status === 403) {
+            handleAccessDenied();
+            return;
+          }
           if (parsed.error) message = parsed.error;
         } catch {
           message = raw;
@@ -182,7 +215,7 @@ export default function StreamsPage() {
         return next;
       });
     };
-  }, [teamId]);
+  }, [handleAccessDenied, teamId]);
 
   useEffect(() => {
     setTypeFilter("all");
@@ -361,26 +394,28 @@ export default function StreamsPage() {
                 })()}
           </td>
           <td className="px-2 py-1.5 text-right w-12">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                copyEntry(entry, index);
-              }}
-              aria-label={
-                justCopied ? "Copied to clipboard" : "Copy message payload"
-              }
-              title={justCopied ? "Copied!" : "Copy payload"}
-              className={clsx(
-                "inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border transition-colors",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
-                justCopied
-                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                  : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800",
-              )}
-            >
-              {justCopied ? <Check size={12} /> : <Copy size={12} />}
-            </button>
+            {!accessDenied && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyEntry(entry, index);
+                }}
+                aria-label={
+                  justCopied ? "Copied to clipboard" : "Copy message payload"
+                }
+                title={justCopied ? "Copied!" : "Copy payload"}
+                className={clsx(
+                  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border transition-colors",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
+                  justCopied
+                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800",
+                )}
+              >
+                {justCopied ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+            )}
           </td>
         </tr>
         {isOpen && (
@@ -417,12 +452,18 @@ export default function StreamsPage() {
                 aria-hidden
               />
               <span className="text-slate-500">
-                {connected ? "connected" : loadError ? "disconnected" : "connecting…"}
+                {accessDenied
+                  ? "access denied"
+                  : connected
+                    ? "connected"
+                    : loadError
+                      ? "disconnected"
+                      : "connecting…"}
               </span>
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <div className="relative">
               <Search
@@ -511,10 +552,26 @@ export default function StreamsPage() {
               <Trash2 size={13} />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {loadError && (
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Stream access status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-amber-200">Stream access denied</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded messages remain visible for reference. Reconnect, filters, pause, clear, and copy controls are hidden until authorization is restored."
+              : "No live stream data is available while authorization is unavailable. Stream controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {loadError && !accessDenied && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known stream data" : "Stream unavailable"}
@@ -529,7 +586,7 @@ export default function StreamsPage() {
       )}
 
       {/* Type filter chips */}
-      {availableTypes.length > 0 && (
+      {availableTypes.length > 0 && !accessDenied && (
         <section role="region" aria-label="Message type filters">
           <div
             className="flex flex-wrap gap-1.5 items-center"
@@ -567,20 +624,28 @@ export default function StreamsPage() {
       <div
         className="dashboard-surface flex-1 overflow-y-auto font-mono"
         role="region"
-        aria-label="Live message feed"
-        aria-busy={!connected && !loadError}
+        aria-label={accessDenied ? "Last known agent message feed" : "Live message feed"}
+        aria-busy={!accessDenied && !connected && !loadError}
       >
         {entries.length === 0 ? (
           <div className="p-6">
-            <EmptyState
-              icon="radio"
-              title={
-                connected
-                  ? `No recent messages on stream:${teamId}`
-                  : "Connecting to stream…"
-              }
-              description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
-            />
+            {accessDenied ? (
+              <EmptyState
+                icon="key"
+                title="No live stream data is available"
+                description="Authorization is required before agent messages can be loaded."
+              />
+            ) : (
+              <EmptyState
+                icon="radio"
+                title={
+                  connected
+                    ? `No recent messages on stream:${teamId}`
+                    : "Connecting to stream…"
+                }
+                description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
+              />
+            )}
           </div>
         ) : filteredEntries.length === 0 ? (
           <div className="p-6">
