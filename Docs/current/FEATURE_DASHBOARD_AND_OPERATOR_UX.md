@@ -103,6 +103,12 @@ both `seeded` and `not_seeded` local deterministic orchestrator fixtures
 control-plane availability and full WCAG/native-Linux visual certification
 remain separate gates.
 
+The unauthenticated operator sign-in route now exposes a named main and
+operator-sign-in region, explicit busy/status announcements, labeled username
+and password fields, password-visibility state, and 44px password/sign-in
+targets. The source-built login accessibility test covers the landmark, status,
+autocomplete, toggle, and target assertions 1/1 (`d928834`).
+
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -202,6 +208,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)
+- Operator sign-in accessibility: [`login/page.tsx`](<../../mas/apps/mas-dashboard/app/login/page.tsx>) and [`login-accessibility.spec.ts`](../../mas/apps/mas-dashboard/e2e/login-accessibility.spec.ts) (`d928834`)
 - Components: [`mas/apps/mas-dashboard/components/`](../../mas/apps/mas-dashboard/components/)
 - Flow editor: [`mas/apps/mas-dashboard/app/(dashboard)/flows/`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/>)
 - Generated flow contract/form: [`mas/apps/mas-dashboard/components/flows/NodeSchemaContractSummary.tsx`](../../mas/apps/mas-dashboard/components/flows/NodeSchemaContractSummary.tsx), [`mas/apps/mas-dashboard/components/flows/NodeSchemaForm.tsx`](../../mas/apps/mas-dashboard/components/flows/NodeSchemaForm.tsx)

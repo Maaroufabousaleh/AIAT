@@ -16,7 +16,13 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, and project-workspace stale/retry recovery is recorded in `cb1c665`. Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
-The latest bounded dashboard increment is the shared identity-resource
+The latest bounded dashboard increment is the unauthenticated operator sign-in
+accessibility group: named main/operator-sign-in regions, explicit busy/status
+announcements, labeled credential fields, password-visibility state, and 44px
+password/sign-in targets (`d928834`) in the source-built login accessibility
+test.
+
+The preceding bounded dashboard increment is the shared identity-resource
 accessibility group: named main/status/metadata/table regions, explicit busy
 state, decorative-icon suppression, and the existing 44px refresh/retry/action
 targets (`a260e04`) in the source-built identity stale/retry test.
@@ -795,6 +801,10 @@ Its table captions, column scopes, explicit action names, named main/status/
 metadata/table regions, explicit busy state, decorative-icon suppression, and
 44px targets are covered by the focused accessibility assertion (`651ad11`,
 `a260e04`).
+The unauthenticated operator sign-in route now exposes named main/operator-sign-in
+regions, explicit busy/status announcements, labeled credential fields,
+password-visibility state, and 44px password/sign-in targets in its focused
+source-built test (`d928834`).
 The CEO Command Center chat now retains its transcript through a live-stream
 failure and exposes a retryable last-known state (`beabb95`); its focused
 source-built recovery test passes 1/1, while native/live Redis/router evidence
@@ -1141,7 +1151,8 @@ an explicit open gate.
    query failures (`85596b0`), and the shared identity-resource tables retain
    rows through failed refreshes and recover cleanly on retry (`46eccee`); their
    semantic table/action baseline plus named main/status/metadata/table
-   regions is covered by `651ad11` and `a260e04`; the
+   regions is covered by `651ad11` and `a260e04`; the operator sign-in route's
+   accessibility baseline is covered by `d928834`; the
    Flows list retains definitions through
    failed refreshes (`a0faf5b`); the flow editor exposes explicit first-load
    unavailable and retained-canvas stale/retry recovery (`b5098e7`); the project
