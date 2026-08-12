@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { clsx } from "clsx";
 import {
-  LineChart, Line, BarChart, Bar, AreaChart, Area,
+  BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
   type TooltipProps,
 } from "recharts";
 import { formatInTz, formatLocaleInTz } from "@/lib/datetime";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -249,7 +249,7 @@ export default function MetricsPage() {
     dlqData.length === 0;
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="Metrics dashboard">
       <PageHeader
         icon="bar-chart"
         title="Metrics"
@@ -284,10 +284,11 @@ export default function MetricsPage() {
               {RANGES.map((r, i) => (
                 <button
                   key={r.label}
+                  type="button"
                   onClick={() => setRangeIdx(i)}
                   aria-pressed={i === rangeIdx}
                   className={clsx(
-                    "px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none",
+                    "min-h-11 min-w-11 px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none",
                     i === rangeIdx
                       ? "bg-blue-500/20 text-blue-100 border-blue-400/40 shadow-inner shadow-blue-950/40"
                       : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 border-transparent",
@@ -299,11 +300,12 @@ export default function MetricsPage() {
               ))}
             </div>
             <button
+              type="button"
               onClick={requestRefresh}
               disabled={loading}
               aria-label="Refresh metrics"
               title="Refresh"
-              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 hover:border-slate-500 transition-colors disabled:opacity-50"
+              className="min-h-11 min-w-11 p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 hover:border-slate-500 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             </button>
@@ -316,7 +318,7 @@ export default function MetricsPage() {
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known metrics" : "Metrics unavailable"}
           action={(
-            <button type="button" onClick={requestRefresh} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10 disabled:opacity-50">
               Retry
             </button>
           )}
@@ -325,7 +327,7 @@ export default function MetricsPage() {
         </ErrorBanner>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Metric summaries">
         <KpiCard
           label="Series loaded"
           value={llmKeys.length + toolKeys.length + msgKeys.length}
@@ -354,7 +356,7 @@ export default function MetricsPage() {
           icon="zap"
           tone={circuitData.length > 0 ? "negative" : "positive"}
         />
-      </div>
+      </section>
 
       {noData && (
         <EmptyState
@@ -364,9 +366,10 @@ export default function MetricsPage() {
           description={`The Prometheus query returned no data for the ${range.label} window. The metrics endpoint may be down, or the operator has not reported any series yet.`}
           action={
             <button
-            onClick={requestRefresh}
+              type="button"
+              onClick={requestRefresh}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
+              className="min-h-11 inline-flex items-center gap-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
               Reconnect
@@ -374,7 +377,7 @@ export default function MetricsPage() {
           }
         />
       )}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 xl:grid-cols-2 gap-4" aria-label="Metric charts">
         {!mounted ? (
           <div className="col-span-2 h-48 flex items-center justify-center text-slate-500 text-sm">
             Loading charts...
@@ -641,7 +644,7 @@ export default function MetricsPage() {
           </MetricCard>
         )}
         </>)}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
