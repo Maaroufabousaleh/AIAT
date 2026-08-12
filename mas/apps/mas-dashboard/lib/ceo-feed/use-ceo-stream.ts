@@ -35,6 +35,7 @@ export function useCeoStream(
   const [connected, setConnected] = useState(false);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const cancelledRef = useRef(false);
   const filterRef = useRef(filter);
@@ -51,6 +52,8 @@ export function useCeoStream(
     const controller = new AbortController();
     let historyError: string | null = null;
     let streamError: string | null = null;
+    let accessDeniedForConnection = false;
+    let eventSource: EventSource | null = null;
 
     const isCurrent = () =>
       !cancelledRef.current && connectionIdRef.current === connectionId;
@@ -67,9 +70,22 @@ export function useCeoStream(
       setStale(Boolean(nextError) && entriesRef.current.length > 0);
     };
 
+    const markAccessDenied = (detail: string) => {
+      if (!isCurrent()) return;
+      accessDeniedForConnection = true;
+      historyError = detail;
+      streamError = null;
+      setAccessDenied(true);
+      setConnected(false);
+      setError(detail);
+      setStale(entriesRef.current.length > 0);
+      eventSource?.close();
+    };
+
     setConnected(false);
     setError(null);
     setStale(false);
+    setAccessDenied(false);
 
     fetch(
       `/api/streams/${encodeURIComponent(teamId)}?history=1&limit=${limit}`,
@@ -85,12 +101,16 @@ export function useCeoStream(
           } catch {
             // Keep the bounded HTTP fallback when the error body is not JSON.
           }
+          if (res.status === 401 || res.status === 403) {
+            markAccessDenied(detail);
+            return null;
+          }
           throw new Error(detail);
         }
         return res.json();
       })
       .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (!isCurrent()) return;
+        if (!isCurrent() || data === null) return;
         if (!data || !Array.isArray(data.entries)) {
           throw new Error("CEO conversation history returned an invalid response");
         }
@@ -120,32 +140,38 @@ export function useCeoStream(
         refreshFailureState();
       });
 
-    const es = new EventSource(`/api/streams/${encodeURIComponent(teamId)}`);
-    es.addEventListener("connected", () => {
-      if (!isCurrent()) return;
+    eventSource = new EventSource(`/api/streams/${encodeURIComponent(teamId)}`);
+    eventSource.addEventListener("connected", () => {
+      if (!isCurrent() || accessDeniedForConnection) return;
       streamError = null;
       setConnected(true);
       refreshFailureState();
     });
-    es.addEventListener("error", (event) => {
+    eventSource.addEventListener("error", (event) => {
       const raw = event instanceof MessageEvent ? event.data : undefined;
       let detail = "CEO live conversation stream disconnected";
+      let status: number | null = null;
       if (typeof raw === "string" && raw.trim()) {
         try {
-          const payload = JSON.parse(raw) as { error?: unknown; detail?: unknown };
+          const payload = JSON.parse(raw) as { error?: unknown; detail?: unknown; status?: unknown };
+          if (typeof payload.status === "number") status = payload.status;
           const message = payload.error ?? payload.detail;
           if (typeof message === "string" && message.trim()) detail = message;
         } catch {
           // EventSource error payloads are often empty or non-JSON.
         }
       }
-      if (!isCurrent()) return;
+      if (!isCurrent() || accessDeniedForConnection) return;
+      if (status === 401 || status === 403) {
+        markAccessDenied(detail);
+        return;
+      }
       streamError = detail;
       setConnected(false);
       refreshFailureState();
     });
-    es.onmessage = (e) => {
-      if (!isCurrent()) return;
+    eventSource.onmessage = (e) => {
+      if (!isCurrent() || accessDeniedForConnection) return;
       const entry = entryFromRaw(e.data);
       if (!filterRef.current || filterRef.current(entry)) {
         setEntries((prev) => {
@@ -162,7 +188,7 @@ export function useCeoStream(
     return () => {
       cancelledRef.current = true;
       controller.abort();
-      es.close();
+      eventSource?.close();
     };
   }, [retryAttempt, teamId, limit]);
 
@@ -186,5 +212,5 @@ export function useCeoStream(
     });
   }, []);
 
-  return { entries, connected, stale, error, retry, clear, append };
+  return { entries, connected, stale, error, accessDenied, retry, clear, append };
 }

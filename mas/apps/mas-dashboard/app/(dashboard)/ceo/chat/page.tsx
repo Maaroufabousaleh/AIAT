@@ -36,6 +36,10 @@ type ActiveRequest = {
   detail: string;
 };
 
+function isAccessDeniedStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 const QUICK_COMMANDS = [
   {
     label: "Company status",
@@ -213,6 +217,7 @@ export default function CeoChatPage() {
   const [sending, setSending] = useState(false);
   const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
   const [failedRequestIds, setFailedRequestIds] = useState<Set<string>>(new Set());
+  const [messageAccessDenied, setMessageAccessDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showJumpButton, setShowJumpButton] = useState(false);
@@ -230,6 +235,7 @@ export default function CeoChatPage() {
     connected,
     stale: streamStale,
     error: streamError,
+    accessDenied: streamAccessDenied,
     retry: retryStream,
     clear,
     append,
@@ -238,6 +244,15 @@ export default function CeoChatPage() {
     isChatEntry,
     100,
   );
+
+  const accessDenied = streamAccessDenied || messageAccessDenied;
+
+  useEffect(() => {
+    if (!accessDenied) return;
+    setSending(false);
+    setActiveRequest(null);
+    setPendingConfirmationToken(null);
+  }, [accessDenied]);
 
   const completedCorrelations = useMemo(
     () => new Set(entries.filter(isCeoResponse).map(correlationId).filter(Boolean)),
@@ -340,7 +355,7 @@ export default function CeoChatPage() {
 
   const handleSend = useCallback(async (override?: string) => {
     const text = (override ?? input).trim();
-    if (!text || sending || activeRequest) return;
+    if (!text || sending || activeRequest || accessDenied) return;
 
     const requestId = crypto.randomUUID();
     const now = Date.now();
@@ -385,7 +400,17 @@ export default function CeoChatPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(body.error ?? `Request failed with HTTP ${res.status}`);
+        const detail = typeof body?.error === "string"
+          ? body.error
+          : `Request failed with HTTP ${res.status}`;
+        if (isAccessDeniedStatus(res.status)) {
+          setMessageAccessDenied(true);
+          setError(detail);
+          setFailedRequestIds((current) => new Set(current).add(requestId));
+          setActiveRequest(null);
+          return;
+        }
+        throw new Error(detail);
       }
       setActiveRequest((current) => current?.id === requestId
         ? {
@@ -404,7 +429,7 @@ export default function CeoChatPage() {
       setSending(false);
       inputRef.current?.focus();
     }
-  }, [activeRequest, append, input, pendingConfirmationToken, scrollToBottom, sending]);
+  }, [accessDenied, activeRequest, append, input, pendingConfirmationToken, scrollToBottom, sending]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -451,12 +476,12 @@ export default function CeoChatPage() {
             </div>
             <div className="mt-0.5 flex items-center gap-2 text-xs">
               <span
-                className={clsx("inline-flex items-center gap-1.5", connected ? "text-emerald-300" : "text-amber-300")}
+                className={clsx("inline-flex items-center gap-1.5", accessDenied ? "text-amber-200" : connected ? "text-emerald-300" : "text-amber-300")}
                 aria-live="polite"
-                aria-label={connected ? "CEO conversation live" : streamStale ? "CEO conversation showing last known data" : "CEO conversation reconnecting"}
+                aria-label={accessDenied ? "CEO conversation access denied" : connected ? "CEO conversation live" : streamStale ? "CEO conversation showing last known data" : "CEO conversation reconnecting"}
               >
-                {connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-                {connected ? "Live" : streamStale ? "Last known" : "Reconnecting"}
+                {accessDenied || !connected ? <WifiOff size={12} /> : <Wifi size={12} />}
+                {accessDenied ? "Access denied" : connected ? "Live" : streamStale ? "Last known" : "Reconnecting"}
               </span>
               <span className="text-slate-600">•</span>
               <span className="truncate text-slate-400">Ask for an outcome; the CEO handles routing and details.</span>
@@ -468,10 +493,12 @@ export default function CeoChatPage() {
             <Activity size={14} />
             <span className="hidden sm:inline">Activity</span>
           </Link>
-          <button type="button" onClick={handleClear} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-xs font-medium text-slate-200 transition hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-200" aria-label="Clear conversation view">
-            <Eraser size={14} />
-            <span className="hidden sm:inline">Clear view</span>
-          </button>
+          {!accessDenied && (
+            <button type="button" onClick={handleClear} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/70 px-3 text-xs font-medium text-slate-200 transition hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-200" aria-label="Clear conversation view">
+              <Eraser size={14} />
+              <span className="hidden sm:inline">Clear view</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -482,7 +509,22 @@ export default function CeoChatPage() {
             role="region"
             aria-label="CEO conversation workspace"
           >
-            {streamError && (
+            {accessDenied && (
+              <section
+                className="mx-3 mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-4 sm:mx-4"
+                role="region"
+                aria-label="CEO chat access status"
+              >
+                <h2 className="text-base font-semibold text-amber-100">CEO chat access denied</h2>
+                <p className="mt-2 text-sm leading-6 text-amber-200/80">
+                  {error ? `${error}. ` : ""}
+                  The current operator identity cannot read or send CEO conversation messages. {entries.length > 0
+                    ? "Previously loaded messages remain visible as read-only context."
+                    : "No live conversation state is inferred while authorization is unavailable."}
+                </p>
+              </section>
+            )}
+            {streamError && !accessDenied && (
               <ErrorBanner
                 tone={streamStale ? "warning" : "error"}
                 title={streamStale ? "Showing last known CEO conversation" : "CEO conversation unavailable"}
@@ -511,9 +553,17 @@ export default function CeoChatPage() {
               role="log"
               aria-label="CEO conversation transcript"
               aria-live="polite"
-              aria-busy={!connected && !streamError}
+              aria-busy={!accessDenied && !connected && !streamError}
             >
               {groupedEntries.length === 0 ? (
+                accessDenied ? (
+                  <div className="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center py-12 text-center">
+                    <h2 className="text-xl font-semibold text-white">CEO conversation is read-only</h2>
+                    <p className="mt-2 max-w-lg text-sm leading-6 text-slate-400">
+                      Authorization must be restored before new CEO requests or live conversation updates can be used.
+                    </p>
+                  </div>
+                ) : (
                 <div className="mx-auto flex min-h-full max-w-2xl flex-col items-center justify-center py-12 text-center">
                   <div className="relative mb-5">
                     <div className="absolute inset-0 rounded-full bg-cyan-400/20 blur-2xl" />
@@ -534,6 +584,7 @@ export default function CeoChatPage() {
                     ))}
                   </div>
                 </div>
+                )
               ) : (
                 <div className="mx-auto w-full max-w-4xl space-y-6">
                   {groupedEntries.map(([dateLabel, dayEntries]) => (
@@ -600,7 +651,7 @@ export default function CeoChatPage() {
                                     </span>
                                     {action.type != null && <span className="rounded bg-slate-950/70 px-1.5 py-0.5 text-slate-400">{String(action.type).replaceAll("_", " ")}</span>}
                                     {action.status != null && <span className="text-slate-500">{String(action.status)}</span>}
-                                    {confirmationIsPending && (
+                                    {confirmationIsPending && !accessDenied && (
                                       <>
                                         <button type="button" onClick={() => void handleSend("confirm")} disabled={isBusy} className="ml-auto min-h-11 rounded-lg border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 font-semibold text-amber-100 transition hover:bg-amber-400/20 disabled:opacity-50">
                                           Confirm
@@ -685,13 +736,13 @@ export default function CeoChatPage() {
               <div ref={bottomRef} className="h-1" />
             </div>
 
-            {showJumpButton && (
+            {showJumpButton && !accessDenied && (
               <button type="button" onClick={() => scrollToBottom()} className="absolute bottom-32 left-1/2 z-20 inline-flex min-h-11 -translate-x-1/2 items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/95 px-3 py-1.5 text-xs text-slate-300 shadow-xl shadow-black/40 hover:bg-slate-800" aria-label="Jump to latest CEO message">
                 <ArrowDown size={13} /> Latest
               </button>
             )}
 
-            <section
+            {!accessDenied && <section
               className="border-t border-slate-800/90 bg-slate-950/90 p-3 backdrop-blur-xl sm:p-4"
               aria-label="CEO message composer"
             >
@@ -720,7 +771,7 @@ export default function CeoChatPage() {
                   </button>
                 </div>
               </div>
-            </section>
+            </section>}
           </section>
 
           <aside className="hidden min-h-0 flex-col gap-3 overflow-y-auto xl:flex" aria-label="CEO chat guidance">
@@ -733,7 +784,7 @@ export default function CeoChatPage() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-800/90 bg-slate-950/45 p-4" aria-label="CEO chat quick commands">
+            {!accessDenied && <section className="rounded-2xl border border-slate-800/90 bg-slate-950/45 p-4" aria-label="CEO chat quick commands">
               <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quick commands</div>
               <div className="mt-3 space-y-2">
                 {QUICK_COMMANDS.map((command) => (
@@ -743,7 +794,7 @@ export default function CeoChatPage() {
                   </button>
                 ))}
               </div>
-            </section>
+            </section>}
 
             <section className="rounded-2xl border border-slate-800/90 bg-slate-950/45 p-4 text-xs leading-5 text-slate-500" aria-label="CEO chat privacy note">
               <div className="flex items-center gap-2 font-medium text-slate-300"><Bot size={14} /> Progress, not private reasoning</div>

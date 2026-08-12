@@ -136,3 +136,118 @@ test("CEO chat retains history through a stream failure and recovers on retry", 
   await expect(page.getByText("Showing last known CEO conversation")).toHaveCount(0);
   await expect(page.getByText("recovered CEO response", { exact: true })).toBeVisible();
 });
+
+test("CEO chat renders a read-only state when conversation history access is denied", async ({
+  page,
+}) => {
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "CEO history fixture denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "",
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  await expect(
+    chat.getByRole("region", { name: "CEO chat access status" }),
+  ).toBeVisible();
+  await expect(
+    chat.getByRole("heading", { name: "CEO chat access denied" }),
+  ).toBeVisible();
+  await expect(chat.getByText("CEO conversation is read-only", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("link", { name: "Open CEO activity feed" })).toBeVisible();
+  await expect(chat.getByRole("button", { name: "Clear conversation view" })).toHaveCount(0);
+  await expect(chat.getByRole("region", { name: "CEO message composer" })).toHaveCount(0);
+  await expect(chat.getByRole("region", { name: "CEO chat quick commands" })).toHaveCount(0);
+  await expect(chat.getByRole("textbox", { name: "Message to CEO" })).toHaveCount(0);
+});
+
+test("CEO chat becomes read-only when message submission access is denied", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    class StableEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readyState = StableEventSource.OPEN;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        window.setTimeout(() => {
+          const event = new MessageEvent("connected", {
+            data: JSON.stringify({ team: "exec_ceo" }),
+          });
+          this.dispatchEvent(event);
+        }, 0);
+      }
+
+      close() {
+        this.readyState = StableEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: StableEventSource,
+    });
+  });
+
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(HISTORY_FIXTURE),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "",
+    });
+  });
+  await page.route("**/api/ceo/messages", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "CEO message fixture denied" }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  await expect(input).toBeVisible();
+  await input.fill("show company status while access is denied");
+  await input.press("Enter");
+
+  await expect(
+    chat.getByRole("heading", { name: "CEO chat access denied" }),
+  ).toBeVisible();
+  await expect(chat.getByText("retained CEO response", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Not delivered", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("link", { name: "Open CEO activity feed" })).toBeVisible();
+  await expect(chat.getByRole("button", { name: "Clear conversation view" })).toHaveCount(0);
+  await expect(chat.getByRole("region", { name: "CEO message composer" })).toHaveCount(0);
+  await expect(chat.getByRole("region", { name: "CEO chat quick commands" })).toHaveCount(0);
+  await expect(chat.getByRole("textbox", { name: "Message to CEO" })).toHaveCount(0);
+});
