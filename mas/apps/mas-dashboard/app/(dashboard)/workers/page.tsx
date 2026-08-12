@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
 import {
   RefreshCw,
   Users,
@@ -183,11 +184,13 @@ function WorkerRow({
   onStatusChange,
   selected,
   onSelectChange,
+  accessDenied,
 }: {
   worker: Worker;
   onStatusChange: () => void;
   selected: boolean;
   onSelectChange: (checked: boolean) => void;
+  accessDenied: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
@@ -349,7 +352,7 @@ function WorkerRow({
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-            {worker.source_repo && (
+            {!accessDenied && worker.source_repo && (
               <button
                 onClick={evaluateWorker}
                 disabled={evaluating}
@@ -360,7 +363,7 @@ function WorkerRow({
                 <ClipboardCheck size={14} />
               </button>
             )}
-            <button
+            {!accessDenied && <button
               onClick={toggleStatus}
               disabled={transitioning}
               title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
@@ -377,8 +380,8 @@ function WorkerRow({
               )}
             >
               <Power size={14} />
-            </button>
-            <button
+            </button>}
+            {!accessDenied && <button
               onClick={drainWorker}
               disabled={transitioning || worker.status !== "ACTIVE"}
               title="Drain"
@@ -386,7 +389,7 @@ function WorkerRow({
               className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors disabled:opacity-30"
             >
               <RefreshCw size={14} />
-            </button>
+            </button>}
           </div>
         </td>
       </tr>
@@ -1010,6 +1013,8 @@ export default function WorkersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const hasLoadedRef = useRef(false);
   // Filter state — initialized from localStorage so user choices persist
   // across page reloads. Falls back to empty/ALL on first visit.
@@ -1049,11 +1054,20 @@ export default function WorkersPage() {
     setStale(false);
     try {
       const workersRes = await fetch("/api/workers");
+      if (workersRes.status === 401 || workersRes.status === 403) {
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read or change the Hiring Board.");
+        setStale(hasLoadedRef.current);
+        return;
+      }
       if (!workersRes.ok) throw new Error(await workersRes.text());
       const workersData = await workersRes.json();
       setWorkers(Array.isArray(workersData) ? workersData : []);
       hasLoadedRef.current = true;
+      setAccessDenied(false);
+      setHasReadContext(true);
     } catch (e: unknown) {
+      setAccessDenied(false);
       setError(e instanceof Error ? e.message : "Workers could not be loaded");
       setStale(hasLoadedRef.current);
     } finally {
@@ -1091,19 +1105,19 @@ export default function WorkersPage() {
         searchRef.current?.select();
         return;
       }
-      if (e.key === "r" || e.key === "R") {
+      if ((e.key === "r" || e.key === "R") && !accessDenied) {
         e.preventDefault();
         void load();
         return;
       }
-      if (e.key === "n" || e.key === "N") {
+      if ((e.key === "n" || e.key === "N") && !accessDenied) {
         e.preventDefault();
         setShowRegister(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [load]);
+  }, [accessDenied, load]);
 
   const filtered = workers.filter((w) => {
     const workerId = w.worker_id ?? "";
@@ -1197,7 +1211,7 @@ export default function WorkersPage() {
         icon="users"
         title="Hiring Board"
         description="Evaluate worker candidates, inspect guarded checks, and control activation state."
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -1220,8 +1234,29 @@ export default function WorkersPage() {
               Register Worker
             </button>
           </>
-        }
+        ) : undefined}
       />
+
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Hiring Board access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Hiring Board access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change workers. Last-known worker rows remain visible, but Refresh, Retry, registration, evaluation, status, drain, and deletion controls are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change workers. No live worker state is being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
 
       <section
         className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5"
@@ -1303,7 +1338,7 @@ export default function WorkersPage() {
         />
       </section>
 
-      {error && (
+      {error && !accessDenied && (
         <ErrorBanner
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known workers" : "Workers unavailable"}
@@ -1325,7 +1360,7 @@ export default function WorkersPage() {
 
       {bulkError && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
 
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={filtered.length}
@@ -1424,6 +1459,12 @@ export default function WorkersPage() {
                     Loading workers…
                   </td>
                 </tr>
+              ) : accessDenied && workers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    No live worker state is inferred while authorization is unavailable.
+                  </td>
+                </tr>
               ) : error && workers.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
@@ -1482,6 +1523,7 @@ export default function WorkersPage() {
                     onSelectChange={() =>
                       w.id != null && selection.toggle(w.id)
                     }
+                    accessDenied={accessDenied}
                   />
                 ))
               )}
@@ -1490,7 +1532,7 @@ export default function WorkersPage() {
         </div>
       </section>
 
-      {showRegister && (
+      {showRegister && !accessDenied && (
         <RegisterWorkerModal
           onClose={() => setShowRegister(false)}
           onCreated={load}

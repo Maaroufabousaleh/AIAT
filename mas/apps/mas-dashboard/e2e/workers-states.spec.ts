@@ -108,3 +108,79 @@ test("hiring board retains workers when refresh fails", async ({ page }) => {
   await expect(page.getByText("Showing last known workers")).toHaveCount(0);
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
 });
+
+test("hiring board exposes a first-load access-denied state without retry or mutations", async ({
+  page,
+}) => {
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "worker access denied" }),
+    });
+  });
+
+  await authenticate(page, "/workers");
+  const hiringBoard = page.getByRole("main", { name: "Hiring Board" });
+  const access = hiringBoard.getByRole("region", { name: "Hiring Board access status" });
+  await expect(access).toBeVisible();
+  await expect(access.getByRole("heading", { name: "Hiring Board access denied" })).toBeVisible();
+  await expect(access.getByText(/not authorized to read or change workers/i)).toBeVisible();
+  await expect(access.getByRole("link", { name: "Return to dashboard" })).toHaveCSS("min-height", "44px");
+  await expect(hiringBoard.getByRole("button", { name: "Refresh workers" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: "Register Worker" })).toHaveCount(0);
+  await expect(hiringBoard.getByText(/no live worker state is inferred/i)).toBeVisible();
+});
+
+test("hiring board hides worker mutations when access is lost after a successful read", async ({
+  page,
+}) => {
+  let requestCount = 0;
+  await page.route("**/api/workers", async (route) => {
+    requestCount += 1;
+    if (requestCount > 1) {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "worker access revoked" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: "worker-denial-001",
+          worker_id: "worker-denial",
+          name: "Denial fixture worker",
+          status: "ACTIVE",
+          evaluation_status: "approved",
+          source_repo: "https://example.invalid/worker",
+          team_id: "dept_qa",
+          version: "1.0.0",
+        },
+      ]),
+    });
+  });
+
+  await authenticate(page, "/workers");
+  const hiringBoard = page.getByRole("main", { name: "Hiring Board" });
+  const row = hiringBoard.getByRole("row", { name: /worker-denial/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Active", { exact: true })).toBeVisible();
+  await hiringBoard.getByRole("button", { name: "Refresh workers" }).click();
+
+  const access = hiringBoard.getByRole("region", { name: "Hiring Board access status" });
+  await expect(access).toBeVisible();
+  await expect(access.getByText(/last-known worker rows remain visible/i)).toBeVisible();
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("button", { name: "Evaluate worker-denial" })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Deactivate worker-denial" })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Drain worker-denial" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: "Refresh workers" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: "Register Worker" })).toHaveCount(0);
+  await expect(hiringBoard.getByRole("button", { name: /Delete .* selected/ })).toHaveCount(0);
+});
