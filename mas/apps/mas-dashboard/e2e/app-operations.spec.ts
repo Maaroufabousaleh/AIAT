@@ -367,9 +367,14 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "System Visualization" }),
     ).toBeVisible();
-    await expect(
-      page.getByText("Some visualization data is stale or unavailable"),
-    ).toBeVisible();
+    const staleBanner = page
+      .locator('[role="status"]')
+      .filter({ hasText: "Some visualization data is stale or unavailable" });
+    await expect(staleBanner).toBeVisible();
+    await expect(staleBanner.locator("svg").first()).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     await expect(page.getByText(/permissions failed to refresh/i)).toBeVisible();
 
     await page.getByRole("tab", { name: /permissions/i }).click();
