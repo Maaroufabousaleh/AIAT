@@ -25,5 +25,13 @@ test.describe("System Overview source recovery baseline", () => {
     await expect(
       status.getByRole("button", { name: "Retry overview data" }),
     ).toHaveCSS("min-height", "44px");
+    if (expectedState === "offline") {
+      const unavailable = page.getByText("Company overview unavailable");
+      await expect(unavailable).toBeVisible();
+      await expect(unavailable.locator("..").locator("svg")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    }
   });
 });

@@ -97,7 +97,7 @@ export function EmptyState({
             : "bg-slate-800/80 text-slate-400 border border-slate-700/80"
         )}
       >
-        <Icon size={22} />
+        <Icon size={22} aria-hidden="true" />
       </div>
       <div className="text-sm font-semibold text-slate-200">{title}</div>
       {description && (
