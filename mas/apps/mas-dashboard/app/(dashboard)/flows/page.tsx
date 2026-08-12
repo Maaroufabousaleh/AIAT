@@ -13,6 +13,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { FilterChip } from "@/components/ui/FilterChips";
 
+type HttpError = Error & { status?: number };
+
 export default function FlowsPage() {
   const [flows, setFlows] = useState<Flow[]>([]);
   const flowsRef = useRef<Flow[] | null>(null);
@@ -25,41 +27,72 @@ export default function FlowsPage() {
   const [bulkError, setBulkError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loadStale, setLoadStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    const hadReadContext = hasReadContextRef.current || flowsRef.current !== null;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setLoadError("");
+    setLoadStale(false);
+    setBulkError("");
+    setSearch("");
+    setFilter("all");
+  }, []);
 
   const load = useCallback(async () => {
+    if (accessDenied) return;
     setLoading(true);
     setLoadError("");
     try {
       const params = new URLSearchParams({ limit: "1000" });
       if (filter !== "all") params.set("is_active", String(filter === "active"));
       const res = await fetch(`/api/flows?${params}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const error = new Error(`HTTP ${res.status}`) as HttpError;
+        error.status = res.status;
+        throw error;
+      }
       const data = await res.json();
       if (!Array.isArray(data)) throw new Error("Invalid flows response");
       flowsRef.current = data;
+      hasReadContextRef.current = true;
       setFlows(data);
       setHasLoaded(true);
+      setHasReadContext(true);
       setLoadStale(false);
     } catch (cause) {
+      const status = cause instanceof Error ? (cause as HttpError).status : undefined;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setLoadError(cause instanceof Error ? cause.message : "Failed to load flows");
       setLoadStale(flowsRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [accessDenied, filter, handleAccessDenied]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const requestRefresh = () => {
-    if (loading) return;
+    if (loading || accessDenied) return;
     void load();
   };
 
   async function deleteFlow(id: string) {
+    if (accessDenied) return;
     setDeleting(id);
     try {
       const res = await fetch(`/api/flows/${id}`, { method: "DELETE" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const detail = await res.text().catch(() => `HTTP ${res.status}`);
         setBulkError(`Failed to delete flow: ${detail}`);
         return;
@@ -71,7 +104,7 @@ export default function FlowsPage() {
   }
 
   async function handleBulkDelete() {
-    if (selection.selectedCount === 0) return;
+    if (accessDenied || selection.selectedCount === 0) return;
     const ids = Array.from(selection.selected);
     setBulkDeleting(true);
     setBulkError("");
@@ -80,9 +113,24 @@ export default function FlowsPage() {
       const results = await Promise.allSettled(
         ids.map(async (id) => {
           const res = await fetch(`/api/flows/${id}`, { method: "DELETE" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            const error = new Error(`HTTP ${res.status}`) as HttpError;
+            error.status = res.status;
+            throw error;
+          }
         })
       );
+      const denied = results.some(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof Error &&
+          ((result.reason as HttpError).status === 401 ||
+            (result.reason as HttpError).status === 403),
+      );
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       for (const r of results) if (r.status === "rejected") failed++;
       if (failed > 0) {
         setBulkError(
@@ -130,6 +178,11 @@ export default function FlowsPage() {
     selection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowIds.join(",")]);
+  useEffect(() => {
+    if (accessDenied) selection.clear();
+    // Selection is intentionally cleared only when the authority boundary is entered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessDenied]);
 
   return (
     <div className="dashboard-page">
@@ -147,7 +200,7 @@ export default function FlowsPage() {
             )}
           </>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -168,10 +221,25 @@ export default function FlowsPage() {
               New Flow
             </Link>
           </>
-        }
+        ) : undefined}
       />
 
-      {flows.length > 0 && (
+      {accessDenied && (
+        <section
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+          role="region"
+          aria-label="Flows access status"
+        >
+          <h2 className="font-medium text-amber-50">Flows access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {hasReadContext
+              ? "Previously loaded flow definitions remain visible for reference. Refresh, retry, New Flow, search, status filters, selection, editing, and deletion controls are hidden until authorization is restored."
+              : "No live flow definitions are available while authorization is unavailable. Flow controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {flows.length > 0 && !accessDenied && (
         <div className="dashboard-toolbar flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search
@@ -229,7 +297,7 @@ export default function FlowsPage() {
         </div>
       )}
 
-      {loadError && (
+      {loadError && !accessDenied && (
         <ErrorBanner
           tone={loadStale ? "warning" : "error"}
           title={loadStale ? "Showing last known flows" : "Flows load failed"}
@@ -243,9 +311,9 @@ export default function FlowsPage() {
         </ErrorBanner>
       )}
 
-      {bulkError && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
+      {bulkError && !accessDenied && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
 
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={visibleFlows.length}
@@ -259,6 +327,14 @@ export default function FlowsPage() {
       <div className="dashboard-surface overflow-hidden">
         {loading && !hasLoaded ? (
           <div className="p-8 text-center text-slate-500 text-sm">Loading…</div>
+        ) : accessDenied && flows.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon="key"
+              title="No live flow definitions are available"
+              description="Flow definitions cannot be read while authorization is unavailable. Controls remain hidden until access is restored."
+            />
+          </div>
         ) : loadError && !hasLoaded ? (
           <div className="p-8 text-center text-slate-400 text-sm">Unable to load flows. Use Retry to try again.</div>
         ) : flows.length === 0 ? (
@@ -306,13 +382,15 @@ export default function FlowsPage() {
               <thead>
                 <tr className="border-b border-slate-800">
                   <th scope="col" className="px-4 py-3 w-16">
-                    <SelectAllCheckbox
-                      checked={selection.isAllSelected}
-                      indeterminate={selection.isIndeterminate}
-                      onChange={selection.toggleAll}
-                      ariaLabel="Select all flows"
-                      className="min-h-11 min-w-11"
-                    />
+                    {!accessDenied && (
+                      <SelectAllCheckbox
+                        checked={selection.isAllSelected}
+                        indeterminate={selection.isIndeterminate}
+                        onChange={selection.toggleAll}
+                        ariaLabel="Select all flows"
+                        className="min-h-11 min-w-11"
+                      />
+                    )}
                   </th>
                   <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
                   <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Version</th>
@@ -355,21 +433,29 @@ export default function FlowsPage() {
                     )}
                   >
                     <td className="px-4 py-3">
-                      <RowCheckbox
-                        checked={isSelected}
-                        onChange={() => selection.toggle(flow.id)}
-                        ariaLabel={`Select ${flow.name}`}
-                        className="min-h-11 min-w-11"
-                      />
+                      {!accessDenied && (
+                        <RowCheckbox
+                          checked={isSelected}
+                          onChange={() => selection.toggle(flow.id)}
+                          ariaLabel={`Select ${flow.name}`}
+                          className="min-h-11 min-w-11"
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/flows/${flow.id}`}
-                        prefetch={false}
-                        className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white"
-                      >
-                        {flow.name}
-                      </Link>
+                      {accessDenied ? (
+                        <span className="inline-flex min-h-11 items-center font-medium text-slate-100">
+                          {flow.name}
+                        </span>
+                      ) : (
+                        <Link
+                          href={`/flows/${flow.id}`}
+                          prefetch={false}
+                          className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white"
+                        >
+                          {flow.name}
+                        </Link>
+                      )}
                       {flow.description && (
                         <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">{flow.description}</div>
                       )}
@@ -424,27 +510,31 @@ export default function FlowsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end items-center">
-                        <Link
-                          href={`/flows/${flow.id}`}
-                          prefetch={false}
-                          className="inline-flex min-h-11 items-center gap-1 px-2 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
-                        >
-                          Edit
-                          <ArrowRight size={12} />
-                        </Link>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!window.confirm(`Delete flow "${flow.name}" v${flow.version}? This cannot be undone.`)) return;
-                            deleteFlow(flow.id);
-                          }}
-                          disabled={deleting === flow.id}
-                          title="Delete flow"
-                          aria-label={`Delete flow ${flow.name} v${flow.version}`}
-                          className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {!accessDenied && (
+                          <>
+                            <Link
+                              href={`/flows/${flow.id}`}
+                              prefetch={false}
+                              className="inline-flex min-h-11 items-center gap-1 px-2 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
+                            >
+                              Edit
+                              <ArrowRight size={12} />
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!window.confirm(`Delete flow "${flow.name}" v${flow.version}? This cannot be undone.`)) return;
+                                deleteFlow(flow.id);
+                              }}
+                              disabled={deleting === flow.id}
+                              title="Delete flow"
+                              aria-label={`Delete flow ${flow.name} v${flow.version}`}
+                              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

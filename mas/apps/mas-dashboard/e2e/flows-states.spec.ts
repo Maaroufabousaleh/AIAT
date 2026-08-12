@@ -102,3 +102,106 @@ test("flows list retains the last known state when a refresh fails", async ({
     page.getByRole("link", { name: "flows-e2e-retained", exact: true }),
   ).toBeVisible();
 });
+
+test("flows list fails closed when the initial read is denied", async ({ page }) => {
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "flows access denied" }),
+    });
+  });
+
+  await authenticate(page, "/flows");
+  await expect(
+    page.getByRole("heading", { name: "Orchestration Flows" }),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Flows access status" })).toContainText(
+    "No live flow definitions are available",
+  );
+  await expect(
+    page.getByText("No live flow definitions are available", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New Flow" })).toHaveCount(0);
+  await expect(
+    page.getByRole("searchbox", { name: "Filter flows by name or description" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^All/ })).toHaveCount(0);
+});
+
+test("flows list preserves retained rows but hides controls after read denial", async ({
+  page,
+}) => {
+  let denyNextRead = false;
+
+  await page.route("**/api/flows**", async (route) => {
+    if (denyNextRead && route.request().method() === "GET") {
+      denyNextRead = false;
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "flows authorization expired" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/flows");
+  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+
+  denyNextRead = true;
+  await page.getByRole("button", { name: "Refresh flows" }).click();
+  await expect(page.getByRole("region", { name: "Flows access status" })).toContainText(
+    "Previously loaded flow definitions remain visible",
+  );
+  await expect(page.getByText("flows-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New Flow" })).toHaveCount(0);
+  await expect(
+    page.getByRole("searchbox", { name: "Filter flows by name or description" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Edit", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Delete flow flows-e2e-retained v1" }),
+  ).toHaveCount(0);
+});
+
+test("flows list enters the same denied state when deletion loses authorization", async ({
+  page,
+}) => {
+  await page.route("**/api/flows**", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "flow deletion denied" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/flows");
+  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete flow flows-e2e-retained v1" }).click();
+
+  await expect(page.getByRole("region", { name: "Flows access status" })).toContainText(
+    "Previously loaded flow definitions remain visible",
+  );
+  await expect(page.getByText("flows-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "New Flow" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toHaveCount(0);
+});
