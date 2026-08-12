@@ -20,8 +20,9 @@ The latest bounded dashboard increment is the System Overview accessibility
 group: a named main/hero/status surface, explicit health, metrics, first-run,
 company/project-state, and quick-link regions, decorative-icon suppression, and
 44px quick-link, graph, and seed controls (`c07b4a6`) in the source-built
-first-run test. The test passes 1/1 with a local deterministic orchestrator
-fixture; live backend availability remains a separate gate.
+first-run test. The test passes 1/1 for both `seeded` and `not_seeded` local
+deterministic orchestrator fixture runs; live backend availability remains a
+separate gate.
 
 The preceding bounded dashboard increment is the PM integrations accessibility
 group: a named busy main landmark, explicit summary/connections/reconciliation/
@@ -793,9 +794,10 @@ source-built recovery test passes 1/1, while native/live Redis/router evidence
 remains separate.
 The System Overview home now separately proves named main/health/metrics/
 first-run/company-state/Quick Links regions, decorative-icon suppression, and
-44px graph/Quick Links/seed targets in a source-built first-run test 1/1
-against a local deterministic orchestrator fixture (`c07b4a6`); live backend
-availability and full visual/WCAG certification remain open.
+44px graph/Quick Links/seed targets in source-built first-run tests 1/1 for
+both `seeded` and `not_seeded` local deterministic orchestrator fixtures
+(`c07b4a6`); live backend availability and full visual/WCAG certification
+remain open.
 The implementation group for transient gateway status classification,
 model/provider cooldown persistence and fallback filtering, deterministic model
 catalogue reconciliation, the conflict-preserving default profile bootstrap,

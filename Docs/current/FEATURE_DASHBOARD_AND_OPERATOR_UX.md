@@ -97,10 +97,11 @@ System Overview now has a focused home accessibility baseline: a named main and
 hero/status surface, explicit health, overview-metrics, first-run,
 company/project-state, and Quick Links regions, decorative icons hidden from
 assistive technology, and 44px graph, Quick Links, and seed controls. The
-source-built first-run test covers the landmark and target assertions 1/1
-against a local deterministic orchestrator fixture (`c07b4a6`). The live
-orchestrator was unavailable during this run, so control-plane availability and
-full WCAG/native-Linux visual certification remain separate gates.
+source-built first-run test covers the landmark and target assertions 1/1 for
+both `seeded` and `not_seeded` local deterministic orchestrator fixtures
+(`c07b4a6`). The live orchestrator was unavailable during this run, so
+control-plane availability and full WCAG/native-Linux visual certification
+remain separate gates.
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -142,7 +143,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - System visualisation fetches each source independently, retains responding sections when another source is unavailable, labels partial data as stale, and offers a retry action; PM integrations use the same last-known/conflict-preserving pattern for refresh failures. The targeted resilience checks live in [`app-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/app-operations.spec.ts).
 - System visualisation now also has a focused accessibility baseline: named loading/error/ready page landmarks, horizontal visualization tabs with semantic tab/tabpanel links, and 44px breadcrumb, refresh, Mermaid-copy, path-trace, graph/detail, policy, retry, and back-link targets. The deterministic fixture-backed hierarchy/path-tracing test covers these semantics 1/1 (`ed5e551`). Full WCAG/native-Linux visual certification remains open.
 - PM integrations now also have a focused accessibility baseline: a named busy main landmark, explicit summary/connections/reconciliation/lifecycle regions, labeled lifecycle inputs, and 44px refresh/retry/generation/approval/apply controls. The existing fixture-backed conflict/stale-retry test covers these semantics 1/1 (`bbd6ba3`). Full WCAG/native-Linux visual certification and provider-owned evidence remain open.
-- System Overview now also has a focused accessibility baseline: a named main and hero/status surface, explicit health/overview-metrics/first-run/company-project-state/Quick Links regions, decorative-icon suppression, and 44px graph/Quick Links/seed controls. The source-built first-run test covers these semantics and target sizes 1/1 with a local deterministic orchestrator fixture (`c07b4a6`). Full WCAG/native-Linux visual certification and live control-plane availability remain open.
+- System Overview now also has a focused accessibility baseline: a named main and hero/status surface, explicit health/overview-metrics/first-run/company-project-state/Quick Links regions, decorative-icon suppression, and 44px graph/Quick Links/seed controls. The source-built first-run test covers these semantics and target sizes 1/1 for both `seeded` and `not_seeded` local deterministic orchestrator fixtures (`c07b4a6`). Full WCAG/native-Linux visual certification and live control-plane availability remain open.
 - Project creation reads the active flow catalogue with `cache: "no-store"`, so a newly saved/versioned flow is selectable immediately after navigation instead of waiting for a stale browser response; the full flow-builder golden path now passes again.
 - Flow editors render the generated node-schema contract and editable form (version, descriptions, required-any rules, field types, defaults, enums, CSV/JSON fields, governed workers, and approved Model Profiles). Deprecated `team_id`/`action` assignments are identified in the contract and remain editable only in the collapsed compatibility controls, which also preserve adapter extension keys.
 - New-flow starter cards consume the canonical `/flow-templates` catalogue through the dashboard proxy, preserve template configs/evidence metadata, remap branch references, and retain a blank-canvas fallback for catalogue outages.
