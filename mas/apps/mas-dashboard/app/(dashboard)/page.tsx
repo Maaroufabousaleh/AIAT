@@ -50,6 +50,8 @@ interface ExecutiveReconciliation {
   };
 }
 
+type OverviewDataState = "healthy" | "partial" | "offline";
+
 const STATE_VISUAL: Record<string, StateVisual> = {
   CREATED: { bg: "bg-slate-500/20", text: "text-slate-300", dot: "bg-slate-400" },
   PLANNING: { bg: "bg-blue-500/20", text: "text-blue-300", dot: "bg-blue-400" },
@@ -140,6 +142,21 @@ async function getOverviewData() {
 
   const company = companyOverview.status === "fulfilled" ? companyOverview.value : null;
   const executive = executiveReport.status === "fulfilled" ? executiveReport.value : null;
+  const failedSources = [
+    projects.status !== "fulfilled" ? "projects" : null,
+    systemStatus.status !== "fulfilled" ? "system status" : null,
+    companyOverview.status !== "fulfilled" ? "company" : null,
+    dlq.status !== "fulfilled" ? "dead-letter queue" : null,
+    llmTimed?.ok === false ? "LLM metrics" : null,
+    dlqTimed?.ok === false ? "queue metrics" : null,
+    executiveReport.status !== "fulfilled" ? "executive reconciliation" : null,
+  ].filter((source): source is string => source !== null);
+  const overviewState: OverviewDataState =
+    failedSources.length === 0
+      ? "healthy"
+      : failedSources.length === 7
+        ? "offline"
+        : "partial";
 
   return {
     projectList,
@@ -152,6 +169,8 @@ async function getOverviewData() {
     promQueryMs,
     promOk,
     executive,
+    overviewState,
+    failedSources,
     lastRefreshedAt,
   };
 }
@@ -345,6 +364,8 @@ export default async function HomePage() {
     promQueryMs,
     promOk,
     executive,
+    overviewState,
+    failedSources,
     lastRefreshedAt,
   } = await getOverviewData().catch(() => ({
     projectList: [] as Array<{ state: string }>,
@@ -357,6 +378,8 @@ export default async function HomePage() {
     promQueryMs: null as number | null,
     promOk: false,
     executive: null as ExecutiveReconciliation | null,
+    overviewState: "offline" as OverviewDataState,
+    failedSources: ["overview data"],
     lastRefreshedAt: new Date(),
   }));
 
@@ -375,6 +398,7 @@ export default async function HomePage() {
   // hint underneath is the human-readable explanation.
   const llmEmpty = llmPerMin === null;
   const llmDisplay = llmEmpty ? "x" : llmPerMin;
+  const overviewUnavailable = overviewState !== "healthy";
 
   return (
     <main className="dashboard-page" aria-label="System Overview">
@@ -395,6 +419,34 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      {overviewUnavailable && (
+        <section
+          className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10"
+          role="region"
+          aria-label="Overview data status"
+        >
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium text-amber-100">
+              {overviewState === "offline" ? "Overview data unavailable" : "Overview data is partial"}
+            </h2>
+            <p className="mt-1 text-xs text-amber-200/70" role="status" aria-live="polite">
+              {overviewState === "offline"
+                ? "The control plane and metrics sources are unavailable. No live overview state is being inferred."
+                : `Some overview sources failed: ${failedSources.join(", ")}. Showing available values only.`}
+            </p>
+          </div>
+          <form method="get" action="/">
+            <button
+              type="submit"
+              aria-label="Retry overview data"
+              className="inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-400/10"
+            >
+              Retry overview
+            </button>
+          </form>
+        </section>
+      )}
 
       {/* System health card: prometheus query time + last refresh timestamp */}
       <SystemHealthCard
