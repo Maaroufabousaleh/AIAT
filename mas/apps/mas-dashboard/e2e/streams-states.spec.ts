@@ -89,6 +89,42 @@ test("stream monitor retains messages when reconnect fails", async ({ page }) =>
 
   await authenticate(page, "/streams");
   await expect(page.getByRole("heading", { name: "Agent Stream Monitor" })).toBeVisible();
+  const streams = page.getByRole("main", { name: "Agent stream monitor" });
+  await expect(streams).toBeVisible();
+  await expect(
+    streams.getByRole("region", { name: "Message type filters" }),
+  ).toBeVisible();
+  await expect(
+    streams.getByRole("region", { name: "Live message feed" }),
+  ).toBeVisible();
+  await expect(
+    streams.getByRole("region", { name: "Stream status" }),
+  ).toBeVisible();
+  await expect(
+    streams.getByRole("table", { name: "Agent message stream" }),
+  ).toBeVisible();
+  for (const control of [
+    streams.getByRole("searchbox", {
+      name: "Filter messages by text, sender, or project",
+    }),
+    streams.getByRole("combobox", { name: "Select team stream" }),
+    streams.getByRole("button", { name: "Reconnect stream" }),
+    streams.getByRole("checkbox", { name: "Group by type" }),
+    streams.getByRole("button", { name: "Pause live feed" }),
+    streams.getByRole("button", { name: "Clear message history" }),
+  ]) {
+    await expect(control).toHaveCSS("min-height", "44px");
+  }
+  const typeFilters = streams
+    .getByRole("region", { name: "Message type filters" })
+    .getByRole("button");
+  await expect(typeFilters).toHaveCount(2);
+  for (const filter of await typeFilters.all()) {
+    await expect(filter).toHaveCSS("min-height", "44px");
+  }
+  await expect(
+    streams.getByRole("button", { name: "Copy message payload" }),
+  ).toHaveCSS("min-height", "44px");
   await expect(page.getByText("agent.started", { exact: true }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Reconnect stream" }).click();

@@ -311,7 +311,15 @@ export default function StreamsPage() {
             isOpen && "bg-slate-800/30",
           )}
           onClick={() => setExpanded(isOpen ? null : index)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setExpanded(isOpen ? null : index);
+            }
+          }}
+          tabIndex={0}
           aria-expanded={isOpen}
+          aria-label={`${type} message${entry.parsed?.sender_id ? ` from ${entry.parsed.sender_id}` : ""}`}
         >
           <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">
             {formatInTz(entry.ts, "yyyy-MM-dd HH:mm:ss.SSS")}
@@ -364,7 +372,7 @@ export default function StreamsPage() {
               }
               title={justCopied ? "Copied!" : "Copy payload"}
               className={clsx(
-                "inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors",
+                "inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
                 justCopied
                   ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
@@ -389,7 +397,10 @@ export default function StreamsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col p-5 sm:p-6 lg:p-8 gap-4">
+    <main
+      className="flex h-full flex-col p-5 sm:p-6 lg:p-8 gap-4"
+      aria-label="Agent stream monitor"
+    >
       {/* Header */}
       <PageHeader
         icon="radio"
@@ -425,14 +436,14 @@ export default function StreamsPage() {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter messages…"
                 aria-label="Filter messages by text, sender, or project"
-                className="bg-slate-950/60 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400/40 w-56"
+                className="min-h-11 bg-slate-950/60 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400/40 w-56"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => setQuery("")}
                   aria-label="Clear search"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-200 rounded transition-colors"
+                  className="absolute right-1.5 top-1/2 min-h-11 min-w-11 -translate-y-1/2 text-slate-500 hover:text-slate-200 rounded transition-colors"
                 >
                   <X size={12} />
                 </button>
@@ -443,7 +454,7 @@ export default function StreamsPage() {
               value={teamId}
               onChange={(e) => setTeamId(e.target.value as TeamStreamId)}
               aria-label="Select team stream"
-              className="bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+              className="min-h-11 bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
             >
               {TEAM_STREAMS.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -456,18 +467,18 @@ export default function StreamsPage() {
               type="button"
               onClick={() => connect(true)}
               aria-label="Reconnect stream"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
             >
               <RefreshCw size={12} />
               Reconnect
             </button>
 
-            <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
+            <label className="inline-flex min-h-11 items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
               <input
                 type="checkbox"
                 checked={groupByType}
                 onChange={(e) => setGroupByType(e.target.checked)}
-                className="h-3 w-3 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-400/60"
+                className="min-h-11 min-w-11 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-400/60"
               />
               Group by type
             </label>
@@ -477,7 +488,7 @@ export default function StreamsPage() {
               aria-pressed={paused}
               aria-label={paused ? "Resume live feed" : "Pause live feed"}
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
                 paused
                   ? "bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25"
@@ -495,7 +506,7 @@ export default function StreamsPage() {
               }}
               aria-label="Clear message history"
               title="Clear history"
-              className="p-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+              className="min-h-11 min-w-11 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
             >
               <Trash2 size={13} />
             </button>
@@ -508,7 +519,7 @@ export default function StreamsPage() {
           tone={stale ? "warning" : "error"}
           title={stale ? "Showing last known stream data" : "Stream unavailable"}
           action={(
-            <button type="button" onClick={() => connect(true)} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10">
+            <button type="button" onClick={() => connect(true)} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">
               Retry
             </button>
           )}
@@ -519,33 +530,37 @@ export default function StreamsPage() {
 
       {/* Type filter chips */}
       {availableTypes.length > 0 && (
-        <div
-          className="flex flex-wrap gap-1.5 items-center"
-          role="toolbar"
-          aria-label="Filter messages by type"
-        >
-          <span className="text-xxs uppercase tracking-wider text-slate-500 font-semibold mr-1">
-            Type:
-          </span>
-          <FilterChip
-            active={typeFilter === "all"}
-            onClick={() => setTypeFilter("all")}
-            count={filteredEntries.length}
-            activeTone="blue"
+        <section role="region" aria-label="Message type filters">
+          <div
+            className="flex flex-wrap gap-1.5 items-center"
+            role="toolbar"
+            aria-label="Filter messages by type"
           >
-            All
-          </FilterChip>
-          {availableTypes.map(({ type, count }) => (
+            <span className="text-xxs uppercase tracking-wider text-slate-500 font-semibold mr-1">
+              Type:
+            </span>
             <FilterChip
-              key={type}
-              active={typeFilter === type}
-              onClick={() => setTypeFilter(type)}
-              count={count}
+              active={typeFilter === "all"}
+              onClick={() => setTypeFilter("all")}
+              count={filteredEntries.length}
+              activeTone="blue"
+              className="min-h-11"
             >
-              {type}
+              All
             </FilterChip>
-          ))}
-        </div>
+            {availableTypes.map(({ type, count }) => (
+              <FilterChip
+                key={type}
+                active={typeFilter === type}
+                onClick={() => setTypeFilter(type)}
+                count={count}
+                className="min-h-11"
+              >
+                {type}
+              </FilterChip>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Feed */}
@@ -553,6 +568,7 @@ export default function StreamsPage() {
         className="dashboard-surface flex-1 overflow-y-auto font-mono"
         role="region"
         aria-label="Live message feed"
+        aria-busy={!connected && !loadError}
       >
         {entries.length === 0 ? (
           <div className="p-6">
@@ -588,6 +604,7 @@ export default function StreamsPage() {
           </div>
         ) : (
           <table className="w-full text-xs">
+            <caption className="sr-only">Agent message stream</caption>
             <thead className="sticky top-0 bg-slate-950/80 backdrop-blur border-b border-slate-800">
               <tr>
                 <th
@@ -665,7 +682,11 @@ export default function StreamsPage() {
       </div>
 
       {/* Footer */}
-      <div className="dashboard-toolbar text-xxs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+      <section
+        className="dashboard-toolbar text-xxs text-slate-500 flex flex-wrap items-center justify-between gap-2"
+        aria-label="Stream status"
+        aria-live="polite"
+      >
         <span>
           {filteredEntries.length === entries.length
             ? `${entries.length} message${entries.length === 1 ? "" : "s"}`
@@ -675,7 +696,7 @@ export default function StreamsPage() {
         <span className="text-slate-600">
           Capped at 500 messages · auto-scroll {paused ? "off" : "on"}
         </span>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
