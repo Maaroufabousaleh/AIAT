@@ -95,12 +95,42 @@ test("CEO chat retains history through a stream failure and recovers on retry", 
 
   await authenticate(page, "/ceo/chat");
   await expect(page.getByRole("heading", { name: "CEO Command Center" })).toBeVisible();
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  await expect(chat).toBeVisible();
+  await expect(
+    chat.getByRole("region", { name: "CEO conversation workspace" }),
+  ).toBeVisible();
+  await expect(
+    chat.getByRole("log", { name: "CEO conversation transcript" }),
+  ).toBeVisible();
+  await expect(
+    chat.getByRole("region", { name: "CEO message composer" }),
+  ).toBeVisible();
+  for (const control of [
+    chat.getByRole("link", { name: "Open CEO activity feed" }),
+    chat.getByRole("button", { name: "Clear conversation view" }),
+    chat.getByRole("textbox", { name: "Message to CEO" }),
+    chat.getByRole("button", { name: "Send message" }),
+  ]) {
+    await expect(control).toHaveCSS("min-height", "44px");
+  }
+  const quickCommands = chat
+    .getByRole("region", { name: "CEO chat quick commands" })
+    .getByRole("button");
+  await expect(quickCommands).toHaveCount(4);
+  for (const command of await quickCommands.all()) {
+    await expect(command).toHaveCSS("min-height", "44px");
+  }
   await expect(page.getByText("retained CEO response", { exact: true })).toBeVisible();
 
   await expect(page.getByText("Showing last known CEO conversation")).toBeVisible();
   await expect(page.getByText(/CEO chat fixture unavailable/i)).toBeVisible();
   await expect(page.getByText("retained CEO response", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry CEO conversation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry CEO conversation" })).toHaveCSS(
+    "min-height",
+    "44px",
+  );
 
   await page.getByRole("button", { name: "Retry CEO conversation" }).click();
   await expect(page.getByText("Showing last known CEO conversation")).toHaveCount(0);
