@@ -161,6 +161,13 @@ both `seeded` and `not_seeded` local deterministic orchestrator fixtures
 control-plane availability and full WCAG/native-Linux visual certification
 remain separate gates.
 
+System Overview now also distinguishes 401/403 authorization failures from
+ordinary source outages. The named access-status region identifies denied
+control-plane/metrics sources, retains any available overview values as
+read-only context, hides retry and first-run seed actions until authorization is
+restored, and keeps safe navigation available. A source-built local 403
+orchestrator/Prometheus fixture passes the denial assertion 1/1 (`b0ab779`).
+
 The unauthenticated operator sign-in route now exposes a named main and
 operator-sign-in region, explicit busy/status announcements, labeled username
 and password fields, password-visibility state, and 44px password/sign-in

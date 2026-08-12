@@ -832,6 +832,10 @@ password/sign-in targets (`d928834`).
 System Overview also classifies its seven independent control-plane/metrics
 reads as healthy, partial, or offline, names failed sources without inferring
 unavailable state, and exposes a bounded GET retry (`50cee61`).
+It now distinguishes 401/403 authorization failures from ordinary outages:
+the named access-status surface retains available values as read-only context,
+omits retry and first-run seed actions, and identifies the denied sources. A
+source-built local 403 fixture passes the denial assertion 1/1 (`b0ab779`).
 The shared `EmptyState` primitive hides decorative status icons from assistive
 technology (`24be4ba`).
 System visualisation now distinguishes a restricted hierarchy read from a
