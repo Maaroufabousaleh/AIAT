@@ -61,7 +61,10 @@ Its source-built stale/retry test covers the focused baseline 1/1 (`93fdfbc`).
 The Metrics page now has named main/summary/chart regions, a semantic
 time-range control, and 44px range, refresh, retry, and empty-state controls.
 Its source-built partial/stale/retry test covers the focused baseline 1/1
-(`da113af`).
+(`da113af`). A 401/403 response from any query family now exposes a named
+access-denied region, preserves only previously loaded series, and hides
+refresh/retry, time-range, and reconnect controls; the focused denial matrix
+passes 3/3 (`b64b15e`).
 
 The Container Logs page now has named main/filter/legend/output/status regions,
 44px stream/filter/recovery targets, and an `aria-busy` log output. Its
@@ -260,7 +263,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Tools catalogue stale/retry and accessibility state: [`tools/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/tools/page.tsx>), [`tools-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/tools-states.spec.ts) (`5f4b0eb`, `83e39e6`)
 - Dead-letter queue stale/retry and accessibility state: [`dlq/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/dlq/page.tsx>), [`FilterChips.tsx`](../../mas/apps/mas-dashboard/components/ui/FilterChips.tsx), [`dlq-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/dlq-states.spec.ts) (`823fa6d`, `99a19a2`)
 - Credentials stale/retry, accessibility, and access-denied state: [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>), [`BulkActionBar.tsx`](../../mas/apps/mas-dashboard/components/ui/BulkActionBar.tsx), [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) (`970f09c`, `e6e6980`, `93fdfbc`, `982c9c0`)
-- Metrics partial/stale/retry and accessibility state: [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>), [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) (`85596b0`, `da113af`)
+- Metrics partial/stale/retry, accessibility, and access-denied state: [`metrics/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/metrics/page.tsx>), [`app/api/metrics/route.ts`](<../../mas/apps/mas-dashboard/app/api/metrics/route.ts>), [`lib/prometheus.ts`](../../mas/apps/mas-dashboard/lib/prometheus.ts), [`metrics-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/metrics-states.spec.ts) (`85596b0`, `da113af`, `b64b15e`)
 - Flows list stale/retry and accessibility state: [`flows/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/page.tsx>), [`flows-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flows-states.spec.ts) (`6b0413b`)
 - Flow editor load/stale/retry and accessibility state: [`flows/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/[id]/page.tsx>), [`flow-store.ts`](../../mas/apps/mas-dashboard/lib/flow-store.ts), [`flow-editor-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flow-editor-states.spec.ts) (`140af1c`)
 - Container Logs stale/retry, accessibility, and access-denied state: [`logs/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/logs/page.tsx>), [`app/api/logs/[container]/route.ts`](<../../mas/apps/mas-dashboard/app/api/logs/[container]/route.ts>), [`logs-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/logs-states.spec.ts) (`280d363`, `993b1cb`, `156597c`)

@@ -92,6 +92,9 @@ identity only; registration, activation, certification, and licence metadata
 remain separate.
 The Container Logs denial-state recovery group `156597c` now applies the same
 boundary to SSE responses; its source-built fixture matrix passes 3/3.
+The Metrics denial-state recovery group `b64b15e` now applies the same boundary
+across six Prometheus query families; its source-built fixture matrix passes
+3/3.
 
 ## Clean-checkout verification
 
