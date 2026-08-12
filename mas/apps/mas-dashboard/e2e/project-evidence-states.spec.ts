@@ -130,3 +130,83 @@ test("project evidence retains the last package through a failed refresh", async
     page.getByText("100% under software-delivery v1.0"),
   ).toBeVisible();
 });
+
+test("project evidence fails closed when the initial package read is denied", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/projects/project-evidence-denied/evidence/package",
+    async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "evidence access denied" }),
+      });
+    },
+  );
+
+  await authenticate(page, "/projects/project-evidence-denied/evidence");
+
+  await expect(
+    page.getByRole("region", { name: "Project evidence access status" }),
+  ).toContainText("cannot be read while authorization is unavailable");
+  await expect(
+    page.getByRole("heading", { name: "Project evidence access denied" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh project evidence" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Back to project" })).toBeVisible();
+});
+
+test("project evidence retains the last-known package after read denial", async ({
+  page,
+}) => {
+  let packageReads = 0;
+  await page.route(
+    "**/api/projects/project-evidence-retained/evidence/package",
+    async (route) => {
+      packageReads += 1;
+      if (packageReads > 1) {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "evidence authorization expired" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...PACKAGE_FIXTURE,
+          project_id: "project-evidence-retained",
+        }),
+      });
+    },
+  );
+
+  await authenticate(page, "/projects/project-evidence-retained/evidence");
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toBeVisible();
+  await expect(page.getByText("software-delivery")).toBeVisible();
+
+  await page.getByRole("button", { name: "Refresh project evidence" }).click();
+
+  await expect(
+    page.getByRole("region", { name: "Project evidence access status" }),
+  ).toContainText("last-known evidence package");
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toBeVisible();
+  await expect(page.getByText("software-delivery")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh project evidence" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});

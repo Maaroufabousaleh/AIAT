@@ -72,9 +72,19 @@ export default function ProjectEvidencePage() {
   const [packageStale, setPackageStale] = useState(false);
   const [packageRefreshError, setPackageRefreshError] = useState<string | null>(null);
   const hasPackageRef = useRef(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const accessDeniedRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    accessDeniedRef.current = true;
+    setAccessDenied(true);
+    setError(null);
+    setPackageStale(false);
+    setPackageRefreshError(null);
+  }, []);
 
   const loadPackage = useCallback(async () => {
-    if (!id) return;
+    if (!id || accessDeniedRef.current) return;
     setLoading(true);
     setError(null);
     setPackageRefreshError(null);
@@ -83,6 +93,10 @@ export default function ProjectEvidencePage() {
         cache: "no-store",
       });
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 401 || response.status === 403) {
+        handleAccessDenied();
+        return;
+      }
       if (!response.ok) {
         throw new Error(typeof payload.error === "string" ? payload.error : "Evidence package unavailable");
       }
@@ -102,7 +116,7 @@ export default function ProjectEvidencePage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [handleAccessDenied, id]);
 
   useEffect(() => {
     void loadPackage();
@@ -118,15 +132,32 @@ export default function ProjectEvidencePage() {
             <Link href={`/projects/${encodeURIComponent(id || "")}`} aria-label="Back to project" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
               <ArrowLeft size={14} /> Project
             </Link>
-            <button type="button" onClick={() => void loadPackage()} disabled={loading} aria-label="Refresh project evidence" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 px-3 py-2 text-sm text-cyan-200 hover:bg-cyan-400/10 disabled:opacity-50">
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-            </button>
+            {!accessDenied && (
+              <button type="button" onClick={() => void loadPackage()} disabled={loading} aria-label="Refresh project evidence" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-400/30 px-3 py-2 text-sm text-cyan-200 hover:bg-cyan-400/10 disabled:opacity-50">
+                <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+              </button>
+            )}
           </div>
         )}
       />
 
-      {error && <div className="mt-6"><ErrorBanner tone="warning">{error}</ErrorBanner></div>}
-      {packageStale && packageRefreshError && (
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Project evidence access status"
+          className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-4 text-sm text-amber-100"
+        >
+          <h2 className="font-semibold text-amber-50">Project evidence access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {packageView
+              ? "This last-known evidence package is retained as read-only context. Refresh and package controls are hidden until authorization is restored."
+              : "The evidence package cannot be read while authorization is unavailable. Refresh and package controls are hidden until access is restored."}
+          </p>
+        </section>
+      )}
+
+      {!accessDenied && error && <div className="mt-6"><ErrorBanner tone="warning">{error}</ErrorBanner></div>}
+      {!accessDenied && packageStale && packageRefreshError && (
         <div className="mt-6" data-testid="project-evidence-stale">
           <ErrorBanner
             tone="warning"
@@ -149,7 +180,7 @@ export default function ProjectEvidencePage() {
           </ErrorBanner>
         </div>
       )}
-      {loading && !packageView && <p className="mt-8 text-sm text-slate-400">Loading evidence package…</p>}
+      {loading && !packageView && !accessDenied && <p className="mt-8 text-sm text-slate-400">Loading evidence package…</p>}
 
       {packageView && (
         <>
