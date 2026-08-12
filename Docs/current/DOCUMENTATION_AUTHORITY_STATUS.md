@@ -113,6 +113,11 @@ boundary to paired project/active-flow reads and create/archive/delete
 mutations; its source-built fixture matrix passes 4/4, covering stale
 recovery, initial denial, retained-read denial, and deletion denial while
 keeping retained definitions read-only.
+The Project Detail denial-state recovery group `0671eaa` now applies the same
+boundary to canonical project reads and workflow/mutation responses; its
+source-built fixture matrix passes 4/4, covering transient recovery, initial
+denial, retained-header denial, and workflow-mutation denial while retaining
+only the last-known project header and hiding all tabs and mutation surfaces.
 
 ## Clean-checkout verification
 

@@ -263,6 +263,16 @@ only previously loaded definitions as read-only text and hide refresh/retry, New
 Project, filters, sorting, selection, archive, and delete controls. Its focused
 source-built denial matrix passes 4/4 (`17d25b0`).
 
+The latest bounded dashboard increment extends the same recovery contract to
+Project Detail: canonical project reads and workflow/mutation responses that
+return 401/403 now render a named denial region, retain only the last-known
+project header as read-only context, clear pending interaction state, and hide
+refresh, tabs, panels, and every workspace/workflow/flow/context/evidence/
+repository/approval/transition mutation control. The source-built
+`project-detail-states.spec.ts` matrix passes 4/4 for transient recovery,
+initial denial, retained-header denial, and workflow-mutation denial
+(`0671eaa`).
+
 The project evidence package page now adds a named main/section structure,
 keyboard-visible action labels with 44px targets, and a captioned evidence
 table with scoped column headers (`89091c1`).
@@ -334,6 +344,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Dashboard Flows list access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); Flows list read/delete boundary `3108b02`, source-built `flows-states.spec.ts` 4/4; native/live ACL and flow evidence remain open |
 | Dashboard flow-editor access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); flow-editor read/save boundary `392d264`, source-built `flow-editor-states.spec.ts` 4/4; native/live ACL and flow/runtime evidence remain open |
 | Dashboard Projects list access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); paired project/active-flow read and archive/delete boundary `17d25b0`, source-built `projects-states.spec.ts` 4/4; native/live ACL and project evidence remain open |
+| Dashboard Project Detail access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); canonical project-read and workflow/mutation boundary `0671eaa`, source-built `project-detail-states.spec.ts` 4/4; native/live ACL and project evidence remain open |
 | Local dashboard E2E evidence | [`dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json) — 58/59 Playwright tests pass on the WSL2 Compose stack, including hierarchy communication-policy/path tracing, retained hiring evaluation details, skip-link/mobile navigation focus, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage; native-Linux and provider-owned paths remain separate gates |
 | Tool authority catalogue and adapter boundary | [Tool Catalogue](tools.md) |
 | Worker/runtime declaration, persisted-binding reconciliation, run-lifecycle fixture, and selected run-readiness preflight | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [`check_worker_reconciliation.py`](mas/scripts/check_worker_reconciliation.py) (static/`--live`), [`check_worker_run_lifecycle.py`](mas/scripts/check_worker_run_lifecycle.py), [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py) (fixture/read-only `--live`), [`generate_worker_certification_matrix.py`](mas/scripts/generate_worker_certification_matrix.py), [`test_worker_certification_matrix.py`](mas/packages/mas-core/tests/test_worker_certification_matrix.py), [matrix](mas/docs/provenance/worker_certification_matrix.yaml) |
@@ -769,7 +780,7 @@ Required outcomes:
 **Plan:** [P1 Default Programme Completion](Docs/current/plans/P1_DEFAULT_PRODUCT_COMPLETION_PLAN.md)  
 **Depends on:** R2 for real worker task nodes
 
-Project-detail refresh failures are covered by the existing project workspace golden path: canonical project data remains visible, the page labels it stale, and an operator can retry without losing workspace context. Project-detail first-load failures now also show an explicit unavailable state with backend error detail and Retry before recovering into the workspace (`f364763`). The flow editor now has the same bounded load/recovery contract: first-load failures are explicit and retryable, while refresh failures retain the last-known canvas (`b5098e7`); its 401/403 canonical read/save boundary preserves only that canvas as read-only and hides editor mutations (`392d264`).
+Project-detail refresh failures are covered by the existing project workspace golden path: canonical project data remains visible, the page labels it stale, and an operator can retry without losing workspace context. Project-detail first-load failures now also show an explicit unavailable state with backend error detail and Retry before recovering into the workspace (`f364763`). A canonical project read or workflow/mutation 401/403 now renders a named denial region, retains only the last-known project header, and hides refresh, tabs, panels, and mutation controls; the source-built denial/recovery matrix passes 4/4 (`0671eaa`). The flow editor now has the same bounded load/recovery contract: first-load failures are explicit and retryable, while refresh failures retain the last-known canvas (`b5098e7`); its 401/403 canonical read/save boundary preserves only that canvas as read-only and hides editor mutations (`392d264`).
 
 The project workspace sub-surface now retains activity, resources, cost, and the
 last repository snapshot through failed `/workspace` or `/repository` refreshes,
