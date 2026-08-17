@@ -19,6 +19,12 @@ probes pass in the fresh 2026-08-11 local run. The transport probe observes one
 API-request row plus one native `/health` span, while the tool probe proves one
 `project_usage_events` row plus one `tool_service` native span and is retained
 at [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json).
+The durable local worker-run slice is also certified at migration
+`0036_native_trace_spans` by `acd3f06`: the real controller/native adapter
+persists a successful run, usage/artifact rows, and model/worker/audit spans,
+then survives a second-connection read-back with a payload-free projection.
+Evidence is [`mas/docs/provenance/worker_run_postgres_evidence.json`](../../mas/docs/provenance/worker_run_postgres_evidence.json);
+live model/provider execution remains open.
 The shared `aiat.mail-edge-observation.v1` normalizer/evaluator and deterministic
 checker are implemented in `85369fe`; identity-service migration
 `0003_mail_edge_observations`, signed delegated webhook persistence, and scalar
@@ -169,6 +175,19 @@ non-mutating, and retained at
 [`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
 This is an explicit evidence join, not a live worker/provider certification or
 an activation/release gate.
+
+The durable worker-run evidence slice is now separately certified by
+[`scripts/check_worker_run_postgres_evidence.py`](../../mas/scripts/check_worker_run_postgres_evidence.py)
+(`acd3f06`). The checker uses the real `WorkerRunController` and
+`NativeWorkerAdapter` against the local Postgres deployment at migration
+`0036_native_trace_spans`, persists one successful run plus artifact/usage and
+native model/worker/audit spans, reopens a second connection, rebuilds the
+payload-free trace projection, and cleans only the reserved fixture namespace.
+The counts-only certificate is retained at
+[`worker_run_postgres_evidence.json`](../../mas/docs/provenance/worker_run_postgres_evidence.json).
+This closes local durable worker evidence, not live model/provider execution,
+external callback/bounce delivery, retention enforcement, sandbox proof,
+canary/rollback, or outage/restore evidence.
 
 The operator-facing incident projection is derived from one
 `aiat.trace-evidence.v1` response through `aiat.trace-incident.v1`. It reports

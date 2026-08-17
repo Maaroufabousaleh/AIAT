@@ -175,6 +175,15 @@ payload-free mail observations and remains a fixture-only evidence contract;
 it does not certify a live worker, provider callback, durable worker record, or
 bounce read-back.
 
+The durable worker-run evidence group `acd3f06` adds the local Postgres
+certificate and maintained evidence
+[`worker_run_postgres_evidence.json`](../../mas/docs/provenance/worker_run_postgres_evidence.json).
+The real controller/native adapter lifecycle, worker usage/artifact rows,
+native model/worker/audit spans, second-connection read-back, and scoped
+cleanup all pass at migration `0036_native_trace_spans`; the report is
+counts-only and payload-free. Live model/provider execution, callback/bounce,
+sandbox, canary/rollback, retention, and outage evidence remain separate.
+
 The trace incident groups `c357fdf`, `b4b7cef`, and `869202c` add the maintained
 `aiat.trace-incident.v1` summary/checker and its operator-only API/dashboard
 boundary over the existing payload-free trace evidence. The route,

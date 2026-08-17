@@ -283,13 +283,23 @@
 - [x] Render the bounded incident finding references and occurrence timestamps
   in the same operator deep link (`869202c`); no raw trace items or payloads are
   displayed, and live source population remains separate.
+- [x] Certify one real `WorkerRunController`/`NativeWorkerAdapter` execution
+  against the local Postgres store (`acd3f06`). The checker persists the run
+  lifecycle, worker artifact and usage rows, native model/worker/audit spans,
+  and a payload-free trace projection; it closes and reopens the store,
+  verifies durable read-back, and removes only the reserved fixture namespace.
+  Evidence is [`worker_run_postgres_evidence.json`](../../../mas/docs/provenance/worker_run_postgres_evidence.json).
+  This closes local durable worker evidence only; live model/provider,
+  external callback/bounce, retention, sandbox, canary/rollback, and outage
+  evidence remain separate.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence
   using [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
   direct model/artifact/integration spans, the fail-closed source evaluator,
-  delivery-attempt correlation, and the metadata-only mail-edge contract are
-  durable/queryable, but live source coverage remains open.
+  delivery-attempt correlation, metadata-only mail-edge contract, and local
+  durable worker evidence are durable/queryable, but live source coverage
+  remains open.
 - Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
 - Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
 
