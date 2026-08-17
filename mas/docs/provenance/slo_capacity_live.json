@@ -15,5 +15,5 @@
   ],
   "url_configured": true,
   "secret_values_printed": false,
-  "scope": "Local operator-authenticated SLO/capacity read-back only; the report is descriptive and non-gating. Native model/tool/mail-edge, many-project scrape, load/soak/chaos, and disaster-recovery evidence are not claimed."
+  "scope": "Local operator-authenticated SLO/capacity read-back only; the report is descriptive and non-gating. Durable many-project metric evidence is retained separately; native model/tool/mail-edge, load/soak/chaos, and disaster-recovery evidence are not claimed."
 }

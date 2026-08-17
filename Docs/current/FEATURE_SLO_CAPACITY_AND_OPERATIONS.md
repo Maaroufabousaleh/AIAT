@@ -167,8 +167,11 @@ execution input for this personal/internal programme.
   backup/read-back evidence (`57e13cb`), human confirmation, atomic batching,
   and a typed bounded audit envelope (`5d71309`); its live adapter and
   restore/erasure evidence remain open.
-- Run native many-project metric/cardinality evidence and compare forecasts to
-  production-like windows; fixture output is not deployment evidence.
+- The durable local many-project metric/cardinality certificate now passes and
+  is retained at [`metric_series_many_projects.json`](../../mas/docs/provenance/metric_series_many_projects.json);
+  compare forecasts to production-like windows on a clean native-Linux host,
+  then add load, soak, chaos, and recovery evidence. Fixture output alone is
+  not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster
   recovery exercises with retained bounded reports.
 - Add alert delivery and incident-action links once the live operations stack

@@ -660,8 +660,10 @@ The codebase already includes:
   bounded-cardinality policy for every `mas_*` family, rejecting unknown or
   non-bounded labels in the static fixture. Its live parser folds the
   Prometheus histogram `_created` sample into the declared family, and the
-  current local scrape passes at 31 bounded series; native many-project scrape
-  evidence remains open.
+  current local scrape passes at 31 bounded series; the durable local
+  many-project certificate also passes at 31 bounded series after inserting
+  and cleaning up 10,000 Postgres project rows, while clean native-Linux
+  release-host scale evidence remains open.
 - The bounded project-state metric contract is committed as `90a7d82` and its
   orchestrator lifecycle wiring as `cbeb9db`; resume-time reconciliation also
   has a bounded compatibility fallback for older storage doubles (`541d6e0`);
@@ -759,7 +761,8 @@ Required outcomes:
   declared bounded-cardinality policy; the current local scrape passes at 31
   bounded series after histogram `_created` normalization; runtime lifecycle
   paths record bounded aggregate state and resume-time reconciliation restores
-  persisted counts; native many-project scrape evidence remains open;
+  persisted counts; the durable local many-project scrape certificate passes;
+  clean native-Linux release-host scale evidence remains open;
 - [x] heavyweight tool image is split or reduced within explicit budgets (`b24ca0c`); [x] local Linux engine measurements pass for both profiles (core 267,957,904 bytes, 26,836 ms/112.3 MiB; extensions 4,155,668,123 bytes, 29,913 ms/137.7 MiB) with retained evidence; clean native-Linux build/pull, compressed archive, generated SBOM/scan artifacts, and vulnerability measurements remain open;
 - [x] production runtime/CLI declarations are exact in the operator-pin
   manifest, while host-, optional-, and deployment-supplied capabilities are
@@ -1324,8 +1327,8 @@ observations when configured. The refreshed local API returns a bounded SLO
 report (`9` targets, `6` observed services, `attention`) and capacity forecast
 (`clear`, `high` confidence), retained at
 [`mas/docs/provenance/slo_capacity_live.json`](mas/docs/provenance/slo_capacity_live.json).
-Native model/tool/mail-edge sources, many-project production evidence, and
-scale exercises remain open.
+Native model/tool/mail-edge sources, clean native-Linux many-project production
+evidence, and scale exercises remain open.
 
 Required outcomes:
 
@@ -1525,7 +1528,7 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
 6. [x] Add CEO identity/section ACL contract and API matrix. [x] Exercise the authenticated local operator/CEO/service/worker matrix. [x] Exercise the local Compose dashboard/UI matrix (58/59, one explicit DLQ-fixture skip; evidence at [`provenance/dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json)), including hierarchy communication-policy/path tracing, retained hiring evaluation details, shell focus, identity stale-record/retry state, PM integration conflict/stale retry, and system-visualization partial/offline retry states. [x] Keep local wrapper principals distinct and propagate the company timezone (`fd41874`). [ ] Repeat the dashboard/UI matrix on native Linux.
 7. [x] Remove high-cardinality metric labels and classify every AIAT label's
    bounded cardinality basis; [x] reconcile the current local scrape (31
-   bounded series, retained at [`provenance/metric_series_live.json`](mas/docs/provenance/metric_series_live.json)). [ ] Run the native many-project scrape.
+   bounded series, retained at [`provenance/metric_series_live.json`](mas/docs/provenance/metric_series_live.json)); [x] run the durable local native many-project scrape (10,000 Postgres rows, 31 bounded series, scoped cleanup, and baseline restoration, retained at [`provenance/metric_series_many_projects.json`](mas/docs/provenance/metric_series_many_projects.json)). [ ] Repeat on a clean native-Linux release host.
 8. [x] Split the heavyweight tool image and define budgets (`b24ca0c`). [x] Measure both profiles on the current local Linux engine. [x] Validate the minimum CycloneDX artifact shape when an SBOM is supplied (`42b03a3`). [ ] Repeat on a clean native-Linux release host with compressed archive/SBOM/scan evidence.
 9. [x] Codify the static/live network boundary verifier and remove the OpenCode runtime from the runner network (`43bee16`). [x] Recreate the local stack and pass the 11-runner denial/allow matrix; [ ] repeat on a native-Linux release host.
 10. [x] Add the fail-closed native release-host preflight (`--require-native-linux`), include it in the aggregate `release_environment:live` child (`4d7a495`), and retain the current WSL blocked result at [`native_release_preflight.json`](mas/docs/provenance/native_release_preflight.json); [ ] run the live network/sandbox/recovery evidence on native Linux.

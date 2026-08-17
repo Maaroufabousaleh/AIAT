@@ -25,7 +25,7 @@
     "violations": []
   },
   "notices": [
-    "This is a bounded live scrape of the refreshed local orchestrator; native many-project production scrape evidence remains open.",
+    "This is the refreshed 31-series local orchestrator scrape; the separate durable 10,000-project certificate is retained at metric_series_many_projects.json, while clean native-Linux release-host scale evidence remains open.",
     "No licence or resource metadata was evaluated as a gate."
   ]
 }

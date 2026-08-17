@@ -228,7 +228,8 @@ single frozen commit before production claims are made.
   transitions for project creation, workflow transitions, decisions, retries,
   watchdog recovery, and archive operations, then reconciles the aggregate from
   persisted rows during resume/startup; the synthetic 10,000-project
-  bounded-label test passes, while the native many-project scrape remains open.
+  bounded-label test passes; the durable local many-project scrape now also
+  passes, while clean native-Linux release-host scale evidence remains open.
 
 ### Secret-safe operational diagnostics
 
@@ -375,8 +376,12 @@ single frozen commit before production claims are made.
   client's synthetic histogram timestamp sample into the declared histogram
   family, and passes the current local scrape at 31 series. It still returns
   `blocked` without a configured endpoint and never emits metric payloads,
-  credentials, or unbounded label values; native many-project scrape evidence
-  remains open.
+  credentials, or unbounded label values. The durable local many-project
+  certificate inserts/read-backs 10,000 Postgres project rows, observes 31
+  bounded series with all 18 workflow-state values and no `project_id` label,
+  removes only its reserved namespace, and verifies baseline restoration; see
+  [`metric_series_many_projects.json`](../../mas/docs/provenance/metric_series_many_projects.json).
+  Clean native-Linux release-host scale evidence remains open.
 
 ### Machine-readable release ledger
 
@@ -533,7 +538,7 @@ single frozen commit before production claims are made.
 | Document ingest fallback contract | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; Docling execution and explicit degraded plain-text fallback are covered without claiming the optional binary is installed |
 | Backend and team-runner regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests -q` |
 | Broader worker/observability regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_*.py packages/mas-core/tests/test_observability.py apps/orchestrator-api/tests/test_metrics.py -q` |
-| Metrics API and label-policy suite | PASS (static + refreshed local live scrape) | Contract `90a7d82`, runtime wiring `cbeb9db`, and bounded legacy-storage reconciliation fallback `541d6e0`; the secret-safe local scrape evidence was refreshed 2026-08-11 in `76a32c0`; `uv run --isolated pytest packages/mas-core/tests/test_metric_series_budget.py apps/orchestrator-api/tests/test_metrics.py apps/orchestrator-api/tests/test_projects.py -q`; the static report includes every AIAT label policy, the 10,000-project fixture, and the Prometheus histogram `_created` normalization regression test; the refreshed local live scrape is 31 bounded series with no `project_id` label, retained at [`mas/docs/provenance/metric_series_live.json`](../../mas/docs/provenance/metric_series_live.json), while native many-project evidence remains open |
+| Metrics API and label-policy suite | PASS (static + refreshed local live + durable many-project scrape) | Contract `90a7d82`, runtime wiring `cbeb9db`, bounded legacy-storage reconciliation fallback `541d6e0`, and native scrape/evidence group `eefe08f`; `uv run --isolated pytest packages/mas-core/tests/test_metric_series_budget.py apps/orchestrator-api/tests/test_metrics.py apps/orchestrator-api/tests/test_projects.py scripts/tests/test_check_metric_series_many_projects.py -q`; the static report includes every AIAT label policy, the synthetic 10,000-project fixture, and the Prometheus histogram `_created` normalization regression test; the refreshed local live scrape and the authenticated durable 10,000-project scrape each pass at 31 bounded series with no `project_id` label, retained at [`metric_series_live.json`](../../mas/docs/provenance/metric_series_live.json) and [`metric_series_many_projects.json`](../../mas/docs/provenance/metric_series_many_projects.json); clean native-Linux release-host scale evidence remains open |
 | HTTP/message/trace-evidence suite | PASS (committed core; operator incident chronology/deep link; fresh local transport + tool read-back; broader sources open) | Core commit `77d5494`; router/agent propagation `5bc0aae`; worker source coverage contract `24c2e35`; bounded incident projection/checker `c357fdf`; operator incident API/generated contracts/dashboard deep link `b4b7cef`; payload-free finding chronology `869202c`; focused API/core/dashboard trace, build/typecheck, and Playwright tests pass; `uv run --isolated pytest packages/mas-core/tests/test_tracing.py packages/mas-core/tests/test_trace_evidence.py packages/mas-core/tests/test_native_trace_spans.py packages/mas-core/tests/test_trace_incident.py packages/mas-core/tests/test_phase4_5.py apps/message-router/tests/test_trace_propagation.py scripts/tests/test_check_trace_incident.py -q`; `uv run --isolated python scripts/check_trace_evidence.py --json`, `scripts/check_native_trace_spans.py --json`, `scripts/check_trace_incident.py --json`, and `scripts/check_worker_trace_coverage.py --json --require-integration` pass deterministic contracts. The configured 2026-08-11 local probes pass and are retained in the two provenance artifacts; selected live model-backed worker, mail-edge, retention, and richer incident chronology probes remain separate evidence boundaries |
 | API observation ledger | PASS (bounded static/unit/API) | `uv run --isolated pytest packages/mas-core/tests/test_api_observations.py apps/orchestrator-api/tests/test_trace_propagation.py -q`; `uv run --isolated python scripts/check_api_observability.py --json` passes the payload-free normalized-route fixture; migrations `0034_api_request_observations`, `0035_trace_correlation_evidence`, and `0036_native_trace_spans`, durable table/readers, and trace/SLO projections are implemented |
 | Secret-safe system diagnostics | PASS (static/unit/API) | Commit `2860838`; `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q` covers database, router, tool-service, optional object-store, degraded aggregation, no-storage 503, and dependency-payload redaction. The route is read-only and returns only bounded status/latency/connection facts or exception type |
@@ -654,10 +659,10 @@ single frozen commit before production claims are made.
    image identity helper with `--require-sbom` first and retain its
    blocked/pass/fail result. The checked-in CycloneDX shape validator is not a
    substitute for clean artifact generation or scan reconciliation.
-4. Run the native many-project aggregate-state scrape and repeat both
-   tool-service profile measurements on the clean native-Linux release host;
-   the local 31-series scrape and both local image-budget probes already pass
-   and are retained as descriptive evidence.
+4. Repeat the durable many-project aggregate-state scrape and both tool-service
+   profile measurements on a clean native-Linux release host; the local
+   10,000-project certificate, local 31-series scrape, and both local
+   image-budget probes already pass and are retained as descriptive evidence.
 5. Certify each default runtime/adapter against the installed lock and live
    worker-run lifecycle. The bounded local LangGraph/CrewAI dependency
    benchmark now passes and is retained at

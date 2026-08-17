@@ -1207,7 +1207,12 @@ The programme is organised around completing and hardening the existing architec
 - Live-retest team-runner denial to Redis/Postgres/object storage and provider endpoints.
 - [x] Remove raw `project_id` metric labels, classify every AIAT label's bounded
   cardinality basis, and add static metric-series budgets.
-- [ ] Run many-project native metric evidence and publish the scrape output.
+- [x] Run many-project native metric evidence and publish the scrape output; the
+  durable local certificate inserts/read-backs 10,000 Postgres project rows,
+  stays at 31 bounded series with no `project_id` label, cleans its reserved
+  namespace, and restores the baseline at
+  [`mas/docs/provenance/metric_series_many_projects.json`](mas/docs/provenance/metric_series_many_projects.json).
+  Clean native-Linux release-host scale evidence remains open.
 - Pin every production image by digest and reconcile it with the provenance catalogue/SBOM; use `scripts/check_image_provenance.py --live --json` as the fail-closed local identity boundary before native build/scan evidence.
 - [x] Add `scripts/check_executive_reconciliation.py --live --json` as the secret-safe, read-only executive coverage/finding boundary; live API/DB population remains environment work.
 - [x] Add the read-only `GET /system/diagnostics` dependency summary with
@@ -1373,7 +1378,7 @@ The programme is organised around completing and hardening the existing architec
 1. **Implemented (`cbdcfa6`):** remove licence/redistribution from worker activation, certification, hiring, rollout, evaluator scoring, and provenance-script failure predicates; preserve the fields as non-blocking metadata and operator notices. The evaluator still emits a diagnostic record for detected, missing, unclassified, or restricted values, but it cannot create a blocker or rejection.
 2. **Implemented:** reconcile the prior coding/tester `approved` status with security evidence: the exact OpenCode source scan is recorded as `findings_review_required`, both manifests remain pending/non-activatable, and activation fails closed until findings are triaged and a passing scan is recorded.
 3. Live-retest the corrected worker-network boundary and close the old critical Redis exposure only with negative evidence.
-4. **Implemented contract:** remove unbounded `project_id` Prometheus labels and enforce static metric-series budgets. **Open evidence:** run the many-project native scrape.
+4. **Implemented and locally certified:** remove unbounded `project_id` Prometheus labels, enforce static metric-series budgets, and run the durable many-project native scrape (`eefe08f`; evidence at [`mas/docs/provenance/metric_series_many_projects.json`](mas/docs/provenance/metric_series_many_projects.json)). **Open release evidence:** repeat on a clean native-Linux release host.
 5. **Implemented contract:** production Compose infrastructure refs and Dockerfile bases are digest-pinned; development/release wrapper separation, distinct local principals, and timezone propagation are recorded in `fd41874`; resolve application image refs and align lockfiles, manifests, operational provenance, SBOMs, and notices.
 6. **Implemented contract:** CEO service identity and persisted section ACLs with human/CEO/service/worker allow-deny API tests; local wrapper principal separation is hardened in `fd41874`; run native deployment evidence.
 7. **Implemented contract:** split the general tool image from browser/Docling/Semgrep/Mermaid extensions and add image/resource budgets; measure both profiles.

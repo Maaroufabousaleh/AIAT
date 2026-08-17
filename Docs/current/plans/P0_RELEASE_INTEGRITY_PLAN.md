@@ -9,17 +9,17 @@ shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
 runner, tool-service profile split, exact operator-pin manifest, and explicit
-bounded-label policy inventory, and read-only persisted default-worker binding
-reconciliation
-are implemented and statically tested.
+bounded-label policy inventory, read-only persisted default-worker binding
+reconciliation, and the durable many-project metric scrape are implemented
+and statically tested.
 The deployed team-runner data-plane
 boundary now uses an authenticated control-plane storage API and fails closed
 when its startup health probe cannot reach durable storage. See the [P0 status
 record](../P0_RELEASE_INTEGRITY_STATUS.md).
 The refreshed local Docker-backed network matrix, local image budget probes,
 and configured current-ledger run are retained as descriptive evidence; native
-image/SBOM, native many-project/live budget, provider, recovery, and frozen
-clean-ledger evidence remain open.
+image/SBOM, clean native-Linux release-host metric scale, provider, recovery,
+and frozen clean-ledger evidence remain open.
 
 ## Why this plan is first
 
@@ -132,7 +132,9 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   `metric_label_policy_inventory()` and `check_metric_series_budget.py` reject
   an unclassified or non-bounded `mas_*` label while retaining the live scrape
   as separate evidence.
-- [x] Add total/per-metric series budgets and scrape tests; many-project live budget evidence remains part of the exit ledger.
+- [x] Add total/per-metric series budgets and scrape tests; the durable local
+  many-project live budget certificate is retained separately from the clean
+  native-Linux release-host exit evidence.
 - [x] Add `scripts/check_metric_series_budget.py` to exercise a 10,000-project
   bounded fixture and fail closed when the live orchestrator scrape is absent
   or exceeds the total/family/label contract.
@@ -143,10 +145,12 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 
 - Metric cardinality remains bounded after creating many projects/workers/runs;
   the refreshed local orchestrator scrape is retained at
-  [`metric_series_live.json`](../../../mas/docs/provenance/metric_series_live.json).
+  [`metric_series_live.json`](../../../mas/docs/provenance/metric_series_live.json),
+  and the durable local 10,000-project certificate is retained at
+  [`metric_series_many_projects.json`](../../../mas/docs/provenance/metric_series_many_projects.json).
 - Static evidence includes the complete AIAT label inventory and the declared
-  bounded basis for every label; native many-project scrape evidence remains
-  separate.
+  bounded basis for every label; clean native-Linux release-host scale evidence
+  remains separate.
 - Tool-service cold build, image size, startup, memory, and vulnerability counts meet explicit budgets.
 
 ## Workstream 5 — current release ledger
