@@ -233,6 +233,9 @@
   contracts, dashboard proxy, and `/logs?trace_id=…` deep link (`b4b7cef`).
   The surface remains read-only, payload-free, and non-gating; live incident
   population and richer chronology remain separate evidence boundaries.
+- [x] Render the bounded incident finding references and occurrence timestamps
+  in the same operator deep link (`869202c`); no raw trace items or payloads are
+  displayed, and live source population remains separate.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

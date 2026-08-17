@@ -224,9 +224,12 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   company manifest as metadata. `check_trace_evidence.py` passes its
   deterministic fixture and blocks without a live API.
 - Native span persistence and projection for transport/model/tool/audit/
-  worker/integration boundaries is implemented. Mail-edge/bounce observations,
-  live retention enforcement, and incident views remain incomplete; the
-  current query reports those remaining gaps explicitly as non-gating notices.
+  worker/integration boundaries is implemented. The bounded
+  `aiat.trace-incident.v1` summary, operator API/dashboard deep link, and
+  payload-free finding chronology are implemented in `c357fdf`, `b4b7cef`, and
+  `869202c`; mail-edge/bounce observations, live retention enforcement, and
+  richer live incident views remain incomplete. The current query reports
+  those remaining gaps explicitly as non-gating notices.
   The optional identity-service
   delivery projection, API request ledger, and PM/SCM/worker-recovery
   projections are bounded read-model inputs, not a replacement for full

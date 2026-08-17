@@ -141,8 +141,9 @@ execution input for this personal/internal programme.
   scalar trace failures and independently reports partial/empty instrumentation
   coverage. It is a descriptive incident surface, not an SLO, budget, worker,
   or release gate. Commit `b4b7cef` exposes the operator-only incident route,
-  dashboard proxy, and `/logs?trace_id=…` deep link; richer chronology and
-  live-populated findings remain later evidence slices.
+  dashboard proxy, and `/logs?trace_id=…` deep link; `869202c` renders the
+  bounded finding references/timestamps. Richer chronology and live-populated
+  findings remain later evidence slices.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

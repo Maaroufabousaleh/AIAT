@@ -33,7 +33,9 @@ summary through the operator-only `GET /observability/incidents/{trace_id}`
 route, checked-in OpenAPI/TypeScript/Python contracts, a dashboard proxy, and
 the existing `/logs?trace_id=…` deep link. The dashboard renders status,
 severity, coverage, finding count, affected source names, and notice codes only;
-it never renders incident payloads. Live model/worker/audit/integration source
+commit `869202c` also renders the bounded finding IDs, source/kind, operation or
+service, status/HTTP code, and occurrence timestamp as a payload-free
+chronology. It never renders incident payloads. Live model/worker/audit/integration source
 coverage, provider ingress certification, complete mail-edge spans, live
 retention execution, and richer incident chronology remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
@@ -143,8 +145,9 @@ same authenticated trace-evidence authority and returns `aiat.trace-incident.v1`
 The dashboard proxy `/api/observability/incidents/[trace_id]` assigns the
 request to the operations section ACL and the canonical CEO evidence link
 `/logs?trace_id=…` loads the summary without fetching or displaying raw trace
-items. This is a read-only operator deep link, not a release or activation
-decision.
+items. The chronology is limited to the bounded finding references already
+returned by the API; it is a read-only operator deep link, not a release or
+activation decision.
 
 ## Sampling and retention metadata
 

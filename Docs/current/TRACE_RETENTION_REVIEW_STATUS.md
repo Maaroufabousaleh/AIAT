@@ -1,6 +1,6 @@
 # Trace Retention Review Status
 
-**Updated:** 2026-08-11
+**Updated:** 2026-08-17
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Owning feature:** [Trace Evidence and Retention](FEATURE_TRACE_EVIDENCE_AND_RETENTION.md)
 **Scope:** personal/internal AIAT instance
@@ -33,6 +33,11 @@ uv run --isolated python scripts/check_trace_retention.py --json
 The clean-checkout review passes the focused tests and fixture. The fixture
 reports `mutation_performed: false`, `live_enforcement_status: not_checked`,
 and `licence_metadata_is_gate: false`.
+
+The operator incident API/dashboard groups (`b4b7cef`, `869202c`) consume the
+same bounded trace evidence authority but do not apply retention decisions.
+They expose only safe incident metadata and finding references; retention
+execution remains an independent storage/recovery action.
 
 ## Remaining gates
 

@@ -155,14 +155,14 @@ callback certification, selected worker live read-back, complete mail-span
 evidence, and the read-only projected-span checker/read-back boundary remain
 separate.
 
-The trace incident groups `c357fdf` and `b4b7cef` add the maintained
+The trace incident groups `c357fdf`, `b4b7cef`, and `869202c` add the maintained
 `aiat.trace-incident.v1` summary/checker and its operator-only API/dashboard
 boundary over the existing payload-free trace evidence. The route,
 checked-in generated contracts, dashboard proxy, and `/logs?trace_id=…` deep
-link expose bounded status/severity/coverage/finding-count metadata only;
-partial/empty instrumentation remains independent from incident status. Live
-worker/provider coverage, retention application, and richer chronology remain
-separate.
+link expose bounded status/severity/coverage/finding-count metadata and the
+existing finding references/timestamps only; partial/empty instrumentation
+remains independent from incident status. Live worker/provider coverage,
+retention application, and richer live chronology remain separate.
 
 ## Clean-checkout verification
 

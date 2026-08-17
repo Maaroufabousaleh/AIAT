@@ -153,12 +153,12 @@ checker to classify projected provider webhook spans. `074ef8a` adds optional
 signed, trace-filtered identity dashboard read-back without payload retention.
 `c357fdf` adds the bounded `aiat.trace-incident.v1` summary/checker over that
 trace authority; partial coverage remains descriptive and no payloads are
-retained. The next bounded R6 increment (`b4b7cef`) exposes the operator-only
-incident route, generated API contracts, dashboard proxy, and existing
-`/logs?trace_id=…` deep link with status/severity/coverage/finding-count
-metadata only. Live provider configuration/callback, selected model-backed
-worker read-back, complete mail-span/SLO evidence, live retention, and richer
-incident chronology remain open.
+retained. The next bounded R6 increments (`b4b7cef`, `869202c`) expose the
+operator-only incident route, generated API contracts, dashboard proxy, and
+existing `/logs?trace_id=…` deep link with status/severity/coverage,
+finding-count, and payload-free finding-reference chronology. Live provider
+configuration/callback, selected model-backed worker read-back, complete
+mail-span/SLO evidence, live retention, and richer live chronology remain open.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
