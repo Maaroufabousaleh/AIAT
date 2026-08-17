@@ -148,6 +148,16 @@ test.describe("CEO evidence detail", () => {
           coverage_status: "partial",
           item_count: 3,
           finding_count: 1,
+          findings: [{
+            id: "api-incident-1",
+            source: "api_requests",
+            kind: "api_request",
+            status: "error",
+            status_code: 503,
+            operation: "POST /workers",
+            service: "orchestrator_api",
+            occurred_at: "2026-08-17T11:59:00Z",
+          }],
           affected_sources: ["api_requests"],
           notice_codes: ["TRACE_COVERAGE_PARTIAL", "TRACE_FAILURE_FINDINGS"],
         }),
@@ -161,6 +171,8 @@ test.describe("CEO evidence detail", () => {
     await expect(page.getByTestId("trace-incident-summary")).toContainText("Severity: critical");
     await expect(page.getByTestId("trace-incident-summary")).toContainText("Coverage: partial");
     await expect(page.getByTestId("trace-incident-summary")).toContainText("Findings: 1");
+    await expect(page.getByTestId("trace-incident-findings")).toContainText("api-incident-1");
+    await expect(page.getByTestId("trace-incident-findings")).toContainText("HTTP 503");
     await expect(page.getByTestId("trace-incident-summary")).not.toContainText("secret");
     await expect(page.getByTestId("trace-incident-summary")).not.toContainText("raw payload");
   });

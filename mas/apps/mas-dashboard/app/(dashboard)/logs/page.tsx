@@ -24,6 +24,17 @@ type LogLine = {
   ts: string;
 };
 
+type TraceIncidentFinding = {
+  id: string;
+  source: string;
+  kind: string;
+  status: string | null;
+  status_code: number | null;
+  operation: string | null;
+  service: string | null;
+  occurred_at: string | null;
+};
+
 type TraceIncident = {
   schema_version: string;
   trace_id: string;
@@ -33,6 +44,7 @@ type TraceIncident = {
   coverage_status: "complete" | "partial" | "empty";
   item_count: number;
   finding_count: number;
+  findings: TraceIncidentFinding[];
   affected_sources: string[];
   notice_codes: string[];
 };
@@ -461,6 +473,30 @@ export default function LogsPage() {
               {incident.affected_sources.length > 0 ? `Affected sources: ${incident.affected_sources.join(", ")}. ` : ""}
               {incident.notice_codes.length > 0 ? `Notices: ${incident.notice_codes.join(", ")}.` : ""}
             </p>
+          )}
+          {incident && incident.findings.length > 0 && (
+            <ol
+              className="mt-3 grid gap-2 border-t border-cyan-400/10 pt-3 text-xs"
+              aria-label="Trace incident finding chronology"
+              data-testid="trace-incident-findings"
+            >
+              {incident.findings.slice(0, 100).map((finding) => (
+                <li key={`${finding.source}:${finding.id}`} className="grid gap-1 rounded border border-slate-800/80 bg-slate-950/40 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <div className="min-w-0">
+                    <p className="break-all font-mono text-slate-200">{finding.id}</p>
+                    <p className="mt-1 break-words text-slate-400">
+                      {finding.source} · {finding.kind}
+                      {finding.operation ? ` · ${finding.operation}` : ""}
+                      {finding.service ? ` · ${finding.service}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-left text-slate-400 sm:text-right">
+                    <p className="text-rose-200">{finding.status_code ? `HTTP ${finding.status_code}` : finding.status ?? "failure"}</p>
+                    {finding.occurred_at && <p className="mt-1 break-all font-mono text-[11px] text-slate-500">{finding.occurred_at}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
           )}
         </section>
       )}
