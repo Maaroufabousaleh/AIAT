@@ -96,6 +96,7 @@ from mas_core.observability.trace_evidence import (
     build_trace_evidence,
     trace_retention_from_manifest,
 )
+from mas_core.observability.trace_incident import TraceIncident, build_trace_incident
 from mas_core.observability.tracing import (
     bind_trace_id,
     clear_trace_context,
@@ -4409,6 +4410,24 @@ async def get_trace_evidence(
         generated_at=datetime.now(tz=UTC).isoformat(),
         limit=limit * 3,
     )
+
+
+@app.get("/observability/incidents/{trace_id}", response_model=TraceIncident)
+async def get_trace_incident(
+    trace_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> TraceIncident:
+    """Return a bounded incident summary for one operator trace citation.
+
+    The incident view is a read-only projection over the same secret-safe
+    trace evidence boundary. It classifies observed failure references while
+    preserving partial/empty instrumentation coverage as an explicit status;
+    it is not an execution, release, or licence gate.
+    """
+
+    evidence = await get_trace_evidence(trace_id, request, limit)
+    return build_trace_incident(evidence)
 
 
 @app.get("/observability/slo", response_model=SLOReport)

@@ -1125,6 +1125,39 @@ export type TraceEvidenceItem = {
   worker_run_id?: (string | null);
 };
 
+export type TraceIncident = {
+  affected_sources?: Array<string>;
+  coverage_status: ("complete" | "partial" | "empty");
+  finding_count?: number;
+  findings?: Array<TraceIncidentFinding>;
+  first_observed_at?: (string | null);
+  generated_at?: (string | null);
+  item_count?: number;
+  last_observed_at?: (string | null);
+  notice_codes?: Array<string>;
+  project_ids?: Array<string>;
+  schema_version?: string;
+  severity: ("info" | "warning" | "critical");
+  source_counts?: {
+  [key: string]: number;
+};
+  status: ("clear" | "attention" | "not_found");
+  trace_id: string;
+};
+
+export type TraceIncidentFinding = {
+  id: string;
+  kind: string;
+  occurred_at?: (string | null);
+  operation?: (string | null);
+  project_id?: (string | null);
+  service?: (string | null);
+  source: string;
+  status?: (string | null);
+  status_code?: (number | null);
+  worker_run_id?: (string | null);
+};
+
 export type TraceRetentionPolicy = {
   retention_days?: number;
   sample_rate?: number;
@@ -3392,6 +3425,18 @@ export type OrchestratorApiOperations = {
     };
     responses: {
       "200": CapacityForecast;
+      "422": HTTPValidationError;
+    };
+  };
+  "get_trace_incident_observability_incidents__trace_id__get": {
+    method: "GET";
+    path: "/observability/incidents/{trace_id}";
+    parameters: {
+      "path:trace_id": string;
+      "query:limit"?: number;
+    };
+    responses: {
+      "200": TraceIncident;
       "422": HTTPValidationError;
     };
   };

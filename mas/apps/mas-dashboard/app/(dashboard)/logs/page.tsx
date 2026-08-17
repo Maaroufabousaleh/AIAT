@@ -24,6 +24,19 @@ type LogLine = {
   ts: string;
 };
 
+type TraceIncident = {
+  schema_version: string;
+  trace_id: string;
+  generated_at: string | null;
+  status: "clear" | "attention" | "not_found";
+  severity: "info" | "warning" | "critical";
+  coverage_status: "complete" | "partial" | "empty";
+  item_count: number;
+  finding_count: number;
+  affected_sources: string[];
+  notice_codes: string[];
+};
+
 /** Log severity buckets we surface in the UI. "all" means "no filter". */
 type LogLevel = "all" | "error" | "warn" | "info" | "debug";
 
@@ -42,6 +55,7 @@ const LEVEL_LEGEND: { key: Exclude<LogLevel, "all">; label: string; swatch: stri
  * download the recent buffer.
  */
 export default function LogsPage() {
+  const [traceId, setTraceId] = useState("");
   const [container, setContainer] = useState<string>(CONTAINER_NAMES[0]);
   const [tail, setTail] = useState<number>(200);
   const [follow, setFollow] = useState<boolean>(false);
@@ -59,11 +73,57 @@ export default function LogsPage() {
   const linesRef = useRef<LogLine[]>([]);
   const hasReadContextRef = useRef(false);
   const streamGenerationRef = useRef(0);
+  const incidentRef = useRef<TraceIncident | null>(null);
 
   // UI-only filter state
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<LogLevel>("all");
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [incident, setIncident] = useState<TraceIncident | null>(null);
+  const [incidentState, setIncidentState] = useState<"idle" | "loading" | "loaded" | "stale" | "unavailable" | "denied">("idle");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setTraceId(params.get("trace_id")?.trim() ?? "");
+  }, []);
+
+  useEffect(() => {
+    if (!traceId) {
+      incidentRef.current = null;
+      setIncident(null);
+      setIncidentState("idle");
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    setIncidentState("loading");
+    void fetch(`/api/observability/incidents/${encodeURIComponent(traceId)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          setIncidentState("denied");
+          return null;
+        }
+        if (!response.ok) throw new Error("trace incident unavailable");
+        return response.json() as Promise<TraceIncident>;
+      })
+      .then((value) => {
+        if (!active || !value) return;
+        incidentRef.current = value;
+        setIncident(value);
+        setIncidentState("loaded");
+      })
+      .catch(() => {
+        if (!active) return;
+        setIncidentState(incidentRef.current ? "stale" : "unavailable");
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [traceId]);
 
   const stopStream = () => {
     if (esRef.current) {
@@ -370,6 +430,40 @@ export default function LogsPage() {
           </div>
         ) : undefined}
       />
+
+      {traceId && (
+        <section
+          className="dashboard-surface border border-cyan-400/20 bg-cyan-400/5 px-4 py-3"
+          aria-label="Trace incident summary"
+          data-testid="trace-incident-summary"
+          aria-busy={incidentState === "loading"}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-cyan-200">Trace incident</p>
+              <p className="mt-1 break-all font-mono text-xs text-slate-400">{traceId}</p>
+            </div>
+            {incident && (
+              <div className="flex flex-wrap gap-2 text-xs" aria-label="Trace incident status">
+                <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">Status: {incident.status}</span>
+                <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">Severity: {incident.severity}</span>
+                <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">Coverage: {incident.coverage_status}</span>
+                <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">Findings: {incident.finding_count}</span>
+              </div>
+            )}
+          </div>
+          {incidentState === "loading" && <p className="mt-2 text-xs text-slate-500" role="status">Loading bounded incident summary…</p>}
+          {incidentState === "unavailable" && <p className="mt-2 text-xs text-amber-300" role="status">Incident summary is temporarily unavailable; the trace citation remains valid.</p>}
+          {incidentState === "stale" && <p className="mt-2 text-xs text-amber-300" role="status">Showing the last known incident summary; refresh is temporarily unavailable.</p>}
+          {incidentState === "denied" && <p className="mt-2 text-xs text-amber-300" role="status">Incident summary access is unavailable; the trace citation remains valid.</p>}
+          {incident && (incident.affected_sources.length > 0 || incident.notice_codes.length > 0) && (
+            <p className="mt-2 break-words text-xs text-slate-400">
+              {incident.affected_sources.length > 0 ? `Affected sources: ${incident.affected_sources.join(", ")}. ` : ""}
+              {incident.notice_codes.length > 0 ? `Notices: ${incident.notice_codes.join(", ")}.` : ""}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Search + level filter row */}
       {!accessDenied && <section className="dashboard-surface flex flex-wrap items-center gap-3 px-4 py-3" aria-label="Log filters">

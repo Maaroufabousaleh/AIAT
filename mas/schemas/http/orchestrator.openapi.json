@@ -6502,6 +6502,261 @@
         "title": "TraceEvidenceItem",
         "type": "object"
       },
+      "TraceIncident": {
+        "additionalProperties": false,
+        "description": "Secret-safe incident summary derived from one trace evidence response.",
+        "properties": {
+          "affected_sources": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Affected Sources",
+            "type": "array"
+          },
+          "coverage_status": {
+            "enum": [
+              "complete",
+              "partial",
+              "empty"
+            ],
+            "title": "Coverage Status",
+            "type": "string"
+          },
+          "finding_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/TraceIncidentFinding"
+            },
+            "maxItems": 100,
+            "title": "Findings",
+            "type": "array"
+          },
+          "first_observed_at": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Observed At"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "item_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "notice_codes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Notice Codes",
+            "type": "array"
+          },
+          "project_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Project Ids",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": "aiat.trace-incident.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Source Counts",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "clear",
+              "attention",
+              "not_found"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "status",
+          "severity",
+          "coverage_status"
+        ],
+        "title": "TraceIncident",
+        "type": "object"
+      },
+      "TraceIncidentFinding": {
+        "additionalProperties": false,
+        "description": "One bounded failure reference suitable for an operator incident view.",
+        "properties": {
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service"
+          },
+          "source": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "worker_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Run Id"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "kind"
+        ],
+        "title": "TraceIncidentFinding",
+        "type": "object"
+      },
       "TraceRetentionPolicy": {
         "additionalProperties": false,
         "description": "Bounded trace sampling/retention metadata used by the read surface.",
@@ -15198,6 +15453,58 @@
           }
         },
         "summary": "Get Capacity Forecast"
+      }
+    },
+    "/observability/incidents/{trace_id}": {
+      "get": {
+        "description": "Return a bounded incident summary for one operator trace citation.\n\nThe incident view is a read-only projection over the same secret-safe\ntrace evidence boundary. It classifies observed failure references while\npreserving partial/empty instrumentation coverage as an explicit status;\nit is not an execution, release, or licence gate.",
+        "operationId": "get_trace_incident_observability_incidents__trace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 300,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceIncident"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trace Incident"
       }
     },
     "/observability/slo": {

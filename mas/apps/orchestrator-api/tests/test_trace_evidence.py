@@ -238,6 +238,35 @@ async def test_operator_trace_evidence_projects_safe_identity_mail_span(client, 
 
 
 @pytest.mark.anyio
+async def test_operator_trace_incident_projects_bounded_evidence(client):
+    from orchestrator_api.main import app
+
+    previous = app.state.storage
+    app.state.storage = _TraceStorage()
+    try:
+        response = await client.get(
+            "/observability/incidents/trace-123",
+            headers={"X-API-Key": "test-operator-key"},
+        )
+    finally:
+        app.state.storage = previous
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "aiat.trace-incident.v1"
+    assert payload["trace_id"] == "trace-123"
+    assert payload["status"] == "clear"
+    assert payload["severity"] == "info"
+    assert payload["coverage_status"] == "partial"
+    assert payload["finding_count"] == 0
+    assert payload["notice_codes"] == [
+        "TRACE_COVERAGE_PARTIAL",
+        "TRACE_NO_FAILURE_FINDINGS",
+    ]
+    assert "do-not-return" not in response.text
+
+
+@pytest.mark.anyio
 async def test_trace_evidence_requires_operator_and_rejects_invalid_id(client):
     from orchestrator_api.main import app
 
@@ -252,8 +281,18 @@ async def test_trace_evidence_requires_operator_and_rejects_invalid_id(client):
             "/observability/traces/not%20safe",
             headers={"X-API-Key": "test-operator-key"},
         )
+        incident_denied = await client.get(
+            "/observability/incidents/trace-123",
+            headers={"X-API-Key": "test-mas-key"},
+        )
+        incident_invalid = await client.get(
+            "/observability/incidents/not%20safe",
+            headers={"X-API-Key": "test-operator-key"},
+        )
     finally:
         app.state.storage = previous
 
     assert denied.status_code == 403
     assert invalid.status_code == 422
+    assert incident_denied.status_code == 403
+    assert incident_invalid.status_code == 422

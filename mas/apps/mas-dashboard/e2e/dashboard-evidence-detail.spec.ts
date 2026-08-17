@@ -134,6 +134,37 @@ test.describe("CEO evidence detail", () => {
     await expect(page.getByTestId("ceo-evidence-canonical-link")).toHaveAttribute("href", "/logs?trace_id=trace-001");
   });
 
+  test("renders the bounded incident summary on the trace logs deep link", async ({ page }) => {
+    await page.route("**/api/observability/incidents/trace-incident-001", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema_version: "aiat.trace-incident.v1",
+          trace_id: "trace-incident-001",
+          generated_at: "2026-08-17T12:00:00Z",
+          status: "attention",
+          severity: "critical",
+          coverage_status: "partial",
+          item_count: 3,
+          finding_count: 1,
+          affected_sources: ["api_requests"],
+          notice_codes: ["TRACE_COVERAGE_PARTIAL", "TRACE_FAILURE_FINDINGS"],
+        }),
+      });
+    });
+
+    await authenticate(page, "/logs?trace_id=trace-incident-001");
+
+    await expect(page.getByTestId("trace-incident-summary")).toContainText("trace-incident-001");
+    await expect(page.getByTestId("trace-incident-summary")).toContainText("Status: attention");
+    await expect(page.getByTestId("trace-incident-summary")).toContainText("Severity: critical");
+    await expect(page.getByTestId("trace-incident-summary")).toContainText("Coverage: partial");
+    await expect(page.getByTestId("trace-incident-summary")).toContainText("Findings: 1");
+    await expect(page.getByTestId("trace-incident-summary")).not.toContainText("secret");
+    await expect(page.getByTestId("trace-incident-summary")).not.toContainText("raw payload");
+  });
+
   test("renders model catalogue scalars without nested bindings", async ({ page }) => {
     await page.route("**/api/evidence/model/model-001", async (route) => {
       await route.fulfill({

@@ -900,6 +900,35 @@ class TraceEvidenceItem(TypedDict):
     total_tokens: NotRequired[int | Any]
     worker_run_id: NotRequired[str | Any]
 
+class TraceIncident(TypedDict):
+    affected_sources: NotRequired[list[str]]
+    coverage_status: Required[Literal['complete', 'partial', 'empty']]
+    finding_count: NotRequired[int]
+    findings: NotRequired[list[TraceIncidentFinding]]
+    first_observed_at: NotRequired[str | Any]
+    generated_at: NotRequired[str | Any]
+    item_count: NotRequired[int]
+    last_observed_at: NotRequired[str | Any]
+    notice_codes: NotRequired[list[str]]
+    project_ids: NotRequired[list[str]]
+    schema_version: NotRequired[str]
+    severity: Required[Literal['info', 'warning', 'critical']]
+    source_counts: NotRequired[dict[str, int]]
+    status: Required[Literal['clear', 'attention', 'not_found']]
+    trace_id: Required[str]
+
+class TraceIncidentFinding(TypedDict):
+    id: Required[str]
+    kind: Required[str]
+    occurred_at: NotRequired[str | Any]
+    operation: NotRequired[str | Any]
+    project_id: NotRequired[str | Any]
+    service: NotRequired[str | Any]
+    source: Required[str]
+    status: NotRequired[str | Any]
+    status_code: NotRequired[int | Any]
+    worker_run_id: NotRequired[str | Any]
+
 class TraceRetentionPolicy(TypedDict):
     retention_days: NotRequired[int]
     sample_rate: NotRequired[float]
@@ -2499,6 +2528,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=('CapacityForecast', 'HTTPValidationError'),
     ),
+    'get_trace_incident_observability_incidents__trace_id__get': ApiOperation(
+        operation_id='get_trace_incident_observability_incidents__trace_id__get',
+        method='GET',
+        path='/observability/incidents/{trace_id}',
+        path_params=('trace_id',),
+        query_params=('limit',),
+        request_body_type=None,
+        response_types=('TraceIncident', 'HTTPValidationError'),
+    ),
     'get_operational_slo_report_observability_slo_get': ApiOperation(
         operation_id='get_operational_slo_report_observability_slo_get',
         method='GET',
@@ -3437,8 +3475,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 130
-OPERATION_COUNT = 269
+MODEL_COUNT = 132
+OPERATION_COUNT = 270
 
 __all__ = [
     "ApiOperation",
@@ -3563,6 +3601,8 @@ __all__ = [
     'TeamRunnerStorageRequest',
     'TraceEvidence',
     'TraceEvidenceItem',
+    'TraceIncident',
+    'TraceIncidentFinding',
     'TraceRetentionPolicy',
     'TransitionRequest',
     'UpdateCredentialRequest',
