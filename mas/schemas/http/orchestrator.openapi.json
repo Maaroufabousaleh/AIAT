@@ -15309,7 +15309,7 @@
     },
     "/metrics": {
       "get": {
-        "description": "Expose Prometheus metrics at /metrics.",
+        "description": "Expose Prometheus metrics at /metrics.\n\nProject-state gauges are aggregate presence metrics, so a scrape must\nrefresh them from the durable project table before rendering.  The\nprocess-global registry is still useful when the database is unavailable\n(for example during a health probe or a unit-test double), therefore the\nreconciliation remains best-effort and never turns observability into a\ncontrol-plane outage.",
         "operationId": "prometheus_metrics_metrics_get",
         "responses": {
           "200": {
