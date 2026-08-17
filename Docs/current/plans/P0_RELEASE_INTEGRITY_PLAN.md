@@ -4,7 +4,7 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-11):** in progress. The licence metadata boundary,
+**Current status (2026-08-17):** in progress. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -163,9 +163,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   tool-version identities, environment-presence flags, and a deterministic
   manifest digest; it does not mutate deployment state or replace native
   release evidence.
-- [x] Add `scripts/check_docs_index.py` to keep the canonical target, ten
-  feature specifications, three ordered plans, local links, roadmap references,
-  and metadata-only policy markers synchronized in CI/release evidence.
+- [x] Add `scripts/check_docs_index.py` to keep the canonical target, twelve
+  feature specifications, three ordered plans, local links, roadmap
+  references, and metadata-only policy markers synchronized in CI/release
+  evidence.
 - [x] Add `docs/provenance/operator_pins.yaml` and
   `scripts/check_operator_pins.py` so production image CLIs/dependencies use
   exact declarations while host/operator/deployment capabilities carry an
