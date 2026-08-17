@@ -31,12 +31,14 @@ the hold.
 Commit `01996c9` adds the provider-neutral `aiat.trace-retention-execution.v1`
 contract and deterministic `InMemoryRetentionStore` rehearsal. Preview mode is
 non-mutating; apply mode sends one complete atomic action batch only after
-project scope, authoritative hold IDs, typed backup-parity evidence, and
-explicit human confirmation pass. Commit `57e13cb` validates matching source,
-backup, and restored manifest digests, record counts, checked read-back count,
-and clean-target verification before apply. `scripts/check_trace_retention_execution.py`
-proves the preview/apply and audit invariants, while `--live` remains blocked
-until a reviewed storage/recovery adapter is configured.
+project scope, a typed authoritative hold snapshot, typed backup-parity
+evidence, and explicit human confirmation pass. Commit `57e13cb` validates
+matching source, backup, and restored manifest digests, record counts, checked
+read-back count, and clean-target verification; `15054ba` validates hold source,
+observed time, active/released state, duplicate handling, and project scope.
+`scripts/check_trace_retention_execution.py` proves the preview/apply and audit
+invariants, while `--live` remains blocked until reviewed registry/storage
+recovery adapters are configured.
 
 Invalid rows are reported and excluded from deletion candidates. The planner
 does not connect to storage, delete spans, archive bytes, or establish the
@@ -72,7 +74,7 @@ when it declares the retention-plan schema, `mode: read-only-plan`, and
 
 The operator incident API/dashboard groups (`b4b7cef`, `869202c`) and the
 retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) and execution rehearsal
-(`01996c9`) consume the same bounded trace evidence authority but do not claim
+(`01996c9`, `57e13cb`, `15054ba`) consume the same bounded trace evidence authority but do not claim
 live retention enforcement. They expose only safe incident metadata, finding
 references, counts, policy scalars, and an auditable fixture result; production
 retention execution remains an independent storage/recovery action.

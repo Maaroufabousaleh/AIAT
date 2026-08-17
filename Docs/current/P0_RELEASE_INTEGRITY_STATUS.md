@@ -316,10 +316,11 @@ single frozen commit before production claims are made.
   metadata guard; all validate bounded policy/candidate metadata and prove
   `mutation_performed: false` without applying retention. The follow-on
   `01996c9` execution contract/rehearsal, hardened by typed parity evidence in
-  `57e13cb`, keeps live storage mutation blocked until project scope,
-  authoritative holds, matching checksum/count/clean-target backup parity,
-  human confirmation, audit, and restore evidence are supplied by a reviewed
-  adapter.
+  `57e13cb` and a typed authoritative hold snapshot in `15054ba`, keeps live
+  storage mutation blocked until project scope, matching
+  checksum/count/clean-target backup parity, current hold-registry evidence,
+  human confirmation, audit, and restore evidence are supplied by reviewed
+  adapters.
 
 ### SLO and capacity read models
 
