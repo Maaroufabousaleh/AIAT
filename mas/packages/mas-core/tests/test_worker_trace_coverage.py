@@ -7,8 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mas_core.observability.mail_edge import normalize_provider_webhook
 from mas_core.observability.trace_evidence import build_trace_evidence
-from mas_core.observability.worker_trace_coverage import evaluate_worker_trace_coverage
+from mas_core.observability.worker_trace_coverage import (
+    WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
+    evaluate_worker_mail_edge_coverage,
+    evaluate_worker_trace_coverage,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -83,3 +88,53 @@ def test_worker_trace_coverage_live_dispatch_requires_explicit_confirmation() ->
     assert report["status"] == "blocked"
     assert report["licence_metadata_is_gate"] is False
     assert "confirm-dispatch" in report["reason"]
+
+
+def test_worker_mail_edge_coverage_joins_independent_payload_free_contracts() -> None:
+    trace_id = "worker-mail-trace"
+    worker_id = "00000000-0000-4000-a000-000000000904"
+    evidence = build_trace_evidence(
+        trace_id=trace_id,
+        worker_usage_rows=[{"id": "usage", "run_id": "run", "prompt_tokens": 1}],
+        artifact_rows=[{"id": "artifact", "run_id": "run", "artifact_id": 1}],
+        integration_evidence_rows=[{"id": "integration", "connection_id": "conn"}],
+        native_span_rows=[
+            {"id": "model", "source_kind": "model", "operation": "model.call"},
+            {"id": "worker", "source_kind": "worker", "operation": "worker.execute"},
+            {"id": "integration-span", "source_kind": "integration", "operation": "pm.update"},
+        ],
+    )
+    delivered = normalize_provider_webhook(
+        "resend",
+        {"id": "event-delivered", "type": "email.delivered", "data": {"email_id": "message"}},
+        signature_verified=True,
+        worker_id=worker_id,
+        trace_id=trace_id,
+    )
+    bounced = normalize_provider_webhook(
+        "resend",
+        {"id": "event-bounced", "type": "email.bounced", "data": {"email_id": "message-2"}},
+        signature_verified=True,
+        worker_id=worker_id,
+        trace_id=trace_id,
+    )
+    report = evaluate_worker_mail_edge_coverage(
+        evidence,
+        [delivered, bounced],
+        trace_id=trace_id,
+        worker_id=worker_id,
+        require_integration=True,
+    )
+    assert report["schema_version"] == WORKER_MAIL_EDGE_COVERAGE_SCHEMA
+    assert report["status"] == "pass"
+    assert report["worker_trace"]["status"] == "pass"
+    assert report["mail_edge"]["status"] == "pass"
+    assert report["licence_metadata_is_gate"] is False
+
+
+def test_worker_mail_edge_coverage_does_not_hide_missing_scope_or_provider_signals() -> None:
+    evidence = _evidence()
+    report = evaluate_worker_mail_edge_coverage(evidence, [], require_mail_edge=True)
+    assert report["status"] == "fail"
+    assert "mail_edge_trace_scope" in report["missing_required_signals"]
+    assert "mail_edge_worker_scope" in report["missing_required_signals"]

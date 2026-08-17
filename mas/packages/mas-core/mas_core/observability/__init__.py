@@ -101,6 +101,14 @@ from mas_core.observability.tracing import (
     new_trace_id,
     resolve_trace_id,
 )
+from mas_core.observability.worker_trace_coverage import (
+    WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
+    WORKER_TRACE_COVERAGE_SCHEMA,
+    WORKER_TRACE_OPTIONAL_SOURCES,
+    WORKER_TRACE_REQUIRED_SOURCES,
+    evaluate_worker_mail_edge_coverage,
+    evaluate_worker_trace_coverage,
+)
 
 __all__ = [
     "API_OBSERVATION_SCHEMA",
@@ -177,6 +185,12 @@ __all__ = [
     "TraceIncident",
     "TraceIncidentFinding",
     "build_trace_incident",
+    "WORKER_MAIL_EDGE_COVERAGE_SCHEMA",
+    "WORKER_TRACE_COVERAGE_SCHEMA",
+    "WORKER_TRACE_OPTIONAL_SOURCES",
+    "WORKER_TRACE_REQUIRED_SOURCES",
+    "evaluate_worker_mail_edge_coverage",
+    "evaluate_worker_trace_coverage",
     # Tracing
     "bind_trace_id",
     "clear_trace_context",

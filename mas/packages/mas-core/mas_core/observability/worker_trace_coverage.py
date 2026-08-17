@@ -9,12 +9,14 @@ mistaken for complete distributed coverage.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
+from .mail_edge import MailEdgeObservation, evaluate_mail_edge_coverage
 from .trace_evidence import TraceEvidence
 
 WORKER_TRACE_COVERAGE_SCHEMA = "aiat.worker-trace-coverage.v1"
+WORKER_MAIL_EDGE_COVERAGE_SCHEMA = "aiat.worker-mail-edge-coverage.v1"
 WORKER_TRACE_REQUIRED_SOURCES = (
     "worker_usage_records",
     "worker_artifacts",
@@ -111,9 +113,69 @@ def evaluate_worker_trace_coverage(
     }
 
 
+def evaluate_worker_mail_edge_coverage(
+    evidence: TraceEvidence | Mapping[str, Any],
+    observations: Iterable[MailEdgeObservation | Mapping[str, Any]],
+    *,
+    trace_id: str | None = None,
+    worker_id: str | None = None,
+    require_integration: bool = False,
+    require_mail_edge: bool = True,
+) -> dict[str, Any]:
+    """Join worker trace sources with payload-free mail-edge observations.
+
+    The worker and mail-edge evaluators remain independent authorities.  This
+    function only provides an explicit cross-surface evidence result so an
+    operator cannot mistake a worker trace pass for provider/mail coverage.
+    It never selects, activates, dispatches, or authorizes a worker.
+    """
+
+    worker_report = evaluate_worker_trace_coverage(
+        evidence,
+        require_integration=require_integration,
+    )
+    mail_report = evaluate_mail_edge_coverage(
+        observations,
+        trace_id=trace_id,
+        worker_id=worker_id,
+    )
+    missing: list[str] = []
+    if worker_report["status"] != "pass":
+        missing.append("worker_trace_sources")
+    if require_mail_edge:
+        if not trace_id:
+            missing.append("mail_edge_trace_scope")
+        if not worker_id:
+            missing.append("mail_edge_worker_scope")
+        if mail_report["status"] != "pass":
+            missing.extend(
+                f"mail_edge:{name}"
+                for name in mail_report.get("missing", [])
+                if isinstance(name, str)
+            )
+    return {
+        "schema_version": WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
+        "status": "pass" if not missing else "fail",
+        "licence_metadata_is_gate": False,
+        "require_integration": bool(require_integration),
+        "require_mail_edge": bool(require_mail_edge),
+        "trace_id": trace_id,
+        "worker_id": worker_id,
+        "worker_trace": worker_report,
+        "mail_edge": mail_report,
+        "missing_required_signals": sorted(set(missing)),
+        "scope": (
+            "cross-surface worker trace and payload-free mail-edge evidence; "
+            "live worker execution and external provider delivery remain separate"
+        ),
+    }
+
+
 __all__ = [
+    "WORKER_MAIL_EDGE_COVERAGE_SCHEMA",
     "WORKER_TRACE_COVERAGE_SCHEMA",
     "WORKER_TRACE_REQUIRED_SOURCES",
     "WORKER_TRACE_OPTIONAL_SOURCES",
     "evaluate_worker_trace_coverage",
+    "evaluate_worker_mail_edge_coverage",
 ]
