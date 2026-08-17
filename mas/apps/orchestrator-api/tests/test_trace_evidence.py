@@ -151,7 +151,7 @@ class _TraceStorage:
                 "span_id": "native-old-span",
                 "source_kind": "transport",
                 "started_at": "2026-01-01T00:00:00+00:00",
-                "attributes_json": {"secret": "do-not-return"},
+                "attributes_json": {"secret": "do-not-return", "legal_hold": True},
             },
             {
                 "id": "native-new",
@@ -315,8 +315,11 @@ async def test_operator_retention_plan_is_read_only_and_bounded(client):
     assert payload["mode"] == "read-only-plan"
     assert payload["trace_id"] == "trace-123"
     assert payload["mutation_performed"] is False
-    assert payload["counts"]["archive"] == 1
-    assert payload["counts"]["retain"] == 1
+    assert payload["counts"]["archive"] == 0
+    assert payload["counts"]["retain"] == 2
+    assert payload["counts"]["legal_hold"] == 1
+    assert payload["deletion_ids"] == []
+    assert payload["candidates"][0]["legal_hold"] is True
     assert len(payload["candidates"]) == 2
     assert "do-not-return" not in response.text
 

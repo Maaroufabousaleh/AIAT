@@ -30,6 +30,7 @@ class TraceRetentionCounts(BaseModel):
     archive: int = Field(default=0, ge=0)
     delete: int = Field(default=0, ge=0)
     invalid: int = Field(default=0, ge=0)
+    legal_hold: int = Field(default=0, ge=0)
 
 
 class TraceRetentionCandidateResponse(BaseModel):
@@ -43,6 +44,7 @@ class TraceRetentionCandidateResponse(BaseModel):
     disposition: RetentionDisposition
     expires_at: str | None = Field(default=None, max_length=80)
     reason: str = Field(min_length=1, max_length=240)
+    legal_hold: bool = False
 
 
 class TraceRetentionPlanResponse(BaseModel):
@@ -80,6 +82,23 @@ def _utc(value: Any) -> datetime | None:
     return candidate.astimezone(UTC)
 
 
+def _legal_hold_active(row: Mapping[str, Any]) -> bool:
+    """Accept only an explicit boolean legal-hold marker.
+
+    Native span attributes are metadata supplied by a separate authority.  A
+    string such as ``"false"`` is deliberately not truthy here; an ambiguous
+    marker must never suppress an eligible retention action accidentally.
+    """
+
+    if row.get("legal_hold") is True:
+        return True
+    for key in ("attributes_json", "attributes"):
+        attributes = row.get(key)
+        if isinstance(attributes, Mapping) and attributes.get("legal_hold") is True:
+            return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class TraceRetentionCandidate:
     """One bounded native-span retention decision."""
@@ -90,6 +109,7 @@ class TraceRetentionCandidate:
     disposition: RetentionDisposition
     expires_at: datetime | None
     reason: str
+    legal_hold: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +119,7 @@ class TraceRetentionCandidate:
             "disposition": self.disposition,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "reason": self.reason,
+            "legal_hold": self.legal_hold,
         }
 
 
@@ -115,12 +136,14 @@ class TraceRetentionPlan:
 
     @property
     def counts(self) -> dict[str, int]:
-        return {
+        counts = {
             disposition: sum(
                 1 for candidate in self.candidates if candidate.disposition == disposition
             )
             for disposition in ("retain", "archive", "delete", "invalid")
         }
+        counts["legal_hold"] = sum(1 for candidate in self.candidates if candidate.legal_hold)
+        return counts
 
     @property
     def deletion_ids(self) -> tuple[str, ...]:
@@ -155,10 +178,12 @@ def plan_native_span_retention(
     """Classify native-span rows using only bounded metadata.
 
     ``retention_until`` is authoritative when present.  Otherwise the expiry
-    is derived from ``started_at`` and the policy's retention period.  Invalid
-    rows are retained in the report as ``invalid`` and are never returned as
-    deletion candidates.  The caller must separately apply a deletion or
-    archive operation after human/operator review.
+    is derived from ``started_at`` and the policy's retention period.  An
+    explicit boolean ``legal_hold`` marker (on the row or its scalar
+    ``attributes_json`` metadata) always retains the row and is counted
+    separately. Invalid rows are retained in the report as ``invalid`` and are
+    never returned as deletion candidates. The caller must separately apply a
+    deletion or archive operation after human/operator review.
     """
 
     if not isinstance(policy, TraceRetentionPolicy):
@@ -193,6 +218,7 @@ def plan_native_span_retention(
         source_kind = str(raw.get("source_kind") or "").strip() or None
         started_at = _utc(raw.get("started_at") or raw.get("created_at"))
         explicit_expiry = _utc(raw.get("retention_until"))
+        legal_hold = _legal_hold_active(raw)
         if not trace_id or not source_kind or started_at is None:
             candidates.append(
                 TraceRetentionCandidate(
@@ -202,14 +228,19 @@ def plan_native_span_retention(
                     disposition="invalid",
                     expires_at=explicit_expiry,
                     reason="missing safe trace/source/timestamp metadata",
+                    legal_hold=legal_hold,
                 )
             )
             notices.append(f"row {record_id!r} is not eligible for automatic retention action")
             continue
 
         expires_at = explicit_expiry or (started_at + timedelta(days=policy.retention_days))
-        if expires_at <= normalized_now:
-            disposition: RetentionDisposition = (
+        disposition: RetentionDisposition
+        if legal_hold:
+            disposition = "retain"
+            reason = "legal hold active"
+        elif expires_at <= normalized_now:
+            disposition = (
                 "delete" if policy.terminal_mode == "delete" else "archive"
             )
             reason = (
@@ -228,6 +259,7 @@ def plan_native_span_retention(
                 disposition=disposition,
                 expires_at=expires_at,
                 reason=reason,
+                legal_hold=legal_hold,
             )
         )
 

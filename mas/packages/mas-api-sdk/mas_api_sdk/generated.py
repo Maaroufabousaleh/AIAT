@@ -932,6 +932,7 @@ class TraceIncidentFinding(TypedDict):
 class TraceRetentionCandidateResponse(TypedDict):
     disposition: Required[Literal['retain', 'archive', 'delete', 'invalid']]
     expires_at: NotRequired[str | Any]
+    legal_hold: NotRequired[bool]
     reason: Required[str]
     record_id: Required[str]
     source_kind: NotRequired[str | Any]
@@ -941,6 +942,7 @@ class TraceRetentionCounts(TypedDict):
     archive: NotRequired[int]
     delete: NotRequired[int]
     invalid: NotRequired[int]
+    legal_hold: NotRequired[int]
     retain: NotRequired[int]
 
 class TraceRetentionPlanResponse(TypedDict):

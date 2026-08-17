@@ -1161,6 +1161,7 @@ export type TraceIncidentFinding = {
 export type TraceRetentionCandidateResponse = {
   disposition: ("retain" | "archive" | "delete" | "invalid");
   expires_at?: (string | null);
+  legal_hold?: boolean;
   reason: string;
   record_id: string;
   source_kind?: (string | null);
@@ -1171,6 +1172,7 @@ export type TraceRetentionCounts = {
   archive?: number;
   delete?: number;
   invalid?: number;
+  legal_hold?: number;
   retain?: number;
 };
 

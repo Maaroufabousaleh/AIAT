@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import httpx
-
 from check_trace_retention import _live, build_report
 
 
@@ -20,7 +19,7 @@ def test_live_retention_summary_is_bounded_and_non_mutating(monkeypatch) -> None
         "schema_version": "aiat.trace-retention-plan.v1",
         "mode": "read-only-plan",
         "trace_id": "live-trace-001",
-        "counts": {"retain": 3, "archive": 2, "delete": 1, "invalid": 0},
+        "counts": {"retain": 3, "archive": 2, "delete": 1, "invalid": 0, "legal_hold": 2},
         "policy": {
             "retention_days": 30,
             "sample_rate": 0.5,
@@ -52,7 +51,14 @@ def test_live_retention_summary_is_bounded_and_non_mutating(monkeypatch) -> None
     )
 
     assert report["status"] == "observed"
-    assert report["counts"] == {"retain": 3, "archive": 2, "delete": 1, "invalid": 0}
+    assert report["counts"] == {
+        "retain": 3,
+        "archive": 2,
+        "delete": 1,
+        "invalid": 0,
+        "legal_hold": 2,
+    }
+    assert report["candidate_count"] == 6
     assert report["mutation_performed"] is False
     assert "secret-key" not in json.dumps(report)
     assert "must-not-be-copied" not in json.dumps(report)

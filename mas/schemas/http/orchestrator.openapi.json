@@ -6783,6 +6783,11 @@
             ],
             "title": "Expires At"
           },
+          "legal_hold": {
+            "default": false,
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
           "reason": {
             "maxLength": 240,
             "minLength": 1,
@@ -6848,6 +6853,12 @@
             "default": 0,
             "minimum": 0.0,
             "title": "Invalid",
+            "type": "integer"
+          },
+          "legal_hold": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Legal Hold",
             "type": "integer"
           },
           "retain": {

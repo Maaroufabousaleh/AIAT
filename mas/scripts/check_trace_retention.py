@@ -48,7 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _rows() -> list[dict[str, str]]:
+def _rows() -> list[dict[str, Any]]:
     return [
         {
             "id": "span-expired",
@@ -69,6 +69,13 @@ def _rows() -> list[dict[str, str]]:
             "started_at": (EVALUATED_AT - timedelta(days=2)).isoformat(),
             "retention_until": (EVALUATED_AT - timedelta(minutes=1)).isoformat(),
         },
+        {
+            "id": "span-legal-hold",
+            "trace_id": "retention-fixture-trace",
+            "source_kind": "audit",
+            "started_at": (EVALUATED_AT - timedelta(days=45)).isoformat(),
+            "attributes_json": {"legal_hold": True},
+        },
         {"id": "span-invalid", "source_kind": "audit"},
     ]
 
@@ -85,9 +92,21 @@ def build_report() -> dict[str, object]:
         evaluated_at=EVALUATED_AT,
     )
     safe = (
-        delete_plan.counts == {"retain": 1, "archive": 0, "delete": 2, "invalid": 1}
+        delete_plan.counts == {
+            "retain": 2,
+            "archive": 0,
+            "delete": 2,
+            "invalid": 1,
+            "legal_hold": 1,
+        }
         and delete_plan.deletion_ids == ("span-expired", "span-explicit-expiry")
-        and archive_plan.counts == {"retain": 0, "archive": 1, "delete": 0, "invalid": 0}
+        and archive_plan.counts == {
+            "retain": 0,
+            "archive": 1,
+            "delete": 0,
+            "invalid": 0,
+            "legal_hold": 0,
+        }
         and not any(candidate.disposition == "delete" for candidate in archive_plan.candidates)
     )
     return {
@@ -157,7 +176,7 @@ def _live(
     try:
         normalized_counts = {
             key: int(counts.get(key, 0))
-            for key in ("retain", "archive", "delete", "invalid")
+            for key in ("retain", "archive", "delete", "invalid", "legal_hold")
         }
     except (TypeError, ValueError):
         return _blocked("retention plan returned invalid count metadata", url_configured=True)
@@ -169,7 +188,9 @@ def _live(
         "url_configured": True,
         "trace_id": payload.get("trace_id"),
         "counts": normalized_counts,
-        "candidate_count": sum(normalized_counts.values()),
+        "candidate_count": sum(
+            normalized_counts[key] for key in ("retain", "archive", "delete", "invalid")
+        ),
         "policy": {
             "retention_days": policy.get("retention_days"),
             "sample_rate": policy.get("sample_rate"),
