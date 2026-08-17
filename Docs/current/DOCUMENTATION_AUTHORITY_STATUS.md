@@ -164,12 +164,14 @@ existing finding references/timestamps only; partial/empty instrumentation
 remains independent from incident status. Live worker/provider coverage,
 retention application, and richer live chronology remain separate.
 
-The retention planning groups `f8829d6` and `b3fca97` add the maintained read-only
-`GET /observability/retention/plan` contract and
-`check_trace_retention.py --live` boundary. It reports bounded native-span candidate counts and policy
-metadata with `mutation_performed: false`; the typed response rejects extra
-fields and true mutation claims. Destructive enforcement, legal
-holds, erasure, project narrowing, audit, and restore parity remain separate.
+The retention planning groups `f8829d6`, `b3fca97`, and `9a80c6c` add the
+maintained read-only `GET /observability/retention/plan` contract and
+`check_trace_retention.py --live` boundary. It reports bounded native-span
+candidate counts and policy metadata with `mutation_performed: false`; the
+typed response rejects extra fields and true mutation claims, and the planner
+keeps explicit-boolean legal-hold rows out of deletion IDs. Destructive
+enforcement, authoritative holds, erasure, project narrowing, audit, and
+restore parity remain separate.
 
 ## Clean-checkout verification
 

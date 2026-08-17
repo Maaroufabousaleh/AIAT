@@ -177,15 +177,16 @@
 - [x] Add the non-mutating `aiat.trace-retention-plan.v1` planner and
   deterministic fixture. It classifies bounded native-span metadata using
   explicit `retention_until` or the company retention period, keeps invalid
-  rows out of deletion candidates, and makes archive/delete mode explicit;
-  applying deletion, archival, project narrowing, and backup parity remains
-  a separate operator/live storage action.
+  rows out of deletion candidates, makes archive/delete mode explicit, and
+  honors an explicit boolean `legal_hold` marker with a separate count;
+  applying deletion, archival, authoritative holds, project narrowing, and
+  backup parity remains a separate operator/live storage action (`9a80c6c`).
 - [x] Expose the bounded planner through the operator-only
   `GET /observability/retention/plan` route and generated contracts, and add
   `scripts/check_trace_retention.py --live` (`f8829d6`). The route/checker
   explicitly report `mutation_performed: false`; destructive enforcement,
-  legal holds, erasure, project narrowing, audit, and restore parity remain
-  separate gates.
+  authoritative legal holds, erasure, project narrowing, audit, and restore
+  parity remain separate gates.
 - [x] Type the retention-plan API response and reject mutation claims at
   serialization (`b3fca97`); generated OpenAPI/SDK artifacts now name the
   policy, count, and candidate schemas.

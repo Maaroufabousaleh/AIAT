@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
-**Baseline:** 2026-08-11
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the read-only retention-plan API/live checker (`f8829d6`), the hardened team-runner control-plane storage boundary (`22fc21a`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
+**Baseline:** 2026-08-17
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -57,11 +57,14 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   deterministic fixtures are `scripts/check_trace_evidence.py` and
   `scripts/check_native_trace_spans.py`.
 - The read-only `GET /observability/retention/plan` route and
-  `scripts/check_trace_retention.py --live` (`f8829d6`) classify bounded
+  `scripts/check_trace_retention.py --live` (`f8829d6`, `b3fca97`, `9a80c6c`) classify bounded
   native-span retention metadata and explicitly report
-  `mutation_performed: false`; no archive/delete, legal-hold, erasure,
-  project-narrowing, audit, or restore action is performed. The response
-  contract and generated artifacts are typed and enforced by `b3fca97`.
+  `mutation_performed: false`; an explicit boolean `legal_hold` marker keeps a
+  candidate retained and out of deletion IDs, while ambiguous string markers
+  do not activate a hold (`9a80c6c`). No archive/delete, authoritative hold,
+  erasure, project-narrowing, audit, or restore action is performed. The
+  response contract and generated artifacts are typed and enforced by
+  `b3fca97`.
 - `aiat.api-observation.v1` is written by orchestrator request middleware into
   a bounded Postgres ledger and feeds the platform `orchestrator_api` SLO. It
   persists only normalized route/method/status/outcome/duration and safe

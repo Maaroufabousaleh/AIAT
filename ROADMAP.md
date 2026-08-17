@@ -154,7 +154,7 @@ signed, trace-filtered identity dashboard read-back without payload retention.
 `c357fdf` adds the bounded `aiat.trace-incident.v1` summary/checker over that
 trace authority; partial coverage remains descriptive and no payloads are
 retained. The next bounded R6 increments (`b4b7cef`, `869202c`, `f8829d6`,
-`b3fca97`)
+`b3fca97`, `9a80c6c`)
 expose the
 operator-only incident route, generated API contracts, dashboard proxy, and
 existing `/logs?trace_id=…` deep link with status/severity/coverage,
@@ -165,7 +165,10 @@ does not apply archive/delete actions. Live provider configuration/callback,
 selected model-backed worker read-back, complete mail-span/SLO evidence, live
 retention enforcement, and richer live chronology remain open. `b3fca97`
 hardens the retention-plan response as a typed Pydantic/OpenAPI contract with
-bounded counts, candidates, and an enforced non-mutation field.
+bounded counts, candidates, and an enforced non-mutation field. `9a80c6c` adds
+strict explicit-boolean legal-hold metadata: held rows remain retained and out
+of deletion IDs, while ambiguous string markers do not activate a hold. Live
+hold authority and retention execution remain separate gates.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -651,7 +654,7 @@ implemented; the latest static ledger run is 48/48 pass with two pending
 technical evidence items and `NO-RELEASE`; the read-only secret-safe
 `/system/diagnostics` route, typed retention-plan response, and regenerated
 238-path/271-operation API contract are covered by focused tests
-(`2860838`, `f8829d6`, `b3fca97`), and the API-facing
+(`2860838`, `f8829d6`, `b3fca97`, `9a80c6c`), and the API-facing
 `scripts/mas-ctl` status/diagnostics/bootstrap wrapper is covered by six
 deterministic CLI cases (`380daf5`); message-router sender role/team coherence
 is enforced before dedupe/enqueue with static and mocked-router coverage
@@ -1159,8 +1162,10 @@ identity delivery-attempt rows can add safe `mail` spans, while provider
 mail-edge spans and live retention enforcement remain open.
 The deterministic `aiat.trace-retention-plan.v1` planner now classifies
 metadata-only native-span rows as retain/archive/delete/invalid without
-mutating storage; live application, project narrowing, and restore parity
-remain open. The refreshed local orchestrator deployment is now at migration
+mutating storage; `9a80c6c` honors explicit boolean legal-hold metadata and
+reports a separate hold count while keeping held rows out of deletion IDs.
+Live application/hold authority, project narrowing, and restore parity remain
+open. The refreshed local orchestrator deployment is now at migration
 `0036_native_trace_spans`; a bounded `/health` request and operator trace read
 observed one API-request row and one native transport span in the fresh
 2026-08-11 local run, with secret-safe
@@ -1260,15 +1265,17 @@ Required outcomes:
   `mail_delivery` SLO evidence, including bounded trace filtering and safe
   delivery `trace_id`/`span_id` metadata;
 - [x] deterministic native-span retention planner/fixture with explicit
-  non-mutating archive/delete decisions and invalid-row fail-safe handling;
+  non-mutating archive/delete decisions, invalid-row fail-safe handling, and
+  explicit-boolean legal-hold protection (`9a80c6c`);
 - [x] operator-only `GET /observability/retention/plan` read model, generated
   API contracts, and `check_trace_retention.py --live` (`f8829d6`) with an
   explicit `mutation_performed: false` invariant; destructive enforcement,
-  legal holds, erasure, project narrowing, audit, and restore parity remain
-  separate gates;
+  authoritative holds, erasure, project narrowing, audit, and restore parity
+  remain separate gates;
 - [x] type the retention-plan response and reject mutation claims at API
   validation (`b3fca97`); generated OpenAPI/SDK artifacts now expose bounded
-  count/candidate schemas rather than an untyped object.
+  count/candidate schemas, including legal-hold fields, rather than an untyped
+  object (`9a80c6c`).
 - [x] payload-free `aiat.trace-incident.v1` summary and deterministic/
   fail-closed checker (`c357fdf`); scalar failure references and partial/empty
   coverage are descriptive;

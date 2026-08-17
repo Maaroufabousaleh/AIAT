@@ -41,9 +41,12 @@ retention execution, and richer incident chronology remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
-fields. The route and checker classify bounded native-span metadata only and explicitly prove
-`mutation_performed: false`; archive/delete application, legal holds, erasure,
-project narrowing, audit, and restore parity remain open gates.
+fields. `9a80c6c` adds a fail-safe explicit-boolean `legal_hold` marker on
+native-span metadata: held rows remain `retain`, are counted separately, and
+never enter `deletion_ids`; ambiguous string markers do not activate a hold.
+The route and checker classify bounded metadata only and explicitly prove
+`mutation_performed: false`; archive/delete application, live hold authority,
+erasure, project narrowing, audit, and restore parity remain open gates.
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -170,14 +173,17 @@ retention:
 The API projects these values into `aiat.trace-retention-policy.v1`. They are
 operator-facing configuration metadata. They do not grant authority, bypass
 approvals, or turn resource notices into gates. Project-level narrowing,
-legal-hold/erasure workflows, and active retention enforcement require a
+legal-hold/erasure authority, and active retention enforcement require a
 separate live storage/recovery slice.
 
 The local retention planner now exposes `aiat.trace-retention-plan.v1`. It
 classifies native-span metadata as `retain`, `archive`, `delete`, or `invalid`,
 prefers an explicit `retention_until` when present, and never returns invalid
-rows as deletion candidates. The planner is non-mutating; an operator or
-future recovery worker must separately review and apply a storage action.
+rows as deletion candidates. An explicit boolean `legal_hold` marker on a row
+or its scalar `attributes_json` metadata forces `retain`, increments the
+separate legal-hold count, and cannot be overridden by expiry. The planner is
+non-mutating; an operator or future recovery worker must separately review and
+apply a storage action.
 
 The operator-only `GET /observability/retention/plan` route reads a bounded set
 of native-span metadata, applies the company retention policy, and returns the
@@ -186,7 +192,8 @@ plan with `mode: read-only-plan` and `mutation_performed: false`. An optional
 (`scripts/check_trace_retention.py --live`) requires the operator endpoint,
 validates the plan schema and non-mutation invariant, and emits only counts,
 policy scalars, and notice totals; it never returns candidate payloads or
-retention IDs.
+retention IDs. Generated clients expose the bounded `legal_hold` count and
+candidate marker without turning the metadata into a live approval authority.
 The generated API contract names the response, policy, count, and candidate
 schemas, and rejects extra fields or a true mutation flag before serialization.
 
@@ -263,7 +270,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   persistence are implemented, but no live worker dispatch or provider
   coverage is claimed yet.
 - Enforce sampling/retention and project-level narrowing in the live storage
-  and recovery workers, including backup/restore parity.
+  and recovery workers, sourcing legal holds from an authoritative hold
+  registry and including backup/restore parity. The planner’s metadata-only
+  hold guard is not live enforcement.
 - Extend the bounded dashboard summary with richer chronology only after the
   incident projection is populated by native/live deployment evidence; the
   current `aiat.trace-incident.v1` API, proxy, and deep-link boundary is

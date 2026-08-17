@@ -17,16 +17,22 @@ Commit `f8829d6` adds the operator-only `GET /observability/retention/plan`
 read model and generated API contracts, plus `check_trace_retention.py --live`.
 The route reads bounded native-span metadata, returns `mode: read-only-plan`,
 and proves `mutation_performed: false`; the live checker validates that
-invariant and emits only bounded counts/policy metadata. No archive, delete,
-legal-hold, erasure, project-narrowing, audit, or restore action is performed.
+invariant and emits only bounded counts/policy metadata. No archive/delete or
+authoritative legal-hold, erasure, project-narrowing, audit, or restore action
+is performed.
 Commit `b3fca97` makes this response a typed Pydantic/OpenAPI model with
 bounded count/candidate schemas and validation that rejects a true mutation
 flag.
+Commit `9a80c6c` adds an explicit-boolean `legal_hold` marker to each candidate
+and a separate `counts.legal_hold` value. Held rows remain `retain` and never
+enter `deletion_ids`; ambiguous string values such as `"true"` do not activate
+the hold.
 
 Invalid rows are reported and excluded from deletion candidates. The planner
-does not connect to storage, delete spans, archive bytes, enforce legal holds,
-or change project authority. Retention mode is operational metadata; licence
-and restriction notices remain metadata-only and never affect the result.
+does not connect to storage, delete spans, archive bytes, or establish the
+authoritative hold registry. Retention mode and hold markers are operational
+metadata; licence and restriction notices remain metadata-only and never
+affect the result.
 
 ## Verification evidence
 
@@ -50,7 +56,7 @@ when it declares the retention-plan schema, `mode: read-only-plan`, and
 `blocked` with exit code 2.
 
 The operator incident API/dashboard groups (`b4b7cef`, `869202c`) and the
-retention plan group (`f8829d6`) consume the same bounded trace evidence
+retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) consume the same bounded trace evidence
 authority but do not apply retention decisions. They expose only safe incident
 metadata, finding references, counts, and policy scalars; retention execution
 remains an independent storage/recovery action.
@@ -58,6 +64,7 @@ remains an independent storage/recovery action.
 ## Remaining gates
 
 - Apply retention decisions through an operator/recovery worker with project
-  narrowing, legal-hold/erasure handling, audit records, and backup parity.
+  narrowing, an authoritative legal-hold/erasure registry, audit records, and
+  backup parity. The current `legal_hold` metadata guard is planner-only.
 - Prove retention behavior against restored storage and a representative live
   multi-service trace workload.

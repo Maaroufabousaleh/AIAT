@@ -94,7 +94,7 @@ The core database migration graph has a single current head at `0036_native_trac
 | Security evaluation and sandboxing | **Partial** | Semgrep/SkillSpector paths and bounded `semgrep`/`skillspector`/`trufflehog` aliases, sandbox policy, gVisor default, Firecracker option, tool limits, and network separation are implemented. Live host proof for `runsc`/Firecracker and provider-specific scanner certification remain environment dependent. |
 | Network isolation | **Static contract implemented; live retest required** | Team runners now receive only router/tool/orchestrator/model-gateway variables and use the authenticated control-plane storage API for checkpoints, usage, documents, and reviews. PgBouncer and MinIO remain internal-only and are not on the `workers` network. The old critical defect must be closed only after a new live negative connectivity test. |
 | LLM/routing analytics | **Implemented foundation** | LiteLLM and OmniRoute services and dashboard surfaces exist. The target-specific monitoring adapter emits a non-networking `aiat.monitoring-analytics-plan.v1` for their health/dashboard surfaces; AIAT metrics and optional Prometheus-compatible scraping remain complementary. Grafana is not part of the target. |
-| Trace evidence and retention | **Bounded query, incident summary/chronology, operator deep link, core native spans, and local transport read-back implemented; model/tool/provider evidence pending** | Request/message/tool/agent propagation and operator-only `aiat.trace-evidence.v1` joins over payload-free API request observations, task logs, project usage, worker-run transitions, direct trace-correlated model-usage/worker-artifact/integration-evidence metadata, PM inbound correlations, native transport/model/tool/audit/worker/integration spans, and optional identity delivery-attempt spans exist with secret-safe fields and company trace sampling/retention metadata. The refreshed local orchestrator is at migration `0036_native_trace_spans`; a bounded `/health` transport span and API-request read-back pass and are retained in [`mas/docs/provenance/trace_observability_live.json`](mas/docs/provenance/trace_observability_live.json). The non-mutating `aiat.trace-retention-plan.v1` classifies bounded span metadata as retain/archive/delete/invalid without deleting data. The read-only `aiat.trace-incident.v1` projection/checker (`c357fdf`) classifies scalar failures while keeping partial coverage independent. Commit `b4b7cef` adds the operator-only `GET /observability/incidents/{trace_id}` route, generated API contracts, the dashboard proxy, and the existing `/logs?trace_id=…` deep link summary; `869202c` renders bounded finding references and timestamps without payloads. Live model/tool/audit/worker/integration coverage, provider mail-edge spans, live retention application, and richer live incident chronology remain P2/live work. |
+| Trace evidence and retention | **Bounded query, incident summary/chronology, operator deep link, core native spans, local transport read-back, and planner legal-hold guard implemented; model/tool/provider evidence pending** | Request/message/tool/agent propagation and operator-only `aiat.trace-evidence.v1` joins over payload-free API request observations, task logs, project usage, worker-run transitions, direct trace-correlated model-usage/worker-artifact/integration-evidence metadata, PM inbound correlations, native transport/model/tool/audit/worker/integration spans, and optional identity delivery-attempt spans exist with secret-safe fields and company trace sampling/retention metadata. The refreshed local orchestrator is at migration `0036_native_trace_spans`; a bounded `/health` transport span and API-request read-back pass and are retained in [`mas/docs/provenance/trace_observability_live.json`](mas/docs/provenance/trace_observability_live.json). The non-mutating `aiat.trace-retention-plan.v1` classifies bounded span metadata as retain/archive/delete/invalid without deleting data; `9a80c6c` makes an explicit boolean `legal_hold` marker retain the row and exclude it from deletion IDs without treating the marker as live authority. The read-only `aiat.trace-incident.v1` projection/checker (`c357fdf`) classifies scalar failures while keeping partial coverage independent. Commit `b4b7cef` adds the operator-only `GET /observability/incidents/{trace_id}` route, generated API contracts, the dashboard proxy, and the existing `/logs?trace_id=…` deep link summary; `869202c` renders bounded finding references and timestamps without payloads. Live model/tool/audit/worker/integration coverage, provider mail-edge spans, live retention application/hold authority, and richer live incident chronology remain P2/live work. |
 | SLO and capacity operations | **Descriptive contracts and local API read-back implemented; native model/tool/mail evidence pending** | Versioned `aiat.slo-policy.v1`, `aiat.slo-report.v1`, and `aiat.capacity-forecast.v1` models, operator-only routes, durable usage aggregates, the payload-free `aiat.api-observation.v1` request ledger, optional signed identity-service outbound delivery-attempt projection, confidence/headroom fields, and deterministic fixture/live checkers exist. The refreshed local API returns a bounded report (`9` targets, `6` observed services, SLO `attention`, capacity `clear` with `high` confidence), retained at [`mas/docs/provenance/slo_capacity_live.json`](mas/docs/provenance/slo_capacity_live.json). Existing API, PM/SCM delivery, worker-recovery, and optional mail-attempt rows are projected; missing native model/tool/mail-edge/complete-span sources remain explicit `no_data`, and load/soak/chaos/DR evidence remains P2 work. |
 | Operational diagnostics and control CLI | **Implemented; live service lifecycle remains separate** | Read-only `GET /system/diagnostics` probes database, router, tool-service, and optional object storage with bounded secret-safe results (`2860838`). `scripts/mas-ctl` provides authenticated `status`, `diagnostics`, fail-closed `bootstrap`, and explicit `resume`/`shutdown` API commands (`380daf5`, executable mode `f8df50e`); container/service restart remains the Compose/systemd operator boundary. |
 | Hierarchy communication-policy visualization | **Implemented; focused local live E2E passed; release image evidence pending** | `HierarchyViz` exposes a sender-role overlay that labels and color-codes allowed/denied team paths from the same permission matrix used by policy (`8b7d9f1`). Dashboard typecheck, focused lint/build, and the authenticated hierarchy/path-tracing E2E pass 1/1 against a current `mas/dashboard:overlay` image (`d5f596e`) rebuilt from a clean explicit context. The normal WSL Docker context still traverses protected `.tmp-*` paths despite generalized exclusions (`b3a2e8e`); native/release image evidence remains separate. |
@@ -601,15 +601,18 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   evidence, configured provider callbacks, live retention enforcement, complete
   mail-span coverage, and richer live incident chronology are still P2 work.
   The local
-  `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
-  of archive/delete actions to a separately reviewed storage/recovery worker.
+  `aiat.trace-retention-plan.v1` planner is non-mutating, honors an explicit
+  boolean `legal_hold` metadata marker, and leaves application of archive/delete
+  actions and authoritative hold resolution to a separately reviewed
+  storage/recovery worker.
   The operator-only `GET /observability/retention/plan` route and
   `mas/scripts/check_trace_retention.py --live` expose bounded native-span
   candidates and explicitly report `mutation_performed: false` (`f8829d6`).
   `b3fca97` makes the response a typed Pydantic/OpenAPI contract with bounded
-  count and candidate fields instead of a generic dictionary.
-  Destructive enforcement, legal holds, erasure, project narrowing, audit, and
-  restore parity remain separate gates.
+  count and candidate fields instead of a generic dictionary; `9a80c6c` adds
+  separate legal-hold count/candidate metadata with strict boolean handling.
+  Destructive enforcement, authoritative holds, erasure, project narrowing,
+  audit, and restore parity remain separate gates.
 
 The operator-only `GET /observability/slo` and
 `GET /observability/capacity/forecast` routes project descriptive SLO targets
@@ -1259,14 +1262,16 @@ The programme is organised around completing and hardening the existing architec
   filtering and fail-closed partial configuration (`074ef8a`); live callback,
   worker, and durable bounce evidence remain separate.
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
-  it classifies explicit/derived expiry metadata and never mutates storage or
-  treats invalid rows as deletion candidates.
+  it classifies explicit/derived expiry metadata, honors explicit boolean
+  legal-hold metadata, and never mutates storage or treats invalid/held rows as
+  deletion candidates (`9a80c6c`).
 - [x] Expose the retention planner through the operator-only read route and
   `scripts/check_trace_retention.py --live` (`f8829d6`), with generated API
   contracts and an explicit `mutation_performed: false` result. Commit
-  `b3fca97` types the response model and rejects mutation claims; destructive
-  enforcement, legal holds, erasure, project narrowing, audit, and restore
-  parity remain separate gates.
+  `b3fca97` types the response model and rejects mutation claims; `9a80c6c`
+  adds the legal-hold count/candidate fields. Destructive enforcement,
+  authoritative holds, erasure, project narrowing, audit, and restore parity
+  remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.
 - Run browser E2E from native Linux CI rather than relying on problematic DrvFS execution.
 
@@ -1326,7 +1331,7 @@ The programme is organised around completing and hardening the existing architec
 7. **Implemented contract:** split the general tool image from browser/Docling/Semgrep/Mermaid extensions and add image/resource budgets; measure both profiles.
 8. **Implemented progress ledger:** `mas/docs/AIAT_CURRENT_RELEASE_LEDGER.md` replaces the July snapshot for current static/API evidence; do not call it release certification until native/live gates are closed.
 9. **Implemented static/live reconciliation:** `scripts/check_worker_reconciliation.py` checks all 39 worker manifests against the shared runtime catalogue, company manifest, Compose/OpenCode service, provenance inventory, and metadata-only notices; its read-only `--live` mode compares the same defaults with persisted `/capabilities/workers` adapter, sandbox, model, source-pin, capability, and active immutable-record bindings. `scripts/generate_worker_certification_matrix.py` records the exact declaration/evidence state for every row; the universal conformance suite exercises the native/LangGraph/CrewAI bridge contract. Coding/tester manifests now link to exact-source Semgrep findings evidence and remain non-passing until triage; live runtime certification remains open.
-10. **Implemented preparatory contract export:** commits `66b8690`, `f2b0961`, and `fd61456` plus the bounded artifact/usage evidence-read group `2ca5f3d`, diagnostics group `2860838`, and retention-plan group `f8829d6`/`b3fca97` keep `schemas/http/orchestrator.openapi.json`, the checked-in `aiat.v1` protocol schema, deterministic dashboard TypeScript, and internal Python SDK models/operation metadata aligned through `scripts/check_api_contract.py`; the current export contains 238 paths, 135 schemas, and 271 operations, including the typed read-only retention-plan response. External-language SDKs and broader modular router extraction remain P1 work after the P0 exit.
+10. **Implemented preparatory contract export:** commits `66b8690`, `f2b0961`, and `fd61456` plus the bounded artifact/usage evidence-read group `2ca5f3d`, diagnostics group `2860838`, and retention-plan group `f8829d6`/`b3fca97`/`9a80c6c` keep `schemas/http/orchestrator.openapi.json`, the checked-in `aiat.v1` protocol schema, deterministic dashboard TypeScript, and internal Python SDK models/operation metadata aligned through `scripts/check_api_contract.py`; the current export contains 238 paths, 135 schemas, and 271 operations, including the typed read-only retention-plan response and legal-hold fields. External-language SDKs and broader modular router extraction remain P1 work after the P0 exit.
 11. **Implemented technical pin contract:** `mas/docs/provenance/operator_pins.yaml` and `scripts/check_operator_pins.py` require exact production runtime/CLI declarations and explicit unavailable reasons for host-, optional-, and deployment-supplied capabilities; this check is independent of licence/restriction metadata.
 12. **Implemented communication-policy identity boundary (`fb39128`):** policy and message-router tests reject non-CEO envelopes whose declared sender role/team pair is incoherent, including direct worker-to-CEO/admin spoof paths, before Redis dedupe/enqueue. The hierarchy overlay (`8b7d9f1`) exposes the same allowed/denied paths to operators; focused live dashboard E2E passes against a current rebuilt image (`d5f596e`), while live external-router, normal-context rebuild, and release-image evidence remain separate.
 
@@ -1604,7 +1609,8 @@ All project documentation available in the reviewed workspace was read and used 
   `mas/scripts/check_trace_retention.py`, and the operator
   `GET /observability/retention/plan` route — deterministic, non-mutating
   `aiat.trace-retention-plan.v1` decisions with explicit archive/delete mode,
-  invalid-row fail-safe handling, and a live checker that proves no mutation.
+  invalid-row and legal-hold fail-safe handling, separate legal-hold counts,
+  and a live checker that proves no mutation (`9a80c6c`).
 - `Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md` and
   `mas/scripts/check_slo_capacity.py` — maintained SLO/capacity contracts and
   deterministic/fail-closed operational evidence boundary.
