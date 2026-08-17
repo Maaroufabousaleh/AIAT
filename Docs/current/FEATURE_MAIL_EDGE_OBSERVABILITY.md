@@ -4,11 +4,11 @@
 **Status:** the payload-free `aiat.mail-edge-observation.v1` contract, provider
 webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
-projected-provider trace parser are implemented in `85369fe`, `cfafe38`,
-`2d21a2f`, and `29d4da5`. The deterministic identity, adapter, orchestrator,
-checker, and core suites pass. Live provider configuration/callback delivery,
-selected model-backed worker, bounce read-back, and deployment evidence remain
-open.
+projected-provider trace parser, and optional signed identity-dashboard
+read-back are implemented in `85369fe`, `cfafe38`, `2d21a2f`, `29d4da5`, and
+`074ef8a`. The deterministic identity, adapter, orchestrator, checker, and core
+suites pass. Live provider configuration/callback delivery, selected
+model-backed worker, bounce read-back, and deployment evidence remain open.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -69,15 +69,18 @@ uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
 
 Fixture mode performs no network or state mutation. Live mode reads only
 `GET /observability/traces/{trace_id}` and requires the operator to choose the
-representative worker and its trace. It never dispatches a worker, sends mail,
-creates credentials, changes a provider, or selects a worker automatically.
-Missing configuration or unavailable authentication returns `blocked` with
-exit code 2. Existing delivery-attempt mail spans report `attention` until a
+representative worker and its trace. When `IDENTITY_SERVICE_URL` and
+`AIAT_IDENTITY_CLIENT_PRIVATE_KEY` are configured, it also performs a signed,
+read-only `POST /v1/dashboard/mail-edge` read and filters it to the selected
+trace. It never dispatches a worker, sends mail, creates credentials, changes a
+provider, or selects a worker automatically. Missing configuration or
+unavailable authentication returns `blocked` with exit code 2 for the affected
+read boundary. Existing delivery-attempt mail spans report `attention` until a
 selected live worker and configured provider supply verified webhook and bounce
-evidence. When the trace response contains the identity projection's
-`mail.provider_webhook.<event>` native spans, the checker derives the bounded
-event type and verified-provider source without importing payloads. The checker
-does not perform provider callbacks.
+evidence. When either trace projection or signed identity read-back contains
+`mail.provider_webhook.<event>` rows, the checker derives the bounded event type
+and verified-provider source without importing payloads. The checker does not
+perform provider callbacks.
 
 ## Integration boundary
 
@@ -93,8 +96,9 @@ verified control-plane handoff. Both paths use migration
 `(provider,event_id)`, rejects conflicting replays, correlates an outbound
 request by opaque provider message reference when possible, and projects
 provider events alongside delivery attempts through `mail-relay`. The
-orchestrator reduces that dashboard response to scalar trace/SLO rows and
-must not import message content or provider secrets.
+orchestrator reduces that dashboard response to scalar trace/SLO rows, and the
+checker can consume the same dashboard through the signed identity client for
+durable read-back. Neither path imports message content or provider secrets.
 
 This feature does not change the personal/internal resource policy. Licence
 and stated-use information remains in the provenance catalogue and operator
@@ -105,8 +109,8 @@ predicate.
 
 - configure the deployed Resend webhook secret/tolerance and exercise a real
   provider callback through the raw-body ingress;
-- run the checker against an explicitly selected live model-backed worker and
-  provider ingress; the live parser now recognizes projected provider spans,
+- configure the signed identity read-back credentials and run the checker
+  against an explicitly selected live model-backed worker and provider ingress;
   then read back a durable bounce observation from identity-service/Postgres;
 - project the live observations into complete mail native spans and SLO timing;
 - retain deployment evidence without claiming provider or worker coverage

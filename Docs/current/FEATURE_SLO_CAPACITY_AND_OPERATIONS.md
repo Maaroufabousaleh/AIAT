@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, and the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, and complete mail-edge evidence remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, and signed identity dashboard read-back is implemented in `074ef8a`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, and complete mail-edge evidence remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -47,7 +47,8 @@ not block workers, routing, integrations, or project completion.
   only bounded scalar metadata survives and conflicting event IDs are reported
   as `attention`. Resend/Svix raw-body verification is implemented at the
   provider-facing identity route, while checker group `29d4da5` recognizes the
-  projected provider span operation in its read-only live mode. Identity-service migration
+  projected provider span operation and optional signed identity dashboard read-back
+  in its read-only live mode. Identity-service migration
   `0003_mail_edge_observations` persists normalized events and projects them
   beside delivery attempts; configured provider ingress and selected-worker
   deployment evidence remain open.

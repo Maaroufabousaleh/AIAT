@@ -144,7 +144,7 @@ region retains loaded transcript context read-only, hides Clear/retry and all
 message/confirmation controls, and its source-built denial/recovery matrix
 passes 3/3. Native/live ACL and full WCAG evidence remain separate.
 
-The mail-edge observation groups `85369fe`, `cfafe38`, `2d21a2f`, and `29d4da5` add the maintained
+The mail-edge observation groups `85369fe`, `cfafe38`, `2d21a2f`, `29d4da5`, and `074ef8a` add the maintained
 [`FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md)
 specification, the `aiat.mail-edge-observation.v1`/coverage contracts, a
 deterministic/fail-closed checker, and identity-service migration
@@ -152,7 +152,8 @@ deterministic/fail-closed checker, and identity-service migration
 dashboard/trace/SLO projection. `2d21a2f` also adds exact raw-body Resend/Svix
 verification and the provider-facing ingress route. Configured provider
 callback certification, selected worker live read-back, complete mail-span
-evidence, and the read-only projected-span checker boundary remain separate.
+evidence, and the read-only projected-span checker/read-back boundary remain
+separate.
 
 ## Clean-checkout verification
 

@@ -219,6 +219,10 @@
   retaining ordinary delivery-attempt rows as unsigned (`29d4da5`). The parser
   remains read-only and payload-free; configured callback, worker, and bounce
   read-back evidence remain separate.
+- [x] Add optional signed identity-service dashboard read-back to the checker,
+  trace-filtered normalization, duplicate-event preference, and fail-closed
+  partial-configuration handling (`074ef8a`). The capability is read-only and
+  does not claim that a live provider callback or worker run has occurred.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence
