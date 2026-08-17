@@ -402,6 +402,54 @@ class IdentityService:
             raise PermissionError("provider mail-edge projection requires delegated scope")
         if not signature_verified:
             raise PermissionError("verified provider signature is required")
+        return await self._persist_provider_webhook(
+            provider=provider,
+            payload=payload,
+            actor_id=actor_id,
+            event_id=event_id,
+            worker_id=worker_id,
+            outbound_request_id=outbound_request_id,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+    async def record_verified_provider_webhook(
+        self,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None = None,
+        worker_id: UUID | None = None,
+        outbound_request_id: UUID | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist an event after a provider adapter verified its raw body."""
+
+        return await self._persist_provider_webhook(
+            provider=provider,
+            payload=payload,
+            actor_id=actor_id,
+            event_id=event_id,
+            worker_id=worker_id,
+            outbound_request_id=outbound_request_id,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+    async def _persist_provider_webhook(
+        self,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None,
+        worker_id: UUID | None,
+        outbound_request_id: UUID | None,
+        trace_id: str | None,
+        span_id: str | None,
+    ) -> dict[str, Any]:
         observation = normalize_provider_webhook(
             provider,
             payload,

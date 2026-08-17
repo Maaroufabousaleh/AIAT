@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import time
 
 import httpx
 import pytest
@@ -256,3 +260,46 @@ def test_resend_webhook_normalization_drops_provider_payload_fields() -> None:
     assert observation.signature_verified is True
     assert observation.metadata == {"provider_event_type": "email.bounced", "provider_status": "bounced"}
     assert "drop-me" not in str(observation)
+
+
+def _resend_signature(raw_body: bytes, *, secret: bytes, message_id: str, timestamp: int) -> dict[str, str]:
+    signed = f"{message_id}.{timestamp}.".encode() + raw_body
+    signature = base64.b64encode(hmac.new(secret, signed, hashlib.sha256).digest()).decode()
+    return {
+        "svix-id": message_id,
+        "svix-timestamp": str(timestamp),
+        "svix-signature": f"v1,{signature}",
+    }
+
+
+def test_resend_webhook_signature_verification_accepts_valid_and_rotated_signatures() -> None:
+    secret = b"resend-webhook-secret"
+    encoded = "whsec_" + base64.b64encode(secret).decode()
+    body = b'{"id":"evt-1","type":"email.delivered"}'
+    headers = _resend_signature(body, secret=secret, message_id="msg-1", timestamp=1_700_000_000)
+    rotated = _resend_signature(body, secret=b"old-secret", message_id="msg-1", timestamp=1_700_000_000)
+    headers["svix-signature"] = f"{rotated['svix-signature']} {headers['svix-signature']}"
+
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret=encoded, now=1_700_000_010
+    ) is True
+
+
+def test_resend_webhook_signature_verification_rejects_tampering_missing_headers_and_replay() -> None:
+    secret = b"resend-webhook-secret"
+    encoded = "whsec_" + base64.b64encode(secret).decode()
+    body = b'{"id":"evt-1","type":"email.delivered"}'
+    headers = _resend_signature(body, secret=secret, message_id="msg-1", timestamp=1_700_000_000)
+
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body + b" ", headers, signing_secret=encoded, now=1_700_000_010
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, {"svix-id": "msg-1"}, signing_secret=encoded, now=1_700_000_010
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret=encoded, now=time.time(), tolerance_seconds=300
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret="not-base64", now=1_700_000_010
+    ) is False

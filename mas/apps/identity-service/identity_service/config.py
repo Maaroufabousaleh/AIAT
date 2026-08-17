@@ -47,6 +47,8 @@ class IdentitySettings(BaseSettings):
     outbound_relay_port: int = 465
     outbound_relay_tls_mode: str = "implicit"
     resend_api_key: str = ""
+    resend_webhook_signing_secret: str = ""
+    resend_webhook_tolerance_seconds: int = Field(default=300, ge=30, le=900)
     # This is an activation latch, not a provider-health guess.  It may be
     # enabled only after the operator records the live Resend certification.
     outbound_relay_certified: bool = False

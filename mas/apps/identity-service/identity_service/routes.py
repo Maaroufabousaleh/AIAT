@@ -7,6 +7,7 @@ raw password, cookie, token, credential, or relay fields.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -191,6 +192,32 @@ async def record_provider_webhook(body: ProviderWebhookRequest, client: Authenti
         )
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _safe_mail_edge(observation)
+
+
+@router.post("/mail-edge/provider-webhook/resend")
+async def receive_resend_provider_webhook(request: Request, service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    """Accept a Resend/Svix webhook after raw-body signature verification."""
+
+    raw_body = bytes(request.scope.get("aiat.identity.raw_body", b""))
+    if len(raw_body) > 1 * 1024 * 1024:
+        raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+    if not service.resend.verify_configured_webhook_signature(raw_body, request.headers):
+        raise HTTPException(401, "invalid provider webhook authentication")
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "webhook body must be valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "webhook body must be a JSON object")
+    try:
+        observation = await service.record_verified_provider_webhook(
+            provider="resend",
+            payload=payload,
+            actor_id="provider:resend",
+        )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return _safe_mail_edge(observation)
