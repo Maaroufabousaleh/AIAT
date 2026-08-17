@@ -1507,6 +1507,11 @@ All project documentation available in the reviewed workspace was read and used 
   `mas/docs/provenance/worker_certification_matrix.yaml` — deterministic
   declaration/evidence status for all checked-in workers; this is not live
   certification.
+- `mas/scripts/check_worker_run_readiness.py` and
+  `mas/scripts/tests/test_check_worker_run_readiness.py` — selected worker-run
+  readiness remains read-only and explicit; `2eea80a` makes unavailable or
+  malformed health reads a stable `read_worker_health_unavailable` blocker,
+  without activation, dispatch, or licence-based gating.
 - `mas/docs/provenance/security_scan_evidence.yaml` — secret-safe exact-source
   Semgrep evidence for coding/tester; findings-review status remains a
   technical activation blocker until triaged.
