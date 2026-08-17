@@ -23,7 +23,9 @@ The shared `aiat.mail-edge-observation.v1` normalizer/evaluator and deterministi
 checker are implemented in `85369fe`; identity-service migration
 `0003_mail_edge_observations`, signed delegated webhook persistence, and scalar
 trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body
-verifier and provider-facing ingress route are implemented in `2d21a2f`. Live model/worker/audit/
+verifier and provider-facing ingress route are implemented in `2d21a2f`; the
+live checker now classifies projected `mail.provider_webhook.<event>` spans in
+`29d4da5`. Live model/worker/audit/
 integration source coverage, provider ingress certification, complete mail-edge
 spans, and live retention execution remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
@@ -70,8 +72,9 @@ projection joins:
   requires a verified webhook and a bounce/failure signal when those sources
   are claimed; conflicting event IDs remain `attention`. Identity-service
   migration `0003_mail_edge_observations` persists one payload-free row per
-  `(provider,event_id)` and projects it beside delivery attempts; configured
-  live callback delivery and read-back remain open.
+  `(provider,event_id)` and projects it beside delivery attempts; the checker
+  recognizes those projected provider spans, while configured live callback
+  delivery and read-back remain open.
 
 Each item contains only safe operational fields: source, stable record ID,
 kind, status, project/agent/team references, worker-run reference, event/model/

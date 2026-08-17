@@ -589,9 +589,11 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   projects scalar rows into the existing mail-relay trace/SLO read model
   (`cfafe38`). The Resend adapter now verifies exact raw-body Svix signatures
   and the provider-facing identity route reuses the same payload-free persistence
-  boundary (`2d21a2f`). Selected-worker live evidence, configured provider
-  callbacks, live retention enforcement, complete mail-span coverage, and
-  incident views are still P2 work. The local
+  boundary (`2d21a2f`). The live checker classifies projected
+  `mail.provider_webhook.<event>` spans without importing payloads (`29d4da5`).
+  Selected-worker live evidence, configured provider callbacks, live retention
+  enforcement, complete mail-span coverage, and incident views are still P2
+  work. The local
   `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
   of archive/delete actions to a separately reviewed storage/recovery worker.
 
@@ -1229,6 +1231,9 @@ The programme is organised around completing and hardening the existing architec
   ingress route with bounded replay tolerance (`2d21a2f`); configured provider
   ingress certification, selected worker live evidence, and complete mail spans
   remain separate.
+- [x] Classify projected provider webhook spans in the read-only mail-edge
+  checker (`29d4da5`); configured callback, selected worker, and durable bounce
+  read-back evidence remain separate.
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
   it classifies explicit/derived expiry metadata and never mutates storage or
   treats invalid rows as deletion candidates.

@@ -3,11 +3,12 @@
 **Baseline:** 2026-08-17
 **Status:** the payload-free `aiat.mail-edge-observation.v1` contract, provider
 webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
-identity-service persistence/projection path, and Resend/Svix raw-body verifier
-are implemented in `85369fe`, `cfafe38`, and `2d21a2f`. The deterministic
-identity, adapter, orchestrator, and core suites pass. Live provider
-configuration/callback delivery, selected model-backed worker, bounce read-back,
-and deployment evidence remain open.
+identity-service persistence/projection path, Resend/Svix raw-body verifier, and
+projected-provider trace parser are implemented in `85369fe`, `cfafe38`,
+`2d21a2f`, and `29d4da5`. The deterministic identity, adapter, orchestrator,
+checker, and core suites pass. Live provider configuration/callback delivery,
+selected model-backed worker, bounce read-back, and deployment evidence remain
+open.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -73,7 +74,10 @@ creates credentials, changes a provider, or selects a worker automatically.
 Missing configuration or unavailable authentication returns `blocked` with
 exit code 2. Existing delivery-attempt mail spans report `attention` until a
 selected live worker and configured provider supply verified webhook and bounce
-evidence. The checker does not perform provider callbacks.
+evidence. When the trace response contains the identity projection's
+`mail.provider_webhook.<event>` native spans, the checker derives the bounded
+event type and verified-provider source without importing payloads. The checker
+does not perform provider callbacks.
 
 ## Integration boundary
 
@@ -102,8 +106,8 @@ predicate.
 - configure the deployed Resend webhook secret/tolerance and exercise a real
   provider callback through the raw-body ingress;
 - run the checker against an explicitly selected live model-backed worker and
-  provider ingress, then read back a durable bounce observation from
-  identity-service/Postgres;
+  provider ingress; the live parser now recognizes projected provider spans,
+  then read back a durable bounce observation from identity-service/Postgres;
 - project the live observations into complete mail native spans and SLO timing;
 - retain deployment evidence without claiming provider or worker coverage
   when a source is absent; and
@@ -115,6 +119,8 @@ predicate.
   [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py)
 - Fixture/live checker:
   [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py)
+- Checker projection tests:
+  [`mas/scripts/tests/test_check_mail_edge_observations.py`](../../mas/scripts/tests/test_check_mail_edge_observations.py)
 - Focused tests:
   [`mas/packages/mas-core/tests/test_mail_edge.py`](../../mas/packages/mas-core/tests/test_mail_edge.py)
 - Existing identity delivery projection:

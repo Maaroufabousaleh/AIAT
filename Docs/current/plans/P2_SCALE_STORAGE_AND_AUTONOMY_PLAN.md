@@ -214,6 +214,11 @@
   route authenticates the exact body before JSON normalization and reuses the
   same payload-free persistence/idempotency boundary; the injected webhook
   secret remains runtime configuration, not stored evidence.
+- [x] Teach the live mail-edge checker to classify projected
+  `mail.provider_webhook.<event>` spans as verified provider observations while
+  retaining ordinary delivery-attempt rows as unsigned (`29d4da5`). The parser
+  remains read-only and payload-free; configured callback, worker, and bounce
+  read-back evidence remain separate.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

@@ -148,9 +148,10 @@ outbound references when possible, and projects provider rows beside delivery
 attempts into scalar orchestrator trace/SLO evidence (`cfafe38`). The
 deterministic fixture/checker and focused identity/orchestrator suites pass in
 `85369fe`/`cfafe38`; `2d21a2f` adds exact raw-body Resend/Svix verification and
-the provider-facing identity ingress route. Live provider configuration/callback,
-selected model-backed worker read-back, and complete mail-span/SLO evidence
-remain open.
+the provider-facing identity ingress route, and `29d4da5` teaches the live
+checker to classify projected provider webhook spans. Live provider
+configuration/callback, selected model-backed worker read-back, and complete
+mail-span/SLO evidence remain open.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -1256,6 +1257,9 @@ Required outcomes:
   and provider-facing `/v1/mail-edge/provider-webhook/resend` route (`2d21a2f`);
   configured provider callback and selected-worker live evidence remain
   separate;
+- [x] Classify projected `mail.provider_webhook.<event>` trace spans in the
+  read-only mail-edge checker (`29d4da5`); configured provider callback,
+  selected-worker, and durable bounce read-back evidence remain separate;
 - native mail-edge/bounce/complete-span telemetry and production-like
   SLO/capacity evidence (PM/SCM and worker-recovery table projections are
   implemented);

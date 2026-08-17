@@ -46,8 +46,8 @@ not block workers, routing, integrations, or project completion.
   plus adapter-verified provider webhook `delivered`/`bounced`/failure events;
   only bounded scalar metadata survives and conflicting event IDs are reported
   as `attention`. Resend/Svix raw-body verification is implemented at the
-  provider-facing identity route, while the checker is deterministic in fixture
-  mode and read-only in live mode. Identity-service migration
+  provider-facing identity route, while checker group `29d4da5` recognizes the
+  projected provider span operation in its read-only live mode. Identity-service migration
   `0003_mail_edge_observations` persists normalized events and projects them
   beside delivery attempts; configured provider ingress and selected-worker
   deployment evidence remain open.

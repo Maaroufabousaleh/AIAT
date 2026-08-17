@@ -16,7 +16,8 @@
 - New-flow builder denial-state recovery (`b07299b`) is covered by source-built initial-catalogue, create-denial, and readiness-validation-denial fixture coverage 3/3; denied reads/mutations expose a named access-status region, preserve the current draft canvas read-only, and hide templates, palette, node configuration, validation, activation, and creation controls. Native/live ACL and full WCAG/native-Linux evidence remain open.
 - Mail-edge observation contracts/checker (`85369fe`), identity-service
   persistence/projection (`cfafe38`), and the Resend/Svix raw-body verifier plus
-  provider-facing ingress (`2d21a2f`) pass the deterministic payload-free
+  provider-facing ingress (`2d21a2f`), and projected-span checker
+  classification (`29d4da5`) pass the deterministic payload-free
   delivery/webhook/bounce fixture and focused service suites; configured
   provider callback certification, selected worker live read-back, and complete
   mail-span evidence remain open and non-gating.
