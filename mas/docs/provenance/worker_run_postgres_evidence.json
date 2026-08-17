@@ -1,0 +1,88 @@
+{
+  "schema_version": "aiat.worker-run-postgres-evidence-certification.v1",
+  "coverage_schema": "aiat.worker-trace-coverage.v1",
+  "mode": "local-postgres-worker-run",
+  "status": "pass",
+  "observed_at": "2026-08-17T22:53:42.043999Z",
+  "migration_version": "0036_native_trace_spans",
+  "expected_migration": "0036_native_trace_spans",
+  "worker_name": "aiat-cert-worker-postgres-v1",
+  "run_state": "SUCCEEDED",
+  "transition_count": 5,
+  "event_count": 2,
+  "usage_count": 1,
+  "artifact_count": 1,
+  "native_span_count": 3,
+  "trace_item_count": 5,
+  "trace_source_counts": {
+    "api_requests": 0,
+    "integration_evidence": 0,
+    "native_spans": 3,
+    "pm_inbox_events": 0,
+    "project_usage_events": 0,
+    "task_log": 0,
+    "worker_artifacts": 1,
+    "worker_run_transitions": 0,
+    "worker_usage_records": 1
+  },
+  "trace_coverage": {
+    "schema_version": "aiat.worker-trace-coverage.v1",
+    "status": "pass",
+    "trace_status": "observed",
+    "require_integration": false,
+    "required_sources": {
+      "native_model_spans": "observed",
+      "native_worker_spans": "observed",
+      "worker_artifacts": "observed",
+      "worker_usage_records": "observed"
+    },
+    "missing_required_sources": [],
+    "optional_sources": {
+      "integration_evidence": "empty",
+      "native_audit_spans": "observed",
+      "native_integration_spans": "empty",
+      "native_mail_spans": "empty"
+    },
+    "licence_metadata_is_gate": false
+  },
+  "durable_reopen": {
+    "healthy": true,
+    "run_present": true,
+    "usage_count": 1,
+    "artifact_count": 1,
+    "native_span_count": 3
+  },
+  "cleanup_deleted_counts": {
+    "artifacts": 1,
+    "spans": 3,
+    "worker_artifacts": 1,
+    "worker_runs": 1,
+    "workers": 1
+  },
+  "remaining_fixture_counts": {
+    "workers": 0,
+    "runs": 0,
+    "artifacts": 0,
+    "usage": 0,
+    "spans": 0
+  },
+  "payload_free": true,
+  "mutation_performed": true,
+  "local_database_access_performed": true,
+  "network_access_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "scope": "real WorkerRunController/NativeWorkerAdapter lifecycle, Postgres evidence persistence, connection reopen, and bounded trace projection",
+  "certification_boundary": {
+    "worker_registry_and_run_lifecycle": "checked",
+    "artifact_and_usage_persistence": "checked",
+    "payload_free_trace_projection": "checked",
+    "postgres_connection_reopen": "checked",
+    "scoped_fixture_cleanup": "checked",
+    "live_model_backed_worker": "not_checked",
+    "external_provider": "not_checked",
+    "deployed_worker_runtime": "not_checked",
+    "retention_enforcement": "not_checked"
+  },
+  "licence_metadata_is_gate": false
+}
