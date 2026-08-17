@@ -149,15 +149,19 @@ external client-language SDK compatibility yet.
   remains informational only.
 - [x] Add deterministic Microsoft Agent Framework adapter compatibility
   coverage for bounded Agent/ChatAgent construction, run/invoke translation,
-  shutdown, and fail-closed missing-package/instructions paths; locked
-  package/MCP compatibility and activation remain open.
+  shutdown, explicit client injection, response normalization, and fail-closed
+  missing-package/instructions paths; locked package/MCP compatibility and
+  activation remain separately tracked.
 - [x] Publish `aiat.runtime-compatibility.v1` for `agent-framework==1.13.0`
   plus MCP `>=1.27,<2`, and enforce a secret-free fail-closed adapter
-  preflight. The current workspace MCP `1.23.3` and missing optional MAF
-  package are reported as activation blockers; installation, canary, and live
-  certification remain open.
-- Install the locked Microsoft Agent Framework/MCP set in an optional runtime
-  environment and certify its representative task before activation.
+  preflight. The current workspace MCP `1.23.3` remains an explicit default
+  activation blocker.
+- [x] Install the locked Microsoft Agent Framework/MCP set in the isolated
+  profile [`mas/infra/runtime/maf/`](../../../mas/infra/runtime/maf/), and
+  certify its representative task with the real MAF `Agent` and an injected
+  deterministic fake client (`b937a89`). The retained result is
+  [`maf_runtime_certification.json`](../../../mas/docs/provenance/maf_runtime_certification.json);
+  provider-backed canary and live activation remain open.
 - [x] Make the credential-free AIAT diff reviewer the default code-review
   adapter and publish a catalogue that keeps generic external candidates
   fail-closed until exact repository/revision/version evidence exists.

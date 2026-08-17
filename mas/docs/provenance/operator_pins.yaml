@@ -84,7 +84,7 @@ pins:
     version: "1.13.0"
     status: unavailable
     scope: optional-worker-runtime
-    reason: "The exact compatibility lock exists, but the package and compatible MCP range are not installed in this workspace."
+    reason: "The isolated profile is pinned and certified, but the package is intentionally not installed in the default workspace; default MCP 1.23.3 remains below the MAF compatibility floor."
   - id: gvisor
     kind: host-sandbox-runtime
     version: null

@@ -180,6 +180,15 @@ typed registry-read adapter (`67f5eae`). Live
 storage/recovery mutation remains blocked until its adapter, hold registry,
 durable audit, and restore evidence are reviewed.
 
+The optional Microsoft Agent Framework phase is now reflected in the authority
+set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
+real adapter accepts an explicit AIAT client boundary, and the deterministic
+fake-client certificate is retained at
+[`mas/docs/provenance/maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json).
+The default workspace MCP `1.23.3` remains unchanged, so provider-backed MAF
+canary/live activation is still an open technical gate; licence metadata stays
+in the provenance catalogue and is not consulted by this phase.
+
 ## Clean-checkout verification
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the

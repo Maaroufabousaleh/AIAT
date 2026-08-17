@@ -164,10 +164,18 @@ single frozen commit before production claims are made.
 - `scripts/check_operator_pins.py --json` (checker/test group `dd857ae`)
   reconciles the exact production
   `uv`, Docker CLI, MCP, Semgrep, Docling, Playwright, Mermaid, OpenTofu, and
-  OpenCode declarations. Microsoft Agent Framework, gVisor, Firecracker,
-  SkillSpector, ccpm, LiteLLM, and OmniRoute are represented as explicitly
-  unavailable until their operator/package/host/image identities are supplied;
-  no licence field is consulted by this technical check.
+  OpenCode declarations. Microsoft Agent Framework remains unavailable in the
+  default workspace but now has a separately pinned/certified isolated profile
+  (`b937a89`); gVisor, Firecracker, SkillSpector, ccpm, LiteLLM, and OmniRoute
+  remain explicitly unavailable until their operator/package/host/image
+  identities are supplied. No licence field is consulted by this technical
+  check.
+- The isolated MAF certificate at
+  [`provenance/maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json)
+  proves package imports and the AIAT adapter's bounded fake-client task,
+  response normalization, health, and shutdown. It does not prove provider
+  configuration, model-backed canary, sandbox, live worker execution, or
+  rollback; the default production MCP pin remains `1.23.3`.
 - `mas/docs/provenance/security_scan_evidence.yaml` records the exact
   OpenCode `v1.17.13` commit and Semgrep `1.168.0` result. The evidence is
   deliberately non-passing because it contains 19 `ERROR` findings and 54

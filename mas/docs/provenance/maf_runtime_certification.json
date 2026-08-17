@@ -1,0 +1,42 @@
+{
+  "schema_version": "aiat.maf-runtime-certification.v1",
+  "observed_at": "2026-08-17T21:49:01Z",
+  "mode": "isolated-runtime-python",
+  "status": "pass",
+  "source_command": "uv run --isolated python mas/scripts/check_maf_runtime.py --python <isolated-maf-venv>/bin/python --json",
+  "profile": {
+    "requirements_file": "mas/infra/runtime/maf/requirements.txt",
+    "agent_framework_version": "1.13.0",
+    "mcp_version": "1.29.0",
+    "mcp_compatibility": ">=1.27,<2"
+  },
+  "probe": {
+    "package_import_available": true,
+    "agent_symbol": "Agent",
+    "adapter_class": "MicrosoftAgentFrameworkAdapter",
+    "result_status": "completed",
+    "output": "bounded-fixture-result",
+    "fake_client_calls": 1,
+    "health_before_shutdown": true,
+    "health_after_shutdown": false,
+    "provider_network_calls": false,
+    "mutation_performed": false
+  },
+  "certification_boundary": {
+    "package_imports": "checked",
+    "adapter_execution": "deterministic_fake_client",
+    "provider_network_calls": "not_performed",
+    "mcp_server_calls": "not_performed",
+    "project_or_tool_calls": "not_performed",
+    "security_scan": "not_checked",
+    "sandbox": "not_checked",
+    "model_backed_canary": "not_checked",
+    "live_worker_run": "not_checked",
+    "rollback": "not_checked"
+  },
+  "secret_policy": "credentials, provider payloads, project identifiers, and interpreter paths are omitted",
+  "scope": "optional isolated MAF/MCP package imports and AIAT adapter conformance only",
+  "mutation_performed": false,
+  "network_access_performed": false,
+  "licence_metadata_is_gate": false
+}

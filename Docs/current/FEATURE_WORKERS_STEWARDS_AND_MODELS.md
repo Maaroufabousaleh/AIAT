@@ -244,15 +244,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   acceptance, ordered-event, and normalized-terminal-result contract as native
   workers. This is deterministic adapter-contract evidence only; installed
   runtime, sandbox, canary, and live recovery certification remain separate.
-- The Microsoft Agent Framework adapter (`fc528a8`) now has a deterministic compatibility
-  fixture covering `Agent` construction, async `run` dispatch, shutdown, and
-  fail-closed missing-package/instructions paths. This proves the AIAT-side
-  translation boundary only. The locked compatibility contract now records
-  `agent-framework==1.13.0` with MCP `>=1.27,<2`; the adapter runs a
-  secret-free preflight and fails closed when either package is absent,
-  mismatched, or missing the required symbols. The current workspace MCP pin
-  is `1.23.3`, so MAF activation remains blocked until the optional dependency
-  set is updated and installed.
+- The Microsoft Agent Framework adapter group (`b937a89`, extending
+  `fc528a8`) now has deterministic compatibility coverage for `Agent`/fallback
+  construction, async `run`/`invoke` dispatch, explicit chat-client injection,
+  response normalization, shutdown, and fail-closed missing-package,
+  missing-client, and missing-instructions paths. The locked compatibility
+  contract records `agent-framework==1.13.0` with MCP `>=1.27,<2`; the isolated
+  profile pins MAF `1.13.0` plus MCP `1.29.0` and passes the real adapter with a
+  local fake client. The secret-safe evidence is
+  [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json).
+  The current workspace MCP pin remains `1.23.3`, so default-profile/provider
+  activation remains blocked.
 - Code review (`fc528a8`, implementation hardening `5b830e9`) now has a reproducible AIAT deterministic diff reviewer as its
   default adapter when no external command is configured. The worker manifest
   points to a versioned adapter catalogue; PR-Agent, open-code-review, and
@@ -290,7 +292,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the current Docker host reports `runsc` unavailable and therefore remains blocked without a `runc` fallback.
 - Runtime benchmark probe (`ad31793`, bounded endpoint hardening `4d61279`): [`mas/scripts/check_runtime_benchmarks.py`](../../mas/scripts/check_runtime_benchmarks.py), [`test_runtime_benchmarks.py`](../../mas/packages/mas-core/tests/test_runtime_benchmarks.py), and [`test_epsilon_runtimes.py`](../../mas/apps/orchestrator-api/tests/test_epsilon_runtimes.py). It runs third-party imports off the API event loop, enforces a capped timeout, and reports explicit `blocked`/`benchmark_timeout`/`benchmark_error` status when the API, package, validation, or dependency path is unavailable; a dependency dry-run does not certify a worker canary or rollback.
 - Runtime adapter conformance probe (`9a10a4b`): [`mas/scripts/check_runtime_adapter_conformance.py`](../../mas/scripts/check_runtime_adapter_conformance.py) and [`runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Deterministic LangGraph/CrewAI fixtures pass manifest/message translation, bounded completion, health, and shutdown; package-import and worker-canary evidence remain separate.
-- MAF/MCP compatibility contract and preflight (`fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py)
+- MAF/MCP compatibility contract, isolated profile, and deterministic certification (`b937a89`, extending `fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/infra/runtime/maf/README.md`](../../mas/infra/runtime/maf/README.md), [`mas/infra/runtime/maf/requirements.txt`](../../mas/infra/runtime/maf/requirements.txt), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py), [`mas/scripts/check_maf_runtime.py`](../../mas/scripts/check_maf_runtime.py), and [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json)
 - Code-review adapter catalogue/default (`fc528a8`): [`mas/docs/provenance/code_review_adapters.yaml`](../../mas/docs/provenance/code_review_adapters.yaml), [`mas/scripts/check_code_review_adapters.py`](../../mas/scripts/check_code_review_adapters.py), [`mas/apps/tool-service/tool_service/code_review_runner.py`](../../mas/apps/tool-service/tool_service/code_review_runner.py), and [`CodeReviewTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py)
 - Security adapter aliases/fixture (`fc528a8`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py)
 - Document ingestion/fallback: [`DocumentIngestTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_document_ingest_falls_back_to_text_when_docling_missing`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `document.ingest` readiness probe
@@ -327,7 +329,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 | Use | Default | Current gate |
 | --- | --- | --- |
 | General specialists | LangGraph 0.6.11 or CrewAI 1.6.1 | Approved provenance; complete worker-by-worker live certification. |
-| Microsoft ecosystem | Microsoft Agent Framework `1.13.0` | Locked contract is present; optional package/MCP preflight is currently blocked by missing MAF and workspace MCP `1.23.3` versus required `>=1.27,<2`. |
+| Microsoft ecosystem | Microsoft Agent Framework `1.13.0` | Isolated profile (`agent-framework==1.13.0`, MCP `1.29.0`) is deterministically certified; default workspace/provider activation remains blocked by MCP `1.23.3` versus required `>=1.27,<2`. |
 | Coding/testing | OpenCode 1.17.13; OpenHands core optional | OpenCode interface approved; manifest scan evidence requires reconciliation. |
 | Documents | Docling + Spec Kit + Mermaid | Bounded extension image/subprocess; `document.ingest` remains usable through an explicit, degraded plain-text fallback when Docling is absent. |
 | Security | Semgrep CLI + SkillSpector baseline | TruffleHog and other bounded scanners are normal selectable adapters; scanner choice is technical, not licence-driven. |
@@ -380,8 +382,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   availability and findings remain technical evidence, while provider-specific
   PM/DevOps adapters still require their own conformance evidence.
 - [x] Publish an exact MAF/MCP compatibility lock and fail-closed activation
-  preflight; package installation, provider configuration, canary, and live
-  certification remain open.
+  preflight, then certify the isolated MAF/MCP profile through the real adapter
+  with a deterministic fake client (`b937a89`); provider configuration,
+  model-backed canary, and live certification remain open.
 - [x] Make the local deterministic diff reviewer the default and record all
   external code-review candidates in an explicit catalogue; exact external
   repository/revision/version pins and representative reviews remain open.

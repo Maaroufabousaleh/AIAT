@@ -25,17 +25,18 @@ components:
     integration: python-dependency
     status: available
   - id: microsoft-agent-framework
-    role: default-worker-runtime
+    role: optional-worker-runtime
     license: MIT
-    version: "1.13.0 (locked; optional-not-installed)"
+    version: "1.13.0 (locked; isolated-profile-certified)"
     source: https://github.com/microsoft/agent-framework/tree/main/python
     license_evidence: https://github.com/microsoft/agent-framework/blob/main/LICENSE
     integration: optional-adapter
-    status: available-locked-pending-install
+    status: available-locked-isolated
     compatibility_lock: mas/docs/provenance/runtime_compatibility.yaml
     mcp_compatibility: ">=1.27,<2"
     current_workspace_mcp: "==1.23.3"
     activation_preflight: mas/scripts/check_runtime_compatibility.py
+    certification_evidence: mas/docs/provenance/maf_runtime_certification.json
   - id: opencode
     role: coding-worker-runtime
     license: MIT

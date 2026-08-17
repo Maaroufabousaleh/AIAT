@@ -257,7 +257,7 @@ Those values are safe seed defaults, not permanent personal-instance limits. All
 | Worker | Department | Default implementation target | Current interpretation |
 | --- | --- | --- | --- |
 | `financial_analyst` | `office_cfo` | LangGraph + AIAT cost/KPI tools + Postgres history | Manifest exists; runtime certification must match installed version. |
-| `tech_analyst` | `office_cio` | LangGraph or Microsoft Agent Framework + GitHub/MCP/web adapters | Manifest exists; MAF has an exact compatibility lock/preflight but remains optional until its dependency set is installed and certified. |
+| `tech_analyst` | `office_cio` | LangGraph or Microsoft Agent Framework + GitHub/MCP/web adapters | Manifest exists; the isolated MAF profile is pinned and deterministically certified (`b937a89`), while default-profile/provider activation remains gated. |
 | `hr_analyst` | `office_chrm` | ccpm/GitHub Issues adapter + AIAT registry data | Manifest exists. |
 | `security_analyst` | `office_cso` | Semgrep CLI + SkillSpector + sandbox evidence | Manifest exists; TruffleHog and other scanners may be added normally. |
 | `sprint_planner` | `office_cto` | ccpm/GitHub Issues + optional LangGraph planning | Manifest exists. |
@@ -266,7 +266,7 @@ Those values are safe seed defaults, not permanent personal-instance limits. All
 | `planner` | `dept_production` | ccpm/GitHub Issues starting profile | Manifest exposes Plane/OpenProject as normal provider options; AIAT remains canonical. |
 | `cost_estimator` | `dept_production` | LangGraph using KPI history and CFO rules | Manifest exists. |
 | `system_architect` | `dept_system` | LangGraph/CrewAI + Mermaid/export tools | Manifest exists. |
-| `solution_designer` | `dept_system` | LangGraph or MAF + MCP/GitHub adapters | Manifest exists; MAF activation remains behind the locked optional preflight. |
+| `solution_designer` | `dept_system` | LangGraph or MAF + MCP/GitHub adapters | Manifest exists; MAF uses the certified isolated profile and remains behind the default-profile/provider preflight. |
 | `tech_writer` | `dept_system` | Docling + Mermaid + LangGraph/CrewAI | Manifest exists; the document tool reports the Docling backend when available and `plain_text_fallback` otherwise. |
 | `tester` | `dept_qa` | OpenCode/OpenHands core + Playwright + pytest | OpenCode path exists; scan/certification record must be reconciled. |
 | `coding_worker` | `dept_qa` | OpenCode default, OpenHands core optional | OpenCode path exists; no unrestricted repository or network access. |
@@ -383,7 +383,7 @@ optional dependency into an execution gate.
 | Category | Default target | Integration boundary |
 | --- | --- | --- |
 | AIAT core | Orchestrator, router, tool service, registries, credentials, approvals, dashboard, adapter SDK | AIAT-owned code. |
-| Worker runtimes | LangGraph 0.6.11, CrewAI 1.6.1, Microsoft Agent Framework 1.13.0 after MCP `>=1.27,<2` compatibility | Python dependency or certified optional adapter; MAF lock/preflight is checked in, but optional installation and live certification remain open. |
+| Worker runtimes | LangGraph 0.6.11, CrewAI 1.6.1, Microsoft Agent Framework 1.13.0 after MCP `>=1.27,<2` compatibility | Python dependency or certified optional adapter; MAF has an isolated `agent-framework==1.13.0`/MCP `1.29.0` certificate, while default-profile provider/canary/live activation remains open. |
 | Coding/testing | OpenCode 1.17.13, OpenHands core, Playwright, pytest | Sandboxed runtime/service and AIAT adapter; other configured editions/runtimes are allowed. |
 | Documents/specs | Docling, GitHub Spec Kit, Mermaid | Prefer bounded subprocess/sidecar adapters; store normalized artifacts in AIAT. `document.ingest` has an explicit degraded plain-text fallback so the core profile remains usable without the Docling extension. |
 | Research/fetch | Scrapling | Guarded adapter with egress, size, timeout, and content controls. |
@@ -1149,7 +1149,10 @@ The programme is organised around completing and hardening the existing architec
   package/API readiness is kept separate from worker canary/live-run and
   rollback certification.
 - [x] Record MAF/MCP compatibility as a technical lock and fail-closed
-  preflight; install, canary, and live activation remain separate gates.
+  preflight, then certify the isolated `agent-framework==1.13.0`/MCP `1.29.0`
+  profile through the real adapter with a deterministic fake client (`b937a89`);
+  provider configuration, model-backed canary, and live activation remain
+  separate gates.
 - Certify the document, research, security, planning, review, DevOps, and SRE adapters with exact pins.
 - Ensure all external workers receive a dedicated steward, immutable bundle, compatibility matrix, and rollback evidence.
 - Prove pause/resume/cancel/checkpoint/recovery, artifact persistence, usage settlement, and in-flight version pinning under live failure.
