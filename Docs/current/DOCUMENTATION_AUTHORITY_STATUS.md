@@ -155,6 +155,13 @@ callback certification, selected worker live read-back, complete mail-span
 evidence, and the read-only projected-span checker/read-back boundary remain
 separate.
 
+The trace incident group `c357fdf` adds the maintained
+`aiat.trace-incident.v1` summary and fail-closed checker over the existing
+payload-free trace evidence. It exposes bounded failure references and keeps
+partial/empty instrumentation independent from incident status; API/dashboard
+deep links, live worker/provider coverage, and retention application remain
+separate.
+
 ## Clean-checkout verification
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the

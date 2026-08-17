@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, and signed identity dashboard read-back is implemented in `074ef8a`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, and complete mail-edge evidence remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, signed identity dashboard read-back is implemented in `074ef8a`, and the bounded `aiat.trace-incident.v1` summary/checker is implemented in `c357fdf`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, complete mail-edge evidence, and API/dashboard incident deep links remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -137,6 +137,10 @@ execution input for this personal/internal programme.
   and safe identity delivery-attempt correlation rows are trace-queryable,
   while API request, PM/SCM, and worker-recovery projections already consume
   bounded durable observations or existing delivery/transition records.
+- The read-only `aiat.trace-incident.v1` projection (`c357fdf`) classifies
+  scalar trace failures and independently reports partial/empty instrumentation
+  coverage. It is a descriptive incident surface, not an SLO, budget, worker,
+  or release gate; API/dashboard deep links remain a later live-evidence slice.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

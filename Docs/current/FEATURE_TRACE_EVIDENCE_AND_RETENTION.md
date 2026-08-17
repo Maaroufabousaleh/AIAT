@@ -26,7 +26,9 @@ trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body
 verifier and provider-facing ingress route are implemented in `2d21a2f`; the
 live checker now classifies projected `mail.provider_webhook.<event>` spans in
 `29d4da5` and can read the signed identity dashboard projection in `074ef8a`.
-Live model/worker/audit/
+The bounded `aiat.trace-incident.v1` summary and fail-closed fixture/live-safe
+checker are implemented in `c357fdf`; they classify scalar failure findings
+without turning partial coverage into a false pass. Live model/worker/audit/
 integration source coverage, provider ingress certification, complete mail-edge
 spans, and live retention execution remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
@@ -119,6 +121,18 @@ and `--confirm-dispatch`; it does not auto-select or activate a worker. The
 fixture passes, but no live model-backed run is claimed until an operator
 supplies that selection and retains the resulting source-count report.
 
+The operator-facing incident projection is derived from one
+`aiat.trace-evidence.v1` response through `aiat.trace-incident.v1`. It reports
+`clear`, `attention`, or `not_found`, an informational/warning/critical
+severity, independent `complete`/`partial`/`empty` coverage, bounded source
+counts, and stable finding references. HTTP 4xx/5xx and known failure statuses
+become scalar findings; missing instrumentation remains a coverage notice.
+`scripts/check_trace_incident.py --live` reads the existing operator trace
+route and emits only this bounded summary. It is read-only and descriptive:
+the checker does not dispatch workers, mutate records, apply retention, or
+make a release decision, and an `attention` incident remains an observed
+operator result rather than a gate.
+
 ## Sampling and retention metadata
 
 The company manifest exposes:
@@ -153,6 +167,10 @@ uv run --isolated pytest \
   apps/orchestrator-api/tests/test_trace_evidence.py -q
 uv run --isolated python scripts/check_trace_evidence.py --json
 uv run --isolated python scripts/check_native_trace_spans.py --json
+uv run --isolated pytest packages/mas-core/tests/test_trace_incident.py -q
+uv run --isolated python scripts/check_trace_incident.py --json
+uv run --isolated python scripts/check_trace_incident.py --live --json \
+  --trace-id aiat-live-trace-check
 uv run --isolated pytest packages/mas-core/tests/test_trace_retention.py -q
 uv run --isolated python scripts/check_trace_retention.py --json
 uv run --isolated python scripts/check_trace_evidence.py --live --json
@@ -189,6 +207,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Native span table and migration: [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0036_native_trace_spans.py`](../../mas/migrations/versions/0036_native_trace_spans.py)
 - API route: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py)
 - Fixture/live checker: [`mas/scripts/check_trace_evidence.py`](../../mas/scripts/check_trace_evidence.py)
+- Incident projection/checker: [`mas/packages/mas-core/mas_core/observability/trace_incident.py`](../../mas/packages/mas-core/mas_core/observability/trace_incident.py), [`mas/scripts/check_trace_incident.py`](../../mas/scripts/check_trace_incident.py), and [`mas/scripts/tests/test_check_trace_incident.py`](../../mas/scripts/tests/test_check_trace_incident.py) (`c357fdf`)
 - Model-backed worker source checker: [`mas/scripts/check_worker_trace_coverage.py`](../../mas/scripts/check_worker_trace_coverage.py)
 - Local live transport checker/evidence (`eac83ae`, refreshed 2026-08-11): [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py), [`mas/docs/provenance/trace_observability_live.json`](../../mas/docs/provenance/trace_observability_live.json)
 - Local live tool checker/evidence (`eac83ae`, refreshed 2026-08-11): [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py), [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json), and [`mas/apps/tool-service/tool_service/usage.py`](../../mas/apps/tool-service/tool_service/usage.py). Both probes are fail-closed and emit no payloads, credentials, or project identifiers.
@@ -209,7 +228,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   coverage is claimed yet.
 - Enforce sampling/retention and project-level narrowing in the live storage
   and recovery workers, including backup/restore parity.
-- Add dashboard deep links and incident views after the API evidence is
-  populated by a native/live deployment.
+- Add API/dashboard deep links and a richer incident view after the bounded
+  incident projection is populated by native/live deployment evidence; the
+  current `aiat.trace-incident.v1` core/checker boundary is intentionally
+  read-only and summary-only.
 - Run multi-service load/soak and outage exercises; static fixtures do not
   certify production availability.

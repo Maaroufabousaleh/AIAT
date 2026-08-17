@@ -223,6 +223,11 @@
   trace-filtered normalization, duplicate-event preference, and fail-closed
   partial-configuration handling (`074ef8a`). The capability is read-only and
   does not claim that a live provider callback or worker run has occurred.
+- [x] Add the bounded `aiat.trace-incident.v1` summary and
+  `scripts/check_trace_incident.py` (`c357fdf`) over the existing trace-evidence
+  authority. Failure findings, severity, source counts, and partial/empty
+  coverage are scalar and payload-free; an `attention` result is descriptive
+  and never a release, activation, dispatch, or retention gate.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence
