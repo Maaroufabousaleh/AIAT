@@ -324,19 +324,20 @@ single frozen commit before production claims are made.
   Commit `24c2e35` adds explicit native model/worker source-category coverage
   and a fail-closed selected-worker checker; its fixture passes, but no live
   worker dispatch is claimed. Provider mail-edge, representative live worker,
-  audit/integration, and live retention evidence remain outside this bounded
-  local slice. Commits `f8829d6`, `b3fca97`, and `9a80c6c` add the read-only
+  audit/integration, and provider-backed retention evidence remain outside this
+  bounded local slice. Commits `f8829d6`, `b3fca97`, and `9a80c6c` add the read-only
   retention-plan route/checker, typed response, and fail-safe legal-hold
   metadata guard; all validate bounded policy/candidate metadata and prove
   `mutation_performed: false` without applying retention. The follow-on
   `01996c9` execution contract/rehearsal, hardened by typed parity evidence in
   `57e13cb`, a typed authoritative hold snapshot in `15054ba`, the typed
   bounded audit envelope in `5d71309`, and the provider-neutral registry read
-  adapter in `67f5eae`, keeps live storage mutation blocked until project
-  scope, matching
-  checksum/count/clean-target backup parity, current hold-registry evidence,
-  human confirmation, audit, and restore evidence are supplied by reviewed
-  adapters.
+  adapter in `67f5eae`. The Postgres-backed local adapter and reserved-fixture
+  certificate (`96f5fc0`) now pass one trace-scoped delete with database-local
+  backup/read-back parity, two held rows, and scoped cleanup; evidence is
+  [`mas/docs/provenance/trace_retention_execution_live.json`](../../mas/docs/provenance/trace_retention_execution_live.json).
+  Production hold authority, durable audit, erasure, archive, provider,
+  and restore evidence remain separate gates.
 
 ### SLO and capacity read models
 
@@ -540,6 +541,7 @@ single frozen commit before production claims are made.
 | Broader worker/observability regression suite | PASS | `uv run --isolated pytest packages/mas-core/tests/test_worker_*.py packages/mas-core/tests/test_observability.py apps/orchestrator-api/tests/test_metrics.py -q` |
 | Metrics API and label-policy suite | PASS (static + refreshed local live + durable many-project scrape) | Contract `90a7d82`, runtime wiring `cbeb9db`, bounded legacy-storage reconciliation fallback `541d6e0`, and native scrape/evidence group `eefe08f`; `uv run --isolated pytest packages/mas-core/tests/test_metric_series_budget.py apps/orchestrator-api/tests/test_metrics.py apps/orchestrator-api/tests/test_projects.py scripts/tests/test_check_metric_series_many_projects.py -q`; the static report includes every AIAT label policy, the synthetic 10,000-project fixture, and the Prometheus histogram `_created` normalization regression test; the refreshed local live scrape and the authenticated durable 10,000-project scrape each pass at 31 bounded series with no `project_id` label, retained at [`metric_series_live.json`](../../mas/docs/provenance/metric_series_live.json) and [`metric_series_many_projects.json`](../../mas/docs/provenance/metric_series_many_projects.json); clean native-Linux release-host scale evidence remains open |
 | HTTP/message/trace-evidence suite | PASS (committed core; operator incident chronology/deep link; fresh local transport + tool read-back; broader sources open) | Core commit `77d5494`; router/agent propagation `5bc0aae`; worker source coverage contract `24c2e35`; bounded incident projection/checker `c357fdf`; operator incident API/generated contracts/dashboard deep link `b4b7cef`; payload-free finding chronology `869202c`; focused API/core/dashboard trace, build/typecheck, and Playwright tests pass; `uv run --isolated pytest packages/mas-core/tests/test_tracing.py packages/mas-core/tests/test_trace_evidence.py packages/mas-core/tests/test_native_trace_spans.py packages/mas-core/tests/test_trace_incident.py packages/mas-core/tests/test_phase4_5.py apps/message-router/tests/test_trace_propagation.py scripts/tests/test_check_trace_incident.py -q`; `uv run --isolated python scripts/check_trace_evidence.py --json`, `scripts/check_native_trace_spans.py --json`, `scripts/check_trace_incident.py --json`, and `scripts/check_worker_trace_coverage.py --json --require-integration` pass deterministic contracts. The configured 2026-08-11 local probes pass and are retained in the two provenance artifacts; selected live model-backed worker, mail-edge, retention, and richer incident chronology probes remain separate evidence boundaries |
+| Trace retention execution | PASS (deterministic fixture + local Postgres reserved-fixture certificate) | `96f5fc0`; `uv run --isolated pytest packages/mas-core/tests/test_postgres_retention.py packages/mas-core/tests/test_retention_execution.py scripts/tests/test_check_trace_retention_execution.py -q` and focused Ruff pass. `check_trace_retention_execution.py --live --json` reaches migration `0036_native_trace_spans`, keeps preview non-mutating, verifies database-local backup/read-back parity, applies one trace-scoped delete after human confirmation, preserves two held rows, and cleans the reserved namespace to zero; evidence is [`trace_retention_execution_live.json`](../../mas/docs/provenance/trace_retention_execution_live.json). Production hold authority, durable audit, erasure, archive, provider-diverse recovery, and restore rollback remain open |
 | API observation ledger | PASS (bounded static/unit/API) | `uv run --isolated pytest packages/mas-core/tests/test_api_observations.py apps/orchestrator-api/tests/test_trace_propagation.py -q`; `uv run --isolated python scripts/check_api_observability.py --json` passes the payload-free normalized-route fixture; migrations `0034_api_request_observations`, `0035_trace_correlation_evidence`, and `0036_native_trace_spans`, durable table/readers, and trace/SLO projections are implemented |
 | Secret-safe system diagnostics | PASS (static/unit/API) | Commit `2860838`; `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q` covers database, router, tool-service, optional object-store, degraded aggregation, no-storage 503, and dependency-payload redaction. The route is read-only and returns only bounded status/latency/connection facts or exception type |
 | Operator control CLI | PASS (static/unit) | Commits `380daf5` and `f8df50e`; `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six deterministic cases, and `test_test10_ops_scripts.py` verifies the executable `scripts/mas-ctl` wrapper. `bootstrap` requires healthy `/health` plus `ok` diagnostics; error bodies are never returned |

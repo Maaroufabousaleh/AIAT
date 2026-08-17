@@ -143,7 +143,7 @@
   integration span and trace-evidence contracts (`77d5494`), with scalar
   allow-listed attributes and deterministic redaction fixtures. The API/storage
   writers, live deployment coverage, identity-service mail-edge spans, incident
-  views, and retention enforcement remain separate review/live gates.
+  views, and production retention authority remain separate review/live gates.
 - [x] Add the `aiat.worker-trace-coverage.v1` evaluator and fail-closed
   `scripts/check_worker_trace_coverage.py` (`24c2e35`). The fixture requires
   model-usage, worker-artifact, native-model, and native-worker source
@@ -196,12 +196,15 @@
   clean-target backup/read-back evidence in addition to project scope,
   and `15054ba` makes it validate a typed authoritative hold-registry
   snapshot in addition to project scope and human confirmation before one
-  atomic adapter call and bounded audit record. The
-  `check_trace_retention_execution.py --live` check remains blocked until a
-  reviewed registry/storage recovery adapter is configured; `5d71309` validates
-  the bounded audit envelope and `67f5eae` supplies the fixture’s typed
-  registry-read source, while live erasure, durable audit, and restore rollback
-  remain open.
+  atomic adapter call and bounded audit record. `5d71309` validates the
+  bounded audit envelope and `67f5eae` supplies the fixture’s typed
+  registry-read source. `96f5fc0` adds a Postgres-backed local adapter and
+  `check_trace_retention_execution.py --live` certificate: four reserved
+  native spans are planned, one eligible delete is guarded by database-local
+  backup/read-back parity and human confirmation, two held rows remain, and
+  scoped cleanup leaves zero rows. This is local fixture evidence only;
+  production hold-registry authority, durable audit, erasure, archive,
+  provider-diverse recovery, and restore rollback remain open.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in

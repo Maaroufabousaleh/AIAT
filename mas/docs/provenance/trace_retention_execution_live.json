@@ -1,0 +1,55 @@
+{
+  "schema_version": "aiat.trace-retention-execution-certification.v1",
+  "check_schema": "aiat.trace-retention-execution-check.v1",
+  "observed_at": "2026-08-17T23:33:04Z",
+  "status": "pass",
+  "mode": "local-postgres-retention",
+  "command": "docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_trace_retention_execution.py --live --json'",
+  "migration_version": "0036_native_trace_spans",
+  "fixture": {
+    "initial_row_count": 4,
+    "trace_scope": "reserved local fixture trace",
+    "payloads_returned": false
+  },
+  "plan_counts": {
+    "retain": 2,
+    "archive": 0,
+    "delete": 2,
+    "invalid": 0,
+    "legal_hold": 1
+  },
+  "preview": {
+    "mutation_performed": false,
+    "action_count": 1,
+    "held_count": 2,
+    "row_count_after_preview": 4
+  },
+  "backup_readback": {
+    "record_count": 1,
+    "parity_verified": true,
+    "clean_target_verified": true,
+    "source_backup_restore_digest_match": true
+  },
+  "apply": {
+    "status": "applied",
+    "mutation_performed": true,
+    "deleted_count": 1,
+    "held_count": 2,
+    "row_count_after_apply": 3,
+    "transaction_scope": "one trace-scoped Postgres transaction"
+  },
+  "cleanup": {
+    "deleted_count": 3,
+    "remaining_count": 0
+  },
+  "local_database_access_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "licence_metadata_is_gate": false,
+  "scope": "reserved native_trace_spans fixture, database-local backup/read-back, one trace-scoped delete transaction, and scoped cleanup",
+  "boundary": [
+    "This certifies local Postgres retention execution only.",
+    "The adapter does not archive records, create durable audit records, perform erasure, or prove restore rollback.",
+    "Provider-diverse, encrypted, clean-environment, multi-host, and disaster-recovery evidence remain separate gates."
+  ]
+}

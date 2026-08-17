@@ -59,9 +59,16 @@ project scope, the typed hold snapshot, typed parity evidence, and human
 confirmation before one atomic adapter call. `5d71309` adds a typed bounded
 audit envelope that carries only evidence references and scalar counts. The
 `67f5eae` adds the provider-neutral `RetentionLegalHoldRegistry` read
-contract and deterministic in-memory source for that snapshot. The live
-registry/storage adapter, live archive/delete application, erasure, durable
-production audit, and restore rollback remain open.
+contract and deterministic in-memory source for that snapshot. `96f5fc0` adds
+`PostgresNativeTraceRetentionStore` and a local `--live` certificate over a
+reserved `native_trace_spans` trace. The certificate proves preview
+non-mutation, database-local backup/read-back parity, one trace-scoped delete
+transaction after human confirmation, two held rows left intact, and scoped
+cleanup; evidence is
+[`trace_retention_execution_live.json`](../../mas/docs/provenance/trace_retention_execution_live.json).
+Production hold-registry authority, archive storage, erasure, durable audit,
+project-wide narrowing, provider-diverse recovery, and restore rollback remain
+open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -69,9 +76,9 @@ fields. `9a80c6c` adds a fail-safe explicit-boolean `legal_hold` marker on
 native-span metadata: held rows remain `retain`, are counted separately, and
 never enter `deletion_ids`; ambiguous string markers do not activate a hold.
 The route and checker classify bounded metadata only and explicitly prove
-`mutation_performed: false`; live archive/delete application, hold authority,
-erasure, project narrowing, durable audit, and restore parity remain open
-gates.
+`mutation_performed: false`; production archive/delete authority, hold
+registry, erasure, project narrowing, durable audit, provider recovery, and
+restore parity remain open gates.
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -186,7 +193,7 @@ payload-free trace projection, and cleans only the reserved fixture namespace.
 The counts-only certificate is retained at
 [`worker_run_postgres_evidence.json`](../../mas/docs/provenance/worker_run_postgres_evidence.json).
 This closes local durable worker evidence, not live model/provider execution,
-external callback/bounce delivery, retention enforcement, sandbox proof,
+external callback/bounce delivery, production retention authority, sandbox proof,
 canary/rollback, or outage/restore evidence.
 
 The operator-facing incident projection is derived from one
@@ -224,7 +231,7 @@ retention:
 The API projects these values into `aiat.trace-retention-policy.v1`. They are
 operator-facing configuration metadata. They do not grant authority, bypass
 approvals, or turn resource notices into gates. Project-level narrowing,
-legal-hold/erasure authority, and active retention enforcement require a
+legal-hold/erasure authority, and production retention enforcement require a
 separate live storage/recovery slice.
 
 The local retention planner now exposes `aiat.trace-retention-plan.v1`. It
@@ -241,10 +248,10 @@ selecting a database or provider, validates project scope and the typed
 authoritative hold snapshot, requires typed checksum/count/clean-target
 backup-parity evidence and human confirmation for apply, and records one
 typed bounded audit envelope (`5d71309`). The fixture obtains its hold snapshot
-through `InMemoryRetentionLegalHoldRegistry` (`67f5eae`). It is a
-fixture/review boundary only;
-`scripts/check_trace_retention_execution.py --live` fails closed until a
-production storage/recovery adapter is configured.
+through `InMemoryRetentionLegalHoldRegistry` (`67f5eae`). The local Postgres
+adapter (`96f5fc0`) now exercises the same guarded contract against a reserved
+database fixture; its evidence is local-only and does not replace production
+hold, audit, erasure, archive, or restore gates.
 
 The operator-only `GET /observability/retention/plan` route reads a bounded set
 of native-span metadata, applies the company retention policy, and returns the

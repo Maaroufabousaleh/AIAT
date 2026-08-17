@@ -20,15 +20,19 @@ The latest bounded R6 retention increments are the guarded
 `aiat.trace-retention-execution.v1` contract and deterministic in-memory
 rehearsal (`01996c9`), typed parity evidence (`57e13cb`), the authoritative
 hold snapshot (`15054ba`), the bounded audit envelope (`5d71309`), and the
-registry read adapter (`67f5eae`). Preview
-never calls a mutation adapter; apply requires
+registry read adapter (`67f5eae`). `96f5fc0` adds the Postgres-backed local
+adapter and reserved-fixture certificate: preview remains non-mutating, one
+eligible delete is guarded by database-local backup/read-back parity and human
+confirmation, two held rows remain, and scoped cleanup leaves zero rows; the
+evidence is [`trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json).
+Preview never calls a mutation adapter; apply requires
 project scope, a typed authoritative hold snapshot (`15054ba`), typed
 checksum/count/clean-target backup-read-back evidence (`57e13cb`), a typed
 bounded audit envelope (`5d71309`), and explicit human confirmation before one
 atomic action batch. The audit envelope carries evidence references and scalar
 counts only.
-The live registry/adapter, erasure, durable audit, and restore rollback remain
-open.
+Production hold-registry authority, archive, erasure, durable audit, provider
+recovery, and restore rollback remain open.
 
 The preceding bounded dashboard increment was shared empty-state accessibility:
 the reusable `EmptyState` primitive marks decorative status icons as hidden
@@ -200,8 +204,9 @@ finding-count, and payload-free finding-reference chronology. `f8829d6` also
 adds the operator-only read-only retention-plan route, regenerated contracts,
 and `check_trace_retention.py --live`; its `mutation_performed: false` result
 does not apply archive/delete actions. Live provider configuration/callback,
-selected model-backed worker read-back, complete mail-span/SLO evidence, live
-retention enforcement, and richer live chronology remain open. `b3fca97`
+selected model-backed worker read-back, complete mail-span/SLO evidence,
+production retention authority/audit/erasure/restore, and richer live
+chronology remain open. `b3fca97`
 hardens the retention-plan response as a typed Pydantic/OpenAPI contract with
 bounded counts, candidates, and an enforced non-mutation field. `9a80c6c` adds
 strict explicit-boolean legal-hold metadata: held rows remain retained and out
@@ -213,9 +218,11 @@ manifest digests, record counts, checked count, and clean-target verification
 must agree; `15054ba` types the authoritative hold snapshot with source,
 observed time, active/released state, duplicate rejection, and project scope;
 `67f5eae` supplies a typed registry-read source, and `5d71309` types the
-bounded audit envelope. Preview/apply still require
-project scope and human confirmation, while live registry/storage mutation,
-erasure, durable audit, and restore rollback remain open.
+bounded audit envelope. `96f5fc0` adds the local Postgres adapter and
+reserved-fixture certificate for backup/read-back parity, one human-confirmed
+trace-scoped delete, held-row preservation, and cleanup. Production
+registry/storage authority, erasure, durable audit, provider recovery, and
+restore rollback remain open.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -502,9 +509,9 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Flow-instance recovery probe status | [Flow-Instance Recovery Probe Status](Docs/current/FLOW_INSTANCE_RECOVERY_STATUS.md), [`check_flow_instance_recovery.py`](mas/scripts/check_flow_instance_recovery.py), [`test_flow_instance_recovery.py`](mas/packages/mas-core/tests/test_flow_instance_recovery.py) |
 | Workflow watchdog and safe-recovery review status | [Workflow Watchdog and Safe-Recovery Status](Docs/current/WORKFLOW_WATCHDOG_RECOVERY_STATUS.md), [`check_workflow_watchdog_recovery.py`](mas/scripts/check_workflow_watchdog_recovery.py), [`test_workflow_watchdog_recovery.py`](mas/packages/mas-core/tests/test_workflow_watchdog_recovery.py) |
 | Request/message trace propagation | Core/router group `5bc0aae`; API/storage integration `84a1c01`; worker trace/span context persistence `ceb7011`; [`propagate_trace_context`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`propagate_trace_context`](mas/apps/message-router/message_router/main.py), [`propagate_trace_context`](mas/apps/tool-service/tool_service/main.py), [`AgentBase._dispatch`](mas/packages/mas-core/mas_core/agent_runtime/base.py), [API test](mas/apps/orchestrator-api/tests/test_trace_propagation.py), [router test](mas/apps/message-router/tests/test_trace_propagation.py), [tool test](mas/apps/tool-service/tests/test_trace_propagation.py), [agent/SDK tests](mas/packages/mas-core/tests/test_phase4_5.py) |
-| Cross-service trace evidence and retention planning | Integration group `84a1c01`; worker artifact/usage correlation `ceb7011`; bounded incident projection `c357fdf`; worker/mail-edge evidence join `1d8aed5`; durable local worker-run evidence `acd3f06`; [`aiat.trace-evidence.v1`](mas/packages/mas-core/mas_core/observability/trace_evidence.py), [`aiat.trace-incident.v1`](mas/packages/mas-core/mas_core/observability/trace_incident.py), [`aiat.native-trace-span.v1`](mas/packages/mas-core/mas_core/observability/native_spans.py), [`aiat.trace-retention-plan.v1`](mas/packages/mas-core/mas_core/observability/retention.py), [`aiat.worker-mail-edge-coverage.v1`](mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py), [`/observability/traces/{trace_id}`](mas/apps/orchestrator-api/orchestrator_api/main.py), signed identity delivery-attempt correlation [`identity_client.py`](mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`check_trace_evidence.py`](mas/scripts/check_trace_evidence.py), [`check_trace_incident.py`](mas/scripts/check_trace_incident.py), [`check_worker_mail_edge_coverage.py`](mas/scripts/check_worker_mail_edge_coverage.py), [`check_worker_run_postgres_evidence.py`](mas/scripts/check_worker_run_postgres_evidence.py), [`check_live_trace_observability.py`](mas/scripts/check_live_trace_observability.py), [`check_native_trace_spans.py`](mas/scripts/check_native_trace_spans.py), [`check_trace_retention.py`](mas/scripts/check_trace_retention.py), [`check_api_observability.py`](mas/scripts/check_api_observability.py), [local live transport evidence](mas/docs/provenance/trace_observability_live.json), [durable worker evidence](mas/docs/provenance/worker_run_postgres_evidence.json), [trace evidence tests](mas/packages/mas-core/tests/test_trace_evidence.py) |
+| Cross-service trace evidence and retention planning | Integration group `84a1c01`; worker artifact/usage correlation `ceb7011`; bounded incident projection `c357fdf`; worker/mail-edge evidence join `1d8aed5`; durable local worker-run evidence `acd3f06`; local Postgres retention certificate `96f5fc0`; [`aiat.trace-evidence.v1`](mas/packages/mas-core/mas_core/observability/trace_evidence.py), [`aiat.trace-incident.v1`](mas/packages/mas-core/mas_core/observability/trace_incident.py), [`aiat.native-trace-span.v1`](mas/packages/mas-core/mas_core/observability/native_spans.py), [`aiat.trace-retention-plan.v1`](mas/packages/mas-core/mas_core/observability/retention.py), [`aiat.worker-mail-edge-coverage.v1`](mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py), [`/observability/traces/{trace_id}`](mas/apps/orchestrator-api/orchestrator_api/main.py), signed identity delivery-attempt correlation [`identity_client.py`](mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`check_trace_evidence.py`](mas/scripts/check_trace_evidence.py), [`check_trace_incident.py`](mas/scripts/check_trace_incident.py), [`check_worker_mail_edge_coverage.py`](mas/scripts/check_worker_mail_edge_coverage.py), [`check_worker_run_postgres_evidence.py`](mas/scripts/check_worker_run_postgres_evidence.py), [`check_live_trace_observability.py`](mas/scripts/check_live_trace_observability.py), [`check_native_trace_spans.py`](mas/scripts/check_native_trace_spans.py), [`check_trace_retention.py`](mas/scripts/check_trace_retention.py), [`check_trace_retention_execution.py`](mas/scripts/check_trace_retention_execution.py), [`check_api_observability.py`](mas/scripts/check_api_observability.py), [local live transport evidence](mas/docs/provenance/trace_observability_live.json), [durable worker evidence](mas/docs/provenance/worker_run_postgres_evidence.json), [local retention evidence](mas/docs/provenance/trace_retention_execution_live.json), [trace evidence tests](mas/packages/mas-core/tests/test_trace_evidence.py) |
 | Trace retention review status | [Trace Retention Review Status](Docs/current/TRACE_RETENTION_REVIEW_STATUS.md) |
-| Trace retention execution rehearsal | [`aiat.trace-retention-execution.v1`](mas/packages/mas-core/mas_core/observability/retention_execution.py), [`check_trace_retention_execution.py`](mas/scripts/check_trace_retention_execution.py), and [`test_retention_execution.py`](mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`, registry read adapter `67f5eae`) |
+| Trace retention execution rehearsal | [`aiat.trace-retention-execution.v1`](mas/packages/mas-core/mas_core/observability/retention_execution.py), [`PostgresNativeTraceRetentionStore`](mas/packages/mas-core/mas_core/observability/postgres_retention.py), [`check_trace_retention_execution.py`](mas/scripts/check_trace_retention_execution.py), and focused tests (`01996c9`, typed parity `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`, registry read adapter `67f5eae`, local certificate `96f5fc0`; evidence [`trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json)) |
 | SLO and capacity forecast read models | Integration group `84a1c01`; [`aiat.slo-policy.v1` / `aiat.slo-report.v1` / `aiat.capacity-forecast.v1`](mas/packages/mas-core/mas_core/observability/slo.py), [`/observability/slo`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/observability/capacity/forecast`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`check_slo_capacity.py`](mas/scripts/check_slo_capacity.py), signed identity mail projection [`identity_client.py`](mas/apps/orchestrator-api/orchestrator_api/identity_client.py) |
 | Immediate release-truth and security work | [P0 Release Integrity Plan](Docs/current/plans/P0_RELEASE_INTEGRITY_PLAN.md) |
 | Current P0 implementation evidence and open gates | [P0 Release Integrity Status](Docs/current/P0_RELEASE_INTEGRITY_STATUS.md) |
@@ -1228,7 +1235,8 @@ integration-evidence, PM-inbound, and durable native
 transport/model/tool/audit/worker/integration span records. The native span
 normalizer drops sensitive/non-scalar attributes before persistence; signed
 identity delivery-attempt rows can add safe `mail` spans, while provider
-mail-edge spans and live retention enforcement remain open.
+mail-edge spans and production retention authority/audit/erasure/restore remain
+open.
 The deterministic `aiat.trace-retention-plan.v1` planner now classifies
 metadata-only native-span rows as retain/archive/delete/invalid without
 mutating storage; `9a80c6c` honors explicit boolean legal-hold metadata and
@@ -1361,8 +1369,8 @@ Required outcomes:
   model-usage/worker-artifact/integration-evidence, PM-inbound metadata, native
   transport/model/tool/audit/worker/integration spans, and optional safe
   identity delivery-attempt mail spans are joined without raw payloads, with
-  legacy run fallback; provider mail-edge spans and live retention enforcement
-  remain;
+  legacy run fallback; provider mail-edge spans and production retention
+  authority/audit/erasure/restore remain;
 - [x] versioned descriptive SLO policy/report and bounded capacity/budget
   forecast contracts with operator-only routes and deterministic fixture;
 - [x] payload-free API request observation ledger and trace/SLO projections;
@@ -1388,8 +1396,11 @@ Required outcomes:
   hold-registry snapshot, `5d71309` types the bounded audit envelope, and
   `67f5eae` supplies the provider-neutral registry read adapter. Project scope,
   typed hold/parity/audit evidence, human confirmation, atomic adapter
-  batching, and bounded metadata are covered, while live
-  registry/storage mutation, erasure, and restore rollback remain.
+  batching, and bounded metadata are covered; `96f5fc0` adds the local
+  Postgres adapter and reserved-fixture certificate for backup/read-back
+  parity, one human-confirmed trace-scoped delete, held-row preservation, and
+  cleanup. Production registry/storage authority, erasure, durable audit,
+  provider recovery, and restore rollback remain.
 - [x] payload-free `aiat.trace-incident.v1` summary and deterministic/
   fail-closed checker (`c357fdf`); scalar failure references and partial/empty
   coverage are descriptive;
@@ -1705,9 +1716,12 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
 6. [x] Verify the local tool-service usage/native-span read-back with the
    bounded `time_now` probe and add the metadata-only mail-edge/bounce
    contract/checker (`85369fe`); [x] certify local durable worker-run and
-   payload-free trace read-back (`acd3f06`); [ ] add a selected live
-   model-backed worker, identity provider webhook persistence, and live
-   retention evidence.
+   payload-free trace read-back (`acd3f06`); [x] certify the reserved local
+   Postgres retention execution batch (`96f5fc0`, evidence at
+   [`provenance/trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json)); [ ] add a selected live
+   model-backed worker and identity provider webhook persistence; [ ] add
+   production hold authority, durable audit, erasure, provider recovery, and
+   restore rollback evidence.
 
 ## 7. Available choices outside the minimal roadmap
 

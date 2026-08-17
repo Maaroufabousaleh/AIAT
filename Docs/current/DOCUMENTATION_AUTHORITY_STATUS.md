@@ -205,9 +205,13 @@ the maintained `aiat.trace-retention-execution.v1` provider-neutral contract
 and deterministic in-memory preview/apply rehearsal; typed parity, hold
 snapshot, and bounded audit evidence are now validated in the fixture
 (`57e13cb`, `15054ba`, `5d71309`), with hold acquisition routed through the
-typed registry-read adapter (`67f5eae`). Live
-storage/recovery mutation remains blocked until its adapter, hold registry,
-durable audit, and restore evidence are reviewed.
+typed registry-read adapter (`67f5eae`). `96f5fc0` adds the local
+`PostgresNativeTraceRetentionStore` and reserved-fixture certificate with
+database-local backup/read-back parity, one trace-scoped delete, held-row
+preservation, and cleanup; evidence is
+[`mas/docs/provenance/trace_retention_execution_live.json`](../../mas/docs/provenance/trace_retention_execution_live.json).
+Production hold-registry authority, durable audit, erasure, archive, provider
+recovery, and restore evidence remain separate review gates.
 
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
