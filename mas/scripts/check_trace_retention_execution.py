@@ -1,23 +1,34 @@
-"""Rehearse guarded retention execution without a live storage mutation.
+"""Certify guarded retention execution and a disposable local Postgres batch.
 
 The fixture exercises project narrowing, a typed authoritative hold snapshot,
 typed backup parity and audit evidence, and explicit human confirmation through
-the in-memory adapter.
-``--live`` is intentionally fail-closed until a reviewed storage/recovery
-adapter is connected; no provider or database is selected by this checker.
+the in-memory adapter.  ``--live`` requires an explicitly configured local
+Postgres DSN, inserts only a reserved native-span fixture, verifies a
+database-local backup/read-back manifest, applies one trace-scoped delete
+transaction, and removes the remaining fixture rows.  It does not claim
+provider-diverse retention, durable audit, erasure, or restore rollback.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import sys
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
+import sqlalchemy as sa
+
+from mas_core.memory.storage import AgentStorage
+from mas_core.observability.postgres_retention import PostgresNativeTraceRetentionStore
 from mas_core.observability.retention import (
     TRACE_RETENTION_PLAN_SCHEMA,
     TraceRetentionCandidate,
     TraceRetentionPlan,
+    plan_native_span_retention,
 )
 from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
@@ -33,6 +44,14 @@ from mas_core.observability.trace_evidence import TraceRetentionPolicy
 
 CHECK_SCHEMA = "aiat.trace-retention-execution-check.v1"
 EVALUATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+EXPECTED_MIGRATION = "0036_native_trace_spans"
+LIVE_TRACE_ID = "aiat-retention-live-v1-trace"
+LIVE_SPANS = {
+    "expired-delete": "aiat-retention-live-v1-expired-delete",
+    "planner-hold": "aiat-retention-live-v1-planner-hold",
+    "authority-hold": "aiat-retention-live-v1-authority-hold",
+    "fresh-retain": "aiat-retention-live-v1-fresh-retain",
+}
 
 
 def _plan() -> TraceRetentionPlan:
@@ -200,6 +219,271 @@ def build_report() -> dict[str, object]:
     }
 
 
+def _normalize_dsn(raw: str | None) -> str | None:
+    value = str(raw or "").strip()
+    if not value or "${" in value or "}" in value:
+        return None
+    if value.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + value.removeprefix("postgresql://")
+    if value.startswith("postgres://"):
+        return "postgresql+asyncpg://" + value.removeprefix("postgres://")
+    return value if value.startswith("postgresql+asyncpg://") else None
+
+
+async def _migration_version(storage: AgentStorage) -> str | None:
+    async with storage.engine.connect() as connection:
+        return await connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+
+
+async def _live_rows(storage: AgentStorage) -> list[dict[str, Any]]:
+    return await storage.list_native_trace_spans_by_trace(LIVE_TRACE_ID, limit=100)
+
+
+async def _live_cleanup(storage: AgentStorage) -> int:
+    async with storage.engine.begin() as connection:
+        result = await connection.execute(
+            sa.text("DELETE FROM native_trace_spans WHERE trace_id = :trace_id"),
+            {"trace_id": LIVE_TRACE_ID},
+        )
+    return int(result.rowcount or 0)
+
+
+async def _insert_live_fixture(storage: AgentStorage) -> None:
+    now = datetime.now(UTC)
+    old = now - timedelta(days=45)
+    fresh = now - timedelta(days=2)
+    rows = (
+        ("expired-delete", "audit", old, {}, "retention.delete"),
+        ("planner-hold", "mail", old, {"legal_hold": True}, "retention.planner_hold"),
+        ("authority-hold", "worker", old, {}, "retention.authority_hold"),
+        ("fresh-retain", "tool", fresh, {}, "retention.retain"),
+    )
+    for key, source_kind, started_at, attributes, operation in rows:
+        await storage.create_native_trace_span(
+            trace_id=LIVE_TRACE_ID,
+            span_id=LIVE_SPANS[key],
+            source_kind=source_kind,
+            operation=operation,
+            service="retention-fixture",
+            status="success",
+            started_at=started_at,
+            ended_at=started_at,
+            duration_ms=1,
+            sampled=True,
+            retention_until=started_at + timedelta(days=30),
+            attributes={**attributes, "fixture": "aiat-retention-live-v1"},
+        )
+
+
+def _live_blocked(
+    reason: str,
+    *,
+    database_configured: bool = False,
+    local_database_access_performed: bool = False,
+    mutation_performed: bool = False,
+    migration_version: str | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "schema_version": CHECK_SCHEMA,
+        "execution_schema": TRACE_RETENTION_EXECUTION_SCHEMA,
+        "mode": "local-postgres-retention",
+        "status": "blocked",
+        "reason": reason,
+        "database_configured": database_configured,
+        "local_database_access_performed": local_database_access_performed,
+        "external_network_access_performed": False,
+        "external_provider_mutation_performed": False,
+        "mutation_performed": mutation_performed,
+        "licence_metadata_is_gate": False,
+        "scope": "reserved native_trace_spans fixture and trace-scoped local Postgres transaction",
+    }
+    if migration_version is not None:
+        report["migration_version"] = migration_version
+    return report
+
+
+async def _run_live(raw_dsn: str | None) -> dict[str, Any]:
+    normalized_dsn = _normalize_dsn(raw_dsn)
+    if normalized_dsn is None:
+        return _live_blocked("retention_evidence_database_not_configured")
+
+    storage = AgentStorage(normalized_dsn)
+    migration_version: str | None = None
+    cleanup_count = 0
+    remaining_count: int | None = None
+    try:
+        await storage.connect()
+        migration_version = await _migration_version(storage)
+        if migration_version != EXPECTED_MIGRATION:
+            return _live_blocked(
+                "retention_evidence_migration_not_at_head",
+                database_configured=True,
+                local_database_access_performed=True,
+                migration_version=migration_version,
+            )
+
+        await _live_cleanup(storage)
+        await _insert_live_fixture(storage)
+        initial_rows = await _live_rows(storage)
+        evaluated_at = datetime.now(UTC)
+        policy = TraceRetentionPolicy(retention_days=30, terminal_mode="delete")
+        plan = plan_native_span_retention(
+            initial_rows,
+            policy,
+            evaluated_at=evaluated_at,
+            limit=100,
+        )
+        authority_record_id = next(
+            candidate.record_id
+            for candidate in plan.candidates
+            if candidate.trace_id == LIVE_TRACE_ID
+            and candidate.source_kind == "worker"
+        )
+        hold_snapshot = InMemoryRetentionLegalHoldRegistry(
+            source_ref="hold-registry://aiat-retention-live-v1",
+            holds=(
+                RetentionLegalHold(
+                    hold_id="aiat-retention-live-v1-authority-hold",
+                    record_id=authority_record_id,
+                    status="active",
+                    authority_ref="registry-entry://aiat-retention-live-v1-authority-hold",
+                ),
+            ),
+        ).read_snapshot(observed_at=evaluated_at)
+        store = PostgresNativeTraceRetentionStore(
+            normalized_dsn,
+            trace_id=LIVE_TRACE_ID,
+        )
+        preview = execute_retention_plan(
+            plan,
+            store=store,
+            scope=f"trace:{LIVE_TRACE_ID}",
+            actor="fixture-planner",
+            actor_kind="system",
+            mode="preview",
+            authoritative_legal_hold_snapshot=hold_snapshot,
+            audit_id="aiat-retention-live-v1-preview",
+            evaluated_at=evaluated_at,
+        )
+        preview_count = len(await _live_rows(storage))
+        action_ids = tuple(
+            candidate.record_id
+            for candidate in plan.candidates
+            if candidate.disposition == "delete" and candidate.record_id != authority_record_id
+        )
+        backup = store.prepare_backup_parity(
+            action_ids,
+            evidence_ref="backup://aiat-retention-live-v1",
+        )
+        applied = execute_retention_plan(
+            plan,
+            store=store,
+            scope=f"trace:{LIVE_TRACE_ID}",
+            actor="fixture-operator",
+            actor_kind="human",
+            mode="apply",
+            confirm=True,
+            backup_parity_evidence=backup,
+            authoritative_legal_hold_snapshot=hold_snapshot,
+            audit_id="aiat-retention-live-v1-apply",
+            evaluated_at=evaluated_at,
+        )
+        after_apply_rows = await _live_rows(storage)
+        cleanup_count = await _live_cleanup(storage)
+        remaining_count = len(await _live_rows(storage))
+        passed = (
+            migration_version == EXPECTED_MIGRATION
+            and len(initial_rows) == 4
+            and plan.counts["delete"] == 2
+            and plan.counts["legal_hold"] == 1
+            and preview.mutation_performed is False
+            and preview.action_count == 1
+            and preview.held_count == 2
+            and preview_count == 4
+            and backup.source_record_count == 1
+            and backup.clean_target_verified is True
+            and applied.status == "applied"
+            and applied.mutation_performed is True
+            and applied.deleted_count == 1
+            and applied.held_count == 2
+            and len(after_apply_rows) == 3
+            and cleanup_count == 3
+            and remaining_count == 0
+        )
+        return {
+            "schema_version": CHECK_SCHEMA,
+            "execution_schema": TRACE_RETENTION_EXECUTION_SCHEMA,
+            "mode": "local-postgres-retention",
+            "status": "pass" if passed else "fail",
+            "migration_version": migration_version,
+            "initial_row_count": len(initial_rows),
+            "plan_counts": plan.counts,
+            "preview": {
+                "mutation_performed": preview.mutation_performed,
+                "action_count": preview.action_count,
+                "held_count": preview.held_count,
+                "row_count_after_preview": preview_count,
+            },
+            "backup": {
+                "record_count": backup.source_record_count,
+                "parity_verified": applied.backup_parity_verified,
+                "clean_target_verified": backup.clean_target_verified,
+            },
+            "apply": {
+                "status": applied.status,
+                "mutation_performed": applied.mutation_performed,
+                "deleted_count": applied.deleted_count,
+                "held_count": applied.held_count,
+                "row_count_after_apply": len(after_apply_rows),
+            },
+            "cleanup": {
+                "deleted_count": cleanup_count,
+                "remaining_count": remaining_count,
+            },
+            "database_configured": True,
+            "local_database_access_performed": True,
+            "external_network_access_performed": False,
+            "external_provider_mutation_performed": False,
+            "mutation_performed": True,
+            "licence_metadata_is_gate": False,
+            "scope": "reserved native_trace_spans fixture and one trace-scoped local Postgres transaction",
+            "boundary": "local Postgres backup/read-back/delete only; no durable audit, erasure, provider, or restore rollback",
+        }
+    except (RetentionExecutionError, TypeError, ValueError) as exc:
+        return {
+            **_live_blocked(
+                "local_postgres_retention_evidence_failed",
+                database_configured=True,
+                local_database_access_performed=True,
+                mutation_performed=False,
+                migration_version=migration_version,
+            ),
+            "failure_type": type(exc).__name__,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            **_live_blocked(
+                "local_postgres_retention_evidence_failed",
+                database_configured=True,
+                local_database_access_performed=True,
+                migration_version=migration_version,
+            ),
+            "failure_type": type(exc).__name__,
+        }
+    finally:
+        if getattr(storage, "_engine", None) is not None:
+            with suppress(Exception):
+                await _live_cleanup(storage)
+            with suppress(Exception):
+                await storage.close()
+
+
+def build_live_report(raw_dsn: str | None) -> dict[str, Any]:
+    """Run the local Postgres certificate from a synchronous CLI boundary."""
+
+    return asyncio.run(_run_live(raw_dsn))
+
+
 def _blocked(reason: str) -> dict[str, object]:
     return {
         "schema_version": CHECK_SCHEMA,
@@ -217,11 +501,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="require a reviewed live storage/recovery adapter (currently blocked)",
+        help="run the reserved local Postgres retention certificate",
+    )
+    parser.add_argument(
+        "--dsn",
+        default=os.getenv(
+            "AIAT_RETENTION_EVIDENCE_DSN",
+            os.getenv("PGBOUNCER_DSN", os.getenv("POSTGRES_DSN", "")),
+        ),
+        help="Postgres DSN; defaults to AIAT_RETENTION_EVIDENCE_DSN/PGBOUNCER_DSN/POSTGRES_DSN",
     )
     args = parser.parse_args(argv)
     try:
-        report = _blocked("live retention execution adapter is not configured") if args.live else build_report()
+        report = build_live_report(args.dsn) if args.live else build_report()
     except (RetentionExecutionError, TypeError, ValueError) as exc:
         report = _blocked(f"retention execution fixture failed: {type(exc).__name__}")
         report["detail"] = str(exc)[:160]

@@ -75,6 +75,7 @@ from mas_core.observability.retention_execution import (
     RetentionLegalHoldStatus,
     execute_retention_plan,
 )
+from mas_core.observability.postgres_retention import PostgresNativeTraceRetentionStore
 from mas_core.observability.trace_evidence import (
     TRACE_EVIDENCE_SCHEMA,
     TRACE_RETENTION_SCHEMA,
@@ -165,6 +166,7 @@ __all__ = [
     "RetentionLegalHoldSnapshot",
     "RetentionLegalHoldStatus",
     "execute_retention_plan",
+    "PostgresNativeTraceRetentionStore",
     # Logging
     "configure_logging",
     "MAIL_EDGE_COVERAGE_SCHEMA",
