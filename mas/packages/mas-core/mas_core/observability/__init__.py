@@ -68,6 +68,12 @@ from mas_core.observability.trace_evidence import (
     build_trace_evidence,
     trace_retention_from_manifest,
 )
+from mas_core.observability.trace_incident import (
+    TRACE_INCIDENT_SCHEMA,
+    TraceIncident,
+    TraceIncidentFinding,
+    build_trace_incident,
+)
 from mas_core.observability.tracing import (
     bind_trace_id,
     clear_trace_context,
@@ -137,6 +143,10 @@ __all__ = [
     "TraceRetentionPolicy",
     "build_trace_evidence",
     "trace_retention_from_manifest",
+    "TRACE_INCIDENT_SCHEMA",
+    "TraceIncident",
+    "TraceIncidentFinding",
+    "build_trace_incident",
     # Tracing
     "bind_trace_id",
     "clear_trace_context",
