@@ -213,6 +213,15 @@ preservation, and cleanup; evidence is
 Production hold-registry authority, durable audit, erasure, archive, provider
 recovery, and restore evidence remain separate review gates.
 
+The guarded self-improvement durability group `10983c8` adds a maintained
+local Compose Postgres certificate at
+[`self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json).
+It exercises the canonical project/lifecycle writers through six technical
+gates, stale-revision rejection, human approval, five checksum/size
+read-backs, exact rollback, terminal outcome/history read-back, and scoped
+cleanup. This is local control-plane evidence only; selected worker/provider,
+budget, deployment, and live issue reconciliation remain separate gates.
+
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
 real adapter accepts an explicit AIAT client boundary, and the deterministic

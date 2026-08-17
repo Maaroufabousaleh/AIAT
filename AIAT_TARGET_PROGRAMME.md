@@ -101,7 +101,7 @@ The core database migration graph has a single current head at `0036_native_trac
 | Production deployment hardening | **Partial** | Compose, Windows/Linux wrappers, systemd helpers, health checks, resource caps, Redis ACLs, distinct CEO/worker principals, persisted dashboard section ACLs, and optional tunnel/mail profiles exist. Fixed infrastructure refs and Dockerfile bases are digest-pinned; application/gateway refs require deployment-supplied immutable `*_IMAGE_REF` values, SBOMs, and live pull/build evidence. |
 | Long-term memory/workflow infrastructure | **Partial** | Postgres/pgvector context and checkpoint storage are real. Letta, Qdrant, and Temporal are approved target adapters/services, not proven default runtime dependencies in the current stack. |
 | Object storage | **Contract/copy/backup/migration fixture implemented; local MinIO conformance and same-provider backup/restore retained; external live work pending** | MinIO is the current S3-compatible artifact backend. The provider-neutral `aiat.object-store-conformance.v1` fixture, real-`BlobClient` `--live` conformance runner, checked-in private-network MinIO probe, bounded aggregate `--compose-local` release child, `aiat.object-store-copy.v1` verified-copy/parity helper, live source-inventory/target-parity runner, deterministic `aiat.object-store-backup.v1` manifest, clean-target `aiat.object-store-restore.v1` verifier, three-provider backup/restore runner, and `aiat.object-store-migration.v1` inventory/dual-write/cutover/rollback workflow fixture are implemented. The deployed local MinIO service has retained secret-safe 8/8 conformance and same-provider backup/restore reports at [`mas/docs/provenance/object_store_live_conformance.json`](mas/docs/provenance/object_store_live_conformance.json) and [`mas/docs/provenance/object_store_backup_restore_live.json`](mas/docs/provenance/object_store_backup_restore_live.json). SeaweedFS comparison, provider-pair migration, encryption, routing cutover, benchmark, clean-environment restore, and disaster-recovery evidence remain open. |
-| Self-development | **Guarded contract, authenticated project API, durable lifecycle/outcome snapshot, artifact manifest/read-back evidence, and canonical storage writer implemented; live lifecycle pending** | Candidate generation, certification, shadow/canary rollout, rollback, worker upgrades, capability evaluation, and approvals exist. The `aiat.self-improvement.v1` contract creates a typed canonical project request, authenticated `POST /projects/self-improvement` validates creator/company scope, `AgentStorage.create_self_improvement_project` delegates it through the canonical project writer, project config stores a revisioned lifecycle snapshot and project-history entries, and authenticated lifecycle reference/action endpoints link canonical issue/worker-run/artifact/budget/branch/SBOM/deployment/evidence records and apply guarded transitions without copying authority. Coding/testing/review/security/migration/rollback gates remain independent, human promotion is required, exact prior-version rollback passes in a deterministic fixture, terminal outcome actions persist bounded cost/incident/rollback/KPI learning with idempotent IDs, and normalized worker-result records now produce the frozen five-kind artifact manifest with checksum/size read-back evidence; live worker/provider execution and deployment integration remain open. |
+| Self-development | **Guarded contract, authenticated project API, durable local Postgres lifecycle/outcome snapshot, artifact manifest/read-back evidence, and canonical storage writer implemented; live worker/provider lifecycle pending** | Candidate generation, certification, shadow/canary rollout, rollback, worker upgrades, capability evaluation, and approvals exist. The `aiat.self-improvement.v1` contract creates a typed canonical project request, authenticated `POST /projects/self-improvement` validates creator/company scope, `AgentStorage.create_self_improvement_project` delegates it through the canonical project writer, project config stores a revisioned lifecycle snapshot and project-history entries, and authenticated lifecycle reference/action endpoints link canonical issue/worker-run/artifact/budget/branch/SBOM/deployment/evidence records and apply guarded transitions without copying authority. Coding/testing/review/security/migration/rollback gates remain independent, human promotion is required, exact prior-version rollback passes in deterministic and reserved local Postgres certificates, terminal outcome actions persist bounded cost/incident/rollback/KPI learning with idempotent IDs, and normalized worker-result records now produce the frozen five-kind artifact manifest with checksum/size read-back evidence. The local certificate is [`self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json); selected live worker/provider execution and deployment integration remain open. |
 | Outside-LAN access | **Partial** | Cloudflare tunnel and mail-edge/gateway deployment profiles exist. Production exposure, identity, TLS, and recovery certification remain operator-owned. |
 
 ### 2.2 Evidence that must be interpreted carefully
@@ -1086,7 +1086,14 @@ storage writer, and [`check_self_improvement_lifecycle.py`](mas/scripts/check_se
 fixture implement the metadata/project-request, independent-gate, human-approval,
 shadow/canary, promotion, exact-rollback, and durable-link boundary. They are
 intentionally not a second project store and do not claim a live worker or
-deployment change.
+deployment change. `check_self_improvement_postgres_evidence.py` now drives
+that same writer against local Compose Postgres: six technical gates, stale
+revision rejection, human approval, five artifact read-backs, exact rollback,
+terminal outcome persistence, connection-backed history read-back, and scoped
+cleanup pass in `10983c8`; the report is
+[`self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json).
+This is local control-plane evidence only; selected model-backed worker,
+provider, budget, issue, and deployment reconciliation remain open.
 The bounded [`aiat.self-improvement-candidate-detection.v1`](mas/packages/mas-core/mas_core/workflow/improvement_candidates.py)
 detector now normalizes defect, metric, upstream-update, cost, and operator-goal
 signals into deterministic opportunities, collapses exact duplicate IDs,
@@ -1376,6 +1383,11 @@ The programme is organised around completing and hardening the existing architec
   conversion plus checksum/size read-back evidence are fixture-tested, while
   certified worker generation and external provider read-back remain separate
   live work.
+- [x] Certify the canonical lifecycle writer against local Compose Postgres,
+  including revision/CAS protection, six technical gates, human approval,
+  exact rollback, terminal outcome persistence, five artifact read-backs, and
+  scoped cleanup (`10983c8`; evidence at
+  [`mas/docs/provenance/self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json)).
 
 ---
 

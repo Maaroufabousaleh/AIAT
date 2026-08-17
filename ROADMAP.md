@@ -14,7 +14,7 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R0 — documentation authority | complete | Canonical target, twelve feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`. |
 | R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. The current unconfigured local live ledger records 51 pass, 0 fail, 14 blocked, 4 pending, and `NO-RELEASE` across 65 checks; the native release-host preflight is now included in that aggregate. The retained configured loopback profile remains 59 pass, 0 fail, 5 blocked, 4 pending across 64 checks. Native-Linux, deployment-wide trace/tool coverage, operator-selected worker certification, deployment image digests/SBOM/scan artifacts, gVisor, provider/mail, clean-worktree, and selected self-improvement evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, new-flow builder, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the project evidence package denial recovery in `00f81b5` (source-built matrix 3/3), the Evidence Detail denial recovery in `23e2db9` (source-built matrix 11/11), the System Overview access-denied recovery in `b0ab779` (source-built 403 fixture 1/1), the new-flow builder access-denied recovery in `b07299b` (source-built matrix 3/3), the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, project-workspace stale/retry recovery is recorded in `cb1c665`, Projects list read/mutation denial recovery is recorded in `17d25b0` (source-built denial matrix 4/4), Project Evidence canonical-read denial recovery is recorded in `00f81b5` (source-built denial matrix 3/3), and Evidence Detail bounded scalar-read denial recovery is recorded in `23e2db9` (source-built denial matrix 11/11). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
-| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; the payload-free `aiat.mail-edge-observation.v1` normalizer, coverage evaluator, and fail-closed checker are implemented in `85369fe`; identity-service migration `0003_mail_edge_observations`, signed delegated webhook persistence, event-ID conflict handling, and scalar dashboard/trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body verifier and provider-facing ingress route are implemented in `2d21a2f`, with projected provider-span classification in `29d4da5`, optional signed identity dashboard read-back in `074ef8a`, and local ASGI ingress certificates for in-memory and rebuilt Compose Postgres profiles in `aab6285` and `2d04b30`; the deterministic worker↔mail-edge evidence join and certificate are implemented in `1d8aed5`; the real worker controller/native adapter now has a local Postgres durability, connection-reopen, payload-free trace, and scoped-cleanup certificate in `acd3f06`; bounded trace incident summary/checker in `c357fdf`, and the operator API/generated-contract/dashboard `/logs?trace_id=…` deep link in `b4b7cef`; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, configured provider callback/selected model-backed worker/bounce evidence, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
+| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; the payload-free `aiat.mail-edge-observation.v1` normalizer, coverage evaluator, and fail-closed checker are implemented in `85369fe`; identity-service migration `0003_mail_edge_observations`, signed delegated webhook persistence, event-ID conflict handling, and scalar dashboard/trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body verifier and provider-facing ingress route are implemented in `2d21a2f`, with projected provider-span classification in `29d4da5`, optional signed identity dashboard read-back in `074ef8a`, and local ASGI ingress certificates for in-memory and rebuilt Compose Postgres profiles in `aab6285` and `2d04b30`; the deterministic worker↔mail-edge evidence join and certificate are implemented in `1d8aed5`; the real worker controller/native adapter now has a local Postgres durability, connection-reopen, payload-free trace, and scoped-cleanup certificate in `acd3f06`; bounded trace incident summary/checker in `c357fdf`, and the operator API/generated-contract/dashboard `/logs?trace_id=…` deep link in `b4b7cef`; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`, and the complete bounded lifecycle now has a local Compose Postgres certificate for six technical gates, stale-write rejection, human approval, five artifact read-backs, exact rollback, durable outcome/history, and scoped cleanup in `10983c8`; provider-pair migration, encrypted/clean-environment recovery, configured provider callback/selected model-backed worker/bounce evidence, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
 The latest bounded R6 retention increments are the guarded
 `aiat.trace-retention-execution.v1` contract and deterministic in-memory
@@ -33,6 +33,17 @@ atomic action batch. The audit envelope carries evidence references and scalar
 counts only.
 Production hold-registry authority, archive, erasure, durable audit, provider
 recovery, and restore rollback remain open.
+
+The latest bounded R7 increment is the durable local self-improvement
+certificate (`10983c8`). The checker drives the canonical project writer and
+revisioned lifecycle writer in local Compose Postgres, rejects a stale CAS
+snapshot, records six technical gates plus human approval, verifies five
+checksum/size read-backs, promotes and exactly rolls back to the prior
+immutable version, persists a terminal outcome and project history, and cleans
+only its reserved project. It is local control-plane evidence; it does not
+claim a selected model-backed worker, external provider callback, budget
+settlement, deployment change, or live issue integration. Evidence is
+[`mas/docs/provenance/self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json).
 
 The preceding bounded dashboard increment was shared empty-state accessibility:
 the reusable `EmptyState` primitive marks decorative status icons as hidden
@@ -1462,6 +1473,11 @@ their authority; the authenticated action endpoint applies gate, shadow,
 observation, canary, promotion-request, human-approval, and rollback commands
 through the same compare-and-set writer. `scripts/check_self_improvement_lifecycle.py --live --json`
 still fails closed until a live control-plane/worker integration is configured.
+The local Postgres certificate `10983c8` now exercises the same canonical
+writer end-to-end: six technical gates, stale-revision rejection, human-only
+promotion, five artifact read-backs, exact rollback, durable outcome/history,
+and scoped cleanup pass in
+[`mas/docs/provenance/self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json).
 Live provider, issue/worker execution, branch/artifact generation, budget
 settlement, and deployment evidence remain open.
 The bounded `aiat.self-improvement-candidate-detection.v1` detector now
@@ -1484,9 +1500,10 @@ bytes by SHA-256 and size without retaining bytes in lifecycle state; the
 deterministic lifecycle fixture exercises all five records and read-backs.
 Live certified-worker generation and external provider read-back remain open.
 The core lifecycle, artifact/read-back, candidate-detection contracts and
-deterministic fixtures are now committed as `4d8dddf`; the authenticated
-API/storage integration described above remains a separate review group and
-does not count as live worker or provider certification.
+deterministic fixtures are now committed as `4d8dddf`; authenticated
+API/storage integration is committed in `64218ab`, and the local durable
+certificate is committed in `10983c8`; neither counts as live worker or
+provider certification.
 
 Required outcomes:
 
@@ -1709,7 +1726,9 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    optional routing changes remain separate follow-up work.
 2. Certify optional memory/workflow services only where justified.
 3. Add multi-host and Firecracker worker pools.
-4. Complete a governed self-improvement lifecycle and rollback.
+4. [x] Certify the bounded governed self-improvement lifecycle and exact
+   rollback against local Compose Postgres (`10983c8`); [ ] complete the live
+   issue/worker/provider/deployment lifecycle and independent recovery proof.
 5. [x] Define versioned SLO targets and deterministic durable-usage capacity/
    budget forecasts; establish production SLO, capacity, soak, chaos, and
    disaster-recovery cadence with native evidence.

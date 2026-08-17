@@ -94,8 +94,10 @@
   persistence now delegate through the canonical project writer; a revisioned
   lifecycle snapshot, project-history record, and authenticated canonical
   reference-link/action APIs cover the durable project boundary (`64218ab`,
-  `test_self_improvement_api.py`, and storage lifecycle tests). Live
-  issue/worker, provider, and database execution remains work.
+  `test_self_improvement_api.py`, and storage lifecycle tests). The reserved
+  local Compose Postgres certificate (`10983c8`) now proves the same writer's
+  revision/CAS persistence, history read-back, and cleanup; live issue/worker,
+  provider, and deployment execution remains work.
 - Use isolated branches/workspaces and certified coding/test/review/security workers.
 - [x] Define independent coding, testing, review, security, migration, and
   rollback gate records plus a separate human approval gate; licence metadata
@@ -120,6 +122,11 @@
   preserve canonical artifact-row IDs, and persist SHA-256/size read-back
   evidence without copying bytes or executing migrations; deterministic
   worker-record and object-store fixtures cover parity and tamper rejection.
+- [x] Certify the complete bounded lifecycle against local Compose Postgres:
+  six technical gates, stale-revision rejection, human-only approval, exact
+  rollback, five artifact read-backs, terminal outcome persistence, durable
+  project history, and reserved-project cleanup (`10983c8`; evidence at
+  [`mas/docs/provenance/self_improvement_postgres_evidence.json`](../../../mas/docs/provenance/self_improvement_postgres_evidence.json)).
 - Generate those immutable artifacts from live certified workers and verify
   read-back against a configured external provider; the current contract is
   ready, but live worker/provider evidence remains open.
