@@ -618,7 +618,9 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   hold-registry snapshot with source, observed time, active/released state,
   duplicate rejection, and project scope. Apply requires project scope, the
   typed hold snapshot, typed backup/read-back evidence, typed bounded audit
-  envelope, and human confirmation before one atomic adapter call.
+  envelope, and human confirmation before one atomic adapter call. The
+  deterministic fixture obtains its hold snapshot through the typed registry
+  read adapter (`67f5eae`).
   Destructive enforcement, authoritative holds, erasure, project narrowing,
   durable audit, and restore parity remain separate live gates.
 
@@ -1291,7 +1293,8 @@ The programme is organised around completing and hardening the existing architec
   project scope, human confirmation, atomic adapter batching, and bounded
   audit metadata. `57e13cb` adds typed checksum/count/clean-target
   backup/read-back evidence, `15054ba` adds the typed authoritative hold-
-  registry snapshot, and `5d71309` adds the typed bounded audit envelope. Live
+  registry snapshot, `5d71309` adds the typed bounded audit envelope, and
+  `67f5eae` adds the provider-neutral registry read adapter. Live
   registry/storage recovery mutation, erasure, durable audit, and restore
   rollback remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.
@@ -1644,8 +1647,9 @@ All project documentation available in the reviewed workspace was read and used 
   the guarded `aiat.trace-retention-execution.v1` adapter contract and
   deterministic in-memory preview/apply rehearsal (`01996c9`), with typed
   checksum/count/clean-target parity evidence in `57e13cb`, typed
-  authoritative hold-registry snapshots in `15054ba`, and typed bounded audit
-  envelopes in `5d71309`; the live
+  authoritative hold-registry snapshots in `15054ba`, typed bounded audit
+  envelopes in `5d71309`, and the fixture registry read adapter in `67f5eae`;
+  the live
   storage/recovery adapter remains unconfigured and fail-closed.
 - `Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md` and
   `mas/scripts/check_slo_capacity.py` — maintained SLO/capacity contracts and

@@ -47,8 +47,10 @@ rejection, and project scope. Preview is non-mutating, while apply requires
 project scope, the typed hold snapshot, typed parity evidence, and human
 confirmation before one atomic adapter call. `5d71309` adds a typed bounded
 audit envelope that carries only evidence references and scalar counts. The
-live registry/storage adapter, live archive/delete application, erasure,
-durable production audit, and restore rollback remain open.
+`67f5eae` adds the provider-neutral `RetentionLegalHoldRegistry` read
+contract and deterministic in-memory source for that snapshot. The live
+registry/storage adapter, live archive/delete application, erasure, durable
+production audit, and restore rollback remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -201,7 +203,9 @@ deterministic `InMemoryRetentionStore` rehearses preview and apply without
 selecting a database or provider, validates project scope and the typed
 authoritative hold snapshot, requires typed checksum/count/clean-target
 backup-parity evidence and human confirmation for apply, and records one
-typed bounded audit envelope (`5d71309`). It is a fixture/review boundary only;
+typed bounded audit envelope (`5d71309`). The fixture obtains its hold snapshot
+through `InMemoryRetentionLegalHoldRegistry` (`67f5eae`). It is a
+fixture/review boundary only;
 `scripts/check_trace_retention_execution.py --live` fails closed until a
 production storage/recovery adapter is configured.
 
@@ -269,7 +273,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Mail-edge observation contract/checker and identity persistence: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`), and migration `0003_mail_edge_observations`/signed route (`cfafe38`)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
-- Retention execution contract/rehearsal: [`mas/packages/mas-core/mas_core/observability/retention_execution.py`](../../mas/packages/mas-core/mas_core/observability/retention_execution.py), [`mas/scripts/check_trace_retention_execution.py`](../../mas/scripts/check_trace_retention_execution.py), and [`mas/packages/mas-core/tests/test_retention_execution.py`](../../mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`)
+- Retention execution contract/rehearsal: [`mas/packages/mas-core/mas_core/observability/retention_execution.py`](../../mas/packages/mas-core/mas_core/observability/retention_execution.py), [`mas/scripts/check_trace_retention_execution.py`](../../mas/scripts/check_trace_retention_execution.py), and [`mas/packages/mas-core/tests/test_retention_execution.py`](../../mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`, registry read adapter `67f5eae`)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
 - API observation contract/table/migration: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py)
 - Direct model/artifact/integration trace columns and migration: [`mas/packages/mas-core/mas_core/worker_contract/models.py`](../../mas/packages/mas-core/mas_core/worker_contract/models.py), [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py), [`mas/migrations/versions/0035_trace_correlation_evidence.py`](../../mas/migrations/versions/0035_trace_correlation_evidence.py)
@@ -296,10 +300,10 @@ storage returns `blocked` with exit code 2 and no secret material.
   persistence are implemented, but no live worker dispatch or provider
   coverage is claimed yet.
 - Connect the guarded execution contract to live storage and recovery workers;
-  source legal holds from an authoritative registry, persist audit records,
-  prove backup/restore parity, and add erasure/rollback. The planner’s
-  metadata-only hold guard and `InMemoryRetentionStore` rehearsal are not live
-  enforcement.
+  source legal holds from a live authoritative registry, persist audit records,
+  prove backup/restore parity, and add erasure/rollback. The provider-neutral
+  registry read contract (`67f5eae`), planner metadata guard, and
+  `InMemoryRetentionStore` rehearsal are not live enforcement.
 - Extend the bounded dashboard summary with richer chronology only after the
   incident projection is populated by native/live deployment evidence; the
   current `aiat.trace-incident.v1` API, proxy, and deep-link boundary is

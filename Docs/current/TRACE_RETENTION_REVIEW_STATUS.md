@@ -38,6 +38,9 @@ read-back count, and clean-target verification; `15054ba` validates hold source,
 observed time, active/released state, duplicate handling, and project scope.
 Commit `5d71309` types the bounded audit envelope passed to the adapter,
 normalizing only evidence references, scalar counts, and evaluation time.
+Commit `67f5eae` adds the provider-neutral read-only
+`RetentionLegalHoldRegistry` contract and deterministic in-memory adapter;
+the rehearsal now obtains its authoritative snapshot through that boundary.
 `scripts/check_trace_retention_execution.py` proves the preview/apply and audit
 invariants, while `--live` remains blocked until reviewed registry/storage
 recovery adapters are configured.
@@ -76,7 +79,7 @@ when it declares the retention-plan schema, `mode: read-only-plan`, and
 
 The operator incident API/dashboard groups (`b4b7cef`, `869202c`) and the
 retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) and execution rehearsal
-(`01996c9`, `57e13cb`, `15054ba`, `5d71309`) consume the same bounded trace evidence authority but do not claim
+(`01996c9`, `57e13cb`, `15054ba`, `5d71309`, `67f5eae`) consume the same bounded trace evidence authority but do not claim
 live retention enforcement. They expose only safe incident metadata, finding
 references, counts, policy scalars, and an auditable fixture result; production
 retention execution remains an independent storage/recovery action.
@@ -87,7 +90,8 @@ retention execution remains an independent storage/recovery action.
   project narrowing, an authoritative legal-hold/erasure registry, durable
   audit records, live backup/read-back parity, and restore-tested rollback. The
   current `legal_hold` metadata guard, typed hold/parity evidence, typed audit
-  envelope, and `InMemoryRetentionStore` are fail-safe rehearsal boundaries,
-  not live authority, durable audit, or database mutation.
+  envelope, provider-neutral hold-registry read adapter, and
+  `InMemoryRetentionStore` are fail-safe rehearsal boundaries, not live
+  authority, durable audit, or database mutation.
 - Prove retention behavior against restored storage and a representative live
   multi-service trace workload.

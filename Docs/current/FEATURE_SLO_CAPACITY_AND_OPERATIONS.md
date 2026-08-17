@@ -154,7 +154,8 @@ execution input for this personal/internal programme.
   makes the response a typed Pydantic/OpenAPI model with bounded counts and
   candidate fields. The guarded `aiat.trace-retention-execution.v1` rehearsal
   (`01996c9`) now proves preview non-mutation and apply prerequisites for
-  project scope, the typed authoritative hold snapshot (`15054ba`), typed
+  project scope, the typed authoritative hold snapshot (`15054ba`) obtained
+  through the fixture registry-read adapter (`67f5eae`), typed
   backup/read-back evidence (`57e13cb`), human confirmation, atomic batching,
   and a typed bounded audit envelope (`5d71309`); its live adapter and
   restore/erasure evidence remain open.

@@ -175,7 +175,8 @@ restore parity remain separate. The follow-on execution group `01996c9` adds
 the maintained `aiat.trace-retention-execution.v1` provider-neutral contract
 and deterministic in-memory preview/apply rehearsal; typed parity, hold
 snapshot, and bounded audit evidence are now validated in the fixture
-(`57e13cb`, `15054ba`, `5d71309`). Live
+(`57e13cb`, `15054ba`, `5d71309`), with hold acquisition routed through the
+typed registry-read adapter (`67f5eae`). Live
 storage/recovery mutation remains blocked until its adapter, hold registry,
 durable audit, and restore evidence are reviewed.
 
