@@ -2537,6 +2537,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=('TraceIncident', 'HTTPValidationError'),
     ),
+    'get_trace_retention_plan_observability_retention_plan_get': ApiOperation(
+        operation_id='get_trace_retention_plan_observability_retention_plan_get',
+        method='GET',
+        path='/observability/retention/plan',
+        path_params=(),
+        query_params=('limit', 'trace_id'),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_operational_slo_report_observability_slo_get': ApiOperation(
         operation_id='get_operational_slo_report_observability_slo_get',
         method='GET',
@@ -3476,7 +3485,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 132
-OPERATION_COUNT = 270
+OPERATION_COUNT = 271
 
 __all__ = [
     "ApiOperation",

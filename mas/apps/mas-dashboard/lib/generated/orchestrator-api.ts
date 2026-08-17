@@ -3440,6 +3440,20 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "get_trace_retention_plan_observability_retention_plan_get": {
+    method: "GET";
+    path: "/observability/retention/plan";
+    parameters: {
+      "query:trace_id"?: (string | null);
+      "query:limit"?: number;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_operational_slo_report_observability_slo_get": {
     method: "GET";
     path: "/observability/slo";

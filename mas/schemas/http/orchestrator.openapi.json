@@ -15507,6 +15507,67 @@
         "summary": "Get Trace Incident"
       }
     },
+    "/observability/retention/plan": {
+      "get": {
+        "description": "Return a bounded, read-only retention plan over native-span metadata.\n\nThe response classifies retain/archive/delete candidates but never applies\nany archive, deletion, legal-hold, or erasure mutation.  It is descriptive\noperator evidence, not a release, security, or licence decision.",
+        "operationId": "get_trace_retention_plan_observability_retention_plan_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "trace_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trace Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Trace Retention Plan Observability Retention Plan Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trace Retention Plan"
+      }
+    },
     "/observability/slo": {
       "get": {
         "description": "Return descriptive SLO targets and observed durable telemetry.",

@@ -90,6 +90,7 @@ from mas_core.observability.slo import (
     build_slo_report,
     default_slo_policy,
 )
+from mas_core.observability.retention import plan_native_span_retention
 from mas_core.observability.trace_evidence import (
     TraceEvidence,
     TraceRetentionPolicy,
@@ -3092,6 +3093,43 @@ async def _trace_retention_policy(storage: AgentStorage) -> TraceRetentionPolicy
     return trace_retention_from_manifest(record)
 
 
+async def _native_span_retention_rows(
+    storage: AgentStorage,
+    *,
+    trace_id: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read bounded native-span metadata without introducing a write path.
+
+    Newer storage adapters may expose a dedicated reader.  The compatibility
+    fallback keeps this phase usable with the current storage object without
+    changing its public file while still restricting the query to the native
+    span table and a hard row bound.
+    """
+
+    bounded_limit = max(1, min(int(limit), 10_000))
+    reader = getattr(storage, "list_native_trace_spans_for_retention", None)
+    if inspect.iscoroutinefunction(reader):
+        return list(await reader(trace_id=trace_id, limit=bounded_limit))
+
+    engine = getattr(storage, "engine", None)
+    if engine is None:
+        raise HTTPException(503, "native trace retention reader is unavailable")
+    query = memory_models.native_trace_spans.select()
+    if trace_id:
+        query = query.where(memory_models.native_trace_spans.c.trace_id == trace_id)
+    query = (
+        query.order_by(
+            memory_models.native_trace_spans.c.started_at.asc(),
+            memory_models.native_trace_spans.c.span_id.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    async with engine.connect() as conn:
+        rows = (await conn.execute(query)).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def _observability_datetime(value: Any) -> datetime | None:
     """Parse a bounded timestamp for operational read-model calculations."""
 
@@ -4428,6 +4466,47 @@ async def get_trace_incident(
 
     evidence = await get_trace_evidence(trace_id, request, limit)
     return build_trace_incident(evidence)
+
+
+@app.get("/observability/retention/plan")
+async def get_trace_retention_plan(
+    request: Request,
+    trace_id: str | None = None,
+    limit: int = Query(default=1_000, ge=1, le=10_000),
+) -> dict[str, Any]:
+    """Return a bounded, read-only retention plan over native-span metadata.
+
+    The response classifies retain/archive/delete candidates but never applies
+    any archive, deletion, legal-hold, or erasure mutation.  It is descriptive
+    operator evidence, not a release, security, or licence decision.
+    """
+
+    _require_operator_identity(request)
+    normalized_trace_id = str(trace_id).strip() if trace_id is not None else None
+    if normalized_trace_id and not is_safe_trace_id(normalized_trace_id):
+        raise HTTPException(422, "trace_id must be a bounded safe identifier")
+    storage = _storage()
+    rows = await _native_span_retention_rows(
+        storage,
+        trace_id=normalized_trace_id,
+        limit=limit,
+    )
+    plan = plan_native_span_retention(
+        rows,
+        await _trace_retention_policy(storage),
+        evaluated_at=datetime.now(tz=UTC),
+        limit=limit,
+    )
+    payload = plan.as_dict()
+    payload.update(
+        {
+            "mode": "read-only-plan",
+            "mutation_performed": False,
+            "trace_id": normalized_trace_id,
+            "scope": "trace" if normalized_trace_id else "bounded native-span metadata",
+        }
+    )
+    return payload
 
 
 @app.get("/observability/slo", response_model=SLOReport)

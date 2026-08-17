@@ -137,6 +137,35 @@ class _TraceStorage:
             }
         ]
 
+    async def list_native_trace_spans_for_retention(
+        self,
+        *,
+        trace_id: str | None,
+        limit: int,
+    ) -> list[dict]:
+        assert trace_id in {None, "trace-123"}
+        rows = [
+            {
+                "id": "native-old",
+                "trace_id": "trace-123",
+                "span_id": "native-old-span",
+                "source_kind": "transport",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "attributes_json": {"secret": "do-not-return"},
+            },
+            {
+                "id": "native-new",
+                "trace_id": "trace-123",
+                "span_id": "native-new-span",
+                "source_kind": "tool",
+                "started_at": "2026-08-10T00:00:00+00:00",
+                "attributes_json": {"secret": "do-not-return"},
+            },
+        ]
+        if trace_id is not None:
+            rows = [row for row in rows if row["trace_id"] == trace_id]
+        return rows[:limit]
+
     async def get_company_manifest(self, company_id):
         return {
             "manifest_json": {
@@ -267,6 +296,32 @@ async def test_operator_trace_incident_projects_bounded_evidence(client):
 
 
 @pytest.mark.anyio
+async def test_operator_retention_plan_is_read_only_and_bounded(client):
+    from orchestrator_api.main import app
+
+    previous = app.state.storage
+    app.state.storage = _TraceStorage()
+    try:
+        response = await client.get(
+            "/observability/retention/plan?trace_id=trace-123&limit=2",
+            headers={"X-API-Key": "test-operator-key"},
+        )
+    finally:
+        app.state.storage = previous
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "aiat.trace-retention-plan.v1"
+    assert payload["mode"] == "read-only-plan"
+    assert payload["trace_id"] == "trace-123"
+    assert payload["mutation_performed"] is False
+    assert payload["counts"]["archive"] == 1
+    assert payload["counts"]["retain"] == 1
+    assert len(payload["candidates"]) == 2
+    assert "do-not-return" not in response.text
+
+
+@pytest.mark.anyio
 async def test_trace_evidence_requires_operator_and_rejects_invalid_id(client):
     from orchestrator_api.main import app
 
@@ -289,6 +344,14 @@ async def test_trace_evidence_requires_operator_and_rejects_invalid_id(client):
             "/observability/incidents/not%20safe",
             headers={"X-API-Key": "test-operator-key"},
         )
+        retention_denied = await client.get(
+            "/observability/retention/plan",
+            headers={"X-API-Key": "test-mas-key"},
+        )
+        retention_invalid = await client.get(
+            "/observability/retention/plan?trace_id=not%20safe",
+            headers={"X-API-Key": "test-operator-key"},
+        )
     finally:
         app.state.storage = previous
 
@@ -296,3 +359,5 @@ async def test_trace_evidence_requires_operator_and_rejects_invalid_id(client):
     assert invalid.status_code == 422
     assert incident_denied.status_code == 403
     assert incident_invalid.status_code == 422
+    assert retention_denied.status_code == 403
+    assert retention_invalid.status_code == 422
