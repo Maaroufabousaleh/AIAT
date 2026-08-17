@@ -1158,6 +1158,37 @@ export type TraceIncidentFinding = {
   worker_run_id?: (string | null);
 };
 
+export type TraceRetentionCandidateResponse = {
+  disposition: ("retain" | "archive" | "delete" | "invalid");
+  expires_at?: (string | null);
+  reason: string;
+  record_id: string;
+  source_kind?: (string | null);
+  trace_id?: (string | null);
+};
+
+export type TraceRetentionCounts = {
+  archive?: number;
+  delete?: number;
+  invalid?: number;
+  retain?: number;
+};
+
+export type TraceRetentionPlanResponse = {
+  candidates?: Array<TraceRetentionCandidateResponse>;
+  counts: TraceRetentionCounts;
+  cutoff: string;
+  deletion_ids?: Array<string>;
+  evaluated_at: string;
+  mode?: "read-only-plan";
+  mutation_performed?: false;
+  notices?: Array<string>;
+  policy: TraceRetentionPolicy;
+  schema_version?: string;
+  scope: string;
+  trace_id?: (string | null);
+};
+
 export type TraceRetentionPolicy = {
   retention_days?: number;
   sample_rate?: number;
@@ -3448,9 +3479,7 @@ export type OrchestratorApiOperations = {
       "query:limit"?: number;
     };
     responses: {
-      "200": {
-  [key: string]: unknown;
-};
+      "200": TraceRetentionPlanResponse;
       "422": HTTPValidationError;
     };
   };

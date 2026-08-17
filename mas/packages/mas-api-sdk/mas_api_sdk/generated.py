@@ -929,6 +929,34 @@ class TraceIncidentFinding(TypedDict):
     status_code: NotRequired[int | Any]
     worker_run_id: NotRequired[str | Any]
 
+class TraceRetentionCandidateResponse(TypedDict):
+    disposition: Required[Literal['retain', 'archive', 'delete', 'invalid']]
+    expires_at: NotRequired[str | Any]
+    reason: Required[str]
+    record_id: Required[str]
+    source_kind: NotRequired[str | Any]
+    trace_id: NotRequired[str | Any]
+
+class TraceRetentionCounts(TypedDict):
+    archive: NotRequired[int]
+    delete: NotRequired[int]
+    invalid: NotRequired[int]
+    retain: NotRequired[int]
+
+class TraceRetentionPlanResponse(TypedDict):
+    candidates: NotRequired[list[TraceRetentionCandidateResponse]]
+    counts: Required[TraceRetentionCounts]
+    cutoff: Required[str]
+    deletion_ids: NotRequired[list[str]]
+    evaluated_at: Required[str]
+    mode: NotRequired[Literal['read-only-plan']]
+    mutation_performed: NotRequired[Literal[False]]
+    notices: NotRequired[list[str]]
+    policy: Required[TraceRetentionPolicy]
+    schema_version: NotRequired[str]
+    scope: Required[str]
+    trace_id: NotRequired[str | Any]
+
 class TraceRetentionPolicy(TypedDict):
     retention_days: NotRequired[int]
     sample_rate: NotRequired[float]
@@ -2544,7 +2572,7 @@ OPERATIONS: dict[str, ApiOperation] = {
         path_params=(),
         query_params=('limit', 'trace_id'),
         request_body_type=None,
-        response_types=('HTTPValidationError',),
+        response_types=('TraceRetentionPlanResponse', 'HTTPValidationError'),
     ),
     'get_operational_slo_report_observability_slo_get': ApiOperation(
         operation_id='get_operational_slo_report_observability_slo_get',
@@ -3484,7 +3512,7 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 132
+MODEL_COUNT = 135
 OPERATION_COUNT = 271
 
 __all__ = [
@@ -3612,6 +3640,9 @@ __all__ = [
     'TraceEvidenceItem',
     'TraceIncident',
     'TraceIncidentFinding',
+    'TraceRetentionCandidateResponse',
+    'TraceRetentionCounts',
+    'TraceRetentionPlanResponse',
     'TraceRetentionPolicy',
     'TransitionRequest',
     'UpdateCredentialRequest',

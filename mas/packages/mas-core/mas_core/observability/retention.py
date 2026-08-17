@@ -13,10 +13,55 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .trace_evidence import TraceRetentionPolicy
 
 TRACE_RETENTION_PLAN_SCHEMA = "aiat.trace-retention-plan.v1"
 RetentionDisposition = Literal["retain", "archive", "delete", "invalid"]
+
+
+class TraceRetentionCounts(BaseModel):
+    """Stable count fields for one bounded retention-plan response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retain: int = Field(default=0, ge=0)
+    archive: int = Field(default=0, ge=0)
+    delete: int = Field(default=0, ge=0)
+    invalid: int = Field(default=0, ge=0)
+
+
+class TraceRetentionCandidateResponse(BaseModel):
+    """Secret-safe metadata for one retention decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1, max_length=160)
+    trace_id: str | None = Field(default=None, max_length=160)
+    source_kind: str | None = Field(default=None, max_length=80)
+    disposition: RetentionDisposition
+    expires_at: str | None = Field(default=None, max_length=80)
+    reason: str = Field(min_length=1, max_length=240)
+
+
+class TraceRetentionPlanResponse(BaseModel):
+    """Versioned read-only retention-plan API response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = TRACE_RETENTION_PLAN_SCHEMA
+    evaluated_at: str = Field(min_length=1, max_length=80)
+    cutoff: str = Field(min_length=1, max_length=80)
+    policy: TraceRetentionPolicy
+    counts: TraceRetentionCounts
+    deletion_ids: list[str] = Field(default_factory=list, max_length=20_000)
+    notices: list[str] = Field(default_factory=list, max_length=100)
+    candidates: list[TraceRetentionCandidateResponse] = Field(default_factory=list, max_length=20_000)
+    mode: Literal["read-only-plan"] = "read-only-plan"
+    mutation_performed: Literal[False] = False
+    trace_id: str | None = Field(default=None, max_length=160)
+    scope: str = Field(min_length=1, max_length=96)
 
 
 def _utc(value: Any) -> datetime | None:
@@ -205,7 +250,10 @@ def plan_native_span_retention(
 __all__ = [
     "TRACE_RETENTION_PLAN_SCHEMA",
     "RetentionDisposition",
+    "TraceRetentionCounts",
     "TraceRetentionCandidate",
+    "TraceRetentionCandidateResponse",
     "TraceRetentionPlan",
+    "TraceRetentionPlanResponse",
     "plan_native_span_retention",
 ]

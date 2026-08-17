@@ -6757,6 +6757,201 @@
         "title": "TraceIncidentFinding",
         "type": "object"
       },
+      "TraceRetentionCandidateResponse": {
+        "additionalProperties": false,
+        "description": "Secret-safe metadata for one retention decision.",
+        "properties": {
+          "disposition": {
+            "enum": [
+              "retain",
+              "archive",
+              "delete",
+              "invalid"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "record_id",
+          "disposition",
+          "reason"
+        ],
+        "title": "TraceRetentionCandidateResponse",
+        "type": "object"
+      },
+      "TraceRetentionCounts": {
+        "additionalProperties": false,
+        "description": "Stable count fields for one bounded retention-plan response.",
+        "properties": {
+          "archive": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Archive",
+            "type": "integer"
+          },
+          "delete": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Delete",
+            "type": "integer"
+          },
+          "invalid": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Invalid",
+            "type": "integer"
+          },
+          "retain": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Retain",
+            "type": "integer"
+          }
+        },
+        "title": "TraceRetentionCounts",
+        "type": "object"
+      },
+      "TraceRetentionPlanResponse": {
+        "additionalProperties": false,
+        "description": "Versioned read-only retention-plan API response.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/TraceRetentionCandidateResponse"
+            },
+            "maxItems": 20000,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/TraceRetentionCounts"
+          },
+          "cutoff": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Cutoff",
+            "type": "string"
+          },
+          "deletion_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20000,
+            "title": "Deletion Ids",
+            "type": "array"
+          },
+          "evaluated_at": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "mode": {
+            "const": "read-only-plan",
+            "default": "read-only-plan",
+            "title": "Mode",
+            "type": "string"
+          },
+          "mutation_performed": {
+            "const": false,
+            "default": false,
+            "title": "Mutation Performed",
+            "type": "boolean"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Notices",
+            "type": "array"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/TraceRetentionPolicy"
+          },
+          "schema_version": {
+            "default": "aiat.trace-retention-plan.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "scope": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Scope",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "evaluated_at",
+          "cutoff",
+          "policy",
+          "counts",
+          "scope"
+        ],
+        "title": "TraceRetentionPlanResponse",
+        "type": "object"
+      },
       "TraceRetentionPolicy": {
         "additionalProperties": false,
         "description": "Bounded trace sampling/retention metadata used by the read surface.",
@@ -15546,9 +15741,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Trace Retention Plan Observability Retention Plan Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TraceRetentionPlanResponse"
                 }
               }
             },

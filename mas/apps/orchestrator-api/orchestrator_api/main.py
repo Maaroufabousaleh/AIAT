@@ -90,7 +90,10 @@ from mas_core.observability.slo import (
     build_slo_report,
     default_slo_policy,
 )
-from mas_core.observability.retention import plan_native_span_retention
+from mas_core.observability.retention import (
+    TraceRetentionPlanResponse,
+    plan_native_span_retention,
+)
 from mas_core.observability.trace_evidence import (
     TraceEvidence,
     TraceRetentionPolicy,
@@ -4468,12 +4471,12 @@ async def get_trace_incident(
     return build_trace_incident(evidence)
 
 
-@app.get("/observability/retention/plan")
+@app.get("/observability/retention/plan", response_model=TraceRetentionPlanResponse)
 async def get_trace_retention_plan(
     request: Request,
     trace_id: str | None = None,
     limit: int = Query(default=1_000, ge=1, le=10_000),
-) -> dict[str, Any]:
+) -> TraceRetentionPlanResponse:
     """Return a bounded, read-only retention plan over native-span metadata.
 
     The response classifies retain/archive/delete candidates but never applies
@@ -4506,7 +4509,7 @@ async def get_trace_retention_plan(
             "scope": "trace" if normalized_trace_id else "bounded native-span metadata",
         }
     )
-    return payload
+    return TraceRetentionPlanResponse.model_validate(payload)
 
 
 @app.get("/observability/slo", response_model=SLOReport)
