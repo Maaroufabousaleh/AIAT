@@ -23,6 +23,7 @@ def test_fixture_execution_check_rehearses_preview_and_apply() -> None:
         "archived_count": 1,
         "deleted_count": 1,
         "held_count": 2,
+        "backup_parity_verified": True,
         "audit_count": 1,
     }
     assert "backup://fixture" not in json.dumps(report)

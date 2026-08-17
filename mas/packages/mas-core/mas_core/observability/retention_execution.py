@@ -10,6 +10,7 @@ rehearsal, not a production database implementation.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -35,6 +36,100 @@ class RetentionAction:
     record_id: str
     action: RetentionActionKind
     project_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionBackupParityEvidence:
+    """Secret-safe proof that a backup was read back without drift.
+
+    The execution boundary does not inspect provider payloads.  It accepts a
+    bounded evidence record instead: source, backup, and restored manifests
+    must share one SHA-256 digest, record counts must agree, every restored
+    record must have been checked, and the target must have been verified
+    empty before restore.  A live adapter remains responsible for producing
+    this record from its own manifest/read-back transaction.
+    """
+
+    evidence_ref: str
+    source_manifest_sha256: str
+    backup_manifest_sha256: str
+    restored_manifest_sha256: str
+    source_record_count: int
+    backup_record_count: int
+    restored_record_count: int
+    checked_record_count: int
+    clean_target_verified: bool
+
+    def validate(self) -> None:
+        normalized_ref = str(self.evidence_ref or "").strip()
+        if not normalized_ref:
+            raise RetentionExecutionError("backup parity evidence reference is required")
+        if len(normalized_ref) > 240:
+            raise RetentionExecutionError("backup parity evidence reference exceeds the bounded length")
+        digests = {
+            name: str(value or "").strip().lower()
+            for name, value in (
+                ("source_manifest_sha256", self.source_manifest_sha256),
+                ("backup_manifest_sha256", self.backup_manifest_sha256),
+                ("restored_manifest_sha256", self.restored_manifest_sha256),
+            )
+        }
+        for name, digest in digests.items():
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise RetentionExecutionError(
+                    f"{name} must be a 64-character hexadecimal digest"
+                )
+        if len(set(digests.values())) != 1:
+            raise RetentionExecutionError(
+                "backup parity evidence manifest digests do not match"
+            )
+        counts = {
+            name: value
+            for name, value in (
+                ("source_record_count", self.source_record_count),
+                ("backup_record_count", self.backup_record_count),
+                ("restored_record_count", self.restored_record_count),
+                ("checked_record_count", self.checked_record_count),
+            )
+        }
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts.values()):
+            raise RetentionExecutionError(
+                "backup parity evidence record counts must be non-negative integers"
+            )
+        if len({self.source_record_count, self.backup_record_count, self.restored_record_count}) != 1:
+            raise RetentionExecutionError(
+                "backup parity evidence record counts do not match"
+            )
+        if self.checked_record_count != self.restored_record_count:
+            raise RetentionExecutionError(
+                "backup parity evidence checked count does not match restored count"
+            )
+        if self.clean_target_verified is not True:
+            raise RetentionExecutionError(
+                "backup parity evidence requires a verified clean restore target"
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        self.validate()
+        normalized_digests = {
+            name: str(value or "").strip().lower()
+            for name, value in (
+                ("source_manifest_sha256", self.source_manifest_sha256),
+                ("backup_manifest_sha256", self.backup_manifest_sha256),
+                ("restored_manifest_sha256", self.restored_manifest_sha256),
+            )
+        }
+        return {
+            "evidence_ref": str(self.evidence_ref).strip(),
+            "source_manifest_sha256": normalized_digests["source_manifest_sha256"],
+            "backup_manifest_sha256": normalized_digests["backup_manifest_sha256"],
+            "restored_manifest_sha256": normalized_digests["restored_manifest_sha256"],
+            "source_record_count": self.source_record_count,
+            "backup_record_count": self.backup_record_count,
+            "restored_record_count": self.restored_record_count,
+            "checked_record_count": self.checked_record_count,
+            "clean_target_verified": self.clean_target_verified,
+        }
 
 
 class RetentionMutationStore(Protocol):
@@ -66,6 +161,7 @@ class RetentionExecutionResult:
     held_count: int = 0
     invalid_count: int = 0
     backup_evidence_ref: str | None = None
+    backup_parity_verified: bool = False
     mutation_performed: bool = False
     notices: tuple[str, ...] = ()
 
@@ -90,6 +186,7 @@ class RetentionExecutionResult:
             "held_count": self.held_count,
             "invalid_count": self.invalid_count,
             "backup_evidence_ref": self.backup_evidence_ref,
+            "backup_parity_verified": self.backup_parity_verified,
             "mutation_performed": self.mutation_performed,
             "notices": list(self.notices),
         }
@@ -171,8 +268,7 @@ def execute_retention_plan(
     actor_kind: RetentionActorKind = "human",
     mode: RetentionExecutionMode = "preview",
     confirm: bool = False,
-    backup_parity_verified: bool = False,
-    backup_evidence_ref: str | None = None,
+    backup_parity_evidence: RetentionBackupParityEvidence | None = None,
     project_id: str | None = None,
     project_by_record: Mapping[str, str] | None = None,
     authoritative_legal_hold_ids: Collection[str] = (),
@@ -182,11 +278,11 @@ def execute_retention_plan(
     """Preview or apply a retention plan through one guarded adapter call.
 
     Apply mode is intentionally narrow: it requires a project or trace scope,
-    a human actor with explicit confirmation, a backup/read-back evidence
-    reference, and a successful parity flag.  An authoritative hold ID or the
-    planner's explicit boolean hold marker always suppresses an action.  The
-    adapter receives one complete action set, allowing it to provide its own
-    transaction/rollback boundary.
+    a human actor with explicit confirmation, and typed backup/read-back
+    parity evidence.  An authoritative hold ID or the planner's explicit
+    boolean hold marker always suppresses an action.  The adapter receives one
+    complete action set, allowing it to provide its own transaction/rollback
+    boundary.
     """
 
     if not isinstance(plan, TraceRetentionPlan):
@@ -213,9 +309,15 @@ def execute_retention_plan(
     ):
         raise RetentionExecutionError("execution scope must be trace:<id> or project:<id>")
 
+    if backup_parity_evidence is not None and not isinstance(
+        backup_parity_evidence, RetentionBackupParityEvidence
+    ):
+        raise TypeError("backup_parity_evidence must be RetentionBackupParityEvidence")
+    if backup_parity_evidence is not None:
+        backup_parity_evidence.validate()
     normalized_backup_ref = (
-        _token(backup_evidence_ref, name="backup_evidence_ref", max_length=240)
-        if backup_evidence_ref is not None
+        _token(backup_parity_evidence.evidence_ref, name="backup_evidence_ref", max_length=240)
+        if backup_parity_evidence is not None
         else None
     )
     if mode == "apply":
@@ -223,9 +325,9 @@ def execute_retention_plan(
             raise RetentionExecutionError("apply requires a human actor")
         if not confirm:
             raise RetentionExecutionError("apply requires explicit confirmation")
-        if not backup_parity_verified or normalized_backup_ref is None:
+        if backup_parity_evidence is None or normalized_backup_ref is None:
             raise RetentionExecutionError(
-                "apply requires verified backup parity and an evidence reference"
+                "apply requires typed verified backup parity evidence"
             )
 
     hold_ids = {str(record_id).strip() for record_id in authoritative_legal_hold_ids if str(record_id).strip()}
@@ -272,6 +374,9 @@ def execute_retention_plan(
                 "actor_kind": actor_kind,
                 "action_count": len(actions),
                 "backup_evidence_ref": normalized_backup_ref,
+                "backup_manifest_sha256": backup_parity_evidence.backup_manifest_sha256.strip().lower(),
+                "backup_record_count": backup_parity_evidence.backup_record_count,
+                "clean_target_verified": backup_parity_evidence.clean_target_verified,
                 "evaluated_at": when.isoformat(),
             },
         )
@@ -295,6 +400,7 @@ def execute_retention_plan(
         held_count=held_count,
         invalid_count=invalid_count,
         backup_evidence_ref=normalized_backup_ref,
+        backup_parity_verified=backup_parity_evidence is not None,
         mutation_performed=mode == "apply" and bool(actions),
         notices=tuple(notices[:20]),
     )
@@ -305,6 +411,7 @@ __all__ = [
     "RetentionAction",
     "RetentionActionKind",
     "RetentionActorKind",
+    "RetentionBackupParityEvidence",
     "RetentionExecutionError",
     "RetentionExecutionMode",
     "RetentionExecutionResult",

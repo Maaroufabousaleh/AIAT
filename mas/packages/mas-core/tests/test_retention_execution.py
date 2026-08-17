@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -13,6 +14,7 @@ from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
     InMemoryRetentionStore,
     RetentionAction,
+    RetentionBackupParityEvidence,
     RetentionExecutionError,
     execute_retention_plan,
 )
@@ -82,6 +84,20 @@ def _store() -> InMemoryRetentionStore:
     )
 
 
+def _parity_evidence() -> RetentionBackupParityEvidence:
+    return RetentionBackupParityEvidence(
+        evidence_ref="backup://fixture",
+        source_manifest_sha256="a" * 64,
+        backup_manifest_sha256="a" * 64,
+        restored_manifest_sha256="a" * 64,
+        source_record_count=4,
+        backup_record_count=4,
+        restored_record_count=4,
+        checked_record_count=4,
+        clean_target_verified=True,
+    )
+
+
 def test_preview_is_non_mutating_and_resolves_holds() -> None:
     store = _store()
     before = {key: dict(value) for key, value in store.records.items()}
@@ -134,8 +150,7 @@ def test_apply_requires_human_confirmation_and_backup_parity() -> None:
         execute_retention_plan(
             _plan(),
             confirm=True,
-            backup_parity_verified=True,
-            backup_evidence_ref="backup://fixture",
+            backup_parity_evidence=_parity_evidence(),
             actor="operator",
             actor_kind="system",
             **{key: value for key, value in kwargs.items() if key != "actor"},
@@ -157,14 +172,14 @@ def test_apply_is_project_scoped_and_audited() -> None:
         actor_kind="human",
         mode="apply",
         confirm=True,
-        backup_parity_verified=True,
-        backup_evidence_ref="backup://fixture",
+        backup_parity_evidence=_parity_evidence(),
         audit_id="apply-audit",
         evaluated_at=NOW,
     )
 
     assert result.status == "applied"
     assert result.mutation_performed is True
+    assert result.backup_parity_verified is True
     assert store.records["archive-1"]["status"] == "archived"
     assert "delete-1" not in store.records
     assert store.records["planner-hold"]["status"] == "active"
@@ -178,6 +193,9 @@ def test_apply_is_project_scoped_and_audited() -> None:
             "actor_kind": "human",
             "action_count": 2,
             "backup_evidence_ref": "backup://fixture",
+            "backup_manifest_sha256": "a" * 64,
+            "backup_record_count": 4,
+            "clean_target_verified": True,
             "evaluated_at": NOW.isoformat(),
         }
     ]
@@ -200,12 +218,60 @@ def test_project_scope_mismatch_fails_before_adapter_mutation() -> None:
             actor_kind="human",
             mode="apply",
             confirm=True,
-            backup_parity_verified=True,
-            backup_evidence_ref="backup://fixture",
+            backup_parity_evidence=_parity_evidence(),
             audit_id="scope-audit",
             evaluated_at=NOW,
         )
     assert store.records == before
+    assert store.audit_records == []
+
+
+def test_apply_rejects_manifest_drift_or_unverified_restore_target() -> None:
+    store = _store()
+    mismatched = replace(_parity_evidence(), restored_manifest_sha256="b" * 64)
+    with pytest.raises(RetentionExecutionError, match="manifest digests"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record={record_id: "project-1" for record_id in store.records},
+            actor="operator",
+            actor_kind="human",
+            mode="apply",
+            confirm=True,
+            backup_parity_evidence=mismatched,
+            audit_id="drift-audit",
+            evaluated_at=NOW,
+        )
+
+    unclean = RetentionBackupParityEvidence(
+        evidence_ref="backup://fixture",
+        source_manifest_sha256="a" * 64,
+        backup_manifest_sha256="a" * 64,
+        restored_manifest_sha256="a" * 64,
+        source_record_count=4,
+        backup_record_count=4,
+        restored_record_count=4,
+        checked_record_count=4,
+        clean_target_verified=False,
+    )
+    with pytest.raises(RetentionExecutionError, match="clean restore target"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record={record_id: "project-1" for record_id in store.records},
+            actor="operator",
+            actor_kind="human",
+            mode="apply",
+            confirm=True,
+            backup_parity_evidence=unclean,
+            audit_id="unclean-audit",
+            evaluated_at=NOW,
+        )
+    assert all(record["status"] == "active" for record in store.records.values())
     assert store.audit_records == []
 
 

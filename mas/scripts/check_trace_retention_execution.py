@@ -21,6 +21,7 @@ from mas_core.observability.retention import (
 from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
     InMemoryRetentionStore,
+    RetentionBackupParityEvidence,
     RetentionExecutionError,
     execute_retention_plan,
 )
@@ -91,6 +92,20 @@ def _store() -> InMemoryRetentionStore:
     )
 
 
+def _parity_evidence() -> RetentionBackupParityEvidence:
+    return RetentionBackupParityEvidence(
+        evidence_ref="backup://fixture",
+        source_manifest_sha256="a" * 64,
+        backup_manifest_sha256="a" * 64,
+        restored_manifest_sha256="a" * 64,
+        source_record_count=4,
+        backup_record_count=4,
+        restored_record_count=4,
+        checked_record_count=4,
+        clean_target_verified=True,
+    )
+
+
 def build_report() -> dict[str, object]:
     store = _store()
     preview = execute_retention_plan(
@@ -118,8 +133,7 @@ def build_report() -> dict[str, object]:
         actor_kind="human",
         mode="apply",
         confirm=True,
-        backup_parity_verified=True,
-        backup_evidence_ref="backup://fixture",
+        backup_parity_evidence=_parity_evidence(),
         audit_id="apply-audit",
         evaluated_at=EVALUATED_AT,
     )
@@ -158,6 +172,7 @@ def build_report() -> dict[str, object]:
             "archived_count": apply.archived_count,
             "deleted_count": apply.deleted_count,
             "held_count": apply.held_count,
+            "backup_parity_verified": apply.backup_parity_verified,
             "audit_count": len(store.audit_records),
         },
         "licence_metadata_is_gate": False,
