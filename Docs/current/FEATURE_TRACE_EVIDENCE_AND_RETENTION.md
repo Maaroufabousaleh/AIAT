@@ -1,6 +1,6 @@
 # Trace Evidence and Retention Feature Specification
 
-**Baseline:** 2026-08-11
+**Baseline:** 2026-08-17
 **Status:** the pure trace-context, native-span, and secret-safe trace-evidence
 contracts are reviewed and committed in `77d5494` with deterministic fixtures;
 the bounded API-observation schema/migrations are committed in `9c39919`, the
@@ -19,7 +19,9 @@ probes pass in the fresh 2026-08-11 local run. The transport probe observes one
 API-request row plus one native `/health` span, while the tool probe proves one
 `project_usage_events` row plus one `tool_service` native span and is retained
 at [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json).
-Live model/worker/audit/integration source coverage, mail-edge spans, and live
+The shared `aiat.mail-edge-observation.v1` normalizer/evaluator and deterministic
+checker are now implemented in `85369fe`; live model/worker/audit/integration
+source coverage, provider webhook/bounce persistence, mail-edge spans, and live
 retention execution remain open  
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -58,6 +60,12 @@ projection joins:
   attempts carrying safe trace/span IDs are projected as bounded `mail` spans.
   This correlates an AIAT request to the identity authority without importing
   recipients, subjects, provider IDs, relay errors, or message content.
+- The shared `aiat.mail-edge-observation.v1` contract normalizes delivery
+  attempts and adapter-verified provider webhook events into bounded event and
+  failure states. Its coverage evaluator requires a verified webhook and a
+  bounce/failure signal when those sources are claimed; conflicting event IDs
+  remain `attention`. The deterministic checker passes, while identity-service
+  persistence and provider/live read-back remain open.
 
 Each item contains only safe operational fields: source, stable record ID,
 kind, status, project/agent/team references, worker-run reference, event/model/
@@ -160,6 +168,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Worker source evaluator: [`mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py`](../../mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py)
 - Trace validation/context: [`mas/packages/mas-core/mas_core/observability/tracing.py`](../../mas/packages/mas-core/mas_core/observability/tracing.py)
 - Native span contract/normalizer: [`mas/packages/mas-core/mas_core/observability/native_spans.py`](../../mas/packages/mas-core/mas_core/observability/native_spans.py)
+- Mail-edge observation contract/checker: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), and [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
@@ -179,7 +188,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 
 ## Remaining gates
 
-- Use the new fail-closed worker source checker against a selected live
+- Use the new fail-closed worker source checker and mail-edge checker against a selected live
   model-backed worker run and retain model-usage, artifact, native model, and
   native worker source counts; add native audit/integration evidence where the
   run exercises those adapters, plus provider/webhook-level identity-service

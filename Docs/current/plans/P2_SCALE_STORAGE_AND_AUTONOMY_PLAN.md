@@ -196,12 +196,21 @@
   and reproducible with [`scripts/check_live_tool_trace.py`](../../../mas/scripts/check_live_tool_trace.py) (`eac83ae`, refreshed 2026-08-11); the host-side probe is fail-closed and creates only bounded telemetry rows.
   The probe creates only normal telemetry rows and does not claim worker/model
   execution or provider evidence.
+- [x] Define `aiat.mail-edge-observation.v1` and
+  `aiat.mail-edge-coverage.v1` for payload-free identity/provider delivery
+  attempts, verified webhooks, bounce/failure events, trace correlation,
+  deterministic event-ID conflict handling, and metadata-only provider fields;
+  add the deterministic redaction fixture and fail-closed checker in
+  `scripts/check_mail_edge_observations.py` (`85369fe`). Provider signature
+  verification, durable identity-service event persistence, and live worker
+  read-back remain separate evidence boundaries.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and persist provider/webhook-level identity-service mail-edge/bounce
-  observations so the remaining SLO targets have deployment evidence; direct
-  model/artifact/integration spans, the fail-closed source evaluator, and
-  delivery-attempt correlation are durable/queryable, but live source coverage
-  remains open.
+  observations so the remaining SLO targets have deployment evidence using
+  [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
+  direct model/artifact/integration spans, the fail-closed source evaluator,
+  delivery-attempt correlation, and the metadata-only mail-edge contract are
+  durable/queryable, but live source coverage remains open.
 - Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
 - Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
 

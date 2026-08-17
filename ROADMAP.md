@@ -1,7 +1,7 @@
 # AIAT Roadmap
 
 **Roadmap baseline:** 2026-08-10
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-17
 **Programme authority:** [AIAT_TARGET_PROGRAMME.md](AIAT_TARGET_PROGRAMME.md)  
 **Current phase:** P0 release integrity
 
@@ -11,10 +11,10 @@ This is the root navigation and delivery-order document for the personal AIAT in
 
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
-| R0 — documentation authority | complete | Canonical target, eleven feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`. |
+| R0 — documentation authority | complete | Canonical target, twelve feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`. |
 | R1 — P0 release integrity | in progress | Static ledger: 48/48 pass. The current unconfigured local live ledger records 51 pass, 0 fail, 14 blocked, 4 pending, and `NO-RELEASE` across 65 checks; the native release-host preflight is now included in that aggregate. The retained configured loopback profile remains 59 pass, 0 fail, 5 blocked, 4 pending across 64 checks. Native-Linux, deployment-wide trace/tool coverage, operator-selected worker certification, deployment image digests/SBOM/scan artifacts, gVisor, provider/mail, clean-worktree, and selected self-improvement evidence remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, new-flow builder, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the project evidence package denial recovery in `00f81b5` (source-built matrix 3/3), the Evidence Detail denial recovery in `23e2db9` (source-built matrix 11/11), the System Overview access-denied recovery in `b0ab779` (source-built 403 fixture 1/1), the new-flow builder access-denied recovery in `b07299b` (source-built matrix 3/3), the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, project-workspace stale/retry recovery is recorded in `cb1c665`, Projects list read/mutation denial recovery is recorded in `17d25b0` (source-built denial matrix 4/4), Project Evidence canonical-read denial recovery is recorded in `00f81b5` (source-built denial matrix 3/3), and Evidence Detail bounded scalar-read denial recovery is recorded in `23e2db9` (source-built denial matrix 11/11). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
-| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, model-backed worker/mail-edge coverage, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
+| R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; the payload-free `aiat.mail-edge-observation.v1` normalizer, coverage evaluator, and fail-closed checker are implemented in `85369fe`; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, selected model-backed worker/provider webhook/bounce evidence, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
 The preceding bounded dashboard increment was shared empty-state accessibility:
 the reusable `EmptyState` primitive marks decorative status icons as hidden
@@ -136,6 +136,15 @@ named access-status region, retain any loaded transcript as read-only context,
 invalidate in-flight stream callbacks, and hide Clear/retry, quick commands,
 composer, and confirmation controls. The source-built history-denial,
 message-denial, and stream-recovery matrix passes 3/3 (`038d5f2`).
+
+The latest bounded R6 increment is the mail-edge observation group: the shared
+`aiat.mail-edge-observation.v1` contract normalizes identity delivery attempts
+and adapter-verified provider webhook events, derives bounded outcome/failure
+classes, drops payload-bearing metadata, and reports event-ID conflicts or
+missing verified webhook/bounce signals as non-passing coverage. The
+deterministic fixture/checker passes in `85369fe`; live provider persistence,
+selected model-backed worker read-back, and complete mail-span/SLO evidence
+remain open.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -368,6 +377,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | PM rollout/runbook/readiness and certification evidence | [`PM_INTEGRATION_PLAN.md`](mas/docs/PM_INTEGRATION_PLAN.md), [`PM_INTEGRATION_RUNBOOK.md`](mas/docs/PM_INTEGRATION_RUNBOOK.md), [`PM_ACTIVE_READINESS.md`](mas/docs/PM_ACTIVE_READINESS.md), [`PM_ACTIVE_DEPLOYMENT.md`](mas/docs/PM_ACTIVE_DEPLOYMENT.md), [`PM_ACTIVE_DASHBOARD.md`](mas/docs/PM_ACTIVE_DASHBOARD.md), [`PM_ACTIVE_CERTIFICATION_LEDGER.md`](mas/docs/PM_ACTIVE_CERTIFICATION_LEDGER.md) |
 | Security boundaries, sandbox, observability, recovery, and operations | [Security, Observability, and Operations](Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md) |
 | Trace evidence, sampling metadata, retention, and bounded query contract | [Trace Evidence and Retention](Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md) |
+| Identity/provider mail-edge observations, webhook normalization, bounce coverage, and live evidence boundary | [Mail-Edge Observability](Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md) |
 | Versioned SLOs, durable usage forecasts, and operational capacity evidence | [SLO, Capacity, and Operational Forecast](Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md) |
 | Postgres/pgvector/Redis/object storage, retention, and memory services | [Data, Storage, Memory, and Retention](Docs/current/FEATURE_DATA_STORAGE_AND_MEMORY.md) |
 | Object-store conformance, copy, backup/restore, migration, and benchmark workflow | [`object_store_conformance.py`](mas/packages/mas-core/mas_core/memory/object_store_conformance.py), [`object_store_migration.py`](mas/packages/mas-core/mas_core/memory/object_store_migration.py), [`object_store_backup.py`](mas/packages/mas-core/mas_core/memory/object_store_backup.py), [`object_store_rollout.py`](mas/packages/mas-core/mas_core/memory/object_store_rollout.py), [`object_store_benchmark.py`](mas/packages/mas-core/mas_core/memory/object_store_benchmark.py), [`check_object_store_conformance.py`](mas/scripts/check_object_store_conformance.py), [`check_object_store_copy.py`](mas/scripts/check_object_store_copy.py), [`check_object_store_backup_restore.py`](mas/scripts/check_object_store_backup_restore.py), [`check_object_store_migration.py`](mas/scripts/check_object_store_migration.py), [`check_object_store_benchmarks.py`](mas/scripts/check_object_store_benchmarks.py), and the local MinIO probes [`check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh)/[`check-minio-backup-restore.sh`](mas/infra/compose/scripts/check-minio-backup-restore.sh) (`--live` paths included) |
@@ -597,7 +607,7 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 the working-tree and clean Git-archive documentation checks pass
 
 - One normative target programme.
-- Eleven current feature specifications.
+- Twelve current feature specifications.
 - Three ordered delivery plans.
 - Root roadmap linking the maintained set.
 - Repository-checked documentation index and metadata-policy markers.
@@ -1155,6 +1165,14 @@ model-backed worker, project, approved profile, bounded budget, and explicit
 confirmation; it does not auto-select or activate a worker. Live worker-run,
 audit/integration, identity provider mail-edge/bounce spans, live retention
 enforcement, and multi-service/host coverage remain open.
+Commit `85369fe` adds the shared `aiat.mail-edge-observation.v1` and
+`aiat.mail-edge-coverage.v1` contracts plus
+[`check_mail_edge_observations.py`](mas/scripts/check_mail_edge_observations.py).
+The fixture covers an identity delivery attempt, verified provider delivery,
+and permanent bounce with payload-free metadata, safe trace/span correlation,
+and conflicting event-ID rejection. Live mode is read-only and requires an
+operator-selected worker and trace; it reports `attention` until provider
+webhooks/bounces are durably projected by the identity service.
 Commit `5553b19` adds the read-only
 [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py)
 contract (`aiat.worker-run-readiness.v1`) so those live prerequisites are
@@ -1216,6 +1234,10 @@ Required outcomes:
   delivery `trace_id`/`span_id` metadata;
 - [x] deterministic native-span retention planner/fixture with explicit
   non-mutating archive/delete decisions and invalid-row fail-safe handling;
+- [x] payload-free `aiat.mail-edge-observation.v1`/`aiat.mail-edge-coverage.v1`
+  normalizer, verified-webhook/bounce coverage evaluator, conflict handling,
+  and deterministic/fail-closed checker (`85369fe`); provider persistence and
+  selected-worker live evidence remain separate;
 - native mail-edge/bounce/complete-span telemetry and production-like
   SLO/capacity evidence (PM/SCM and worker-recovery table projections are
   implemented);
@@ -1497,8 +1519,9 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    budget forecasts; establish production SLO, capacity, soak, chaos, and
    disaster-recovery cadence with native evidence.
 6. [x] Verify the local tool-service usage/native-span read-back with the
-   bounded `time_now` probe; [ ] add model-backed worker, identity provider
-   mail-edge, and live retention evidence.
+   bounded `time_now` probe and add the metadata-only mail-edge/bounce
+   contract/checker (`85369fe`); [ ] add model-backed worker, identity provider
+   webhook persistence, and live retention evidence.
 
 ## 7. Available choices outside the minimal roadmap
 

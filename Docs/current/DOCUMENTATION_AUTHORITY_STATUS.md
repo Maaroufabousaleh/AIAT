@@ -1,6 +1,6 @@
 # Documentation Authority Status
 
-**Updated:** 2026-08-12
+**Updated:** 2026-08-17
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
@@ -13,7 +13,7 @@ set is intentionally smaller:
 
 - one normative target programme (`AIAT_TARGET_PROGRAMME.md`);
 - one root navigation/delivery roadmap (`ROADMAP.md`);
-- eleven current feature specifications;
+- twelve current feature specifications;
 - three ordered plans; and
 - focused implementation/review status notes linked from the roadmap.
 
@@ -32,9 +32,9 @@ remain independent controls.
 The current workspace reports:
 
 ```text
-canonical features: 11
+canonical features: 12
 canonical plans: 3
-maintained documents: 20
+maintained documents: 21
 licence metadata is a gate: false
 ```
 
@@ -143,6 +143,12 @@ boundary to history, SSE, and message submission: its named access-status
 region retains loaded transcript context read-only, hides Clear/retry and all
 message/confirmation controls, and its source-built denial/recovery matrix
 passes 3/3. Native/live ACL and full WCAG evidence remain separate.
+
+The mail-edge observation group `85369fe` adds the maintained
+[`FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md)
+specification, the `aiat.mail-edge-observation.v1`/coverage contracts, and a
+deterministic/fail-closed checker. Provider webhook persistence, selected
+worker live read-back, and complete mail-span evidence remain separate.
 
 ## Clean-checkout verification
 

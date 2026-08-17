@@ -1,7 +1,7 @@
 # AIAT Target Programme
 
 **Authoritative personal programme and implementation target**  
-**Baseline reviewed:** 2026-08-12
+**Baseline reviewed:** 2026-08-17
 **Programme status:** active  
 **Applies to:** the AIAT repository, personal instance, deployment profiles, agents, workers, adapters, integrations, and operator dashboard
 
@@ -580,8 +580,12 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   `mas/scripts/check_live_trace_observability.py`. When configured, signed identity
   delivery attempts carrying safe trace/span IDs are projected as `mail` spans;
   scalar attribute allow-listing drops request/tool/model/mail payloads and
-  secrets before persistence. Provider mail-edge spans, live retention
-  enforcement, and incident views are still P2 work. The local
+  secrets before persistence. The shared `aiat.mail-edge-observation.v1`
+  normalizer, `aiat.mail-edge-coverage.v1` evaluator, and deterministic
+  fail-closed checker now cover delivery attempts, verified provider webhooks,
+  bounded bounce/failure states, safe trace correlation, and event-ID conflict
+  handling (`85369fe`). Provider persistence, selected-worker live evidence,
+  live retention enforcement, and incident views are still P2 work. The local
   `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
   of archive/delete actions to a separately reviewed storage/recovery worker.
 
@@ -593,7 +597,10 @@ without blocking execution or changing authority. The deterministic contract
 and checker are implemented; PM/SCM delivery and worker-recovery records are
 projected from existing durable tables, the API request ledger supplies the
 platform target, and the signed identity client can supply bounded
-`mail_delivery` attempt rows when configured, while native mail-edge/complete-
+`mail_delivery` attempt rows when configured. The mail-edge contract/checker
+now reports verified provider webhook and bounce coverage without retaining
+payloads; native mail-edge/complete-span deployment evidence remains explicit
+`no_data`/`attention` until a selected worker and provider supply it.
 The local deployment read-back is retained at
 [`mas/docs/provenance/slo_capacity_live.json`](mas/docs/provenance/slo_capacity_live.json)
 and is descriptive evidence only.
@@ -1204,6 +1211,11 @@ The programme is organised around completing and hardening the existing architec
   deterministic redaction fixture; identity mail-edge spans, live
   retention/sampling enforcement, and incident views remain open and
   non-gating.
+- [x] Add the payload-free `aiat.mail-edge-observation.v1` and
+  `aiat.mail-edge-coverage.v1` contracts, provider webhook normalizer, event
+  conflict handling, and deterministic/fail-closed checker (`85369fe`);
+  provider signature verification, identity-service persistence, selected
+  worker live evidence, and complete mail spans remain separate.
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
   it classifies explicit/derived expiry metadata and never mutates storage or
   treats invalid rows as deletion candidates.
@@ -1520,16 +1532,22 @@ All project documentation available in the reviewed workspace was read and used 
   current static/contract/recovery/live evidence; blocked or failed live checks,
   pending security evidence, licence metadata, and dirty-worktree state remain
   explicit and cannot become a release pass.
-- `ROADMAP.md`, `Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md`, and
+- `ROADMAP.md`, `Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md`,
+  `Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`, and
   `Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md` — maintained
-  delivery navigation and the bounded trace evidence/retention contract,
-  including native span persistence and its deterministic checker.
+  delivery navigation and the bounded trace/mail-edge evidence and retention
+  contracts, including native span persistence and deterministic checkers.
 - `mas/packages/mas-core/mas_core/observability/native_spans.py`,
   `mas/migrations/versions/0036_native_trace_spans.py`,
   `mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py`,
   and `mas/scripts/check_native_trace_spans.py` — payload-free native span
   contract, durable core/identity delivery-attempt correlation, and redaction
   fixture; provider mail-edge and live retention evidence remain open.
+- `mas/packages/mas-core/mas_core/observability/mail_edge.py`,
+  `mas/packages/mas-core/tests/test_mail_edge.py`, and
+  `mas/scripts/check_mail_edge_observations.py` — payload-free provider
+  webhook/bounce normalization, coverage evaluation, conflict handling, and
+  the selected-worker live evidence boundary (`85369fe`).
 - `mas/packages/mas-core/mas_core/observability/retention.py` and
   `mas/scripts/check_trace_retention.py` — deterministic, non-mutating
   `aiat.trace-retention-plan.v1` decisions with explicit archive/delete mode
