@@ -190,6 +190,13 @@
 - [x] Type the retention-plan API response and reject mutation claims at
   serialization (`b3fca97`); generated OpenAPI/SDK artifacts now name the
   policy, count, and candidate schemas.
+- [x] Add the provider-neutral `aiat.trace-retention-execution.v1` contract
+  and deterministic in-memory rehearsal (`01996c9`). Preview is explicitly
+  non-mutating; apply validates project scope, authoritative hold IDs,
+  backup/read-back evidence, and human confirmation before one atomic adapter
+  call and bounded audit record. `check_trace_retention_execution.py --live`
+  remains blocked until a reviewed storage/recovery adapter is configured;
+  live erasure, durable audit, and restore rollback remain open.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in

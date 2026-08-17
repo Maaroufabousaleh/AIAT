@@ -28,6 +28,14 @@ and a separate `counts.legal_hold` value. Held rows remain `retain` and never
 enter `deletion_ids`; ambiguous string values such as `"true"` do not activate
 the hold.
 
+Commit `01996c9` adds the provider-neutral `aiat.trace-retention-execution.v1`
+contract and deterministic `InMemoryRetentionStore` rehearsal. Preview mode is
+non-mutating; apply mode sends one complete atomic action batch only after
+project scope, authoritative hold IDs, backup-parity evidence, and explicit
+human confirmation pass. `scripts/check_trace_retention_execution.py` proves
+the preview/apply and audit invariants, while `--live` remains blocked until a
+reviewed storage/recovery adapter is configured.
+
 Invalid rows are reported and excluded from deletion candidates. The planner
 does not connect to storage, delete spans, archive bytes, or establish the
 authoritative hold registry. Retention mode and hold markers are operational
@@ -46,6 +54,11 @@ uv run --isolated pytest \
 uv run --isolated python scripts/check_trace_retention.py --json
 uv run --isolated python scripts/check_trace_retention.py --live --json \
   --trace-id aiat-live-trace-check
+uv run --isolated pytest \
+  packages/mas-core/tests/test_retention_execution.py \
+  scripts/tests/test_check_trace_retention_execution.py -q
+uv run --isolated python scripts/check_trace_retention_execution.py --json
+uv run --isolated python scripts/check_trace_retention_execution.py --live --json
 ```
 
 The clean-checkout review passes the focused tests and fixture. The fixture
@@ -56,15 +69,18 @@ when it declares the retention-plan schema, `mode: read-only-plan`, and
 `blocked` with exit code 2.
 
 The operator incident API/dashboard groups (`b4b7cef`, `869202c`) and the
-retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) consume the same bounded trace evidence
-authority but do not apply retention decisions. They expose only safe incident
-metadata, finding references, counts, and policy scalars; retention execution
-remains an independent storage/recovery action.
+retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) and execution rehearsal
+(`01996c9`) consume the same bounded trace evidence authority but do not claim
+live retention enforcement. They expose only safe incident metadata, finding
+references, counts, policy scalars, and an auditable fixture result; production
+retention execution remains an independent storage/recovery action.
 
 ## Remaining gates
 
-- Apply retention decisions through an operator/recovery worker with project
-  narrowing, an authoritative legal-hold/erasure registry, audit records, and
-  backup parity. The current `legal_hold` metadata guard is planner-only.
+- Connect the guarded execution contract to an operator/recovery worker with
+  project narrowing, an authoritative legal-hold/erasure registry, durable
+  audit records, backup/read-back parity, and restore-tested rollback. The
+  current `legal_hold` metadata guard and `InMemoryRetentionStore` are
+  fail-safe rehearsal boundaries, not live authority or database mutation.
 - Prove retention behavior against restored storage and a representative live
   multi-service trace workload.

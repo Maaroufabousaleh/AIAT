@@ -152,7 +152,11 @@ execution input for this personal/internal programme.
   Retention enforcement, authoritative legal holds, erasure, project narrowing,
   audit, and restore parity remain separate storage/recovery gates. `b3fca97`
   makes the response a typed Pydantic/OpenAPI model with bounded counts and
-  candidate fields.
+  candidate fields. The guarded `aiat.trace-retention-execution.v1` rehearsal
+  (`01996c9`) now proves preview non-mutation and apply prerequisites for
+  project scope, authoritative holds, backup/read-back evidence, human
+  confirmation, atomic batching, and bounded audit metadata; its live adapter
+  and restore/erasure evidence remain open.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

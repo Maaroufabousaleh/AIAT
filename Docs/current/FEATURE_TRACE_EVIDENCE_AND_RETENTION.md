@@ -36,8 +36,13 @@ severity, coverage, finding count, affected source names, and notice codes only;
 commit `869202c` also renders the bounded finding IDs, source/kind, operation or
 service, status/HTTP code, and occurrence timestamp as a payload-free
 chronology. It never renders incident payloads. Live model/worker/audit/integration source
-coverage, provider ingress certification, complete mail-edge spans, live
-retention execution, and richer incident chronology remain open.
+coverage, provider ingress certification, complete mail-edge spans, and richer
+incident chronology remain open. `01996c9` adds a provider-neutral
+`aiat.trace-retention-execution.v1` contract with a deterministic in-memory
+rehearsal: preview is non-mutating, while apply requires project scope,
+authoritative hold IDs, backup/read-back evidence, and human confirmation
+before one atomic adapter call. The live storage/recovery adapter, erasure,
+durable production audit, and restore rollback remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -183,7 +188,14 @@ rows as deletion candidates. An explicit boolean `legal_hold` marker on a row
 or its scalar `attributes_json` metadata forces `retain`, increments the
 separate legal-hold count, and cannot be overridden by expiry. The planner is
 non-mutating; an operator or future recovery worker must separately review and
-apply a storage action.
+apply a storage action. The `aiat.trace-retention-execution.v1` contract now
+provides that boundary as a provider-neutral adapter interface. Its
+deterministic `InMemoryRetentionStore` rehearses preview and apply without
+selecting a database or provider, validates project scope and authoritative
+hold IDs, requires backup-parity evidence and human confirmation for apply,
+and records one bounded audit envelope. It is a fixture/review boundary only;
+`scripts/check_trace_retention_execution.py --live` fails closed until a
+production storage/recovery adapter is configured.
 
 The operator-only `GET /observability/retention/plan` route reads a bounded set
 of native-span metadata, applies the company retention policy, and returns the
@@ -216,6 +228,11 @@ uv run --isolated pytest packages/mas-core/tests/test_trace_retention.py -q
 uv run --isolated python scripts/check_trace_retention.py --json
 uv run --isolated python scripts/check_trace_retention.py --live --json \
   --trace-id aiat-live-trace-check
+uv run --isolated pytest \
+  packages/mas-core/tests/test_retention_execution.py \
+  scripts/tests/test_check_trace_retention_execution.py -q
+uv run --isolated python scripts/check_trace_retention_execution.py --json
+uv run --isolated python scripts/check_trace_retention_execution.py --live --json
 uv run --isolated python scripts/check_trace_evidence.py --live --json
 uv run --isolated python scripts/check_live_trace_observability.py --live --json \
   --trace-id aiat-live-trace-check
@@ -244,6 +261,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Mail-edge observation contract/checker and identity persistence: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`), and migration `0003_mail_edge_observations`/signed route (`cfafe38`)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
+- Retention execution contract/rehearsal: [`mas/packages/mas-core/mas_core/observability/retention_execution.py`](../../mas/packages/mas-core/mas_core/observability/retention_execution.py), [`mas/scripts/check_trace_retention_execution.py`](../../mas/scripts/check_trace_retention_execution.py), and [`mas/packages/mas-core/tests/test_retention_execution.py`](../../mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
 - API observation contract/table/migration: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py)
 - Direct model/artifact/integration trace columns and migration: [`mas/packages/mas-core/mas_core/worker_contract/models.py`](../../mas/packages/mas-core/mas_core/worker_contract/models.py), [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py), [`mas/migrations/versions/0035_trace_correlation_evidence.py`](../../mas/migrations/versions/0035_trace_correlation_evidence.py)
@@ -269,10 +287,11 @@ storage returns `blocked` with exit code 2 and no secret material.
   mail-edge/bounce spans. The deterministic source contract and identity
   persistence are implemented, but no live worker dispatch or provider
   coverage is claimed yet.
-- Enforce sampling/retention and project-level narrowing in the live storage
-  and recovery workers, sourcing legal holds from an authoritative hold
-  registry and including backup/restore parity. The planner’s metadata-only
-  hold guard is not live enforcement.
+- Connect the guarded execution contract to live storage and recovery workers;
+  source legal holds from an authoritative registry, persist audit records,
+  prove backup/restore parity, and add erasure/rollback. The planner’s
+  metadata-only hold guard and `InMemoryRetentionStore` rehearsal are not live
+  enforcement.
 - Extend the bounded dashboard summary with richer chronology only after the
   incident projection is populated by native/live deployment evidence; the
   current `aiat.trace-incident.v1` API, proxy, and deep-link boundary is
