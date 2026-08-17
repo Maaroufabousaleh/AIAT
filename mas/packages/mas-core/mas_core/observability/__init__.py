@@ -61,11 +61,15 @@ from mas_core.observability.retention import (
 )
 from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
+    TRACE_RETENTION_HOLD_REGISTRY_SCHEMA,
     InMemoryRetentionStore,
     RetentionAction,
     RetentionBackupParityEvidence,
     RetentionExecutionError,
     RetentionExecutionResult,
+    RetentionLegalHold,
+    RetentionLegalHoldSnapshot,
+    RetentionLegalHoldStatus,
     execute_retention_plan,
 )
 from mas_core.observability.trace_evidence import (
@@ -137,11 +141,15 @@ __all__ = [
     "TraceRetentionPlan",
     "plan_native_span_retention",
     "TRACE_RETENTION_EXECUTION_SCHEMA",
+    "TRACE_RETENTION_HOLD_REGISTRY_SCHEMA",
     "InMemoryRetentionStore",
     "RetentionAction",
     "RetentionBackupParityEvidence",
     "RetentionExecutionError",
     "RetentionExecutionResult",
+    "RetentionLegalHold",
+    "RetentionLegalHoldSnapshot",
+    "RetentionLegalHoldStatus",
     "execute_retention_plan",
     # Logging
     "configure_logging",

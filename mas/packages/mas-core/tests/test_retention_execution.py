@@ -16,6 +16,8 @@ from mas_core.observability.retention_execution import (
     RetentionAction,
     RetentionBackupParityEvidence,
     RetentionExecutionError,
+    RetentionLegalHold,
+    RetentionLegalHoldSnapshot,
     execute_retention_plan,
 )
 from mas_core.observability.trace_evidence import TraceRetentionPolicy
@@ -98,6 +100,27 @@ def _parity_evidence() -> RetentionBackupParityEvidence:
     )
 
 
+def _hold_snapshot(
+    *,
+    authority_project_id: str | None = "project-1",
+    status: str = "active",
+) -> RetentionLegalHoldSnapshot:
+    return RetentionLegalHoldSnapshot(
+        schema_version="aiat.trace-retention-hold-registry.v1",
+        source_ref="hold-registry://fixture",
+        observed_at=NOW,
+        holds=(
+            RetentionLegalHold(
+                hold_id="hold-authority-1",
+                record_id="authority-hold",
+                project_id=authority_project_id,
+                status=status,  # type: ignore[arg-type]
+                authority_ref="registry-entry://hold-authority-1",
+            ),
+        ),
+    )
+
+
 def test_preview_is_non_mutating_and_resolves_holds() -> None:
     store = _store()
     before = {key: dict(value) for key, value in store.records.items()}
@@ -108,7 +131,7 @@ def test_preview_is_non_mutating_and_resolves_holds() -> None:
         scope="project:project-1",
         project_id="project-1",
         project_by_record={record_id: "project-1" for record_id in store.records},
-        authoritative_legal_hold_ids={"authority-hold"},
+        authoritative_legal_hold_snapshot=_hold_snapshot(),
         actor="planner",
         actor_kind="system",
         mode="preview",
@@ -135,7 +158,7 @@ def test_apply_requires_human_confirmation_and_backup_parity() -> None:
         "scope": "project:project-1",
         "project_id": "project-1",
         "project_by_record": {record_id: "project-1" for record_id in store.records},
-        "authoritative_legal_hold_ids": {"authority-hold"},
+        "authoritative_legal_hold_snapshot": _hold_snapshot(),
         "actor": "operator",
         "mode": "apply",
         "audit_id": "apply-audit",
@@ -167,7 +190,7 @@ def test_apply_is_project_scoped_and_audited() -> None:
         scope="project:project-1",
         project_id="project-1",
         project_by_record={record_id: "project-1" for record_id in store.records},
-        authoritative_legal_hold_ids={"authority-hold"},
+        authoritative_legal_hold_snapshot=_hold_snapshot(),
         actor="operator",
         actor_kind="human",
         mode="apply",
@@ -180,6 +203,7 @@ def test_apply_is_project_scoped_and_audited() -> None:
     assert result.status == "applied"
     assert result.mutation_performed is True
     assert result.backup_parity_verified is True
+    assert result.legal_hold_snapshot_ref == "hold-registry://fixture"
     assert store.records["archive-1"]["status"] == "archived"
     assert "delete-1" not in store.records
     assert store.records["planner-hold"]["status"] == "active"
@@ -196,6 +220,8 @@ def test_apply_is_project_scoped_and_audited() -> None:
             "backup_manifest_sha256": "a" * 64,
             "backup_record_count": 4,
             "clean_target_verified": True,
+            "legal_hold_snapshot_ref": "hold-registry://fixture",
+            "active_legal_hold_count": 1,
             "evaluated_at": NOW.isoformat(),
         }
     ]
@@ -219,11 +245,102 @@ def test_project_scope_mismatch_fails_before_adapter_mutation() -> None:
             mode="apply",
             confirm=True,
             backup_parity_evidence=_parity_evidence(),
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
             audit_id="scope-audit",
             evaluated_at=NOW,
         )
     assert store.records == before
     assert store.audit_records == []
+
+
+def test_apply_requires_authoritative_hold_snapshot() -> None:
+    store = _store()
+    with pytest.raises(RetentionExecutionError, match="authoritative legal-hold snapshot"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record={record_id: "project-1" for record_id in store.records},
+            actor="operator",
+            actor_kind="human",
+            mode="apply",
+            confirm=True,
+            backup_parity_evidence=_parity_evidence(),
+            audit_id="missing-hold-snapshot-audit",
+            evaluated_at=NOW,
+        )
+    assert all(record["status"] == "active" for record in store.records.values())
+    assert store.audit_records == []
+
+
+def test_hold_snapshot_rejects_duplicate_record_ids() -> None:
+    snapshot = RetentionLegalHoldSnapshot(
+        schema_version="aiat.trace-retention-hold-registry.v1",
+        source_ref="hold-registry://duplicate",
+        observed_at=NOW,
+        holds=(
+            RetentionLegalHold(
+                hold_id="hold-1",
+                record_id="same-record",
+                status="active",
+                authority_ref="registry-entry://hold-1",
+            ),
+            RetentionLegalHold(
+                hold_id="hold-2",
+                record_id="same-record",
+                status="released",
+                authority_ref="registry-entry://hold-2",
+            ),
+        ),
+    )
+    with pytest.raises(RetentionExecutionError, match="duplicate legal hold record ID"):
+        snapshot.validate()
+
+
+def test_project_scoped_hold_mismatch_fails_closed_before_mutation() -> None:
+    store = _store()
+    before = {key: dict(value) for key, value in store.records.items()}
+    with pytest.raises(RetentionExecutionError, match="legal hold is outside"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record={record_id: "project-1" for record_id in store.records},
+            authoritative_legal_hold_snapshot=_hold_snapshot(
+                authority_project_id="project-2"
+            ),
+            actor="operator",
+            actor_kind="human",
+            mode="apply",
+            confirm=True,
+            backup_parity_evidence=_parity_evidence(),
+            audit_id="hold-scope-audit",
+            evaluated_at=NOW,
+        )
+    assert store.records == before
+    assert store.audit_records == []
+
+
+def test_released_hold_does_not_suppress_retention_action() -> None:
+    store = _store()
+    result = execute_retention_plan(
+        _plan(),
+        store=store,
+        scope="project:project-1",
+        project_id="project-1",
+        project_by_record={record_id: "project-1" for record_id in store.records},
+        authoritative_legal_hold_snapshot=_hold_snapshot(status="released"),
+        actor="planner",
+        actor_kind="system",
+        mode="preview",
+        audit_id="released-hold-audit",
+        evaluated_at=NOW,
+    )
+    assert result.action_count == 3
+    assert result.held_count == 1
+    assert result.mutation_performed is False
 
 
 def test_apply_rejects_manifest_drift_or_unverified_restore_target() -> None:
@@ -241,6 +358,7 @@ def test_apply_rejects_manifest_drift_or_unverified_restore_target() -> None:
             mode="apply",
             confirm=True,
             backup_parity_evidence=mismatched,
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
             audit_id="drift-audit",
             evaluated_at=NOW,
         )
@@ -268,6 +386,7 @@ def test_apply_rejects_manifest_drift_or_unverified_restore_target() -> None:
             mode="apply",
             confirm=True,
             backup_parity_evidence=unclean,
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
             audit_id="unclean-audit",
             evaluated_at=NOW,
         )

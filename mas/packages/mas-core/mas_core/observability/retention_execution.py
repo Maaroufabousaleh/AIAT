@@ -2,16 +2,16 @@
 
 The read-only retention planner deliberately stops before storage mutation.  A
 future recovery worker can use this contract to apply an already reviewed plan
-without moving authority into the planner: project scope, authoritative hold
-IDs, backup/read-back evidence, and human confirmation are all required before
-``apply`` mode reaches an adapter.  The in-memory adapter is a deterministic
-rehearsal, not a production database implementation.
+without moving authority into the planner: project scope, a typed authoritative
+hold snapshot, backup/read-back evidence, and human confirmation are all
+required before ``apply`` mode reaches an adapter.  The in-memory adapter is a
+deterministic rehearsal, not a production database implementation.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
@@ -19,14 +19,25 @@ from typing import Any, Literal, Protocol
 from .retention import TRACE_RETENTION_PLAN_SCHEMA, TraceRetentionPlan
 
 TRACE_RETENTION_EXECUTION_SCHEMA = "aiat.trace-retention-execution.v1"
+TRACE_RETENTION_HOLD_REGISTRY_SCHEMA = "aiat.trace-retention-hold-registry.v1"
 RetentionExecutionMode = Literal["preview", "apply"]
 RetentionExecutionStatus = Literal["preview", "applied"]
 RetentionActionKind = Literal["archive", "delete"]
 RetentionActorKind = Literal["human", "system"]
+RetentionLegalHoldStatus = Literal["active", "released"]
 
 
 class RetentionExecutionError(ValueError):
     """Raised when a retention plan cannot cross the mutation boundary."""
+
+
+def _token(value: Any, *, name: str, max_length: int = 240) -> str:
+    rendered = str(value or "").strip()
+    if not rendered:
+        raise RetentionExecutionError(f"{name} is required")
+    if len(rendered) > max_length:
+        raise RetentionExecutionError(f"{name} exceeds the bounded length")
+    return rendered
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +47,95 @@ class RetentionAction:
     record_id: str
     action: RetentionActionKind
     project_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionLegalHold:
+    """One current or released record from an authoritative hold registry."""
+
+    hold_id: str
+    record_id: str
+    status: RetentionLegalHoldStatus
+    authority_ref: str
+    project_id: str | None = None
+
+    def validate(self) -> None:
+        _token(self.hold_id, name="hold_id", max_length=160)
+        _token(self.record_id, name="record_id", max_length=160)
+        _token(self.authority_ref, name="authority_ref", max_length=240)
+        if self.status not in {"active", "released"}:
+            raise RetentionExecutionError(
+                "legal hold status must be active or released"
+            )
+        if self.project_id is not None:
+            _token(self.project_id, name="hold_project_id", max_length=160)
+
+    def as_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "hold_id": _token(self.hold_id, name="hold_id", max_length=160),
+            "record_id": _token(self.record_id, name="record_id", max_length=160),
+            "status": self.status,
+            "authority_ref": _token(self.authority_ref, name="authority_ref", max_length=240),
+            "project_id": (
+                _token(self.project_id, name="hold_project_id", max_length=160)
+                if self.project_id is not None
+                else None
+            ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionLegalHoldSnapshot:
+    """Bounded, immutable read of the current authoritative hold registry."""
+
+    schema_version: str
+    source_ref: str
+    observed_at: datetime
+    holds: tuple[RetentionLegalHold, ...] = ()
+
+    def validate(self) -> None:
+        if self.schema_version != TRACE_RETENTION_HOLD_REGISTRY_SCHEMA:
+            raise RetentionExecutionError("unsupported legal hold registry schema")
+        _token(self.source_ref, name="hold_source_ref", max_length=240)
+        if not isinstance(self.observed_at, datetime) or self.observed_at.tzinfo is None:
+            raise RetentionExecutionError(
+                "legal hold snapshot observed_at must be timezone-aware"
+            )
+        hold_ids: set[str] = set()
+        record_ids: set[str] = set()
+        for hold in self.holds:
+            if not isinstance(hold, RetentionLegalHold):
+                raise TypeError("legal hold snapshot entries must be RetentionLegalHold")
+            hold.validate()
+            hold_id = _token(hold.hold_id, name="hold_id", max_length=160)
+            record_id = _token(hold.record_id, name="record_id", max_length=160)
+            if hold_id in hold_ids:
+                raise RetentionExecutionError("duplicate legal hold ID in snapshot")
+            if record_id in record_ids:
+                raise RetentionExecutionError(
+                    "duplicate legal hold record ID in snapshot"
+                )
+            hold_ids.add(hold_id)
+            record_ids.add(record_id)
+
+    def active_holds_by_record(self) -> dict[str, RetentionLegalHold]:
+        self.validate()
+        return {
+            _token(hold.record_id, name="record_id", max_length=160): hold
+            for hold in self.holds
+            if hold.status == "active"
+        }
+
+    def as_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "schema_version": self.schema_version,
+            "source_ref": _token(self.source_ref, name="hold_source_ref", max_length=240),
+            "observed_at": self.observed_at.astimezone(UTC).isoformat(),
+            "active_hold_count": sum(hold.status == "active" for hold in self.holds),
+            "holds": [hold.as_dict() for hold in self.holds],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +262,7 @@ class RetentionExecutionResult:
     invalid_count: int = 0
     backup_evidence_ref: str | None = None
     backup_parity_verified: bool = False
+    legal_hold_snapshot_ref: str | None = None
     mutation_performed: bool = False
     notices: tuple[str, ...] = ()
 
@@ -187,6 +288,7 @@ class RetentionExecutionResult:
             "invalid_count": self.invalid_count,
             "backup_evidence_ref": self.backup_evidence_ref,
             "backup_parity_verified": self.backup_parity_verified,
+            "legal_hold_snapshot_ref": self.legal_hold_snapshot_ref,
             "mutation_performed": self.mutation_performed,
             "notices": list(self.notices),
         }
@@ -243,15 +345,6 @@ class InMemoryRetentionStore:
         self.audit_records.append(dict(audit))
 
 
-def _token(value: Any, *, name: str, max_length: int = 240) -> str:
-    rendered = str(value or "").strip()
-    if not rendered:
-        raise RetentionExecutionError(f"{name} is required")
-    if len(rendered) > max_length:
-        raise RetentionExecutionError(f"{name} exceeds the bounded length")
-    return rendered
-
-
 def _evaluated_at(value: datetime | None) -> datetime:
     candidate = value or datetime.now(UTC)
     if candidate.tzinfo is None:
@@ -271,18 +364,18 @@ def execute_retention_plan(
     backup_parity_evidence: RetentionBackupParityEvidence | None = None,
     project_id: str | None = None,
     project_by_record: Mapping[str, str] | None = None,
-    authoritative_legal_hold_ids: Collection[str] = (),
+    authoritative_legal_hold_snapshot: RetentionLegalHoldSnapshot | None = None,
     audit_id: str = "retention-execution-fixture-audit",
     evaluated_at: datetime | None = None,
 ) -> RetentionExecutionResult:
     """Preview or apply a retention plan through one guarded adapter call.
 
     Apply mode is intentionally narrow: it requires a project or trace scope,
-    a human actor with explicit confirmation, and typed backup/read-back
-    parity evidence.  An authoritative hold ID or the planner's explicit
-    boolean hold marker always suppresses an action.  The adapter receives one
-    complete action set, allowing it to provide its own transaction/rollback
-    boundary.
+    a human actor with explicit confirmation, typed backup/read-back parity
+    evidence, and a typed authoritative hold snapshot.  A current hold or the
+    planner's explicit boolean hold marker always suppresses an action.  The
+    adapter receives one complete action set, allowing it to provide its own
+    transaction/rollback boundary.
     """
 
     if not isinstance(plan, TraceRetentionPlan):
@@ -330,7 +423,33 @@ def execute_retention_plan(
                 "apply requires typed verified backup parity evidence"
             )
 
-    hold_ids = {str(record_id).strip() for record_id in authoritative_legal_hold_ids if str(record_id).strip()}
+    if authoritative_legal_hold_snapshot is not None and not isinstance(
+        authoritative_legal_hold_snapshot, RetentionLegalHoldSnapshot
+    ):
+        raise TypeError(
+            "authoritative_legal_hold_snapshot must be RetentionLegalHoldSnapshot"
+        )
+    if authoritative_legal_hold_snapshot is not None:
+        authoritative_legal_hold_snapshot.validate()
+    normalized_hold_ref = (
+        _token(
+            authoritative_legal_hold_snapshot.source_ref,
+            name="hold_source_ref",
+            max_length=240,
+        )
+        if authoritative_legal_hold_snapshot is not None
+        else None
+    )
+    active_holds = (
+        authoritative_legal_hold_snapshot.active_holds_by_record()
+        if authoritative_legal_hold_snapshot is not None
+        else {}
+    )
+    if mode == "apply" and normalized_hold_ref is None:
+        raise RetentionExecutionError(
+            "apply requires a typed authoritative legal-hold snapshot"
+        )
+
     actions: list[RetentionAction] = []
     held_count = 0
     invalid_count = 0
@@ -339,17 +458,28 @@ def execute_retention_plan(
         if candidate.disposition == "invalid":
             invalid_count += 1
             continue
+        candidate_record_id = str(candidate.record_id or "").strip()
+        authority_hold = active_holds.get(candidate_record_id)
+        if (
+            authority_hold is not None
+            and normalized_project_id is not None
+            and authority_hold.project_id not in {None, normalized_project_id}
+        ):
+            raise RetentionExecutionError(
+                f"legal hold is outside the selected project: {candidate.record_id}"
+            )
+        has_hold = candidate.legal_hold or authority_hold is not None
         if candidate.disposition == "retain":
-            if candidate.legal_hold or candidate.record_id in hold_ids:
+            if has_hold:
                 held_count += 1
             continue
-        if candidate.legal_hold or candidate.record_id in hold_ids:
+        if has_hold:
             held_count += 1
             continue
         candidate_project_id: str | None = None
         if normalized_project_id is not None:
             assert project_by_record is not None
-            candidate_project_id = str(project_by_record.get(candidate.record_id) or "").strip() or None
+            candidate_project_id = str(project_by_record.get(candidate_record_id) or "").strip() or None
             if candidate_project_id != normalized_project_id:
                 raise RetentionExecutionError(
                     f"retention candidate is outside the selected project: {candidate.record_id}"
@@ -377,6 +507,8 @@ def execute_retention_plan(
                 "backup_manifest_sha256": backup_parity_evidence.backup_manifest_sha256.strip().lower(),
                 "backup_record_count": backup_parity_evidence.backup_record_count,
                 "clean_target_verified": backup_parity_evidence.clean_target_verified,
+                "legal_hold_snapshot_ref": normalized_hold_ref,
+                "active_legal_hold_count": len(active_holds),
                 "evaluated_at": when.isoformat(),
             },
         )
@@ -401,6 +533,7 @@ def execute_retention_plan(
         invalid_count=invalid_count,
         backup_evidence_ref=normalized_backup_ref,
         backup_parity_verified=backup_parity_evidence is not None,
+        legal_hold_snapshot_ref=normalized_hold_ref,
         mutation_performed=mode == "apply" and bool(actions),
         notices=tuple(notices[:20]),
     )
@@ -408,6 +541,7 @@ def execute_retention_plan(
 
 __all__ = [
     "TRACE_RETENTION_EXECUTION_SCHEMA",
+    "TRACE_RETENTION_HOLD_REGISTRY_SCHEMA",
     "RetentionAction",
     "RetentionActionKind",
     "RetentionActorKind",
@@ -417,6 +551,9 @@ __all__ = [
     "RetentionExecutionResult",
     "RetentionExecutionStatus",
     "RetentionMutationStore",
+    "RetentionLegalHold",
+    "RetentionLegalHoldSnapshot",
+    "RetentionLegalHoldStatus",
     "InMemoryRetentionStore",
     "execute_retention_plan",
 ]
