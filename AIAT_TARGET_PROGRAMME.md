@@ -1509,9 +1509,10 @@ All project documentation available in the reviewed workspace was read and used 
   certification.
 - `mas/scripts/check_worker_run_readiness.py` and
   `mas/scripts/tests/test_check_worker_run_readiness.py` — selected worker-run
-  readiness remains read-only and explicit; `2eea80a` makes unavailable or
-  malformed health reads a stable `read_worker_health_unavailable` blocker,
-  without activation, dispatch, or licence-based gating.
+  readiness remains read-only and explicit; `2eea80a` and `dac268c` make
+  unavailable or malformed health reads, including successful empty payloads,
+  a stable `read_worker_health_unavailable` blocker, without activation,
+  dispatch, or licence-based gating.
 - `mas/docs/provenance/security_scan_evidence.yaml` — secret-safe exact-source
   Semgrep evidence for coding/tester; findings-review status remains a
   technical activation blocker until triaged.

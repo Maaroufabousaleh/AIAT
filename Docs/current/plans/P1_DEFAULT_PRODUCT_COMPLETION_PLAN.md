@@ -106,7 +106,8 @@ external client-language SDK compatibility yet.
   dispatches, or returns payloads; live worker, sandbox runtime, canary, and
   rollback certification remain open.
 - [x] Harden the selected worker-run readiness live read to fail closed on an
-  unavailable or malformed health response (`2eea80a`); emit the stable
+  unavailable or malformed health response (`2eea80a`, `dac268c`), including a
+  successful response without `health_status`; emit the stable
   `read_worker_health_unavailable` blocker without activation or mutation.
 - [x] Add the read-only `aiat.worker-steward-readiness.v1` evaluator and
   `scripts/check_worker_steward_readiness.py` (`adc7b26`) for one explicitly
