@@ -1,13 +1,14 @@
 """Check bounded identity/provider mail-edge and bounce observations.
 
 Fixture mode exercises the shared normalizer with delivery, verified provider
-webhook, and permanent-bounce observations.  Live mode only reads one
-operator-selected trace from the orchestrator.  It requires an explicitly
-selected representative worker and never dispatches a worker, sends mail, or
-changes provider state.  A live pass is reported only when the deployment
-returns signed/provider webhook and bounce coverage; ordinary delivery-attempt
-rows remain an explicit ``attention`` result.  Licence metadata is never a
-predicate.
+webhook, and permanent-bounce observations. Live mode reads one
+operator-selected trace from the orchestrator and, when explicitly configured,
+one signed identity-service mail-edge dashboard projection. It requires an
+explicitly selected representative worker and never dispatches a worker, sends
+mail, or changes provider state. A live pass is reported only when the
+deployment returns signed/provider webhook and bounce coverage; ordinary
+delivery-attempt rows remain an explicit ``attention`` result. Licence metadata
+is never a predicate.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ import httpx
 MAS_ROOT = Path(__file__).resolve().parents[1]
 if str(MAS_ROOT / "packages" / "mas-core") not in sys.path:
     sys.path.insert(0, str(MAS_ROOT / "packages" / "mas-core"))
+if str(MAS_ROOT / "apps" / "orchestrator-api") not in sys.path:
+    sys.path.insert(0, str(MAS_ROOT / "apps" / "orchestrator-api"))
 
 from mas_core.observability.mail_edge import (  # noqa: E402
     MAIL_EDGE_COVERAGE_SCHEMA,
@@ -67,6 +70,21 @@ def _parser() -> argparse.ArgumentParser:
         "--trace-id",
         default=os.getenv("AIAT_LIVE_WORKER_TRACE_ID", ""),
         help="trace produced by the selected worker run",
+    )
+    parser.add_argument(
+        "--identity-url",
+        default=os.getenv("AIAT_IDENTITY_SERVICE_URL", os.getenv("IDENTITY_SERVICE_URL", "")),
+        help="optional identity-service base URL for signed mail-edge read-back",
+    )
+    parser.add_argument(
+        "--identity-client-id",
+        default=os.getenv("AIAT_IDENTITY_CLIENT_ID", "operator-laptop"),
+        help="identity client id; its private key is read from the environment",
+    )
+    parser.add_argument(
+        "--identity-private-key",
+        default=os.getenv("AIAT_IDENTITY_CLIENT_PRIVATE_KEY", ""),
+        help="identity client private key; never included in the report",
     )
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument("--timeout", type=float, default=15.0)
@@ -215,6 +233,100 @@ def _trace_mail_observation(row: Mapping[str, Any], *, trace_id: str) -> Any:
     )
 
 
+def _identity_dashboard_observation(
+    row: Mapping[str, Any], *, trace_id: str
+) -> Any | None:
+    """Normalize one safe identity dashboard row for the selected trace."""
+
+    row_trace_id = str(row.get("trace_id") or "").strip()
+    if row_trace_id != trace_id:
+        return None
+    source = str(row.get("source") or "").strip().lower()
+    if source not in {"delivery_attempt", "provider_webhook", "provider_poll"}:
+        return None
+    event_id = str(row.get("event_id") or row.get("id") or "").strip()
+    if not event_id:
+        return None
+    metadata = row.get("metadata")
+    return build_mail_edge_observation(
+        provider=str(row.get("provider") or "identity_service"),
+        source=source,  # type: ignore[arg-type]
+        event_id=event_id,
+        event_type=row.get("event_type"),
+        occurred_at=row.get("occurred_at") or row.get("attempted_at"),
+        worker_id=str(row.get("worker_id") or "") or None,
+        outbound_request_id=str(row.get("outbound_request_id") or "") or None,
+        provider_message_ref=str(row.get("provider_message_ref") or "") or None,
+        trace_id=row_trace_id,
+        span_id=str(row.get("span_id") or "") or None,
+        signature_verified=bool(row.get("signature_verified")),
+        metadata=metadata if isinstance(metadata, Mapping) else None,
+    )
+
+
+async def _identity_mail_readback(
+    args: argparse.Namespace,
+    *,
+    trace_id: str,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
+    """Read a selected trace's identity projection through the signed client."""
+
+    identity_url = str(args.identity_url or "").strip().rstrip("/")
+    private_key = str(args.identity_private_key or "").strip()
+    if not identity_url and not private_key:
+        return {"status": "not_configured", "observations": []}
+    if not identity_url or not private_key:
+        return {
+            "status": "blocked",
+            "reason": "identity URL and signed client key must be configured together",
+            "observations": [],
+        }
+    try:
+        from orchestrator_api.identity_client import IdentityClientConfig, SignedIdentityClient
+
+        identity_client = SignedIdentityClient(
+            IdentityClientConfig(
+                url=identity_url,
+                client_id=str(args.identity_client_id or "operator-laptop").strip(),
+                private_key_b64=private_key,
+                timeout_seconds=float(args.timeout),
+            ),
+            client=client,
+        )
+        response = await identity_client.request(
+            "POST",
+            "/v1/dashboard/mail-edge",
+            {"limit": max(1, min(int(args.limit), 300))},
+        )
+    except (RuntimeError, ValueError, TypeError):
+        return {"status": "blocked", "reason": "identity mail-edge read unavailable", "observations": []}
+    rows = response.get("items") if isinstance(response, Mapping) else None
+    if not isinstance(rows, list):
+        return {"status": "fail", "reason": "identity returned an invalid mail-edge projection", "observations": []}
+    observations: list[Any] = []
+    invalid_count = 0
+    for row in rows:
+        if not isinstance(row, Mapping):
+            invalid_count += 1
+            continue
+        try:
+            observation = _identity_dashboard_observation(row, trace_id=trace_id)
+        except (TypeError, ValueError):
+            invalid_count += 1
+            continue
+        if observation is not None:
+            observations.append(observation)
+    result: dict[str, Any] = {
+        "status": "read" if observations else "empty",
+        "observations": observations,
+        "row_count": len(observations),
+    }
+    if invalid_count:
+        result["invalid_row_count"] = invalid_count
+    return result
+
+
 async def _live(args: argparse.Namespace) -> dict[str, Any]:
     url = str(args.url or "").strip().rstrip("/")
     api_key = str(args.api_key or "").strip()
@@ -249,23 +361,35 @@ async def _live(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(payload, Mapping) or payload.get("schema_version") != TRACE_SCHEMA:
         return {**_blocked("orchestrator returned an invalid trace evidence model", url_configured=True), "status": "fail"}
     mail_rows = _trace_mail_rows(payload)
+    identity_readback = await _identity_mail_readback(args, trace_id=trace_id)
+    identity_observations = list(identity_readback.get("observations") or [])
+    # Prefer the signed identity projection for duplicate event IDs. The
+    # orchestrator trace projection is still useful when direct read-back is
+    # not configured, but both paths must not turn one event into a conflict.
+    observations_by_event_id = {
+        item.event_id: item
+        for item in (_trace_mail_observation(row, trace_id=trace_id) for row in mail_rows)
+    }
+    observations_by_event_id.update({item.event_id: item for item in identity_observations})
+    normalized_observations = list(observations_by_event_id.values())
     # Future identity projections may expose normalized coverage alongside the
     # generic span rows.  Keep this parser additive and payload-free.
     projected = payload.get("mail_edge")
-    if isinstance(projected, Mapping):
+    if identity_observations:
+        coverage = evaluate_mail_edge_coverage(normalized_observations, trace_id=trace_id)
+        status = str(coverage.get("status") or "attention")
+    elif isinstance(projected, Mapping):
         coverage = dict(projected)
         status = str(coverage.get("status") or "attention")
     else:
-        coverage = evaluate_mail_edge_coverage(
-            [_trace_mail_observation(row, trace_id=trace_id) for row in mail_rows],
-            trace_id=trace_id,
-        )
-        status = "attention" if mail_rows else "blocked"
-        coverage = {
-            **coverage,
-            "status": status,
-            "missing": sorted(set(coverage.get("missing", [])) | {"verified_provider_webhook", "bounce_or_failure_event"}),
-        }
+        coverage = evaluate_mail_edge_coverage(normalized_observations, trace_id=trace_id)
+        status = str(coverage.get("status") or "attention") if mail_rows else "blocked"
+        if not mail_rows and not identity_observations:
+            coverage = {
+                **coverage,
+                "status": status,
+                "missing": sorted(set(coverage.get("missing", [])) | {"verified_provider_webhook", "bounce_or_failure_event"}),
+            }
     return {
         "schema_version": CHECK_SCHEMA,
         "coverage_schema": MAIL_EDGE_COVERAGE_SCHEMA,
@@ -277,11 +401,17 @@ async def _live(args: argparse.Namespace) -> dict[str, Any]:
         "trace_id_used": trace_id,
         "trace_status": payload.get("status"),
         "mail_span_count": len(mail_rows),
+        "identity_readback": {
+            key: value
+            for key, value in identity_readback.items()
+            if key != "observations"
+        },
+        "identity_observation_count": len(identity_observations),
         "coverage": coverage,
         "network_access_performed": True,
         "mutation_performed": False,
         "payload_free_report": True,
-        "scope": "read-only selected-worker trace inspection; provider webhook/bounce coverage is reported only when projected",
+        "scope": "read-only selected-worker trace and optional signed identity dashboard inspection; no dispatch, provider mutation, or payload retention",
     }
 
 
