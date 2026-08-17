@@ -65,8 +65,8 @@ services:
     profiles: [mail-local]
     image: mas/identity-service:local
     build:
-      context: ../../apps/identity-service
-      dockerfile: ../../infra/docker/Dockerfile.identity-service
+      context: ${MAS_BUILD_CONTEXT:-../..}
+      dockerfile: infra/docker/Dockerfile.identity-service
     restart: "no"
     env_file:
       - path: .env.stalwart-local
@@ -97,8 +97,8 @@ services:
     profiles: [mail-local]
     image: mas/identity-service:local
     build:
-      context: ../../apps/identity-service
-      dockerfile: ../../infra/docker/Dockerfile.identity-service
+      context: ${MAS_BUILD_CONTEXT:-../..}
+      dockerfile: infra/docker/Dockerfile.identity-service
     restart: unless-stopped
     env_file:
       - path: .env.stalwart-local
