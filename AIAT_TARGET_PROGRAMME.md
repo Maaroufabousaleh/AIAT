@@ -612,9 +612,11 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   count and candidate fields instead of a generic dictionary; `9a80c6c` adds
   separate legal-hold count/candidate metadata with strict boolean handling.
   `01996c9` adds the provider-neutral `aiat.trace-retention-execution.v1`
-  contract and deterministic in-memory preview/apply rehearsal. Apply requires
-  project scope, authoritative hold IDs, backup/read-back evidence, and human
-  confirmation before one atomic adapter call with bounded audit metadata.
+  contract and deterministic in-memory preview/apply rehearsal; `57e13cb`
+  types source/backup/restored manifest digests, record counts, checked count,
+  and clean-target verification. Apply requires project scope, authoritative
+  hold IDs, typed backup/read-back evidence, and human confirmation before one
+  atomic adapter call with bounded audit metadata.
   Destructive enforcement, authoritative holds, erasure, project narrowing,
   durable audit, and restore parity remain separate live gates.
 
@@ -854,9 +856,9 @@ bounded trace evidence projection; project-level narrowing and live erasure/
 hold enforcement remain separate storage work. The
 `aiat.trace-retention-execution.v1` contract is the guarded provider-neutral
 boundary for a future recovery worker: preview is non-mutating, and apply must
-prove scope, authoritative holds, backup/read-back parity, and human
-confirmation before one atomic action batch. The current in-memory adapter is a
-deterministic rehearsal only. Worker/runtime deletion must
+prove scope, authoritative holds, typed checksum/count/clean-target
+backup/read-back parity, and human confirmation before one atomic action batch.
+The current in-memory adapter is a deterministic rehearsal only. Worker/runtime deletion must
 never erase historical project evidence; it retires active pointers and
 preserves immutable provenance. Secret deletion revokes access and removes
 secret material while retaining non-secret audit metadata.
@@ -1283,10 +1285,10 @@ The programme is organised around completing and hardening the existing architec
   remain separate gates.
 - [x] Add the provider-neutral `aiat.trace-retention-execution.v1` contract
   and deterministic in-memory preview/apply rehearsal (`01996c9`), including
-  project scope, authoritative hold IDs, backup/read-back evidence, human
-  confirmation, atomic adapter batching, and bounded audit metadata. Live
-  storage/recovery mutation, erasure, durable audit, and restore rollback
-  remain separate gates.
+  project scope, authoritative hold IDs, human confirmation, atomic adapter
+  batching, and bounded audit metadata. `57e13cb` adds typed checksum/count/
+  clean-target backup/read-back evidence. Live storage/recovery mutation,
+  erasure, durable audit, and restore rollback remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.
 - Run browser E2E from native Linux CI rather than relying on problematic DrvFS execution.
 
@@ -1635,7 +1637,8 @@ All project documentation available in the reviewed workspace was read and used 
 - `mas/packages/mas-core/mas_core/observability/retention_execution.py`,
   `mas/scripts/check_trace_retention_execution.py`, and their focused tests —
   the guarded `aiat.trace-retention-execution.v1` adapter contract and
-  deterministic in-memory preview/apply rehearsal (`01996c9`); the live
+  deterministic in-memory preview/apply rehearsal (`01996c9`), with typed
+  checksum/count/clean-target parity evidence in `57e13cb`; the live
   storage/recovery adapter remains unconfigured and fail-closed.
 - `Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md` and
   `mas/scripts/check_slo_capacity.py` — maintained SLO/capacity contracts and

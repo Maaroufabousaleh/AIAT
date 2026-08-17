@@ -192,8 +192,9 @@
   policy, count, and candidate schemas.
 - [x] Add the provider-neutral `aiat.trace-retention-execution.v1` contract
   and deterministic in-memory rehearsal (`01996c9`). Preview is explicitly
-  non-mutating; apply validates project scope, authoritative hold IDs,
-  backup/read-back evidence, and human confirmation before one atomic adapter
+  non-mutating; `57e13cb` makes apply validate typed checksum/count/
+  clean-target backup/read-back evidence in addition to project scope,
+  authoritative hold IDs, and human confirmation before one atomic adapter
   call and bounded audit record. `check_trace_retention_execution.py --live`
   remains blocked until a reviewed storage/recovery adapter is configured;
   live erasure, durable audit, and restore rollback remain open.
