@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), and worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), and the deterministic worker↔mail-edge evidence join (`1d8aed5`) pass in fixture/static scope; current live selections are blocked and worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -132,6 +132,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   deterministic in-memory fixture: database, sandbox, live worker, canary,
   and rollback certification remain explicit boundaries. `--live` is
   fail-closed and makes no mutation.
+- `evaluate_worker_mail_edge_coverage()` and
+  `scripts/check_worker_mail_edge_coverage.py --json --require-integration`
+  compose the worker source evaluator with the payload-free mail-edge
+  evaluator under `aiat.worker-mail-edge-coverage.v1`. The joined certificate
+  requires worker usage/artifact/model/worker sources, optional integration
+  sources when requested, an explicitly scoped worker and trace, a verified
+  provider webhook, and a bounce/failure signal. It returns only counts and
+  missing-signal names; the deterministic certificate is retained at
+  [`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json)
+  (`1d8aed5`). It does not select, activate, dispatch, or certify a live
+  worker, and external provider delivery remains a separate gate.
 - `scripts/check_worker_run_readiness.py` and
   `worker_registry/worker_run_readiness.py` provide a read-only, fail-closed
   preflight for one explicitly selected model-backed worker and project. The

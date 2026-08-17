@@ -261,6 +261,15 @@
   [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
   This is local database evidence only; external provider, selected worker,
   live bounce, and outage/restore evidence remain open.
+- [x] Join the independent worker trace-source and payload-free mail-edge
+  evaluators under `aiat.worker-mail-edge-coverage.v1` (`1d8aed5`). The
+  deterministic certificate requires explicit worker/trace scope, worker
+  usage/artifact/model/worker sources, optional integration sources when
+  requested, a verified webhook, and a bounce/failure signal; evidence is
+  retained at [`worker_mail_edge_coverage_fixture.json`](../../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
+  This closes only the local evidence-join contract and does not claim a live
+  worker run, external provider callback, durable worker records, or live
+  bounce/read-back evidence.
 - [x] Add the bounded `aiat.trace-incident.v1` summary and
   `scripts/check_trace_incident.py` (`c357fdf`) over the existing trace-evidence
   authority. Failure findings, severity, source counts, and partial/empty

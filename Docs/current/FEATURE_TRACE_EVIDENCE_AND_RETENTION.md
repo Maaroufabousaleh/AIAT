@@ -37,7 +37,12 @@ commit `869202c` also renders the bounded finding IDs, source/kind, operation or
 service, status/HTTP code, and occurrence timestamp as a payload-free
 chronology. It never renders incident payloads. Live model/worker/audit/integration source
 coverage, provider ingress certification, complete mail-edge spans, and richer
-incident chronology remain open. `01996c9` adds a provider-neutral
+incident chronology remain open. `1d8aed5` adds the reusable
+`aiat.worker-mail-edge-coverage.v1` join and deterministic certificate, which
+requires the independent worker source and payload-free mail-edge signals to
+be explicitly correlated without selecting or dispatching a worker. The
+fixture evidence is [`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json);
+it does not close live worker/provider evidence. `01996c9` adds a provider-neutral
 `aiat.trace-retention-execution.v1` contract with a deterministic in-memory
 rehearsal; `57e13cb` types its backup/read-back guard with matching source,
 backup, and restored manifest digests, record counts, checked count, and
@@ -151,6 +156,19 @@ active model-backed worker, project, approved model profile, bounded budget,
 and `--confirm-dispatch`; it does not auto-select or activate a worker. The
 fixture passes, but no live model-backed run is claimed until an operator
 supplies that selection and retains the resulting source-count report.
+
+The cross-surface `aiat.worker-mail-edge-coverage.v1` evaluator now composes
+that worker result with `evaluate_mail_edge_coverage()`. A required join must
+carry an explicit trace and worker scope, observed worker usage/artifact/model/
+worker sources (and integration sources when requested), a verified provider
+webhook, and a bounce/failure signal. The deterministic checker
+[`check_worker_mail_edge_coverage.py`](../../mas/scripts/check_worker_mail_edge_coverage.py)
+passes with six worker/integration source rows plus one delivery attempt, one
+verified delivery event, and one verified bounce; its report is payload-free,
+non-mutating, and retained at
+[`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
+This is an explicit evidence join, not a live worker/provider certification or
+an activation/release gate.
 
 The operator-facing incident projection is derived from one
 `aiat.trace-evidence.v1` response through `aiat.trace-incident.v1`. It reports
@@ -282,6 +300,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Fixture/live checker: [`mas/scripts/check_trace_evidence.py`](../../mas/scripts/check_trace_evidence.py)
 - Incident projection/checker: [`mas/packages/mas-core/mas_core/observability/trace_incident.py`](../../mas/packages/mas-core/mas_core/observability/trace_incident.py), [`mas/scripts/check_trace_incident.py`](../../mas/scripts/check_trace_incident.py), and [`mas/scripts/tests/test_check_trace_incident.py`](../../mas/scripts/tests/test_check_trace_incident.py) (`c357fdf`)
 - Model-backed worker source checker: [`mas/scripts/check_worker_trace_coverage.py`](../../mas/scripts/check_worker_trace_coverage.py)
+- Worker/mail-edge evidence join (`1d8aed5`): [`mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py`](../../mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py), [`mas/scripts/check_worker_mail_edge_coverage.py`](../../mas/scripts/check_worker_mail_edge_coverage.py), [`mas/scripts/tests/test_check_worker_mail_edge_coverage.py`](../../mas/scripts/tests/test_check_worker_mail_edge_coverage.py), and [`mas/docs/provenance/worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json)
 - Local live transport checker/evidence (`eac83ae`, refreshed 2026-08-11): [`mas/scripts/check_live_trace_observability.py`](../../mas/scripts/check_live_trace_observability.py), [`mas/docs/provenance/trace_observability_live.json`](../../mas/docs/provenance/trace_observability_live.json)
 - Local live tool checker/evidence (`eac83ae`, refreshed 2026-08-11): [`mas/scripts/check_live_tool_trace.py`](../../mas/scripts/check_live_tool_trace.py), [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json), and [`mas/apps/tool-service/tool_service/usage.py`](../../mas/apps/tool-service/tool_service/usage.py). Both probes are fail-closed and emit no payloads, credentials, or project identifiers.
 - Core/API tests: [`test_trace_evidence.py`](../../mas/packages/mas-core/tests/test_trace_evidence.py), [`test_trace_evidence.py`](../../mas/apps/orchestrator-api/tests/test_trace_evidence.py), [`test_trace_propagation.py`](../../mas/apps/orchestrator-api/tests/test_trace_propagation.py), and [`test_slo_capacity.py`](../../mas/apps/orchestrator-api/tests/test_slo_capacity.py)
@@ -296,9 +315,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   model-backed worker run and retain model-usage, artifact, native model, and
   native worker source counts; add native audit/integration evidence where the
   run exercises those adapters, plus provider/webhook-level identity-service
-  mail-edge/bounce spans. The deterministic source contract and identity
-  persistence are implemented, but no live worker dispatch or provider
-  coverage is claimed yet.
+  mail-edge/bounce spans. The deterministic source contract, identity
+  persistence, and worker/mail-edge evidence join are implemented, but no
+  live worker dispatch or provider coverage is claimed yet.
 - Connect the guarded execution contract to live storage and recovery workers;
   source legal holds from a live authoritative registry, persist audit records,
   prove backup/restore parity, and add erasure/rollback. The provider-neutral

@@ -6,7 +6,8 @@ webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
 projected-provider trace parser, optional signed identity-dashboard read-back,
 and the real local ASGI ingress certificates are implemented in `85369fe`,
-`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, and `2d04b30`. The
+`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, and
+`1d8aed5`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
@@ -59,6 +60,17 @@ and a bounce/failure signal; an optional selected trace and worker must also be
 correlated when supplied. The report includes source/event counts and missing
 signals only. `licence_metadata_is_gate` is always `false`.
 
+The cross-surface `aiat.worker-mail-edge-coverage.v1` evaluator (commit
+`1d8aed5`) composes this mail-edge result with the independent worker trace
+source evaluator. A required join explicitly scopes a worker and trace and
+requires worker usage/artifact/model/worker sources, optional integration
+sources when requested, a verified webhook, and a bounce/failure event. It
+returns counts and missing-signal names only; it does not select, activate, or
+dispatch a worker. The deterministic certificate is retained at
+[`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
+This join is local fixture evidence and does not claim external provider
+delivery, durable worker execution, or live bounce read-back.
+
 ## Checker and live boundary
 
 From `mas/`:
@@ -66,6 +78,8 @@ From `mas/`:
 ```bash
 uv run --isolated pytest packages/mas-core/tests/test_mail_edge.py -q
 uv run --isolated python scripts/check_mail_edge_observations.py --json
+uv run --isolated python scripts/check_worker_mail_edge_coverage.py --json \
+  --require-integration
 uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --url http://127.0.0.1:8000 \
   --api-key "$AIAT_OPERATOR_API_KEY" \

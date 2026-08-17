@@ -166,6 +166,15 @@ and cleans its reserved fixture namespace; evidence is
 Deployed provider callback, selected worker, live bounce, and outage/restore
 evidence remain separate.
 
+The worker/mail-edge evidence-join group `1d8aed5` adds the maintained
+`aiat.worker-mail-edge-coverage.v1` evaluator, deterministic checker, focused
+regressions, and secret-safe fixture evidence
+[`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
+It composes worker source coverage with explicit trace/worker-scoped,
+payload-free mail observations and remains a fixture-only evidence contract;
+it does not certify a live worker, provider callback, durable worker record, or
+bounce read-back.
+
 The trace incident groups `c357fdf`, `b4b7cef`, and `869202c` add the maintained
 `aiat.trace-incident.v1` summary/checker and its operator-only API/dashboard
 boundary over the existing payload-free trace evidence. The route,
