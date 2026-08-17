@@ -245,6 +245,14 @@
   trace-filtered normalization, duplicate-event preference, and fail-closed
   partial-configuration handling (`074ef8a`). The capability is read-only and
   does not claim that a live provider callback or worker run has occurred.
+- [x] Certify the real identity-service Resend/Svix ingress boundary through a
+  disposable local ASGI fixture (`aab6285`): signed delivered/bounced events,
+  payload-free normalization and persistence, duplicate idempotency, conflict
+  rejection, raw-body tamper rejection, and dashboard read-back are retained
+  at [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../../mas/docs/provenance/mail_edge_ingress_certification.json).
+  This closes only the local application boundary; it does not claim an
+  external provider callback, Postgres durability, selected worker run, or
+  live bounce evidence.
 - [x] Add the bounded `aiat.trace-incident.v1` summary and
   `scripts/check_trace_incident.py` (`c357fdf`) over the existing trace-evidence
   authority. Failure findings, severity, source counts, and partial/empty

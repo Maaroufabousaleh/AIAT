@@ -98,6 +98,14 @@ CAPTCHA, MFA enrolment/recovery, payment, legal acceptance, destructive account 
 
 ## Remaining gaps
 
+- [x] Certify the real local Resend/Svix FastAPI ingress, normalized
+  payload-free in-memory persistence, idempotent/conflicting replay handling,
+  tamper rejection, and dashboard read-back with
+  [`check_mail_edge_ingress.py`](../../mas/scripts/check_mail_edge_ingress.py);
+  secret-safe evidence is
+  [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
+  This local certificate does not claim external provider, Postgres, worker, or
+  live bounce evidence.
 - Add provider/webhook-level delivery, bounce, relay, and inbound mail-edge
   spans. The durable outbound-attempt correlation and safe orchestrator
   projection are complete, but they do not claim provider delivery or bounce

@@ -4,11 +4,14 @@
 **Status:** the payload-free `aiat.mail-edge-observation.v1` contract, provider
 webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
-projected-provider trace parser, and optional signed identity-dashboard
-read-back are implemented in `85369fe`, `cfafe38`, `2d21a2f`, `29d4da5`, and
-`074ef8a`. The deterministic identity, adapter, orchestrator, checker, and core
-suites pass. Live provider configuration/callback delivery, selected
-model-backed worker, bounce read-back, and deployment evidence remain open.
+projected-provider trace parser, optional signed identity-dashboard read-back,
+and the real local ASGI ingress certificate are implemented in `85369fe`,
+`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, and `aab6285`. The deterministic
+identity, adapter, orchestrator, checker, and core suites pass; the local
+certificate is retained at
+[`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
+Live provider configuration/callback delivery, selected model-backed worker,
+Postgres durability, bounce read-back, and deployment evidence remain open.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -82,6 +85,22 @@ evidence. When either trace projection or signed identity read-back contains
 and verified-provider source without importing payloads. The checker does not
 perform provider callbacks.
 
+The local ingress certificate in `aab6285` drives the actual identity-service
+FastAPI app through an in-process ASGI transport. It signs deterministic
+`email.delivered` and `email.bounced` bodies, exercises the Resend/Svix raw-body
+verifier, normalization, duplicate idempotency, conflicting event rejection,
+tamper rejection, payload-free in-memory persistence, and dashboard read-back.
+Run it with:
+
+```bash
+uv run --isolated python scripts/check_mail_edge_ingress.py --json
+```
+
+This is local integration evidence only: it mutates a disposable in-memory
+fixture store and does not contact a provider, SMTP relay, Postgres, worker, or
+external network. It must not be reported as live provider, model-worker, or
+durability evidence.
+
 ## Integration boundary
 
 The identity service remains the authority for mailbox, outbound request,
@@ -123,6 +142,12 @@ predicate.
   [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py)
 - Fixture/live checker:
   [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py)
+- Local real-ingress certificate:
+  [`mas/scripts/check_mail_edge_ingress.py`](../../mas/scripts/check_mail_edge_ingress.py)
+- Local ingress certificate test:
+  [`mas/scripts/tests/test_check_mail_edge_ingress.py`](../../mas/scripts/tests/test_check_mail_edge_ingress.py)
+- Local ingress evidence:
+  [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
 - Checker projection tests:
   [`mas/scripts/tests/test_check_mail_edge_observations.py`](../../mas/scripts/tests/test_check_mail_edge_observations.py)
 - Focused tests:

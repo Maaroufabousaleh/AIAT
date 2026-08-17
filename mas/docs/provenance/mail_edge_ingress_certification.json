@@ -1,0 +1,56 @@
+{
+  "schema_version": "aiat.mail-edge-ingress-certification.v1",
+  "observed_at": "2026-08-17T22:02:51Z",
+  "mode": "local-asgi-fixture",
+  "status": "pass",
+  "source_command": "uv run --isolated python scripts/check_mail_edge_ingress.py --json",
+  "http_statuses": {
+    "delivered": 200,
+    "bounced": 200,
+    "duplicate": 200,
+    "conflict": 409,
+    "tampered": 401
+  },
+  "stored_observation_count": 2,
+  "dashboard_row_count": 2,
+  "dashboard_rows": [
+    {
+      "source": "provider_webhook",
+      "event_type": "delivered",
+      "outcome": "success",
+      "failure_class": null,
+      "signature_verified": true
+    },
+    {
+      "source": "provider_webhook",
+      "event_type": "bounced",
+      "outcome": "failure",
+      "failure_class": "permanent",
+      "signature_verified": true
+    }
+  ],
+  "idempotent_duplicate": true,
+  "conflicting_event_rejected": true,
+  "tampered_body_rejected": true,
+  "payload_free": true,
+  "fixture_store_mutated": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "certification_boundary": {
+    "raw_body_signature_verification": "checked",
+    "normalization": "checked",
+    "idempotency": "checked",
+    "conflict_rejection": "checked",
+    "dashboard_read_back": "checked",
+    "postgres_durability": "not_checked",
+    "external_provider_callback": "not_checked",
+    "model_backed_worker": "not_checked",
+    "live_worker_run": "not_checked",
+    "outage_restore": "not_checked"
+  },
+  "secret_policy": "provider payload body, recipient, signing secret, and runtime credentials are omitted",
+  "scope": "real local identity-service Resend/Svix ingress, normalized in-memory persistence, and dashboard read-back only",
+  "mutation_performed": false,
+  "network_access_performed": false,
+  "licence_metadata_is_gate": false
+}
