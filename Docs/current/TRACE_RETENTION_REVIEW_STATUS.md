@@ -31,10 +31,12 @@ the hold.
 Commit `01996c9` adds the provider-neutral `aiat.trace-retention-execution.v1`
 contract and deterministic `InMemoryRetentionStore` rehearsal. Preview mode is
 non-mutating; apply mode sends one complete atomic action batch only after
-project scope, authoritative hold IDs, backup-parity evidence, and explicit
-human confirmation pass. `scripts/check_trace_retention_execution.py` proves
-the preview/apply and audit invariants, while `--live` remains blocked until a
-reviewed storage/recovery adapter is configured.
+project scope, authoritative hold IDs, typed backup-parity evidence, and
+explicit human confirmation pass. Commit `57e13cb` validates matching source,
+backup, and restored manifest digests, record counts, checked read-back count,
+and clean-target verification before apply. `scripts/check_trace_retention_execution.py`
+proves the preview/apply and audit invariants, while `--live` remains blocked
+until a reviewed storage/recovery adapter is configured.
 
 Invalid rows are reported and excluded from deletion candidates. The planner
 does not connect to storage, delete spans, archive bytes, or establish the
@@ -79,7 +81,7 @@ retention execution remains an independent storage/recovery action.
 
 - Connect the guarded execution contract to an operator/recovery worker with
   project narrowing, an authoritative legal-hold/erasure registry, durable
-  audit records, backup/read-back parity, and restore-tested rollback. The
+  audit records, live backup/read-back parity, and restore-tested rollback. The
   current `legal_hold` metadata guard and `InMemoryRetentionStore` are
   fail-safe rehearsal boundaries, not live authority or database mutation.
 - Prove retention behavior against restored storage and a representative live
