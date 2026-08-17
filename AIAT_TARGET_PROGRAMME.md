@@ -587,8 +587,11 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   handling (`85369fe`). Identity-service migration `0003_mail_edge_observations`
   now persists normalized provider events with idempotent conflict handling and
   projects scalar rows into the existing mail-relay trace/SLO read model
-  (`cfafe38`). Selected-worker live evidence, live retention enforcement,
-  complete mail-span coverage, and incident views are still P2 work. The local
+  (`cfafe38`). The Resend adapter now verifies exact raw-body Svix signatures
+  and the provider-facing identity route reuses the same payload-free persistence
+  boundary (`2d21a2f`). Selected-worker live evidence, configured provider
+  callbacks, live retention enforcement, complete mail-span coverage, and
+  incident views are still P2 work. The local
   `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
   of archive/delete actions to a separately reviewed storage/recovery worker.
 
@@ -1219,9 +1222,13 @@ The programme is organised around completing and hardening the existing architec
   conflict handling, and deterministic/fail-closed checker (`85369fe`), then
   add identity-service migration `0003_mail_edge_observations`, signed
   delegated webhook persistence, normalized event-ID idempotency/conflict
-  handling, and scalar mail-relay trace/SLO projection (`cfafe38`);
+  handling, and scalar mail-relay trace/SLO projection (`cfafe38`); configured
   provider ingress certification, selected worker live evidence, and complete
   mail spans remain separate.
+- [x] Add Resend/Svix exact raw-body verification and the provider-facing
+  ingress route with bounded replay tolerance (`2d21a2f`); configured provider
+  ingress certification, selected worker live evidence, and complete mail spans
+  remain separate.
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
   it classifies explicit/derived expiry metadata and never mutates storage or
   treats invalid rows as deletion candidates.

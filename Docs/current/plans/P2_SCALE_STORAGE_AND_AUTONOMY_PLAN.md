@@ -208,6 +208,12 @@
   provider events through the scalar `mail-relay` dashboard/SLO/trace read
   model (`cfafe38`). Provider-specific ingress verification and live deployment
   read-back remain separate evidence boundaries.
+- [x] Add the fail-closed Resend/Svix raw-body signature verifier, bounded
+  timestamp tolerance, and provider-facing
+  `POST /v1/mail-edge/provider-webhook/resend` ingress route (`2d21a2f`). The
+  route authenticates the exact body before JSON normalization and reuses the
+  same payload-free persistence/idempotency boundary; the injected webhook
+  secret remains runtime configuration, not stored evidence.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

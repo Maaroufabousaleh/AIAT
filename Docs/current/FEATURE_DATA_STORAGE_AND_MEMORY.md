@@ -51,7 +51,9 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   integration spans from the corresponding writers; sensitive attribute names
   are dropped before storage. The operator-only `aiat.trace-evidence.v1`
   projection joins these rows without returning raw payloads and reports the
-  remaining mail-edge/live-retention gap.
+  remaining configured mail-edge/live-retention gap. The identity-service
+  Resend/Svix verifier and raw webhook ingress are implemented in `2d21a2f`,
+  but live callback and durable bounce read-back evidence remain separate.
 - Company retention manifests now expose `trace_days` and
   `trace_sample_rate`; these are operational metadata for the bounded trace
   surface and do not alter project authority or completion predicates.

@@ -22,7 +22,8 @@ at [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_t
 The shared `aiat.mail-edge-observation.v1` normalizer/evaluator and deterministic
 checker are implemented in `85369fe`; identity-service migration
 `0003_mail_edge_observations`, signed delegated webhook persistence, and scalar
-trace/SLO projection are implemented in `cfafe38`. Live model/worker/audit/
+trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body
+verifier and provider-facing ingress route are implemented in `2d21a2f`. Live model/worker/audit/
 integration source coverage, provider ingress certification, complete mail-edge
 spans, and live retention execution remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
@@ -64,11 +65,13 @@ projection joins:
   recipients, subjects, provider IDs, relay errors, or message content.
 - The shared `aiat.mail-edge-observation.v1` contract normalizes delivery
   attempts and adapter-verified provider webhook events into bounded event and
-  failure states. Its coverage evaluator requires a verified webhook and a
-  bounce/failure signal when those sources are claimed; conflicting event IDs
-  remain `attention`. Identity-service migration `0003_mail_edge_observations`
-  persists one payload-free row per `(provider,event_id)` and projects it beside
-  delivery attempts; provider ingress and live read-back remain open.
+  failure states. The Resend adapter verifies the raw Svix signature before the
+  event reaches the provider-facing identity route. Its coverage evaluator
+  requires a verified webhook and a bounce/failure signal when those sources
+  are claimed; conflicting event IDs remain `attention`. Identity-service
+  migration `0003_mail_edge_observations` persists one payload-free row per
+  `(provider,event_id)` and projects it beside delivery attempts; configured
+  live callback delivery and read-back remain open.
 
 Each item contains only safe operational fields: source, stable record ID,
 kind, status, project/agent/team references, worker-run reference, event/model/
