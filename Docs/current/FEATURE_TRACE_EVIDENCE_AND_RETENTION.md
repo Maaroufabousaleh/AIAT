@@ -45,8 +45,10 @@ clean-target verification, while `15054ba` types the authoritative hold
 snapshot with source, observed time, active/released state, duplicate
 rejection, and project scope. Preview is non-mutating, while apply requires
 project scope, the typed hold snapshot, typed parity evidence, and human
-confirmation before one atomic adapter call. The live registry/storage
-adapter, erasure, durable production audit, and restore rollback remain open.
+confirmation before one atomic adapter call. `5d71309` adds a typed bounded
+audit envelope that carries only evidence references and scalar counts. The
+live registry/storage adapter, live archive/delete application, erasure,
+durable production audit, and restore rollback remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -54,8 +56,9 @@ fields. `9a80c6c` adds a fail-safe explicit-boolean `legal_hold` marker on
 native-span metadata: held rows remain `retain`, are counted separately, and
 never enter `deletion_ids`; ambiguous string markers do not activate a hold.
 The route and checker classify bounded metadata only and explicitly prove
-`mutation_performed: false`; archive/delete application, live hold authority,
-erasure, project narrowing, audit, and restore parity remain open gates.
+`mutation_performed: false`; live archive/delete application, hold authority,
+erasure, project narrowing, durable audit, and restore parity remain open
+gates.
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -198,7 +201,7 @@ deterministic `InMemoryRetentionStore` rehearses preview and apply without
 selecting a database or provider, validates project scope and the typed
 authoritative hold snapshot, requires typed checksum/count/clean-target
 backup-parity evidence and human confirmation for apply, and records one
-bounded audit envelope. It is a fixture/review boundary only;
+typed bounded audit envelope (`5d71309`). It is a fixture/review boundary only;
 `scripts/check_trace_retention_execution.py --live` fails closed until a
 production storage/recovery adapter is configured.
 
@@ -266,7 +269,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Mail-edge observation contract/checker and identity persistence: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`), and migration `0003_mail_edge_observations`/signed route (`cfafe38`)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
-- Retention execution contract/rehearsal: [`mas/packages/mas-core/mas_core/observability/retention_execution.py`](../../mas/packages/mas-core/mas_core/observability/retention_execution.py), [`mas/scripts/check_trace_retention_execution.py`](../../mas/scripts/check_trace_retention_execution.py), and [`mas/packages/mas-core/tests/test_retention_execution.py`](../../mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`)
+- Retention execution contract/rehearsal: [`mas/packages/mas-core/mas_core/observability/retention_execution.py`](../../mas/packages/mas-core/mas_core/observability/retention_execution.py), [`mas/scripts/check_trace_retention_execution.py`](../../mas/scripts/check_trace_retention_execution.py), and [`mas/packages/mas-core/tests/test_retention_execution.py`](../../mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
 - API observation contract/table/migration: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py)
 - Direct model/artifact/integration trace columns and migration: [`mas/packages/mas-core/mas_core/worker_contract/models.py`](../../mas/packages/mas-core/mas_core/worker_contract/models.py), [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py), [`mas/migrations/versions/0035_trace_correlation_evidence.py`](../../mas/migrations/versions/0035_trace_correlation_evidence.py)

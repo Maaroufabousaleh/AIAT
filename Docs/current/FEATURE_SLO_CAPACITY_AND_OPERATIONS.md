@@ -154,9 +154,10 @@ execution input for this personal/internal programme.
   makes the response a typed Pydantic/OpenAPI model with bounded counts and
   candidate fields. The guarded `aiat.trace-retention-execution.v1` rehearsal
   (`01996c9`) now proves preview non-mutation and apply prerequisites for
-  project scope, authoritative holds, backup/read-back evidence, human
-  confirmation, atomic batching, and bounded audit metadata; its live adapter
-  and restore/erasure evidence remain open.
+  project scope, the typed authoritative hold snapshot (`15054ba`), typed
+  backup/read-back evidence (`57e13cb`), human confirmation, atomic batching,
+  and a typed bounded audit envelope (`5d71309`); its live adapter and
+  restore/erasure evidence remain open.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

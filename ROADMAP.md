@@ -16,12 +16,16 @@ This is the root navigation and delivery-order document for the personal AIAT in
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, new-flow builder, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the project evidence package denial recovery in `00f81b5` (source-built matrix 3/3), the Evidence Detail denial recovery in `23e2db9` (source-built matrix 11/11), the System Overview access-denied recovery in `b0ab779` (source-built 403 fixture 1/1), the new-flow builder access-denied recovery in `b07299b` (source-built matrix 3/3), the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, project-workspace stale/retry recovery is recorded in `cb1c665`, Projects list read/mutation denial recovery is recorded in `17d25b0` (source-built denial matrix 4/4), Project Evidence canonical-read denial recovery is recorded in `00f81b5` (source-built denial matrix 3/3), and Evidence Detail bounded scalar-read denial recovery is recorded in `23e2db9` (source-built denial matrix 11/11). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 | R6–R7 — P2 scale and guarded autonomy | partial | Local MinIO conformance and same-provider backup/restore pass; restore copies now fail closed on non-empty target prefixes (`93bf755`); a bounded local `time_now` run now proves project-usage plus `tool_service` native trace read-back; the payload-free `aiat.mail-edge-observation.v1` normalizer, coverage evaluator, and fail-closed checker are implemented in `85369fe`; identity-service migration `0003_mail_edge_observations`, signed delegated webhook persistence, event-ID conflict handling, and scalar dashboard/trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body verifier and provider-facing ingress route are implemented in `2d21a2f`, with projected provider-span classification in `29d4da5`, optional signed identity dashboard read-back in `074ef8a`, bounded trace incident summary/checker in `c357fdf`, and the operator API/generated-contract/dashboard `/logs?trace_id=…` deep link in `b4b7cef`; authenticated self-improvement lifecycle persistence, revision/CAS actions, typed references, and bounded outcomes are committed in `64218ab`; provider-pair migration, encrypted/clean-environment recovery, configured provider callback/selected model-backed worker/bounce evidence, multi-host/Firecracker, optional memory services, and live self-improvement worker/provider/control-plane evidence remain later work. |
 
-The latest bounded R6 retention increment is the guarded
+The latest bounded R6 retention increments are the guarded
 `aiat.trace-retention-execution.v1` contract and deterministic in-memory
-rehearsal (`01996c9`). Preview never calls a mutation adapter; apply requires
+rehearsal (`01996c9`), typed parity evidence (`57e13cb`), the authoritative
+hold snapshot (`15054ba`), and the bounded audit envelope (`5d71309`). Preview
+never calls a mutation adapter; apply requires
 project scope, a typed authoritative hold snapshot (`15054ba`), typed
-checksum/count/clean-target backup-read-back evidence (`57e13cb`), and explicit
-human confirmation before one atomic action batch with bounded audit metadata.
+checksum/count/clean-target backup-read-back evidence (`57e13cb`), a typed
+bounded audit envelope (`5d71309`), and explicit human confirmation before one
+atomic action batch. The audit envelope carries evidence references and scalar
+counts only.
 The live registry/adapter, erasure, durable audit, and restore rollback remain
 open.
 
@@ -182,10 +186,10 @@ the provider-neutral execution contract and deterministic in-memory rehearsal;
 `57e13cb` types its backup/read-back guard so source, backup, and restored
 manifest digests, record counts, checked count, and clean-target verification
 must agree; `15054ba` types the authoritative hold snapshot with source,
-observed time, active/released state, duplicate rejection, and project scope.
-Preview/apply still require project scope and human confirmation, while live
-registry/storage mutation, erasure, durable audit, and restore rollback remain
-open.
+observed time, active/released state, duplicate rejection, and project scope;
+`5d71309` types the bounded audit envelope. Preview/apply still require
+project scope and human confirmation, while live registry/storage mutation,
+erasure, durable audit, and restore rollback remain open.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -474,7 +478,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Request/message trace propagation | Core/router group `5bc0aae`; API/storage integration `84a1c01`; worker trace/span context persistence `ceb7011`; [`propagate_trace_context`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`propagate_trace_context`](mas/apps/message-router/message_router/main.py), [`propagate_trace_context`](mas/apps/tool-service/tool_service/main.py), [`AgentBase._dispatch`](mas/packages/mas-core/mas_core/agent_runtime/base.py), [API test](mas/apps/orchestrator-api/tests/test_trace_propagation.py), [router test](mas/apps/message-router/tests/test_trace_propagation.py), [tool test](mas/apps/tool-service/tests/test_trace_propagation.py), [agent/SDK tests](mas/packages/mas-core/tests/test_phase4_5.py) |
 | Cross-service trace evidence and retention planning | Integration group `84a1c01`; worker artifact/usage correlation `ceb7011`; bounded incident projection `c357fdf`; [`aiat.trace-evidence.v1`](mas/packages/mas-core/mas_core/observability/trace_evidence.py), [`aiat.trace-incident.v1`](mas/packages/mas-core/mas_core/observability/trace_incident.py), [`aiat.native-trace-span.v1`](mas/packages/mas-core/mas_core/observability/native_spans.py), [`aiat.trace-retention-plan.v1`](mas/packages/mas-core/mas_core/observability/retention.py), [`/observability/traces/{trace_id}`](mas/apps/orchestrator-api/orchestrator_api/main.py), signed identity delivery-attempt correlation [`identity_client.py`](mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`check_trace_evidence.py`](mas/scripts/check_trace_evidence.py), [`check_trace_incident.py`](mas/scripts/check_trace_incident.py), [`check_live_trace_observability.py`](mas/scripts/check_live_trace_observability.py), [`check_native_trace_spans.py`](mas/scripts/check_native_trace_spans.py), [`check_trace_retention.py`](mas/scripts/check_trace_retention.py), [`check_api_observability.py`](mas/scripts/check_api_observability.py), [local live transport evidence](mas/docs/provenance/trace_observability_live.json), [trace evidence tests](mas/packages/mas-core/tests/test_trace_evidence.py) |
 | Trace retention review status | [Trace Retention Review Status](Docs/current/TRACE_RETENTION_REVIEW_STATUS.md) |
-| Trace retention execution rehearsal | [`aiat.trace-retention-execution.v1`](mas/packages/mas-core/mas_core/observability/retention_execution.py), [`check_trace_retention_execution.py`](mas/scripts/check_trace_retention_execution.py), and [`test_retention_execution.py`](mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`) |
+| Trace retention execution rehearsal | [`aiat.trace-retention-execution.v1`](mas/packages/mas-core/mas_core/observability/retention_execution.py), [`check_trace_retention_execution.py`](mas/scripts/check_trace_retention_execution.py), and [`test_retention_execution.py`](mas/packages/mas-core/tests/test_retention_execution.py) (`01996c9`, typed parity evidence `57e13cb`, hold snapshot `15054ba`, typed audit `5d71309`) |
 | SLO and capacity forecast read models | Integration group `84a1c01`; [`aiat.slo-policy.v1` / `aiat.slo-report.v1` / `aiat.capacity-forecast.v1`](mas/packages/mas-core/mas_core/observability/slo.py), [`/observability/slo`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/observability/capacity/forecast`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`check_slo_capacity.py`](mas/scripts/check_slo_capacity.py), signed identity mail projection [`identity_client.py`](mas/apps/orchestrator-api/orchestrator_api/identity_client.py) |
 | Immediate release-truth and security work | [P0 Release Integrity Plan](Docs/current/plans/P0_RELEASE_INTEGRITY_PLAN.md) |
 | Current P0 implementation evidence and open gates | [P0 Release Integrity Status](Docs/current/P0_RELEASE_INTEGRITY_STATUS.md) |
@@ -1196,11 +1200,12 @@ reports a separate hold count while keeping held rows out of deletion IDs.
 Live application/hold authority, project narrowing, and restore parity remain
 open. Commit `01996c9` adds the provider-neutral `aiat.trace-retention-execution.v1`
 contract and deterministic preview/apply rehearsal; `57e13cb` adds typed
-checksum/count/clean-target backup-read-back evidence, and `15054ba` adds the
-typed authoritative hold-registry snapshot. Apply requires project scope,
-that hold snapshot, parity evidence, and human confirmation before one atomic
-action batch with bounded audit metadata. The live registry/storage adapter,
-erasure, durable audit, and restore rollback remain open.
+checksum/count/clean-target backup-read-back evidence, `15054ba` adds the typed
+authoritative hold-registry snapshot, and `5d71309` adds the typed bounded audit
+envelope. Apply requires project scope, that hold snapshot, parity evidence,
+and human confirmation before one atomic action batch. The live
+registry/storage adapter, erasure, durable audit, and restore rollback remain
+open.
 The refreshed local orchestrator deployment is now at migration
 `0036_native_trace_spans`; a bounded `/health` request and operator trace read
 observed one API-request row and one native transport span in the fresh
@@ -1316,10 +1321,10 @@ Required outcomes:
   and deterministic in-memory preview/apply rehearsal (`01996c9`); `57e13cb`
   types source/backup/restored manifest digests, record counts, checked count,
   and clean-target verification, while `15054ba` types the authoritative
-  hold-registry snapshot. Project scope, typed hold/parity evidence, human
-  confirmation, atomic adapter batching, and bounded audit metadata are
-  covered, while live registry/storage mutation, erasure, and restore rollback
-  remain.
+  hold-registry snapshot and `5d71309` types the bounded audit envelope.
+  Project scope, typed hold/parity/audit evidence, human confirmation, atomic
+  adapter batching, and bounded metadata are covered, while live
+  registry/storage mutation, erasure, and restore rollback remain.
 - [x] payload-free `aiat.trace-incident.v1` summary and deterministic/
   fail-closed checker (`c357fdf`); scalar failure references and partial/empty
   coverage are descriptive;

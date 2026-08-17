@@ -1,7 +1,8 @@
 """Rehearse guarded retention execution without a live storage mutation.
 
-The fixture exercises project narrowing, authoritative hold IDs, backup parity,
-audit metadata, and explicit human confirmation through the in-memory adapter.
+The fixture exercises project narrowing, a typed authoritative hold snapshot,
+typed backup parity and audit evidence, and explicit human confirmation through
+the in-memory adapter.
 ``--live`` is intentionally fail-closed until a reviewed storage/recovery
 adapter is connected; no provider or database is selected by this checker.
 """

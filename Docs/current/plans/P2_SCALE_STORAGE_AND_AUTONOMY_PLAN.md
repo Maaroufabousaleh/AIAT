@@ -198,8 +198,9 @@
   snapshot in addition to project scope and human confirmation before one
   atomic adapter call and bounded audit record. The
   `check_trace_retention_execution.py --live` check remains blocked until a
-  reviewed registry/storage recovery adapter is configured; live erasure,
-  durable audit, and restore rollback remain open.
+  reviewed registry/storage recovery adapter is configured; `5d71309` validates
+  the bounded audit envelope used by the fixture, while live erasure, durable
+  audit, and restore rollback remain open.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in

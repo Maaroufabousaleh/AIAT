@@ -617,8 +617,8 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   and clean-target verification, while `15054ba` types the authoritative
   hold-registry snapshot with source, observed time, active/released state,
   duplicate rejection, and project scope. Apply requires project scope, the
-  typed hold snapshot, typed backup/read-back evidence, and human confirmation
-  before one atomic adapter call with bounded audit metadata.
+  typed hold snapshot, typed backup/read-back evidence, typed bounded audit
+  envelope, and human confirmation before one atomic adapter call.
   Destructive enforcement, authoritative holds, erasure, project narrowing,
   durable audit, and restore parity remain separate live gates.
 
@@ -1290,9 +1290,10 @@ The programme is organised around completing and hardening the existing architec
   and deterministic in-memory preview/apply rehearsal (`01996c9`), including
   project scope, human confirmation, atomic adapter batching, and bounded
   audit metadata. `57e13cb` adds typed checksum/count/clean-target
-  backup/read-back evidence, and `15054ba` adds the typed authoritative
-  hold-registry snapshot. Live registry/storage recovery mutation, erasure,
-  durable audit, and restore rollback remain separate gates.
+  backup/read-back evidence, `15054ba` adds the typed authoritative hold-
+  registry snapshot, and `5d71309` adds the typed bounded audit envelope. Live
+  registry/storage recovery mutation, erasure, durable audit, and restore
+  rollback remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.
 - Run browser E2E from native Linux CI rather than relying on problematic DrvFS execution.
 
@@ -1642,8 +1643,9 @@ All project documentation available in the reviewed workspace was read and used 
   `mas/scripts/check_trace_retention_execution.py`, and their focused tests —
   the guarded `aiat.trace-retention-execution.v1` adapter contract and
   deterministic in-memory preview/apply rehearsal (`01996c9`), with typed
-  checksum/count/clean-target parity evidence in `57e13cb` and typed
-  authoritative hold-registry snapshots in `15054ba`; the live
+  checksum/count/clean-target parity evidence in `57e13cb`, typed
+  authoritative hold-registry snapshots in `15054ba`, and typed bounded audit
+  envelopes in `5d71309`; the live
   storage/recovery adapter remains unconfigured and fail-closed.
 - `Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md` and
   `mas/scripts/check_slo_capacity.py` — maintained SLO/capacity contracts and
