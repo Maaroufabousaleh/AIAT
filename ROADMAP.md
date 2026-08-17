@@ -528,9 +528,10 @@ The codebase already includes:
   schedule defaults, clock-tool responses, dashboard display, and Compose
   environment defaults; scheduler/display fallback hardening is committed as
   `ee1361f` and durable records remain UTC.
-- the generated dashboard and Python SDK contract surfaces both contain 130
-  models and 268 operation records tied to the same OpenAPI/provenance hash;
-  the three role-scoped executive action routes are included in that export.
+- the generated dashboard and Python SDK contract surfaces both contain 135
+  models and 271 operation records tied to the same OpenAPI/provenance hash;
+  the three role-scoped executive action routes and typed retention-plan
+  response are included in that export.
 - the 11 shipped authority/manager prompts resolve only concrete, policy-allowed
   tools; review submissions publish canonical `REVIEW_RESPONSE` envelopes and
   privileged CEO requests use the audited control-plane route.
@@ -648,8 +649,9 @@ reconciliation, the bounded metric contract (`90a7d82`) and lifecycle wiring
 (`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
 implemented; the latest static ledger run is 48/48 pass with two pending
 technical evidence items and `NO-RELEASE`; the read-only secret-safe
-`/system/diagnostics` route and regenerated 236-path/269-operation API
-contract are covered by focused tests (`2860838`), and the API-facing
+`/system/diagnostics` route, typed retention-plan response, and regenerated
+238-path/271-operation API contract are covered by focused tests
+(`2860838`, `f8829d6`, `b3fca97`), and the API-facing
 `scripts/mas-ctl` status/diagnostics/bootstrap wrapper is covered by six
 deterministic CLI cases (`380daf5`); message-router sender role/team coherence
 is enforced before dedupe/enqueue with static and mocked-router coverage
