@@ -274,7 +274,11 @@ def _live(args: argparse.Namespace) -> dict[str, Any]:
                 path=f"/capabilities/workers/{worker_id}/health",
                 headers=headers,
             )
-            if health_error or not isinstance(health, Mapping):
+            if health_error:
+                fetch_errors["worker_health"] = f"worker health read returned {health_error}"
+                health = None
+            elif not isinstance(health, Mapping):
+                fetch_errors["worker_health"] = "worker health read returned an invalid payload"
                 health = None
     except (httpx.HTTPError, ValueError, TypeError, OverflowError) as exc:
         return _blocked(f"live readiness read unavailable: {type(exc).__name__}", url_configured=True)
