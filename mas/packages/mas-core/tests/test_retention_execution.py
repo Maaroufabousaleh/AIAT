@@ -12,12 +12,14 @@ from mas_core.observability.retention import (
 )
 from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
+    InMemoryRetentionLegalHoldRegistry,
     InMemoryRetentionStore,
     RetentionAction,
     RetentionBackupParityEvidence,
     RetentionExecutionAudit,
     RetentionExecutionError,
     RetentionLegalHold,
+    RetentionLegalHoldRegistry,
     RetentionLegalHoldSnapshot,
     execute_retention_plan,
 )
@@ -334,6 +336,46 @@ def test_hold_snapshot_rejects_duplicate_record_ids() -> None:
     )
     with pytest.raises(RetentionExecutionError, match="duplicate legal hold record ID"):
         snapshot.validate()
+
+
+def test_in_memory_hold_registry_emits_sorted_typed_snapshot() -> None:
+    registry: RetentionLegalHoldRegistry = InMemoryRetentionLegalHoldRegistry(
+        source_ref="hold-registry://fixture",
+        holds=(
+            RetentionLegalHold(
+                hold_id="hold-2",
+                record_id="record-2",
+                status="released",
+                authority_ref="registry-entry://hold-2",
+            ),
+            RetentionLegalHold(
+                hold_id="hold-1",
+                record_id="record-1",
+                status="active",
+                authority_ref="registry-entry://hold-1",
+            ),
+        ),
+    )
+
+    snapshot = registry.read_snapshot(observed_at=NOW)
+
+    assert snapshot.source_ref == "hold-registry://fixture"
+    assert [hold.hold_id for hold in snapshot.holds] == ["hold-1", "hold-2"]
+    assert snapshot.active_holds_by_record() == {"record-1": snapshot.holds[0]}
+
+
+def test_in_memory_hold_registry_rejects_naive_snapshot_time() -> None:
+    registry = InMemoryRetentionLegalHoldRegistry()
+
+    with pytest.raises(RetentionExecutionError, match="timezone-aware"):
+        registry.read_snapshot(observed_at=datetime(2026, 1, 1))
+
+
+def test_in_memory_hold_registry_rejects_untyped_entries() -> None:
+    registry = InMemoryRetentionLegalHoldRegistry(holds=(object(),))  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="RetentionLegalHold"):
+        registry.read_snapshot(observed_at=NOW)
 
 
 def test_project_scoped_hold_mismatch_fails_closed_before_mutation() -> None:

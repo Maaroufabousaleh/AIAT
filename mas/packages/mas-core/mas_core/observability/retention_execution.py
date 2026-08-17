@@ -138,6 +138,48 @@ class RetentionLegalHoldSnapshot:
         }
 
 
+class RetentionLegalHoldRegistry(Protocol):
+    """Read-only source of one authoritative hold-registry snapshot."""
+
+    def read_snapshot(
+        self,
+        *,
+        observed_at: datetime | None = None,
+    ) -> RetentionLegalHoldSnapshot: ...
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryRetentionLegalHoldRegistry:
+    """Deterministic fixture adapter that emits a validated hold snapshot."""
+
+    source_ref: str = "hold-registry://fixture"
+    holds: tuple[RetentionLegalHold, ...] = ()
+
+    def read_snapshot(
+        self,
+        *,
+        observed_at: datetime | None = None,
+    ) -> RetentionLegalHoldSnapshot:
+        when = observed_at or datetime.now(UTC)
+        if not isinstance(when, datetime) or when.tzinfo is None:
+            raise RetentionExecutionError(
+                "legal hold registry observed_at must be timezone-aware"
+            )
+        holds = tuple(self.holds)
+        if any(not isinstance(hold, RetentionLegalHold) for hold in holds):
+            raise TypeError(
+                "legal hold registry entries must be RetentionLegalHold"
+            )
+        snapshot = RetentionLegalHoldSnapshot(
+            schema_version=TRACE_RETENTION_HOLD_REGISTRY_SCHEMA,
+            source_ref=_token(self.source_ref, name="hold_source_ref", max_length=240),
+            observed_at=when,
+            holds=tuple(sorted(holds, key=lambda hold: (hold.hold_id, hold.record_id))),
+        )
+        snapshot.validate()
+        return snapshot
+
+
 @dataclass(frozen=True, slots=True)
 class RetentionBackupParityEvidence:
     """Secret-safe proof that a backup was read back without drift.
@@ -647,10 +689,12 @@ __all__ = [
     "RetentionExecutionMode",
     "RetentionExecutionResult",
     "RetentionExecutionStatus",
-    "RetentionMutationStore",
+    "InMemoryRetentionLegalHoldRegistry",
+    "InMemoryRetentionStore",
     "RetentionLegalHold",
+    "RetentionLegalHoldRegistry",
     "RetentionLegalHoldSnapshot",
     "RetentionLegalHoldStatus",
-    "InMemoryRetentionStore",
+    "RetentionMutationStore",
     "execute_retention_plan",
 ]

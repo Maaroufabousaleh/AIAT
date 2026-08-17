@@ -21,6 +21,7 @@ from mas_core.observability.retention import (
 )
 from mas_core.observability.retention_execution import (
     TRACE_RETENTION_EXECUTION_SCHEMA,
+    InMemoryRetentionLegalHoldRegistry,
     InMemoryRetentionStore,
     RetentionBackupParityEvidence,
     RetentionExecutionError,
@@ -110,10 +111,8 @@ def _parity_evidence() -> RetentionBackupParityEvidence:
 
 
 def _hold_snapshot() -> RetentionLegalHoldSnapshot:
-    return RetentionLegalHoldSnapshot(
-        schema_version="aiat.trace-retention-hold-registry.v1",
+    return InMemoryRetentionLegalHoldRegistry(
         source_ref="hold-registry://fixture",
-        observed_at=EVALUATED_AT,
         holds=(
             RetentionLegalHold(
                 hold_id="hold-authority-1",
@@ -123,7 +122,7 @@ def _hold_snapshot() -> RetentionLegalHoldSnapshot:
                 authority_ref="registry-entry://hold-authority-1",
             ),
         ),
-    )
+    ).read_snapshot(observed_at=EVALUATED_AT)
 
 
 def build_report() -> dict[str, object]:
