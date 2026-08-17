@@ -56,7 +56,6 @@ def _contract_errors(lock: dict[str, Any]) -> list[str]:
         "distribution": "agent-framework",
         "import": "agent_framework",
         "locked_version": "1.13.0",
-        "status": "locked-pending-install",
     }
     for key, expected in required.items():
         if entry.get(key) != expected:
@@ -64,6 +63,21 @@ def _contract_errors(lock: dict[str, Any]) -> list[str]:
     mcp = entry.get("mcp")
     if not isinstance(mcp, dict) or mcp.get("version_specifier") != ">=1.27,<2":
         errors.append("MAF lock MCP specifier must be >=1.27,<2")
+    if entry.get("status") not in {"locked-pending-install", "locked-certified-isolated"}:
+        errors.append("MAF lock status must record pending or isolated-certified state")
+    profile = entry.get("optional_profile")
+    if not isinstance(profile, dict):
+        errors.append("MAF lock optional_profile must be an object")
+    else:
+        if profile.get("requirements_file") != "mas/infra/runtime/maf/requirements.txt":
+            errors.append("MAF optional profile requirements file is invalid")
+        if profile.get("certification_evidence") != "mas/docs/provenance/maf_runtime_certification.json":
+            errors.append("MAF optional profile certification evidence path is invalid")
+        locked_versions = profile.get("locked_versions")
+        if not isinstance(locked_versions, dict) or locked_versions.get("agent-framework") != "1.13.0" or locked_versions.get("mcp") != "1.29.0":
+            errors.append("MAF optional profile versions must be agent-framework 1.13.0 and MCP 1.29.0")
+        if profile.get("certification_status") not in {"pass", "pending"}:
+            errors.append("MAF optional profile certification status must be pass or pending")
     return errors
 
 
