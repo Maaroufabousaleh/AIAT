@@ -59,6 +59,14 @@ from mas_core.observability.retention import (
     TraceRetentionPlan,
     plan_native_span_retention,
 )
+from mas_core.observability.retention_execution import (
+    TRACE_RETENTION_EXECUTION_SCHEMA,
+    InMemoryRetentionStore,
+    RetentionAction,
+    RetentionExecutionError,
+    RetentionExecutionResult,
+    execute_retention_plan,
+)
 from mas_core.observability.trace_evidence import (
     TRACE_EVIDENCE_SCHEMA,
     TRACE_RETENTION_SCHEMA,
@@ -127,6 +135,12 @@ __all__ = [
     "TraceRetentionCandidate",
     "TraceRetentionPlan",
     "plan_native_span_retention",
+    "TRACE_RETENTION_EXECUTION_SCHEMA",
+    "InMemoryRetentionStore",
+    "RetentionAction",
+    "RetentionExecutionError",
+    "RetentionExecutionResult",
+    "execute_retention_plan",
     # Logging
     "configure_logging",
     "MAIL_EDGE_COVERAGE_SCHEMA",
