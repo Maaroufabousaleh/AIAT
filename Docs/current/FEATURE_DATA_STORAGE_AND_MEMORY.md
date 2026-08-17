@@ -189,11 +189,12 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 - The refreshed local orchestrator is at migration `0036_native_trace_spans`
   and the bounded API/transport writer has live read-back evidence; connect
   native model/tool/audit/worker/integration writers to a representative live
-  run and add provider/webhook-level identity-service mail-edge/bounce span
-  events so those SLO targets can move from explicit `no_data` to deployment
-  evidence. Safe outbound delivery-attempt trace/span correlation is already
-  durable, while direct model/artifact/integration evidence and API, PM/SCM,
-  and recovery projections already have bounded durable read paths.
+  run and read back provider/webhook-level identity-service mail-edge/bounce
+  span events so those SLO targets can move from explicit `no_data` to
+  deployment evidence. The identity persistence path is now migration-backed;
+  safe outbound delivery-attempt trace/span correlation is already durable,
+  while direct model/artifact/integration evidence and API, PM/SCM, and recovery
+  projections already have bounded durable read paths.
 - Prove Postgres point-in-time recovery and cross-store consistency after restore.
 - Add object lifecycle, orphan detection, garbage collection, and legal-hold tests.
 

@@ -20,9 +20,11 @@ API-request row plus one native `/health` span, while the tool probe proves one
 `project_usage_events` row plus one `tool_service` native span and is retained
 at [`mas/docs/provenance/tool_trace_live.json`](../../mas/docs/provenance/tool_trace_live.json).
 The shared `aiat.mail-edge-observation.v1` normalizer/evaluator and deterministic
-checker are now implemented in `85369fe`; live model/worker/audit/integration
-source coverage, provider webhook/bounce persistence, mail-edge spans, and live
-retention execution remain open  
+checker are implemented in `85369fe`; identity-service migration
+`0003_mail_edge_observations`, signed delegated webhook persistence, and scalar
+trace/SLO projection are implemented in `cfafe38`. Live model/worker/audit/
+integration source coverage, provider ingress certification, complete mail-edge
+spans, and live retention execution remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -64,8 +66,9 @@ projection joins:
   attempts and adapter-verified provider webhook events into bounded event and
   failure states. Its coverage evaluator requires a verified webhook and a
   bounce/failure signal when those sources are claimed; conflicting event IDs
-  remain `attention`. The deterministic checker passes, while identity-service
-  persistence and provider/live read-back remain open.
+  remain `attention`. Identity-service migration `0003_mail_edge_observations`
+  persists one payload-free row per `(provider,event_id)` and projects it beside
+  delivery attempts; provider ingress and live read-back remain open.
 
 Each item contains only safe operational fields: source, stable record ID,
 kind, status, project/agent/team references, worker-run reference, event/model/
@@ -77,8 +80,9 @@ strings. API routes are normalized so IDs do not become unbounded dimensions.
 The response includes per-source counts, project IDs, first/last observed time,
 and a `PARTIAL_TRACE_SOURCES` notice that distinguishes the now-queryable
 native transport/model/tool/audit/worker/integration span categories and
-optional identity delivery-attempt spans from still-missing provider mail-edge
-observations. Native category coverage is scalar metadata (`observed` or
+optional identity delivery-attempt/provider-event spans from the identity
+mail-edge projection. Live provider and complete-span coverage remain separate.
+Native category coverage is scalar metadata (`observed` or
 `empty`); it never exposes native span attributes or payloads.
 Empty source coverage is reported explicitly; it is not treated as a clean or
 failed project result.
@@ -168,7 +172,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Worker source evaluator: [`mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py`](../../mas/packages/mas-core/mas_core/observability/worker_trace_coverage.py)
 - Trace validation/context: [`mas/packages/mas-core/mas_core/observability/tracing.py`](../../mas/packages/mas-core/mas_core/observability/tracing.py)
 - Native span contract/normalizer: [`mas/packages/mas-core/mas_core/observability/native_spans.py`](../../mas/packages/mas-core/mas_core/observability/native_spans.py)
-- Mail-edge observation contract/checker: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), and [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`)
+- Mail-edge observation contract/checker and identity persistence: [`Docs/current/FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md), [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py), [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py) (`85369fe`), and migration `0003_mail_edge_observations`/signed route (`cfafe38`)
 - Core review batch: commit `77d5494`; `test_tracing.py`, `test_native_trace_spans.py`, `test_trace_evidence.py`, `check_native_trace_spans.py`, and `check_trace_evidence.py` pass without database/provider mutation.
 - Retention planner: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py)
 - Durable reads: [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py)
@@ -184,7 +188,7 @@ storage returns `blocked` with exit code 2 and no secret material.
 - Worker source coverage tests: [`test_worker_trace_coverage.py`](../../mas/packages/mas-core/tests/test_worker_trace_coverage.py)
 - API observation fixture/check: [`test_api_observations.py`](../../mas/packages/mas-core/tests/test_api_observations.py), [`check_api_observability.py`](../../mas/scripts/check_api_observability.py)
 - Native span fixture/check: [`test_native_trace_spans.py`](../../mas/packages/mas-core/tests/test_native_trace_spans.py), [`check_native_trace_spans.py`](../../mas/scripts/check_native_trace_spans.py)
-- Identity delivery correlation: [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py), [`identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`test_identity_service.py`](../../mas/apps/identity-service/tests/test_identity_service.py), and [`test_identity_reconciliation.py`](../../mas/apps/orchestrator-api/tests/test_identity_reconciliation.py)
+- Identity delivery/provider correlation: [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py), [`0003_mail_edge_observations.py`](../../mas/apps/identity-service/migrations/versions/0003_mail_edge_observations.py), [`identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py), [`test_identity_service.py`](../../mas/apps/identity-service/tests/test_identity_service.py), and [`test_identity_reconciliation.py`](../../mas/apps/orchestrator-api/tests/test_identity_reconciliation.py)
 
 ## Remaining gates
 
@@ -192,8 +196,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   model-backed worker run and retain model-usage, artifact, native model, and
   native worker source counts; add native audit/integration evidence where the
   run exercises those adapters, plus provider/webhook-level identity-service
-  mail-edge/bounce spans. The deterministic source contract is implemented,
-  but no live worker dispatch or provider coverage is claimed yet.
+  mail-edge/bounce spans. The deterministic source contract and identity
+  persistence are implemented, but no live worker dispatch or provider
+  coverage is claimed yet.
 - Enforce sampling/retention and project-level narrowing in the live storage
   and recovery workers, including backup/restore parity.
 - Add dashboard deep links and incident views after the API evidence is

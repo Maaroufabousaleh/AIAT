@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are now implemented in `85369fe`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, provider webhook/bounce persistence, and mail-edge evidence remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, and identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, provider ingress certification, live bounce read-back, and complete mail-edge evidence remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -46,8 +46,10 @@ not block workers, routing, integrations, or project completion.
   plus adapter-verified provider webhook `delivered`/`bounced`/failure events;
   only bounded scalar metadata survives and conflicting event IDs are reported
   as `attention`. The checker is deterministic in fixture mode and read-only
-  in live mode. Provider signature verification, durable webhook ingestion, and
-  selected-worker deployment evidence remain open.
+  in live mode. Identity-service migration `0003_mail_edge_observations`
+  persists normalized events and projects them beside delivery attempts;
+  provider ingress certification and selected-worker deployment evidence
+  remain open.
 - `aiat.capacity-forecast.v1` projects daily cost/token demand over a bounded
   forecast horizon, reports confidence based on event density/time span, and
   compares projected cost to configured company budgets when present.

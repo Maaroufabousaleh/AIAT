@@ -2,10 +2,11 @@
 
 **Baseline:** 2026-08-17
 **Status:** the payload-free `aiat.mail-edge-observation.v1` contract, provider
-webhook normalizer, coverage evaluator, and fail-closed fixture/live checker
-are implemented in `85369fe`. The deterministic fixture passes. Live
-provider signature, selected model-backed worker, bounce, and deployment
-read-back evidence remain open.
+webhook normalizer, coverage evaluator, fail-closed fixture/live checker, and
+identity-service persistence/projection path are implemented in `85369fe` and
+`cfafe38`. The deterministic identity, adapter, orchestrator, and core suites
+pass. Live provider ingress verification, selected model-backed worker, bounce,
+and deployment read-back evidence remain open.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -37,8 +38,10 @@ accepted as arbitrary provider text.
 boundary. It retains opaque event/message references, a bounded timestamp,
 safe trace/span correlation, and an allow-listed scalar metadata set. Bodies,
 recipients, subjects, headers, tokens, credentials, provider payloads, and
-arbitrary JSON are dropped. An unsigned webhook is retained as a non-evidence
-observation and cannot satisfy verified provider coverage.
+arbitrary JSON are dropped. The shared model can represent an unsigned
+observation for fixture evaluation, but the identity-service persistence route
+rejects it; only an adapter-verified webhook can enter the durable evidence
+projection.
 
 `evaluate_mail_edge_coverage()` deduplicates identical event IDs and reports a
 conflict as `attention`. A passing report requires a verified provider webhook
@@ -65,17 +68,21 @@ Fixture mode performs no network or state mutation. Live mode reads only
 representative worker and its trace. It never dispatches a worker, sends mail,
 creates credentials, changes a provider, or selects a worker automatically.
 Missing configuration or unavailable authentication returns `blocked` with
-exit code 2. Existing delivery-attempt mail spans report `attention` until
-the identity service projects verified provider webhook and bounce events.
+exit code 2. Existing delivery-attempt mail spans report `attention` until a
+selected live worker and provider supply verified webhook and bounce evidence.
 
 ## Integration boundary
 
 The identity service remains the authority for mailbox, outbound request,
 provider, and credential state. A provider adapter is responsible for
 signature verification and for passing only normalized event metadata into
-this contract. The orchestrator may project the resulting scalar rows into
-the trace and `mail_delivery` SLO read models, but it must not import message
-content or provider secrets.
+the signed `POST /v1/mail-edge/provider-webhook` boundary. Migration
+`0003_mail_edge_observations` stores one payload-free row per
+`(provider,event_id)`, rejects conflicting replays, correlates an outbound
+request by opaque provider message reference when possible, and projects
+provider events alongside delivery attempts through `mail-relay`. The
+orchestrator reduces that dashboard response to scalar trace/SLO rows and
+must not import message content or provider secrets.
 
 This feature does not change the personal/internal resource policy. Licence
 and stated-use information remains in the provenance catalogue and operator
@@ -84,10 +91,11 @@ predicate.
 
 ## Remaining evidence
 
-- run the checker against an explicitly selected live model-backed worker;
-- persist identity-service provider webhook and bounce observations after
-  provider signature verification;
-- project those observations into complete mail native spans and SLO timing;
+- run the checker against an explicitly selected live model-backed worker and
+  provider ingress;
+- verify the deployed provider adapter's signature result and read back a
+  durable bounce observation from identity-service/Postgres;
+- project the live observations into complete mail native spans and SLO timing;
 - retain deployment evidence without claiming provider or worker coverage
   when a source is absent; and
 - separately enforce live retention, recovery, and production mail controls.
@@ -102,6 +110,13 @@ predicate.
   [`mas/packages/mas-core/tests/test_mail_edge.py`](../../mas/packages/mas-core/tests/test_mail_edge.py)
 - Existing identity delivery projection:
   [`mas/apps/orchestrator-api/orchestrator_api/identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py)
+- Identity persistence, signed route, and migration:
+  [`mas/apps/identity-service/identity_service/service.py`](../../mas/apps/identity-service/identity_service/service.py),
+  [`mas/apps/identity-service/identity_service/store.py`](../../mas/apps/identity-service/identity_service/store.py),
+  [`mas/apps/identity-service/migrations/versions/0003_mail_edge_observations.py`](../../mas/apps/identity-service/migrations/versions/0003_mail_edge_observations.py)
+- Identity and orchestrator coverage:
+  [`mas/apps/identity-service/tests/test_identity_service.py`](../../mas/apps/identity-service/tests/test_identity_service.py),
+  [`mas/apps/orchestrator-api/tests/test_identity_reconciliation.py`](../../mas/apps/orchestrator-api/tests/test_identity_reconciliation.py)
 - Existing trace read route:
   [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py)
 - Related trace/SLO specifications:

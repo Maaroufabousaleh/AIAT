@@ -584,8 +584,11 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   normalizer, `aiat.mail-edge-coverage.v1` evaluator, and deterministic
   fail-closed checker now cover delivery attempts, verified provider webhooks,
   bounded bounce/failure states, safe trace correlation, and event-ID conflict
-  handling (`85369fe`). Provider persistence, selected-worker live evidence,
-  live retention enforcement, and incident views are still P2 work. The local
+  handling (`85369fe`). Identity-service migration `0003_mail_edge_observations`
+  now persists normalized provider events with idempotent conflict handling and
+  projects scalar rows into the existing mail-relay trace/SLO read model
+  (`cfafe38`). Selected-worker live evidence, live retention enforcement,
+  complete mail-span coverage, and incident views are still P2 work. The local
   `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
   of archive/delete actions to a separately reviewed storage/recovery worker.
 
@@ -1213,9 +1216,12 @@ The programme is organised around completing and hardening the existing architec
   non-gating.
 - [x] Add the payload-free `aiat.mail-edge-observation.v1` and
   `aiat.mail-edge-coverage.v1` contracts, provider webhook normalizer, event
-  conflict handling, and deterministic/fail-closed checker (`85369fe`);
-  provider signature verification, identity-service persistence, selected
-  worker live evidence, and complete mail spans remain separate.
+  conflict handling, and deterministic/fail-closed checker (`85369fe`), then
+  add identity-service migration `0003_mail_edge_observations`, signed
+  delegated webhook persistence, normalized event-ID idempotency/conflict
+  handling, and scalar mail-relay trace/SLO projection (`cfafe38`);
+  provider ingress certification, selected worker live evidence, and complete
+  mail spans remain separate.
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
   it classifies explicit/derived expiry metadata and never mutates storage or
   treats invalid rows as deletion candidates.
@@ -1540,14 +1546,18 @@ All project documentation available in the reviewed workspace was read and used 
 - `mas/packages/mas-core/mas_core/observability/native_spans.py`,
   `mas/migrations/versions/0036_native_trace_spans.py`,
   `mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py`,
+  `mas/apps/identity-service/migrations/versions/0003_mail_edge_observations.py`,
   and `mas/scripts/check_native_trace_spans.py` — payload-free native span
-  contract, durable core/identity delivery-attempt correlation, and redaction
-  fixture; provider mail-edge and live retention evidence remain open.
+  contract, durable core/identity delivery-attempt and provider-event
+  correlation, and redaction fixture; provider ingress/live mail evidence and
+  live retention remain open.
 - `mas/packages/mas-core/mas_core/observability/mail_edge.py`,
   `mas/packages/mas-core/tests/test_mail_edge.py`, and
   `mas/scripts/check_mail_edge_observations.py` — payload-free provider
   webhook/bounce normalization, coverage evaluation, conflict handling, and
-  the selected-worker live evidence boundary (`85369fe`).
+  the selected-worker live evidence boundary (`85369fe`); identity-service
+  signed persistence and scalar trace/SLO projection are anchored by
+  migration `0003_mail_edge_observations` and commit `cfafe38`.
 - `mas/packages/mas-core/mas_core/observability/retention.py` and
   `mas/scripts/check_trace_retention.py` — deterministic, non-mutating
   `aiat.trace-retention-plan.v1` decisions with explicit archive/delete mode

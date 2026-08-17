@@ -201,13 +201,17 @@
   attempts, verified webhooks, bounce/failure events, trace correlation,
   deterministic event-ID conflict handling, and metadata-only provider fields;
   add the deterministic redaction fixture and fail-closed checker in
-  `scripts/check_mail_edge_observations.py` (`85369fe`). Provider signature
-  verification, durable identity-service event persistence, and live worker
+  `scripts/check_mail_edge_observations.py` (`85369fe`).
+- [x] Persist normalized provider webhook observations in identity-service with
+  migration `0003_mail_edge_observations` and a unique `(provider,event_id)`
+  conflict boundary; expose the signed delegated route and project correlated
+  provider events through the scalar `mail-relay` dashboard/SLO/trace read
+  model (`cfafe38`). Provider-specific ingress verification and live deployment
   read-back remain separate evidence boundaries.
 - [ ] Run the new checker against a selected live representative model-backed
-  worker and persist provider/webhook-level identity-service mail-edge/bounce
-  observations so the remaining SLO targets have deployment evidence using
-  [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
+  worker and provider ingress, then read back a durable provider webhook and
+  bounce observation so the remaining SLO targets have deployment evidence
+  using [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
   direct model/artifact/integration spans, the fail-closed source evaluator,
   delivery-attempt correlation, and the metadata-only mail-edge contract are
   durable/queryable, but live source coverage remains open.
