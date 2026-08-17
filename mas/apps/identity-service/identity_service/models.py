@@ -161,6 +161,25 @@ class OutboundStatusRequest(ApiModel):
     outbound_request_id: UUID
 
 
+class ProviderWebhookRequest(ApiModel):
+    """Provider event received after an ingress adapter verifies its signature.
+
+    The payload is accepted only long enough for the provider adapter to
+    normalize it.  The identity service persists the bounded observation, not
+    the provider body.
+    """
+
+    provider: str = Field(min_length=1, max_length=64)
+    payload: dict[str, Any]
+    actor: RequestActor
+    event_id: str | None = Field(default=None, min_length=1, max_length=200)
+    signature_verified: bool = False
+    worker_id: UUID | None = None
+    outbound_request_id: UUID | None = None
+    trace_id: str | None = Field(default=None, max_length=128)
+    span_id: str | None = Field(default=None, max_length=128)
+
+
 class ApprovalDecisionRequest(ApiModel):
     actor: RequestActor
     approved: bool

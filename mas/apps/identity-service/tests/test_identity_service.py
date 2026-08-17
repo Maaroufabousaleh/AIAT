@@ -302,6 +302,59 @@ async def test_outbound_requires_human_approval(identity_client):
 
 
 @pytest.mark.anyio
+async def test_verified_provider_webhook_is_idempotent_payload_free_and_projected(identity_client):
+    client, signers = identity_client
+    worker_id = uuid4()
+    body = {
+        "provider": "resend",
+        "payload": {
+            "id": "provider-event-1",
+            "type": "email.bounced",
+            "created_at": "2026-08-17T12:00:00Z",
+            "data": {
+                "email_id": "provider-message-1",
+                "status": "bounced",
+                "reason_code": "550",
+                "to": "recipient@example.net",
+                "body": "must-not-persist",
+            },
+        },
+        "worker_id": str(worker_id),
+        "signature_verified": True,
+        "actor": {"actor_id": "orchestrator-api", "purpose": "persist verified provider event"},
+        "trace_id": "trace-mail-edge-001",
+    }
+    first = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", body)
+    repeated = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", body)
+    assert first.status_code == repeated.status_code == 200
+    assert first.json()["event_type"] == "bounced"
+    assert first.json()["failure_class"] == "permanent"
+    assert first.json()["id"] == repeated.json()["id"]
+    assert "must-not-persist" not in first.text
+    assert "recipient@example.net" not in first.text
+    assert first.json()["metadata"] == {
+        "provider_event_type": "email.bounced",
+        "provider_reason_code": "550",
+        "provider_status": "bounced",
+    }
+
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    assert len(store.mail_edge_observations) == 1
+    assert "must-not-persist" not in str(store.mail_edge_observations)
+    projection = await store.dashboard_rows("mail-relay")
+    assert projection[-1]["source"] == "provider_webhook"
+    assert projection[-1]["event_type"] == "bounced"
+    assert projection[-1]["trace_id"] == "trace-mail-edge-001"
+
+    conflict = {**body, "payload": {**body["payload"], "type": "email.delivered"}}
+    conflicting = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", conflict)
+    assert conflicting.status_code == 409
+    unsigned = {**body, "signature_verified": False, "payload": {**body["payload"], "id": "provider-event-2"}}
+    rejected = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", unsigned)
+    assert rejected.status_code == 403
+
+
+@pytest.mark.anyio
 async def test_mailbox_grant_and_external_credential_lease_are_durable_and_secret_free(identity_client):
     client, signers = identity_client
     company_id, worker = uuid4(), uuid4()

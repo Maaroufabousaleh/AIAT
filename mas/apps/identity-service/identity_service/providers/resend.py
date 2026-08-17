@@ -13,6 +13,8 @@ from uuid import uuid4
 
 import httpx
 
+from mas_core.observability.mail_edge import MailEdgeObservation, normalize_provider_webhook
+
 from ..models import redact
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,30 @@ class ResendRelayAdapter:
     @staticmethod
     def record_delivery_event(event: dict[str, Any]) -> dict[str, Any]:
         return redact(event)
+
+    @staticmethod
+    def normalize_webhook(
+        payload: dict[str, Any],
+        *,
+        event_id: str | None = None,
+        signature_verified: bool = False,
+        worker_id: str | None = None,
+        outbound_request_id: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> MailEdgeObservation:
+        """Normalize a verified-or-rejected Resend body without retaining it."""
+
+        return normalize_provider_webhook(
+            "resend",
+            payload,
+            event_id=event_id,
+            signature_verified=signature_verified,
+            worker_id=worker_id,
+            outbound_request_id=outbound_request_id,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
 
     @staticmethod
     def classify_transient_or_permanent_failure(status_code: int | None, error: str | None = None) -> str:

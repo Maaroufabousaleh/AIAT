@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
+from mas_core.observability.mail_edge import normalize_provider_webhook
+
 from .approvals.service import ApprovalService
 from .config import IdentitySettings
 from .credentials.leases import issue_opaque_lease
@@ -373,6 +375,86 @@ class IdentityService:
         request = await self.outbound.send_approved(worker_id=worker_id, outbound_request_id=request_id, idempotency_key=idempotency_key, trace_id=trace_id)
         await self.store.create_audit(actor_id=actor_id, action="mail.send_approved", target_type="outbound_mail_request", target_id=str(request_id), outcome="submitted", metadata={"provider_correlation_id": request.get("provider_correlation_id")})
         return request
+
+    async def record_provider_webhook(
+        self,
+        client: AuthenticatedClient,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None = None,
+        signature_verified: bool = False,
+        worker_id: UUID | None = None,
+        outbound_request_id: UUID | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one verified provider event without retaining its body.
+
+        Provider-specific signature verification belongs to the ingress
+        adapter.  This signed control-plane endpoint accepts only its explicit
+        boolean result; an unverified webhook can never become an AIAT
+        observation.
+        """
+
+        if not client.has("identity:delegate"):
+            raise PermissionError("provider mail-edge projection requires delegated scope")
+        if not signature_verified:
+            raise PermissionError("verified provider signature is required")
+        observation = normalize_provider_webhook(
+            provider,
+            payload,
+            event_id=event_id,
+            signature_verified=True,
+            worker_id=str(worker_id) if worker_id else None,
+            outbound_request_id=str(outbound_request_id) if outbound_request_id else None,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+        target: dict[str, Any] | None = None
+        if outbound_request_id is not None:
+            target = await self.store.get_outbound_request_metadata(outbound_request_id)
+            if target is None:
+                raise ValueError("outbound request for provider event was not found")
+        elif observation.provider_message_ref:
+            target = await self.store.find_outbound_request_by_provider_message_id(
+                observation.provider_message_ref
+            )
+        if target is not None:
+            target_worker = str(target.get("worker_id") or "")
+            if worker_id is not None and target_worker != str(worker_id):
+                raise PermissionError("provider event worker correlation is inconsistent")
+            stored_message_ref = str(target.get("provider_message_id") or "")
+            if (
+                stored_message_ref
+                and observation.provider_message_ref
+                and stored_message_ref != observation.provider_message_ref
+            ):
+                raise ValueError("provider event message correlation is inconsistent")
+            observation = observation.model_copy(
+                update={
+                    "worker_id": target_worker or observation.worker_id,
+                    "outbound_request_id": str(target["id"]),
+                    "provider_message_ref": observation.provider_message_ref or stored_message_ref or None,
+                }
+            )
+        row = await self.store.record_mail_edge_observation(observation)
+        await self.store.create_audit(
+            actor_id=actor_id,
+            action="mail.provider_event",
+            target_type="mail_edge_observation",
+            target_id=str(row["id"]),
+            outcome=observation.event_type,
+            metadata={
+                "provider": observation.provider,
+                "event_id": observation.event_id,
+                "source": observation.source,
+                "signature_verified": observation.signature_verified,
+            },
+        )
+        return row
 
     async def cancel_queued_outbound(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID) -> dict[str, Any]:
         await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)

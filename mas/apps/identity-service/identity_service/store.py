@@ -16,8 +16,10 @@ import sqlalchemy as sa
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from mas_core.observability.mail_edge import MailEdgeObservation
+
 from .models import ApprovalState, ExternalAccountState, IdentityState, UsageHoldState, redact
-from .observability import normalize_span_id, normalize_trace_id, new_span_id
+from .observability import new_span_id, normalize_span_id, normalize_trace_id
 
 
 class IdentityStore(Protocol):
@@ -39,6 +41,7 @@ class IdentityStore(Protocol):
     async def get_provisioning_job(self, idempotency_key: str) -> dict[str, Any] | None: ...
     async def finish_provisioning_job(self, *, idempotency_key: str, state: str, provider_correlation_id: str | None, evidence: dict[str, Any]) -> dict[str, Any] | None: ...
     async def record_mail_event(self, *, identity_id: UUID, provider_message_id: str | None, event_type: str, metadata: dict[str, Any]) -> dict[str, Any]: ...
+    async def record_mail_edge_observation(self, observation: MailEdgeObservation) -> dict[str, Any]: ...
     async def record_verification_transaction(self, *, identity_id: UUID, provider_message_id: str, idempotency_key: str, code_hash: str | None, link_hash: str | None, state: str) -> dict[str, Any]: ...
     async def create_identity_access_grant(self, *, worker_id: UUID, identity_id: UUID, grant_type: str, issued_by: str) -> dict[str, Any]: ...
     async def has_identity_access_grant(self, *, worker_id: UUID, identity_id: UUID, grant_type: str) -> bool: ...
@@ -54,6 +57,8 @@ class IdentityStore(Protocol):
     async def get_approval_for_target(self, target_id: UUID) -> dict[str, Any] | None: ...
     async def create_outbound_request(self, **kwargs: Any) -> tuple[dict[str, Any], bool]: ...
     async def get_outbound_request(self, request_id: UUID) -> dict[str, Any] | None: ...
+    async def get_outbound_request_metadata(self, request_id: UUID) -> dict[str, Any] | None: ...
+    async def find_outbound_request_by_provider_message_id(self, provider_message_id: str) -> dict[str, Any] | None: ...
     async def claim_outbound_submission(self, request_id: UUID) -> tuple[dict[str, Any] | None, bool]: ...
     async def update_outbound_request(self, request_id: UUID, **values: Any) -> dict[str, Any] | None: ...
     async def record_delivery_attempt(self, *, outbound_request_id: UUID, provider_correlation_id: str | None, provider_message_id: str | None, outcome: str, failure_class: str | None = None, sanitized_reason: str | None = None, trace_id: str | None = None, span_id: str | None = None) -> dict[str, Any]: ...
@@ -76,6 +81,37 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _mail_edge_row(observation: MailEdgeObservation) -> dict[str, Any]:
+    """Convert the shared observation into a persistence-safe scalar row."""
+
+    row = observation.model_dump(mode="python")
+    row["received_at"] = _now()
+    return row
+
+
+def _mail_edge_conflicts(row: dict[str, Any], observation: MailEdgeObservation) -> bool:
+    """Reject a reused provider event ID whose normalized meaning changed."""
+
+    expected = observation.model_dump(mode="python")
+    for field in (
+        "provider", "source", "event_id", "event_type", "outcome", "failure_class",
+        "worker_id", "outbound_request_id", "provider_message_ref", "trace_id", "span_id",
+        "signature_verified", "metadata", "occurred_at",
+    ):
+        actual = (
+            row.get("metadata_json", row.get("metadata"))
+            if field == "metadata"
+            else row.get(field)
+        )
+        wanted = expected.get(field)
+        if field == "occurred_at":
+            actual = actual.astimezone(UTC) if isinstance(actual, datetime) and actual.tzinfo else actual
+            wanted = wanted.astimezone(UTC) if isinstance(wanted, datetime) and wanted.tzinfo else wanted
+        if actual != wanted:
+            return True
+    return False
+
+
 class InMemoryIdentityStore:
     """Deterministic backend used by policy/adapter tests; never a production fallback."""
 
@@ -87,6 +123,7 @@ class InMemoryIdentityStore:
         self.identity_grants: dict[tuple[UUID, UUID, str], dict[str, Any]] = {}
         self.provisioning_jobs: dict[str, dict[str, Any]] = {}
         self.mail_events: dict[tuple[UUID, str | None, str], dict[str, Any]] = {}
+        self.mail_edge_observations: dict[tuple[str, str], dict[str, Any]] = {}
         self.verification_transactions: dict[str, dict[str, Any]] = {}
         self.nonces: dict[tuple[str, str], int] = {}
         self.client_registrations: dict[str, dict[str, Any]] = {}
@@ -252,6 +289,17 @@ class InMemoryIdentityStore:
         row["metadata"] = redact(metadata)
         return row
 
+    async def record_mail_edge_observation(self, observation: MailEdgeObservation) -> dict[str, Any]:
+        key = (observation.provider, observation.event_id)
+        existing = self.mail_edge_observations.get(key)
+        if existing is not None:
+            if _mail_edge_conflicts(existing, observation):
+                raise ValueError("mail-edge provider event ID was reused with different data")
+            return existing
+        row = _mail_edge_row(observation)
+        self.mail_edge_observations[key] = row
+        return row
+
     async def record_verification_transaction(self, *, identity_id: UUID, provider_message_id: str, idempotency_key: str, code_hash: str | None, link_hash: str | None, state: str) -> dict[str, Any]:
         row = self.verification_transactions.get(idempotency_key)
         if row is None:
@@ -342,6 +390,24 @@ class InMemoryIdentityStore:
 
     async def get_outbound_request(self, request_id: UUID) -> dict[str, Any] | None:
         return self.outbound.get(request_id)
+
+    async def get_outbound_request_metadata(self, request_id: UUID) -> dict[str, Any] | None:
+        row = self.outbound.get(request_id)
+        if row is None:
+            return None
+        return {
+            key: row.get(key)
+            for key in (
+                "id", "identity_id", "worker_id", "provider_message_id",
+                "provider_correlation_id", "state",
+            )
+        }
+
+    async def find_outbound_request_by_provider_message_id(self, provider_message_id: str) -> dict[str, Any] | None:
+        for row in self.outbound.values():
+            if str(row.get("provider_message_id") or "") == provider_message_id:
+                return await self.get_outbound_request_metadata(row["id"])
+        return None
 
     async def claim_outbound_submission(self, request_id: UUID) -> tuple[dict[str, Any] | None, bool]:
         row = self.outbound.get(request_id)
@@ -523,11 +589,33 @@ class InMemoryIdentityStore:
                 row["approval_state"] = approval.get("state") if approval else None
                 rows.append(row)
             return rows[-limit:]
+        edge_rows = [
+            {
+                "id": row["id"],
+                "outbound_request_id": row.get("outbound_request_id"),
+                "provider_message_id": row.get("provider_message_ref"),
+                "provider_correlation_id": None,
+                "outcome": row.get("outcome"),
+                "failure_class": row.get("failure_class"),
+                "sanitized_reason": None,
+                "trace_id": row.get("trace_id"),
+                "span_id": row.get("span_id"),
+                "attempted_at": row.get("occurred_at"),
+                "occurred_at": row.get("occurred_at"),
+                "source": row.get("source"),
+                "event_type": row.get("event_type"),
+                "signature_verified": row.get("signature_verified"),
+                "provider_account_id": None,
+            }
+            for row in self.mail_edge_observations.values()
+        ]
+        if resource == "mail-edge":
+            return edge_rows[-limit:]
         lookup = {
             "mail-domains": self.domains.values(),
             "identities": self.identities_by_worker.values(),
             "external-accounts": self.external_accounts.values(),
-            "mail-relay": self.delivery_attempts,
+            "mail-relay": [*self.delivery_attempts, *edge_rows],
             "auth-sessions": self.sessions.values(), "identity-approvals": self.approvals.values(), "identity-audit": self.audit,
         }
         return list(lookup.get(resource, []))[-limit:]
@@ -737,6 +825,63 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         assert row is not None
         return row
 
+    async def record_mail_edge_observation(self, observation: MailEdgeObservation) -> dict[str, Any]:
+        existing = await self._fetchone(
+            """SELECT * FROM mail_edge_observations
+               WHERE provider = :provider AND event_id = :event_id""",
+            {"provider": observation.provider, "event_id": observation.event_id},
+        )
+        if existing is not None:
+            if _mail_edge_conflicts(existing, observation):
+                raise ValueError("mail-edge provider event ID was reused with different data")
+            return existing
+        values = _mail_edge_row(observation)
+        row = await self._fetchone(
+            """INSERT INTO mail_edge_observations
+                 (id, schema_version, provider, source, event_id, event_type,
+                  outcome, failure_class, worker_id, outbound_request_id,
+                  provider_message_ref, trace_id, span_id, occurred_at,
+                  signature_verified, metadata_json, received_at)
+               VALUES (:id, :schema_version, :provider, :source, :event_id,
+                       :event_type, :outcome, :failure_class, :worker_id,
+                       :outbound_request_id, :provider_message_ref, :trace_id,
+                       :span_id, :occurred_at, :signature_verified,
+                       CAST(:metadata AS jsonb), :received_at)
+               ON CONFLICT (provider, event_id) DO NOTHING
+               RETURNING *""",
+            {
+                "id": values["id"],
+                "schema_version": values["schema_version"],
+                "provider": values["provider"],
+                "source": values["source"],
+                "event_id": values["event_id"],
+                "event_type": values["event_type"],
+                "outcome": values["outcome"],
+                "failure_class": values["failure_class"],
+                "worker_id": values["worker_id"],
+                "outbound_request_id": values["outbound_request_id"],
+                "provider_message_ref": values["provider_message_ref"],
+                "trace_id": values["trace_id"],
+                "span_id": values["span_id"],
+                "occurred_at": values["occurred_at"],
+                "signature_verified": values["signature_verified"],
+                "metadata": json.dumps(values["metadata"]),
+                "received_at": values["received_at"],
+            },
+        )
+        if row is not None:
+            return row
+        existing = await self._fetchone(
+            """SELECT * FROM mail_edge_observations
+               WHERE provider = :provider AND event_id = :event_id""",
+            {"provider": observation.provider, "event_id": observation.event_id},
+        )
+        if existing is None:
+            raise RuntimeError("mail-edge observation idempotency lookup failed")
+        if _mail_edge_conflicts(existing, observation):
+            raise ValueError("mail-edge provider event ID was reused with different data")
+        return existing
+
     async def record_verification_transaction(self, *, identity_id: UUID, provider_message_id: str, idempotency_key: str, code_hash: str | None, link_hash: str | None, state: str) -> dict[str, Any]:
         row = await self._fetchone(
             """INSERT INTO mail_verification_transactions
@@ -913,6 +1058,23 @@ class PostgresIdentityStore(InMemoryIdentityStore):
 
     async def get_outbound_request(self, request_id: UUID) -> dict[str, Any] | None:
         return self._hydrate_outbound(await self._fetchone("SELECT * FROM outbound_mail_requests WHERE id = :id", {"id": request_id}))
+
+    async def get_outbound_request_metadata(self, request_id: UUID) -> dict[str, Any] | None:
+        return await self._fetchone(
+            """SELECT id, identity_id, worker_id, provider_message_id,
+                      provider_correlation_id, state
+                 FROM outbound_mail_requests WHERE id = :id""",
+            {"id": request_id},
+        )
+
+    async def find_outbound_request_by_provider_message_id(self, provider_message_id: str) -> dict[str, Any] | None:
+        return await self._fetchone(
+            """SELECT id, identity_id, worker_id, provider_message_id,
+                      provider_correlation_id, state
+                 FROM outbound_mail_requests
+                 WHERE provider_message_id = :provider_message_id""",
+            {"provider_message_id": provider_message_id},
+        )
 
     async def claim_outbound_submission(self, request_id: UUID) -> tuple[dict[str, Any] | None, bool]:
         row = await self._fetchone(
@@ -1126,7 +1288,44 @@ class PostgresIdentityStore(InMemoryIdentityStore):
             "identity-approvals": "SELECT * FROM identity_approval_requests ORDER BY created_at DESC LIMIT :limit",
             "identity-audit": "SELECT * FROM identity_audit_events ORDER BY occurred_at DESC LIMIT :limit",
             "mail-domains": "SELECT * FROM email_domains ORDER BY updated_at DESC LIMIT :limit",
-            "mail-relay": """SELECT d.outbound_request_id, d.provider_message_id, d.provider_correlation_id, d.outcome, d.failure_class, d.sanitized_reason, d.trace_id, d.span_id, d.attempted_at, i.provider_account_id FROM outbound_delivery_attempts d JOIN outbound_mail_requests r ON r.id = d.outbound_request_id JOIN agent_email_identities i ON i.id = r.identity_id ORDER BY d.attempted_at DESC LIMIT :limit""",
+            "mail-edge": """SELECT o.id, o.outbound_request_id, o.provider_message_ref AS provider_message_id,
+                              NULL::text AS provider_correlation_id, o.outcome,
+                              o.failure_class, NULL::text AS sanitized_reason,
+                              o.trace_id, o.span_id, o.occurred_at AS attempted_at,
+                              o.occurred_at, o.source, o.event_type,
+                              o.signature_verified, i.provider_account_id
+                         FROM mail_edge_observations o
+                         LEFT JOIN outbound_mail_requests r ON r.id::text = o.outbound_request_id
+                         LEFT JOIN agent_email_identities i ON i.id = r.identity_id
+                        ORDER BY o.occurred_at DESC LIMIT :limit""",
+            "mail-relay": """SELECT * FROM (
+                              SELECT d.id, d.outbound_request_id::text AS outbound_request_id,
+                                     d.provider_message_id, d.provider_correlation_id,
+                                     d.outcome, d.failure_class, d.sanitized_reason,
+                                     d.trace_id, d.span_id, d.attempted_at,
+                                     d.attempted_at AS occurred_at,
+                                     'delivery_attempt'::text AS source,
+                                     NULL::text AS event_type,
+                                     NULL::boolean AS signature_verified,
+                                     i.provider_account_id
+                                FROM outbound_delivery_attempts d
+                                JOIN outbound_mail_requests r ON r.id = d.outbound_request_id
+                                JOIN agent_email_identities i ON i.id = r.identity_id
+                              UNION ALL
+                              SELECT o.id, o.outbound_request_id,
+                                     o.provider_message_ref AS provider_message_id,
+                                     NULL::text AS provider_correlation_id,
+                                     o.outcome, o.failure_class,
+                                     NULL::text AS sanitized_reason,
+                                     o.trace_id, o.span_id,
+                                     o.occurred_at AS attempted_at,
+                                     o.occurred_at, o.source, o.event_type,
+                                     o.signature_verified, i.provider_account_id
+                                FROM mail_edge_observations o
+                                LEFT JOIN outbound_mail_requests r ON r.id::text = o.outbound_request_id
+                                LEFT JOIN agent_email_identities i ON i.id = r.identity_id
+                           ) relay
+                         ORDER BY relay.occurred_at DESC LIMIT :limit""",
         }
         statement = queries.get(resource)
         if statement is None:

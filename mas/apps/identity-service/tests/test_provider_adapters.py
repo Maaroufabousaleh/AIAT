@@ -237,3 +237,22 @@ async def test_resend_adapter_validates_domain_without_exposing_api_key() -> Non
     assert "secret-api-key" not in json.dumps(result)
     assert adapter.classify_transient_or_permanent_failure(503) == "transient"
     assert adapter.classify_transient_or_permanent_failure(400) == "permanent"
+
+
+def test_resend_webhook_normalization_drops_provider_payload_fields() -> None:
+    observation = ResendRelayAdapter.normalize_webhook(
+        {
+            "id": "resend-event-1",
+            "type": "email.bounced",
+            "data": {
+                "email_id": "resend-message-1",
+                "status": "bounced",
+                "body": "drop-me",
+            },
+        },
+        signature_verified=True,
+    )
+    assert observation.event_type == "bounced"
+    assert observation.signature_verified is True
+    assert observation.metadata == {"provider_event_type": "email.bounced", "provider_status": "bounced"}
+    assert "drop-me" not in str(observation)

@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from mas_core.observability.tracing import (
     current_trace_id,
     is_safe_span_id,
@@ -200,7 +201,7 @@ class SignedIdentityClient:
             row_trace_id = str(row.get("trace_id") or "").strip()
             if requested_trace_id and row_trace_id != requested_trace_id:
                 continue
-            occurred_at = row.get("attempted_at")
+            occurred_at = row.get("occurred_at") or row.get("attempted_at")
             if since is not None and occurred_at is not None:
                 try:
                     parsed = (
@@ -214,14 +215,23 @@ class SignedIdentityClient:
                 except (TypeError, ValueError):
                     continue
             outcome = str(row.get("outcome") or "").strip().lower()
+            source_kind = str(row.get("source") or "").strip().lower()
+            source = (
+                "identity_outbound_delivery_attempts"
+                if not source_kind or source_kind == "delivery_attempt"
+                else f"identity_mail_edge_{source_kind}"
+            )
             observation = {
-                    "id": str(row.get("outbound_request_id") or "unknown"),
+                    "id": str(row.get("id") or row.get("outbound_request_id") or "unknown"),
                     "status": "success"
                     if outcome in {"success", "submitted", "sent", "delivered", "accepted"}
                     else "failed",
                     "occurred_at": occurred_at,
-                    "source": "identity_outbound_delivery_attempts",
+                    "source": source,
                 }
+            event_type = str(row.get("event_type") or "").strip().lower()
+            if event_type in {"queued", "sent", "delivered", "deferred", "bounced", "complained", "failed", "unknown"}:
+                observation["event_type"] = event_type
             if is_safe_trace_id(row_trace_id):
                 observation["trace_id"] = row_trace_id
             row_span_id = str(row.get("span_id") or "").strip()

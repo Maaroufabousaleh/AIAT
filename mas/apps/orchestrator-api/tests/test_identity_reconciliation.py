@@ -177,6 +177,55 @@ async def test_mail_delivery_projection_can_filter_and_keep_only_safe_trace_ids(
 
 
 @pytest.mark.anyio
+async def test_provider_webhook_projection_keeps_event_shape_but_drops_provider_payload() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/dashboard/mail-relay"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "edge-observation-1",
+                        "outbound_request_id": "mail-1",
+                        "provider_message_id": "provider-secret",
+                        "source": "provider_webhook",
+                        "event_type": "bounced",
+                        "outcome": "failure",
+                        "occurred_at": "2026-08-17T12:00:00+00:00",
+                        "trace_id": "trace-mail-edge-001",
+                        "span_id": "span-mail-edge-001",
+                        "metadata": {"provider_reason_code": "550", "body": "drop"},
+                    }
+                ]
+            },
+        )
+
+    private = Ed25519PrivateKey.generate().private_bytes_raw()
+    config = IdentityClientConfig(
+        url="https://identity.example",
+        client_id="operator-laptop",
+        private_key_b64=base64.b64encode(private).decode(),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        identity_client = SignedIdentityClient(config, client=http_client)
+        rows = await identity_client.list_mail_delivery_observations(trace_id="trace-mail-edge-001")
+
+    assert rows == [
+        {
+            "id": "edge-observation-1",
+            "status": "failed",
+            "occurred_at": "2026-08-17T12:00:00+00:00",
+            "source": "identity_mail_edge_provider_webhook",
+            "event_type": "bounced",
+            "trace_id": "trace-mail-edge-001",
+            "span_id": "span-mail-edge-001",
+        }
+    ]
+    assert "provider-secret" not in str(rows)
+    assert "drop" not in str(rows)
+
+
+@pytest.mark.anyio
 async def test_dashboard_identity_actions_are_explicitly_allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
     from orchestrator_api import main
 

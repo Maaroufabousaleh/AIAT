@@ -4380,7 +4380,11 @@ async def get_trace_evidence(
                         "trace_id": normalized_trace_id,
                         "span_id": row.get("span_id"),
                         "source_kind": "mail",
-                        "operation": "mail.delivery_attempt",
+                        "operation": (
+                            "mail.delivery_attempt"
+                            if not row.get("event_type")
+                            else f"mail.provider_webhook.{row.get('event_type')}"
+                        ),
                         "service": row.get("source") or "identity_service",
                         "status": row.get("status") or "unknown",
                         "started_at": row.get("occurred_at"),
@@ -13173,7 +13177,7 @@ async def full_audit_log(limit: int = 100) -> list[dict[str, Any]]:
 async def identity_dashboard_resource(resource: str, _auth: None = Depends(_check_auth)) -> dict[str, Any]:
     """Signed control-plane proxy for secret-free identity dashboard data."""
     allowed = {
-        "identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay",
+        "identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "mail-edge",
         "external-accounts", "auth-sessions", "identity-approvals", "identity-audit",
     }
     if resource not in allowed:

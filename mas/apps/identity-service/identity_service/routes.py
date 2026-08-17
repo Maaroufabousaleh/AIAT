@@ -14,7 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.routing import APIRoute
 
 from .clients.auth import SIGNATURE_VERSION, verify_request
-from .messages.verification_parser import extract_verification_code, extract_verification_link, message_text
+from .messages.verification_parser import (
+    extract_verification_code,
+    extract_verification_link,
+    message_text,
+)
 from .models import (
     ApprovalDecisionRequest,
     BrowserSessionLeaseRequest,
@@ -29,6 +33,7 @@ from .models import (
     MailQueryRequest,
     OutboundRequest,
     OutboundStatusRequest,
+    ProviderWebhookRequest,
     ProvisionIdentityRequest,
     RequestActor,
     SendApprovedRequest,
@@ -121,6 +126,16 @@ def _safe_session(value: dict[str, Any]) -> dict[str, Any]:
     return redact({key: item for key, item in value.items() if key in allowed})
 
 
+def _safe_mail_edge(value: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "id", "schema_version", "provider", "source", "event_id", "event_type",
+        "outcome", "failure_class", "worker_id", "outbound_request_id",
+        "provider_message_ref", "trace_id", "span_id", "occurred_at",
+        "received_at", "signature_verified", "metadata",
+    }
+    return redact({key: item for key, item in value.items() if key in allowed})
+
+
 @router.post("/domains")
 async def create_domain(body: DomainCreateRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
@@ -157,6 +172,28 @@ async def verify_identity(worker_id: UUID, body: IdentityVerificationRequest, cl
     except (PermissionError, ValueError) as exc:
         raise HTTPException(403 if isinstance(exc, PermissionError) else 409, str(exc)) from exc
     return _safe_identity(identity)
+
+
+@router.post("/mail-edge/provider-webhook")
+async def record_provider_webhook(body: ProviderWebhookRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    try:
+        observation = await service.record_provider_webhook(
+            client,
+            provider=body.provider,
+            payload=body.payload,
+            actor_id=body.actor.actor_id,
+            event_id=body.event_id,
+            signature_verified=body.signature_verified,
+            worker_id=body.worker_id,
+            outbound_request_id=body.outbound_request_id,
+            trace_id=body.trace_id,
+            span_id=body.span_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _safe_mail_edge(observation)
 
 
 @router.post("/worker-identities/{worker_id}/suspend")
@@ -501,7 +538,7 @@ async def dashboard_resource(resource: str, client: AuthenticatedClient = Depend
         service.assert_admin(client)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    allowed = {"identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "external-accounts", "auth-sessions", "identity-approvals", "identity-audit"}
+    allowed = {"identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "mail-edge", "external-accounts", "auth-sessions", "identity-approvals", "identity-audit"}
     if resource not in allowed:
         raise HTTPException(404, "identity dashboard resource not found")
     return {"items": redact(await service.dashboard_resource(resource)), "resource": resource}
