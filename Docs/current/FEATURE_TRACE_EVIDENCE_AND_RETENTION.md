@@ -39,8 +39,9 @@ chronology. It never renders incident payloads. Live model/worker/audit/integrat
 coverage, provider ingress certification, complete mail-edge spans, live
 retention execution, and richer incident chronology remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
-generated contracts, and `check_trace_retention.py --live`. The route and
-checker classify bounded native-span metadata only and explicitly prove
+generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
+the response a typed Pydantic/OpenAPI model with bounded counts and candidate
+fields. The route and checker classify bounded native-span metadata only and explicitly prove
 `mutation_performed: false`; archive/delete application, legal holds, erasure,
 project narrowing, audit, and restore parity remain open gates.
 
@@ -186,6 +187,8 @@ plan with `mode: read-only-plan` and `mutation_performed: false`. An optional
 validates the plan schema and non-mutation invariant, and emits only counts,
 policy scalars, and notice totals; it never returns candidate payloads or
 retention IDs.
+The generated API contract names the response, policy, count, and candidate
+schemas, and rejects extra fields or a true mutation flag before serialization.
 
 ## Evidence commands
 

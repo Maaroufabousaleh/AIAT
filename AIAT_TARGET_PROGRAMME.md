@@ -606,6 +606,8 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   The operator-only `GET /observability/retention/plan` route and
   `mas/scripts/check_trace_retention.py --live` expose bounded native-span
   candidates and explicitly report `mutation_performed: false` (`f8829d6`).
+  `b3fca97` makes the response a typed Pydantic/OpenAPI contract with bounded
+  count and candidate fields instead of a generic dictionary.
   Destructive enforcement, legal holds, erasure, project narrowing, audit, and
   restore parity remain separate gates.
 
@@ -1261,7 +1263,8 @@ The programme is organised around completing and hardening the existing architec
   treats invalid rows as deletion candidates.
 - [x] Expose the retention planner through the operator-only read route and
   `scripts/check_trace_retention.py --live` (`f8829d6`), with generated API
-  contracts and an explicit `mutation_performed: false` result; destructive
+  contracts and an explicit `mutation_performed: false` result. Commit
+  `b3fca97` types the response model and rejects mutation claims; destructive
   enforcement, legal holds, erasure, project narrowing, audit, and restore
   parity remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.

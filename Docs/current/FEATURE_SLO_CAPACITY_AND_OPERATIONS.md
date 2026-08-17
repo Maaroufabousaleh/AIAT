@@ -149,7 +149,8 @@ execution input for this personal/internal programme.
   retain/archive/delete/invalid candidate counts and policy metadata while
   explicitly reporting `mutation_performed: false`; retention enforcement,
   legal holds, erasure, project narrowing, audit, and restore parity remain
-  separate storage/recovery gates.
+  separate storage/recovery gates. `b3fca97` makes the response a typed
+  Pydantic/OpenAPI model with bounded counts and candidate fields.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

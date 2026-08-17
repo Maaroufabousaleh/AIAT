@@ -60,7 +60,8 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   `scripts/check_trace_retention.py --live` (`f8829d6`) classify bounded
   native-span retention metadata and explicitly report
   `mutation_performed: false`; no archive/delete, legal-hold, erasure,
-  project-narrowing, audit, or restore action is performed.
+  project-narrowing, audit, or restore action is performed. The response
+  contract and generated artifacts are typed and enforced by `b3fca97`.
 - `aiat.api-observation.v1` is written by orchestrator request middleware into
   a bounded Postgres ledger and feeds the platform `orchestrator_api` SLO. It
   persists only normalized route/method/status/outcome/duration and safe

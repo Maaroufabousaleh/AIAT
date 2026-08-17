@@ -19,6 +19,9 @@ The route reads bounded native-span metadata, returns `mode: read-only-plan`,
 and proves `mutation_performed: false`; the live checker validates that
 invariant and emits only bounded counts/policy metadata. No archive, delete,
 legal-hold, erasure, project-narrowing, audit, or restore action is performed.
+Commit `b3fca97` makes this response a typed Pydantic/OpenAPI model with
+bounded count/candidate schemas and validation that rejects a true mutation
+flag.
 
 Invalid rows are reported and excluded from deletion candidates. The planner
 does not connect to storage, delete spans, archive bytes, enforce legal holds,

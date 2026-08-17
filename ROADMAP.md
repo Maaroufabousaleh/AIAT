@@ -153,7 +153,8 @@ checker to classify projected provider webhook spans. `074ef8a` adds optional
 signed, trace-filtered identity dashboard read-back without payload retention.
 `c357fdf` adds the bounded `aiat.trace-incident.v1` summary/checker over that
 trace authority; partial coverage remains descriptive and no payloads are
-retained. The next bounded R6 increments (`b4b7cef`, `869202c`, `f8829d6`)
+retained. The next bounded R6 increments (`b4b7cef`, `869202c`, `f8829d6`,
+`b3fca97`)
 expose the
 operator-only incident route, generated API contracts, dashboard proxy, and
 existing `/logs?trace_id=…` deep link with status/severity/coverage,
@@ -162,7 +163,9 @@ adds the operator-only read-only retention-plan route, regenerated contracts,
 and `check_trace_retention.py --live`; its `mutation_performed: false` result
 does not apply archive/delete actions. Live provider configuration/callback,
 selected model-backed worker read-back, complete mail-span/SLO evidence, live
-retention enforcement, and richer live chronology remain open.
+retention enforcement, and richer live chronology remain open. `b3fca97`
+hardens the retention-plan response as a typed Pydantic/OpenAPI contract with
+bounded counts, candidates, and an enforced non-mutation field.
 
 The preceding bounded dashboard increment is the shared identity-resource route
 matrix: identities, approvals, audit, sessions, external accounts, domains,
@@ -1261,6 +1264,9 @@ Required outcomes:
   explicit `mutation_performed: false` invariant; destructive enforcement,
   legal holds, erasure, project narrowing, audit, and restore parity remain
   separate gates;
+- [x] type the retention-plan response and reject mutation claims at API
+  validation (`b3fca97`); generated OpenAPI/SDK artifacts now expose bounded
+  count/candidate schemas rather than an untyped object.
 - [x] payload-free `aiat.trace-incident.v1` summary and deterministic/
   fail-closed checker (`c357fdf`); scalar failure references and partial/empty
   coverage are descriptive;

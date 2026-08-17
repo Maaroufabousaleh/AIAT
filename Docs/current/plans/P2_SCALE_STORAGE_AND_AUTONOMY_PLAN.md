@@ -186,6 +186,9 @@
   explicitly report `mutation_performed: false`; destructive enforcement,
   legal holds, erasure, project narrowing, audit, and restore parity remain
   separate gates.
+- [x] Type the retention-plan API response and reject mutation claims at
+  serialization (`b3fca97`); generated OpenAPI/SDK artifacts now name the
+  policy, count, and candidate schemas.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in
