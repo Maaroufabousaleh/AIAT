@@ -28,9 +28,14 @@ live checker now classifies projected `mail.provider_webhook.<event>` spans in
 `29d4da5` and can read the signed identity dashboard projection in `074ef8a`.
 The bounded `aiat.trace-incident.v1` summary and fail-closed fixture/live-safe
 checker are implemented in `c357fdf`; they classify scalar failure findings
-without turning partial coverage into a false pass. Live model/worker/audit/
-integration source coverage, provider ingress certification, complete mail-edge
-spans, and live retention execution remain open
+without turning partial coverage into a false pass. Commit `b4b7cef` exposes the
+summary through the operator-only `GET /observability/incidents/{trace_id}`
+route, checked-in OpenAPI/TypeScript/Python contracts, a dashboard proxy, and
+the existing `/logs?trace_id=…` deep link. The dashboard renders status,
+severity, coverage, finding count, affected source names, and notice codes only;
+it never renders incident payloads. Live model/worker/audit/integration source
+coverage, provider ingress certification, complete mail-edge spans, live
+retention execution, and richer incident chronology remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -133,6 +138,14 @@ the checker does not dispatch workers, mutate records, apply retention, or
 make a release decision, and an `attention` incident remains an observed
 operator result rather than a gate.
 
+The operator API route `GET /observability/incidents/{trace_id}` reuses the
+same authenticated trace-evidence authority and returns `aiat.trace-incident.v1`.
+The dashboard proxy `/api/observability/incidents/[trace_id]` assigns the
+request to the operations section ACL and the canonical CEO evidence link
+`/logs?trace_id=…` loads the summary without fetching or displaying raw trace
+items. This is a read-only operator deep link, not a release or activation
+decision.
+
 ## Sampling and retention metadata
 
 The company manifest exposes:
@@ -228,9 +241,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   coverage is claimed yet.
 - Enforce sampling/retention and project-level narrowing in the live storage
   and recovery workers, including backup/restore parity.
-- Add API/dashboard deep links and a richer incident view after the bounded
+- Extend the bounded dashboard summary with richer chronology only after the
   incident projection is populated by native/live deployment evidence; the
-  current `aiat.trace-incident.v1` core/checker boundary is intentionally
-  read-only and summary-only.
+  current `aiat.trace-incident.v1` API, proxy, and deep-link boundary is
+  intentionally read-only, summary-only, payload-free, and non-gating.
 - Run multi-service load/soak and outage exercises; static fixtures do not
   certify production availability.

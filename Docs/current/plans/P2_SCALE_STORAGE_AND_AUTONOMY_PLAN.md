@@ -228,6 +228,11 @@
   authority. Failure findings, severity, source counts, and partial/empty
   coverage are scalar and payload-free; an `attention` result is descriptive
   and never a release, activation, dispatch, or retention gate.
+- [x] Expose the bounded incident projection through the operator-only
+  `GET /observability/incidents/{trace_id}` route, generated OpenAPI/SDK
+  contracts, dashboard proxy, and `/logs?trace_id=…` deep link (`b4b7cef`).
+  The surface remains read-only, payload-free, and non-gating; live incident
+  population and richer chronology remain separate evidence boundaries.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence
