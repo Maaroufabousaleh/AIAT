@@ -144,7 +144,7 @@ region retains loaded transcript context read-only, hides Clear/retry and all
 message/confirmation controls, and its source-built denial/recovery matrix
 passes 3/3. Native/live ACL and full WCAG evidence remain separate.
 
-The mail-edge observation groups `85369fe`, `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, and `aab6285` add the maintained
+The mail-edge observation groups `85369fe`, `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, and `2d04b30` add the maintained
 [`FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md)
 specification, the `aiat.mail-edge-observation.v1`/coverage contracts, a
 deterministic/fail-closed checker, and identity-service migration
@@ -156,9 +156,15 @@ idempotent/conflicting replay handling, tamper rejection, payload-free
 in-memory persistence, and dashboard read-back; its secret-safe evidence is
 [`mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
 This closes only the local application boundary. Configured provider callback
-certification, Postgres durability, selected worker live read-back, complete
-mail-span evidence, and the read-only projected-span checker/read-back boundary
-remain separate.
+certification, selected worker live read-back, complete mail-span evidence, and
+the read-only projected-span checker/read-back boundary remain separate. The
+durable local certificate in `2d04b30` additionally rebuilds the identity image
+with the current `mas-core` package and migration `0003_mail_edge_observations`,
+reopens `PostgresIdentityStore`, verifies payload-free SQL/dashboard read-back,
+and cleans its reserved fixture namespace; evidence is
+[`mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
+Deployed provider callback, selected worker, live bounce, and outage/restore
+evidence remain separate.
 
 The trace incident groups `c357fdf`, `b4b7cef`, and `869202c` add the maintained
 `aiat.trace-incident.v1` summary/checker and its operator-only API/dashboard

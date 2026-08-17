@@ -5,13 +5,16 @@
 webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
 projected-provider trace parser, optional signed identity-dashboard read-back,
-and the real local ASGI ingress certificate are implemented in `85369fe`,
-`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, and `aab6285`. The deterministic
-identity, adapter, orchestrator, checker, and core suites pass; the local
-certificate is retained at
-[`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
+and the real local ASGI ingress certificates are implemented in `85369fe`,
+`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, and `2d04b30`. The
+deterministic identity, adapter, orchestrator, checker, and core suites pass;
+the local in-memory and Postgres certificates are retained at
+[`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
+and
+[`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
 Live provider configuration/callback delivery, selected model-backed worker,
-Postgres durability, bounce read-back, and deployment evidence remain open.
+external bounce read-back, and deployment evidence remain open; local Postgres
+durability is certified only for the rebuilt Compose identity profile.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -101,6 +104,27 @@ fixture store and does not contact a provider, SMTP relay, Postgres, worker, or
 external network. It must not be reported as live provider, model-worker, or
 durability evidence.
 
+The durable local certificate in `2d04b30` runs the same real ingress against
+`PostgresIdentityStore` at migration `0003_mail_edge_observations`. It closes
+the first database connection, reopens a second store, reads the two
+normalized rows through SQL and the `mail-edge` dashboard projection, verifies
+payload-free fields, and removes only its reserved fixture namespace. Run it
+inside the local identity image with the ignored Compose environment:
+
+```bash
+docker run --rm --network mas_internal \
+  --env-file /path/to/mas/infra/compose/.env.stalwart-local \
+  -e MAS_ENVIRONMENT=development -e IDENTITY_PROFILE=development \
+  -e OUTBOUND_RELAY_PROVIDER=disabled \
+  -v /path/to/mas/scripts/check_mail_edge_postgres_ingress.py:/tmp/check.py:ro \
+  mas/identity-service:local python /tmp/check.py --json
+```
+
+This is local database integration evidence: it performs scoped insert/read/
+delete mutations in the private Compose Postgres service, but does not contact
+an external provider, SMTP relay, model worker, or external network. It does
+not close the live provider, worker, or outage/restore gates.
+
 ## Integration boundary
 
 The identity service remains the authority for mailbox, outbound request,
@@ -148,6 +172,12 @@ predicate.
   [`mas/scripts/tests/test_check_mail_edge_ingress.py`](../../mas/scripts/tests/test_check_mail_edge_ingress.py)
 - Local ingress evidence:
   [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
+- Durable local Postgres certificate:
+  [`mas/scripts/check_mail_edge_postgres_ingress.py`](../../mas/scripts/check_mail_edge_postgres_ingress.py)
+- Durable certificate test:
+  [`mas/scripts/tests/test_check_mail_edge_postgres_ingress.py`](../../mas/scripts/tests/test_check_mail_edge_postgres_ingress.py)
+- Durable Postgres evidence:
+  [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json)
 - Checker projection tests:
   [`mas/scripts/tests/test_check_mail_edge_observations.py`](../../mas/scripts/tests/test_check_mail_edge_observations.py)
 - Focused tests:

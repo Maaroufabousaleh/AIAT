@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, signed identity dashboard read-back is implemented in `074ef8a`, and the real local ASGI ingress certificate is implemented in `aab6285` with evidence at [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json); the bounded `aiat.trace-incident.v1` summary/checker is implemented in `c357fdf`, its operator API/dashboard deep-link boundary is implemented in `b4b7cef`, and the typed read-only retention-plan API/live checker is implemented in `f8829d6`/`b3fca97`/`9a80c6c`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, Postgres durability, live bounce read-back, complete mail-edge evidence, live retention enforcement, and richer incident chronology remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, signed identity dashboard read-back is implemented in `074ef8a`, and the local ASGI ingress certificates are implemented in `aab6285` and `2d04b30` with evidence at [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json) and [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json); the bounded `aiat.trace-incident.v1` summary/checker is implemented in `c357fdf`, its operator API/dashboard deep-link boundary is implemented in `b4b7cef`, and the typed read-only retention-plan API/live checker is implemented in `f8829d6`/`b3fca97`/`9a80c6c`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, deployed Postgres durability, live bounce read-back, complete mail-edge evidence, live retention enforcement, and richer incident chronology remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -52,6 +52,12 @@ not block workers, routing, integrations, or project completion.
   `0003_mail_edge_observations` persists normalized events and projects them
   beside delivery attempts; configured provider ingress and selected-worker
   deployment evidence remain open.
+- The local identity image now rebuilds with the current `mas-core` package and
+  migration `0003_mail_edge_observations`; the durable ingress certificate
+  reopens `PostgresIdentityStore`, reads two payload-free rows through SQL and
+  the dashboard projection, and cleans its reserved fixture namespace. This
+  proves local database durability only; deployed provider and worker sources
+  remain separate.
 - `aiat.capacity-forecast.v1` projects daily cost/token demand over a bounded
   forecast horizon, reports confidence based on event density/time span, and
   compares projected cost to configured company budgets when present.
@@ -92,6 +98,7 @@ not block workers, routing, integrations, or project completion.
   [`mas/packages/mas-core/mas_core/observability/mail_edge.py`](../../mas/packages/mas-core/mas_core/observability/mail_edge.py),
   [`mas/scripts/check_mail_edge_observations.py`](../../mas/scripts/check_mail_edge_observations.py),
   [`mas/scripts/check_mail_edge_ingress.py`](../../mas/scripts/check_mail_edge_ingress.py),
+  [`mas/scripts/check_mail_edge_postgres_ingress.py`](../../mas/scripts/check_mail_edge_postgres_ingress.py),
   and [`FEATURE_MAIL_EDGE_OBSERVABILITY.md`](FEATURE_MAIL_EDGE_OBSERVABILITY.md)
 - PM/recovery observation readers in the same storage module project
   `pm_inbox_events`/`pm_outbox_events` and `worker_run_transitions` into the

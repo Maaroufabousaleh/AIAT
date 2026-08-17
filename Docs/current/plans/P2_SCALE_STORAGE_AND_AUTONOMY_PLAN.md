@@ -253,6 +253,14 @@
   This closes only the local application boundary; it does not claim an
   external provider callback, Postgres durability, selected worker run, or
   live bounce evidence.
+- [x] Certify the same ingress against the rebuilt local Compose
+  `PostgresIdentityStore` at migration `0003_mail_edge_observations`
+  (`2d04b30`): reopen the store, read two normalized rows through SQL and the
+  dashboard projection, verify payload-free persistence, and clean only the
+  reserved fixture namespace. Secret-safe evidence is retained at
+  [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
+  This is local database evidence only; external provider, selected worker,
+  live bounce, and outage/restore evidence remain open.
 - [x] Add the bounded `aiat.trace-incident.v1` summary and
   `scripts/check_trace_incident.py` (`c357fdf`) over the existing trace-evidence
   authority. Failure findings, severity, source counts, and partial/empty

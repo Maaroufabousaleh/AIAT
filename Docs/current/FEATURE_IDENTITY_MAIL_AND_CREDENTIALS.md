@@ -106,6 +106,15 @@ CAPTCHA, MFA enrolment/recovery, payment, legal acceptance, destructive account 
   [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
   This local certificate does not claim external provider, Postgres, worker, or
   live bounce evidence.
+- [x] Certify the rebuilt local Compose `PostgresIdentityStore` path at
+  migration `0003_mail_edge_observations`, including connection reopen,
+  payload-free SQL/dashboard read-back, duplicate/conflict/tamper handling, and
+  reserved-fixture cleanup with
+  [`check_mail_edge_postgres_ingress.py`](../../mas/scripts/check_mail_edge_postgres_ingress.py);
+  evidence is
+  [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
+  This remains local database evidence, not external provider or live worker
+  evidence.
 - Add provider/webhook-level delivery, bounce, relay, and inbound mail-edge
   spans. The durable outbound-attempt correlation and safe orchestrator
   projection are complete, but they do not claim provider delivery or bounce
