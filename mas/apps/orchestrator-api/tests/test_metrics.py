@@ -92,6 +92,27 @@ async def test_metrics_no_error_on_repeated_calls(client):
         assert response.status_code == 200
 
 
+@pytest.mark.anyio
+async def test_metrics_reconciles_durable_project_states_before_scrape(client, monkeypatch):
+    """A configured durable store refreshes aggregate state before rendering."""
+
+    from orchestrator_api import main
+
+    storage = object()
+    calls: list[object] = []
+
+    async def fake_reconcile(candidate):
+        calls.append(candidate)
+
+    monkeypatch.setattr(main.app.state, "storage", storage)
+    monkeypatch.setattr(main, "_reconcile_project_state_metrics", fake_reconcile)
+
+    response = await client.get("/metrics")
+
+    assert response.status_code == 200
+    assert calls == [storage]
+
+
 def test_project_state_metric_uses_bounded_labels_and_budget():
     """Project IDs must not create unbounded Prometheus series."""
     assert MAS_PROJECT_STATE._labelnames == ("state",)

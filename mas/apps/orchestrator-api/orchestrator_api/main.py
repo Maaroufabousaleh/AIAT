@@ -3049,7 +3049,18 @@ _prom_app = prometheus_client.make_asgi_app()
 
 @app.get("/metrics")
 async def prometheus_metrics(request: Request) -> Response:
-    """Expose Prometheus metrics at /metrics."""
+    """Expose Prometheus metrics at /metrics.
+
+    Project-state gauges are aggregate presence metrics, so a scrape must
+    refresh them from the durable project table before rendering.  The
+    process-global registry is still useful when the database is unavailable
+    (for example during a health probe or a unit-test double), therefore the
+    reconciliation remains best-effort and never turns observability into a
+    control-plane outage.
+    """
+    storage = getattr(request.app.state, "storage", None)
+    if storage is not None:
+        await _reconcile_project_state_metrics(storage)
     scope = dict(request.scope)
     scope["path"] = "/"
     status_code = 200
