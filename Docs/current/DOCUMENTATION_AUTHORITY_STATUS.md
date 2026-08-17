@@ -164,6 +164,12 @@ existing finding references/timestamps only; partial/empty instrumentation
 remains independent from incident status. Live worker/provider coverage,
 retention application, and richer live chronology remain separate.
 
+The retention planning group `f8829d6` adds the maintained read-only
+`GET /observability/retention/plan` contract and
+`check_trace_retention.py --live` boundary. It reports bounded native-span candidate counts and policy
+metadata with `mutation_performed: false`; destructive enforcement, legal
+holds, erasure, project narrowing, audit, and restore parity remain separate.
+
 ## Clean-checkout verification
 
 The focused clean-checkout flow verification at commit `2a41b7b` passed the

@@ -1,7 +1,7 @@
 # SLO, Capacity, and Operational Forecast Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, signed identity dashboard read-back is implemented in `074ef8a`, the bounded `aiat.trace-incident.v1` summary/checker is implemented in `c357fdf`, and its operator API/dashboard deep-link boundary is implemented in `b4b7cef`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, complete mail-edge evidence, live retention, and richer incident chronology remain open
+**Status:** deterministic policy/report/forecast contracts and the API/storage integration are implemented; operator SLO/capacity routes, payload-free API observation ledger, trace/native-span read-back, fixture checkers, durable usage aggregates, project-state metric reconciliation compatibility (`541d6e0`), and local live transport/tool evidence are verified in `84a1c01`. The shared `aiat.mail-edge-observation.v1` normalizer and fail-closed checker are implemented in `85369fe`, identity-service migration `0003_mail_edge_observations` plus scalar provider-event projection are implemented in `cfafe38`, the Resend/Svix verifier/raw ingress boundary is implemented in `2d21a2f`, signed identity dashboard read-back is implemented in `074ef8a`, the bounded `aiat.trace-incident.v1` summary/checker is implemented in `c357fdf`, its operator API/dashboard deep-link boundary is implemented in `b4b7cef`, and the read-only retention-plan API/live checker is implemented in `f8829d6`; the retained report is [`mas/docs/provenance/slo_capacity_live.json`](../../mas/docs/provenance/slo_capacity_live.json). Deployed load/soak/chaos, model-backed worker, configured provider callback, live bounce read-back, complete mail-edge evidence, live retention enforcement, and richer incident chronology remain open
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -144,6 +144,12 @@ execution input for this personal/internal programme.
   dashboard proxy, and `/logs?trace_id=…` deep link; `869202c` renders the
   bounded finding references/timestamps. Richer chronology and live-populated
   findings remain later evidence slices.
+- The operator-only `GET /observability/retention/plan` route and
+  `scripts/check_trace_retention.py --live` (`f8829d6`) expose bounded
+  retain/archive/delete/invalid candidate counts and policy metadata while
+  explicitly reporting `mutation_performed: false`; retention enforcement,
+  legal holds, erasure, project narrowing, audit, and restore parity remain
+  separate storage/recovery gates.
 - Run native many-project metric/cardinality evidence and compare forecasts to
   production-like windows; fixture output is not deployment evidence.
 - Add load, soak, chaos, provider outage, backup/restore, and regional disaster

@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
 **Baseline:** 2026-08-11
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the hardened team-runner control-plane storage boundary (`22fc21a`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, and full cross-service span gates remain
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the read-only retention-plan API/live checker (`f8829d6`), the hardened team-runner control-plane storage boundary (`22fc21a`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -56,6 +56,11 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   verify one bounded `/health` API-request/native transport read-back. The
   deterministic fixtures are `scripts/check_trace_evidence.py` and
   `scripts/check_native_trace_spans.py`.
+- The read-only `GET /observability/retention/plan` route and
+  `scripts/check_trace_retention.py --live` (`f8829d6`) classify bounded
+  native-span retention metadata and explicitly report
+  `mutation_performed: false`; no archive/delete, legal-hold, erasure,
+  project-narrowing, audit, or restore action is performed.
 - `aiat.api-observation.v1` is written by orchestrator request middleware into
   a bounded Postgres ledger and feeds the platform `orchestrator_api` SLO. It
   persists only normalized route/method/status/outcome/duration and safe
@@ -133,6 +138,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Request trace middleware: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/apps/message-router/message_router/main.py`](../../mas/apps/message-router/message_router/main.py), [`mas/apps/tool-service/tool_service/main.py`](../../mas/apps/tool-service/tool_service/main.py), [`mas/packages/mas-tools-sdk/mas_tools_sdk/client.py`](../../mas/packages/mas-tools-sdk/mas_tools_sdk/client.py)
 - Worker message trace boundary: [`mas/packages/mas-core/mas_core/agent_runtime/base.py`](../../mas/packages/mas-core/mas_core/agent_runtime/base.py), [`mas/packages/mas-core/mas_core/agent_runtime/router_client.py`](../../mas/packages/mas-core/mas_core/agent_runtime/router_client.py)
 - Trace evidence read model: [`mas/packages/mas-core/mas_core/observability/trace_evidence.py`](../../mas/packages/mas-core/mas_core/observability/trace_evidence.py), [`/observability/traces/{trace_id}`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/scripts/check_trace_evidence.py`](../../mas/scripts/check_trace_evidence.py)
+- Retention plan read model/checker: [`mas/packages/mas-core/mas_core/observability/retention.py`](../../mas/packages/mas-core/mas_core/observability/retention.py), [`/observability/retention/plan`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/scripts/check_trace_retention.py`](../../mas/scripts/check_trace_retention.py)
 - Release evidence aggregation: [`mas/scripts/check_release_ledger.py`](../../mas/scripts/check_release_ledger.py), [`mas/docs/provenance/release_ledger.yaml`](../../mas/docs/provenance/release_ledger.yaml)
 - API request observation ledger: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py), [`mas/scripts/check_api_observability.py`](../../mas/scripts/check_api_observability.py)
 - SLO/capacity read models: [`mas/packages/mas-core/mas_core/observability/slo.py`](../../mas/packages/mas-core/mas_core/observability/slo.py), [`/observability/slo`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`/observability/capacity/forecast`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/scripts/check_slo_capacity.py`](../../mas/scripts/check_slo_capacity.py)

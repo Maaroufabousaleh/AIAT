@@ -37,7 +37,13 @@ commit `869202c` also renders the bounded finding IDs, source/kind, operation or
 service, status/HTTP code, and occurrence timestamp as a payload-free
 chronology. It never renders incident payloads. Live model/worker/audit/integration source
 coverage, provider ingress certification, complete mail-edge spans, live
-retention execution, and richer incident chronology remain open
+retention execution, and richer incident chronology remain open.
+`f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
+generated contracts, and `check_trace_retention.py --live`. The route and
+checker classify bounded native-span metadata only and explicitly prove
+`mutation_performed: false`; archive/delete application, legal holds, erasure,
+project narrowing, audit, and restore parity remain open gates.
+
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -172,6 +178,15 @@ prefers an explicit `retention_until` when present, and never returns invalid
 rows as deletion candidates. The planner is non-mutating; an operator or
 future recovery worker must separately review and apply a storage action.
 
+The operator-only `GET /observability/retention/plan` route reads a bounded set
+of native-span metadata, applies the company retention policy, and returns the
+plan with `mode: read-only-plan` and `mutation_performed: false`. An optional
+`trace_id` narrows the read without changing authority. The live checker
+(`scripts/check_trace_retention.py --live`) requires the operator endpoint,
+validates the plan schema and non-mutation invariant, and emits only counts,
+policy scalars, and notice totals; it never returns candidate payloads or
+retention IDs.
+
 ## Evidence commands
 
 From `mas/`:
@@ -189,6 +204,8 @@ uv run --isolated python scripts/check_trace_incident.py --live --json \
   --trace-id aiat-live-trace-check
 uv run --isolated pytest packages/mas-core/tests/test_trace_retention.py -q
 uv run --isolated python scripts/check_trace_retention.py --json
+uv run --isolated python scripts/check_trace_retention.py --live --json \
+  --trace-id aiat-live-trace-check
 uv run --isolated python scripts/check_trace_evidence.py --live --json
 uv run --isolated python scripts/check_live_trace_observability.py --live --json \
   --trace-id aiat-live-trace-check

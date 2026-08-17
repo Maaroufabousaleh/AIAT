@@ -180,6 +180,12 @@
   rows out of deletion candidates, and makes archive/delete mode explicit;
   applying deletion, archival, project narrowing, and backup parity remains
   a separate operator/live storage action.
+- [x] Expose the bounded planner through the operator-only
+  `GET /observability/retention/plan` route and generated contracts, and add
+  `scripts/check_trace_retention.py --live` (`f8829d6`). The route/checker
+  explicitly report `mutation_performed: false`; destructive enforcement,
+  legal holds, erasure, project narrowing, audit, and restore parity remain
+  separate gates.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in

@@ -603,6 +603,11 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   The local
   `aiat.trace-retention-plan.v1` planner is non-mutating and leaves application
   of archive/delete actions to a separately reviewed storage/recovery worker.
+  The operator-only `GET /observability/retention/plan` route and
+  `mas/scripts/check_trace_retention.py --live` expose bounded native-span
+  candidates and explicitly report `mutation_performed: false` (`f8829d6`).
+  Destructive enforcement, legal holds, erasure, project narrowing, audit, and
+  restore parity remain separate gates.
 
 The operator-only `GET /observability/slo` and
 `GET /observability/capacity/forecast` routes project descriptive SLO targets
@@ -1254,6 +1259,11 @@ The programme is organised around completing and hardening the existing architec
 - [x] Add the deterministic `aiat.trace-retention-plan.v1` planner and fixture;
   it classifies explicit/derived expiry metadata and never mutates storage or
   treats invalid rows as deletion candidates.
+- [x] Expose the retention planner through the operator-only read route and
+  `scripts/check_trace_retention.py --live` (`f8829d6`), with generated API
+  contracts and an explicit `mutation_performed: false` result; destructive
+  enforcement, legal holds, erasure, project narrowing, audit, and restore
+  parity remain separate gates.
 - Automate backup restore, disaster recovery, shutdown/drain, queue recovery, and rollback rehearsals.
 - Run browser E2E from native Linux CI rather than relying on problematic DrvFS execution.
 
@@ -1587,10 +1597,11 @@ All project documentation available in the reviewed workspace was read and used 
   the selected-worker live evidence boundary (`85369fe`); identity-service
   signed persistence and scalar trace/SLO projection are anchored by
   migration `0003_mail_edge_observations` and commit `cfafe38`.
-- `mas/packages/mas-core/mas_core/observability/retention.py` and
-  `mas/scripts/check_trace_retention.py` — deterministic, non-mutating
-  `aiat.trace-retention-plan.v1` decisions with explicit archive/delete mode
-  and invalid-row fail-safe handling.
+- `mas/packages/mas-core/mas_core/observability/retention.py`,
+  `mas/scripts/check_trace_retention.py`, and the operator
+  `GET /observability/retention/plan` route — deterministic, non-mutating
+  `aiat.trace-retention-plan.v1` decisions with explicit archive/delete mode,
+  invalid-row fail-safe handling, and a live checker that proves no mutation.
 - `Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md` and
   `mas/scripts/check_slo_capacity.py` — maintained SLO/capacity contracts and
   deterministic/fail-closed operational evidence boundary.
