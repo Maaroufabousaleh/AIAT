@@ -39,6 +39,9 @@ CHECK_SCHEMA = "aiat.mail-edge-observation-check.v1"
 TRACE_SCHEMA = "aiat.trace-evidence.v1"
 FIXTURE_WORKER_ID = "00000000-0000-4000-a000-000000000911"
 FIXTURE_TRACE_ID = "fixture-mail-edge-trace-001"
+_EVENT_TYPES = frozenset(
+    {"queued", "sent", "delivered", "deferred", "bounced", "complained", "failed", "unknown"}
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -191,6 +194,27 @@ def _trace_mail_rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _trace_mail_observation(row: Mapping[str, Any], *, trace_id: str) -> Any:
+    """Reduce one native mail span to the shared payload-free observation model."""
+
+    operation = str(row.get("operation") or "").strip().lower()
+    service = str(row.get("service") or "").strip().lower()
+    provider_webhook = ".provider_webhook." in operation
+    event_type = operation.rsplit(".provider_webhook.", 1)[-1] if provider_webhook else ""
+    if event_type not in _EVENT_TYPES:
+        event_type = "delivered" if str(row.get("status") or "").lower() == "success" else "failed"
+    provider = "resend" if "resend" in service or "resend" in operation else "identity_service"
+    return build_mail_edge_observation(
+        provider=provider,
+        source="provider_webhook" if provider_webhook else "delivery_attempt",
+        event_id=str(row.get("id") or "unknown"),
+        event_type=event_type,
+        trace_id=trace_id,
+        span_id=str(row.get("span_id") or "") or None,
+        signature_verified=provider_webhook,
+    )
+
+
 async def _live(args: argparse.Namespace) -> dict[str, Any]:
     url = str(args.url or "").strip().rstrip("/")
     api_key = str(args.api_key or "").strip()
@@ -233,17 +257,7 @@ async def _live(args: argparse.Namespace) -> dict[str, Any]:
         status = str(coverage.get("status") or "attention")
     else:
         coverage = evaluate_mail_edge_coverage(
-            [
-                build_mail_edge_observation(
-                    provider="identity_service",
-                    source="delivery_attempt",
-                    event_id=str(row.get("id") or "unknown"),
-                    event_type="delivered" if str(row.get("status") or "").lower() == "success" else "failed",
-                    trace_id=trace_id,
-                    span_id=str(row.get("span_id") or "") or None,
-                )
-                for row in mail_rows
-            ],
+            [_trace_mail_observation(row, trace_id=trace_id) for row in mail_rows],
             trace_id=trace_id,
         )
         status = "attention" if mail_rows else "blocked"
