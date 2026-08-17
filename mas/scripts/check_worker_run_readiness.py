@@ -277,7 +277,7 @@ def _live(args: argparse.Namespace) -> dict[str, Any]:
             if health_error:
                 fetch_errors["worker_health"] = f"worker health read returned {health_error}"
                 health = None
-            elif not isinstance(health, Mapping):
+            elif not isinstance(health, Mapping) or not str(health.get("health_status") or "").strip():
                 fetch_errors["worker_health"] = "worker health read returned an invalid payload"
                 health = None
     except (httpx.HTTPError, ValueError, TypeError, OverflowError) as exc:

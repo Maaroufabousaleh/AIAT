@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from check_worker_run_readiness import _live, _parser
 
 WORKER_ID = "00000000-0000-4000-8000-000000000101"
@@ -8,7 +9,16 @@ PROJECT_ID = "00000000-0000-4000-8000-000000000102"
 COMPANY_ID = "00000000-0000-4000-8000-000000000103"
 
 
-def test_live_readiness_fails_closed_when_health_read_is_unavailable(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("health_status_code", "health_payload"),
+    [
+        pytest.param(503, {"health_status": "unavailable"}, id="http-error"),
+        pytest.param(200, {}, id="missing-status"),
+    ],
+)
+def test_live_readiness_fails_closed_when_health_read_is_unavailable_or_malformed(
+    monkeypatch, health_status_code: int, health_payload: dict[str, str]
+) -> None:
     worker = {
         "id": WORKER_ID,
         "status": "ACTIVE",
@@ -65,7 +75,7 @@ def test_live_readiness_fails_closed_when_health_read_is_unavailable(monkeypatch
                 ],
             )
         if request.url.path == f"/capabilities/workers/{WORKER_ID}/health":
-            return httpx.Response(503, json={"health_status": "unavailable"})
+            return httpx.Response(health_status_code, json=health_payload)
         raise AssertionError(f"unexpected path: {request.url.path}")
 
     real_client = httpx.Client
