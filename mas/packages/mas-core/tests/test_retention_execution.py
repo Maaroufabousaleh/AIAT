@@ -15,6 +15,7 @@ from mas_core.observability.retention_execution import (
     InMemoryRetentionStore,
     RetentionAction,
     RetentionBackupParityEvidence,
+    RetentionExecutionAudit,
     RetentionExecutionError,
     RetentionLegalHold,
     RetentionLegalHoldSnapshot,
@@ -225,6 +226,43 @@ def test_apply_is_project_scoped_and_audited() -> None:
             "evaluated_at": NOW.isoformat(),
         }
     ]
+
+
+def test_retention_audit_envelope_is_typed_and_bounded() -> None:
+    audit = RetentionExecutionAudit(
+        schema_version=TRACE_RETENTION_EXECUTION_SCHEMA,
+        audit_id="typed-audit",
+        scope="project:project-1",
+        actor="operator",
+        actor_kind="human",
+        action_count=2,
+        backup_evidence_ref="backup://fixture",
+        backup_manifest_sha256="A" * 64,
+        backup_record_count=4,
+        clean_target_verified=True,
+        legal_hold_snapshot_ref="hold-registry://fixture",
+        active_legal_hold_count=1,
+        evaluated_at=NOW,
+    )
+
+    assert audit.as_dict() == {
+        "schema_version": TRACE_RETENTION_EXECUTION_SCHEMA,
+        "audit_id": "typed-audit",
+        "scope": "project:project-1",
+        "actor": "operator",
+        "actor_kind": "human",
+        "action_count": 2,
+        "backup_evidence_ref": "backup://fixture",
+        "backup_manifest_sha256": "a" * 64,
+        "backup_record_count": 4,
+        "clean_target_verified": True,
+        "legal_hold_snapshot_ref": "hold-registry://fixture",
+        "active_legal_hold_count": 1,
+        "evaluated_at": NOW.isoformat(),
+    }
+
+    with pytest.raises(RetentionExecutionError, match="backup manifest"):
+        replace(audit, backup_manifest_sha256="not-a-digest").validate()
 
 
 def test_project_scope_mismatch_fails_before_adapter_mutation() -> None:

@@ -232,6 +232,98 @@ class RetentionBackupParityEvidence:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RetentionExecutionAudit:
+    """Typed, bounded audit envelope passed to a retention adapter.
+
+    The envelope records only the evidence references and scalar counts needed
+    to review one atomic action batch.  It contains no record payloads,
+    credentials, provider responses, or arbitrary metadata.  Durable audit
+    storage remains an adapter responsibility; this type keeps the rehearsal
+    boundary from emitting an unvalidated mapping.
+    """
+
+    schema_version: str
+    audit_id: str
+    scope: str
+    actor: str
+    actor_kind: RetentionActorKind
+    action_count: int
+    backup_evidence_ref: str
+    backup_manifest_sha256: str
+    backup_record_count: int
+    clean_target_verified: bool
+    legal_hold_snapshot_ref: str
+    active_legal_hold_count: int
+    evaluated_at: datetime
+
+    def validate(self) -> None:
+        if self.schema_version != TRACE_RETENTION_EXECUTION_SCHEMA:
+            raise RetentionExecutionError("unsupported retention audit schema")
+        _token(self.audit_id, name="audit_id", max_length=160)
+        _token(self.scope, name="scope", max_length=160)
+        _token(self.actor, name="actor", max_length=160)
+        if self.actor_kind not in {"human", "system"}:
+            raise RetentionExecutionError("retention audit actor_kind is invalid")
+        counts = {
+            "action_count": self.action_count,
+            "backup_record_count": self.backup_record_count,
+            "active_legal_hold_count": self.active_legal_hold_count,
+        }
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in counts.values()
+        ):
+            raise RetentionExecutionError(
+                "retention audit counts must be non-negative integers"
+            )
+        _token(self.backup_evidence_ref, name="backup_evidence_ref", max_length=240)
+        normalized_digest = str(self.backup_manifest_sha256 or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", normalized_digest):
+            raise RetentionExecutionError(
+                "retention audit backup manifest must be a 64-character hexadecimal digest"
+            )
+        if self.clean_target_verified is not True:
+            raise RetentionExecutionError(
+                "retention audit requires a verified clean restore target"
+            )
+        _token(
+            self.legal_hold_snapshot_ref,
+            name="legal_hold_snapshot_ref",
+            max_length=240,
+        )
+        if not isinstance(self.evaluated_at, datetime) or self.evaluated_at.tzinfo is None:
+            raise RetentionExecutionError(
+                "retention audit evaluated_at must be timezone-aware"
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "schema_version": self.schema_version,
+            "audit_id": _token(self.audit_id, name="audit_id", max_length=160),
+            "scope": _token(self.scope, name="scope", max_length=160),
+            "actor": _token(self.actor, name="actor", max_length=160),
+            "actor_kind": self.actor_kind,
+            "action_count": self.action_count,
+            "backup_evidence_ref": _token(
+                self.backup_evidence_ref,
+                name="backup_evidence_ref",
+                max_length=240,
+            ),
+            "backup_manifest_sha256": str(self.backup_manifest_sha256).strip().lower(),
+            "backup_record_count": self.backup_record_count,
+            "clean_target_verified": self.clean_target_verified,
+            "legal_hold_snapshot_ref": _token(
+                self.legal_hold_snapshot_ref,
+                name="legal_hold_snapshot_ref",
+                max_length=240,
+            ),
+            "active_legal_hold_count": self.active_legal_hold_count,
+            "evaluated_at": self.evaluated_at.astimezone(UTC).isoformat(),
+        }
+
+
 class RetentionMutationStore(Protocol):
     """Atomic adapter boundary used by the execution contract."""
 
@@ -494,23 +586,27 @@ def execute_retention_plan(
 
     when = _evaluated_at(evaluated_at)
     if mode == "apply":
+        assert backup_parity_evidence is not None
+        assert normalized_backup_ref is not None
+        assert normalized_hold_ref is not None
+        audit_record = RetentionExecutionAudit(
+            schema_version=TRACE_RETENTION_EXECUTION_SCHEMA,
+            audit_id=normalized_audit_id,
+            scope=normalized_scope,
+            actor=normalized_actor,
+            actor_kind=actor_kind,
+            action_count=len(actions),
+            backup_evidence_ref=normalized_backup_ref,
+            backup_manifest_sha256=backup_parity_evidence.backup_manifest_sha256,
+            backup_record_count=backup_parity_evidence.backup_record_count,
+            clean_target_verified=backup_parity_evidence.clean_target_verified,
+            legal_hold_snapshot_ref=normalized_hold_ref,
+            active_legal_hold_count=len(active_holds),
+            evaluated_at=when,
+        )
         store.apply_retention_actions(
             actions,
-            audit={
-                "schema_version": TRACE_RETENTION_EXECUTION_SCHEMA,
-                "audit_id": normalized_audit_id,
-                "scope": normalized_scope,
-                "actor": normalized_actor,
-                "actor_kind": actor_kind,
-                "action_count": len(actions),
-                "backup_evidence_ref": normalized_backup_ref,
-                "backup_manifest_sha256": backup_parity_evidence.backup_manifest_sha256.strip().lower(),
-                "backup_record_count": backup_parity_evidence.backup_record_count,
-                "clean_target_verified": backup_parity_evidence.clean_target_verified,
-                "legal_hold_snapshot_ref": normalized_hold_ref,
-                "active_legal_hold_count": len(active_holds),
-                "evaluated_at": when.isoformat(),
-            },
+            audit=audit_record.as_dict(),
         )
     else:
         notices.append("preview mode did not call the mutation adapter")
@@ -547,6 +643,7 @@ __all__ = [
     "RetentionActorKind",
     "RetentionBackupParityEvidence",
     "RetentionExecutionError",
+    "RetentionExecutionAudit",
     "RetentionExecutionMode",
     "RetentionExecutionResult",
     "RetentionExecutionStatus",
