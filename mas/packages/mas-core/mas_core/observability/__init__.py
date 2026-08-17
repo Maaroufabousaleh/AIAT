@@ -14,6 +14,15 @@ from mas_core.observability.executive_reconciliation import (
     build_executive_views,
 )
 from mas_core.observability.logging import configure_logging
+from mas_core.observability.mail_edge import (
+    MAIL_EDGE_COVERAGE_SCHEMA,
+    MAIL_EDGE_OBSERVATION_SCHEMA,
+    MailEdgeObservation,
+    build_mail_edge_observation,
+    evaluate_mail_edge_coverage,
+    normalize_event_type,
+    normalize_provider_webhook,
+)
 from mas_core.observability.metrics import (
     AIAT_METRIC_COLLECTORS,
     MAS_AGENT_CORRECTION_FACTOR,
@@ -114,6 +123,13 @@ __all__ = [
     "plan_native_span_retention",
     # Logging
     "configure_logging",
+    "MAIL_EDGE_COVERAGE_SCHEMA",
+    "MAIL_EDGE_OBSERVATION_SCHEMA",
+    "MailEdgeObservation",
+    "build_mail_edge_observation",
+    "evaluate_mail_edge_coverage",
+    "normalize_event_type",
+    "normalize_provider_webhook",
     "TRACE_EVIDENCE_SCHEMA",
     "TRACE_RETENTION_SCHEMA",
     "TraceEvidence",
