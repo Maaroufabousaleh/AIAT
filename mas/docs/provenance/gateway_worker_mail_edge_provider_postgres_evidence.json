@@ -1,0 +1,170 @@
+{
+  "certification_boundary": {
+    "durable_worker_usage_artifact_trace": "checked",
+    "external_provider_callback": "not_checked",
+    "gateway_worker_adapter_fixture_dispatch": "checked",
+    "identity_postgres_connection_reopen": "checked",
+    "identity_signed_http_ingress": "not_checked",
+    "normalized_delivery_webhook_bounce_observations": "checked",
+    "payload_free_projection": "checked",
+    "provider_backed_recovery": "not_checked",
+    "provider_message_trace_correlation": "checked",
+    "resend_raw_body_provider_ingress": "checked",
+    "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+    "scoped_cleanup": "checked",
+    "selected_live_worker": "not_checked",
+    "worker_postgres_connection_reopen": "checked",
+    "worker_trace_mail_edge_correlation": "checked"
+  },
+  "commit": "0e0a76f",
+  "controller_terminal_state": "SUCCEEDED",
+  "coverage_schema": "aiat.worker-mail-edge-coverage.v1",
+  "durable_reopen": {
+    "identity_healthy": true,
+    "mail_observation_count": 3,
+    "native_span_count": 4,
+    "worker_artifact_count": 1,
+    "worker_healthy": true,
+    "worker_run_present": true,
+    "worker_usage_count": 1
+  },
+  "exact_model_id": "fixture/model-v1",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "gateway_call_count": 1,
+  "identity_cleanup_deleted_count": 11,
+  "identity_client_cleanup_deleted_count": 1,
+  "identity_fixture_remaining": {
+    "delivery_attempts": 0,
+    "domains": 0,
+    "identities": 0,
+    "observations": 0,
+    "outbound_requests": 0
+  },
+  "identity_ingress": false,
+  "identity_ingress_conflict_rejected": false,
+  "identity_ingress_idempotent_duplicate": false,
+  "identity_ingress_statuses": {},
+  "identity_ingress_tampered_rejected": false,
+  "identity_migration_version": "0003_mail_edge_observations",
+  "licence_metadata_is_gate": false,
+  "local_database_access_performed": true,
+  "mail_observation_count": 3,
+  "mode": "local-dual-postgres-worker-mail-edge",
+  "mutation_performed": true,
+  "native_span_count": 4,
+  "network_access_performed": true,
+  "observed_at": "2026-08-18T06:50:42.866114Z",
+  "payload_free": true,
+  "provider_id": "fixture-provider",
+  "provider_ingress": true,
+  "provider_ingress_conflict_rejected": true,
+  "provider_ingress_idempotent_duplicate": true,
+  "provider_ingress_statuses": {
+    "bounced": 200,
+    "conflict": 409,
+    "delivered": 200,
+    "duplicate": 200,
+    "tampered": 401
+  },
+  "provider_ingress_tampered_rejected": true,
+  "remaining_identity_client_rows": 0,
+  "remaining_identity_fixture_rows": 0,
+  "remaining_worker_fixture_counts": {
+    "artifacts": 0,
+    "runs": 0,
+    "spans": 0,
+    "usage": 0,
+    "workers": 0
+  },
+  "run_state": "SUCCEEDED",
+  "schema_version": "aiat.gateway-worker-mail-edge-postgres-certification.v1",
+  "scope": "production GatewayWorkerAdapter/WorkerRunController, durable worker evidence, normalized identity mail-edge observations, optional signed or Resend/Svix raw-body ingress, provider-message trace correlation, dual-Postgres reopen/read-back, payload-free worker/mail-edge join, and scoped cleanup",
+  "status": "pass",
+  "trace_id": "aiat-cert-gateway-mail-edge-postgres-v1-trace",
+  "trace_item_count": 9,
+  "trace_source_counts": {
+    "api_requests": 0,
+    "integration_evidence": 3,
+    "native_spans": 4,
+    "pm_inbox_events": 0,
+    "project_usage_events": 0,
+    "task_log": 0,
+    "worker_artifacts": 1,
+    "worker_run_transitions": 0,
+    "worker_usage_records": 1
+  },
+  "worker_artifact_count": 1,
+  "worker_cleanup_deleted_counts": {
+    "artifacts": 1,
+    "spans": 4,
+    "worker_artifacts": 1,
+    "worker_runs": 1,
+    "workers": 1
+  },
+  "worker_id": "00000000-0000-4000-a000-000000000b61",
+  "worker_mail_edge_coverage": {
+    "licence_metadata_is_gate": false,
+    "mail_edge": {
+      "bounce_or_failure_count": 1,
+      "conflict_event_ids": [],
+      "correlated_count": 3,
+      "event_counts": {
+        "bounced": 1,
+        "complained": 0,
+        "deferred": 0,
+        "delivered": 1,
+        "failed": 0,
+        "queued": 1,
+        "sent": 0,
+        "unknown": 0
+      },
+      "licence_metadata_is_gate": false,
+      "missing": [],
+      "observation_count": 3,
+      "providers": [
+        "resend"
+      ],
+      "schema_version": "aiat.mail-edge-coverage.v1",
+      "scope": "payload-free identity/provider mail-edge observations; live provider and worker execution remain separate",
+      "signed_webhook_count": 2,
+      "source_counts": {
+        "delivery_attempt": 1,
+        "provider_poll": 0,
+        "provider_webhook": 2
+      },
+      "status": "pass"
+    },
+    "missing_required_signals": [],
+    "require_integration": true,
+    "require_mail_edge": true,
+    "schema_version": "aiat.worker-mail-edge-coverage.v1",
+    "scope": "cross-surface worker trace and payload-free mail-edge evidence; live worker execution and external provider delivery remain separate",
+    "status": "pass",
+    "trace_id": "aiat-cert-gateway-mail-edge-postgres-v1-trace",
+    "worker_id": "00000000-0000-4000-a000-000000000b61",
+    "worker_trace": {
+      "licence_metadata_is_gate": false,
+      "missing_required_sources": [],
+      "optional_sources": {
+        "native_audit_spans": "observed",
+        "native_mail_spans": "empty"
+      },
+      "require_integration": true,
+      "required_sources": {
+        "integration_evidence": "observed",
+        "native_integration_spans": "observed",
+        "native_model_spans": "observed",
+        "native_worker_spans": "observed",
+        "worker_artifacts": "observed",
+        "worker_usage_records": "observed"
+      },
+      "schema_version": "aiat.worker-trace-coverage.v1",
+      "status": "pass",
+      "trace_status": "observed",
+      "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
+    }
+  },
+  "worker_migration_version": "0042_worker_run_host_binding",
+  "worker_usage_count": 1
+}

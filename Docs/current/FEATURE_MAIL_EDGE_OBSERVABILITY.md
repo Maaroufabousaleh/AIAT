@@ -6,9 +6,10 @@ webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
 projected-provider trace parser, optional signed identity-dashboard read-back,
 and the real local ASGI ingress certificates, plus the durable dual-Postgres
-worker/mail-edge composition certificate, are implemented in `85369fe`,
+worker/mail-edge composition certificate and raw-provider composition follow-up,
+are implemented in `85369fe`,
 `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, `1d8aed5`,
-`6ebb12c`, `fa42284`, and `67f1599`. The
+`6ebb12c`, `fa42284`, `67f1599`, and `0e0a76f`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
@@ -98,6 +99,20 @@ a live provider callback; selected live worker/provider delivery, recovery, and
 sandbox evidence remain open. Evidence is
 [`gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
 
+`0e0a76f` adds the raw-provider composition follow-up. With
+`--provider-ingress`, the checker creates a bounded durable outbound request
+and delivery attempt, then sends the delivered/bounced bodies through the real
+Resend/Svix `POST /v1/mail-edge/provider-webhook/resend` route. The route
+correlates only through the already-authorized provider message reference and
+durable attempt trace; it does not trust provider-supplied AIAT headers. The
+same duplicate, conflicting-event, and exact-raw-body tamper checks pass after
+both Postgres stores are reopened, the payload-free worker/mail-edge join
+passes, and the reserved outbound, attempt, identity, domain, observation,
+audit, and client rows are removed. This closes the local provider-facing
+application boundary while leaving a configured external callback, selected
+live worker, provider delivery, recovery, and sandbox gates open. Evidence is
+[`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
+
 ## Checker and live boundary
 
 From `mas/`:
@@ -109,6 +124,8 @@ uv run --isolated python scripts/check_worker_mail_edge_coverage.py --json \
   --require-integration
 uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json \
   --identity-ingress
+uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json \
+  --provider-ingress
 uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --url http://127.0.0.1:8000 \
   --api-key "$AIAT_OPERATOR_API_KEY" \
@@ -177,6 +194,13 @@ checks exact provider/model usage and payload-free cross-store correlation, and
 cleans only its reserved namespaces. It is a local dual-database composition
 check, not an external provider callback, selected-worker, or sandbox check.
 
+The raw-provider follow-up in `0e0a76f` uses the same two DSNs with
+`--provider-ingress`. It creates a durable outbound attempt carrying the
+worker/trace scope, verifies exact Svix bytes at the provider-facing route,
+projects the events through provider-message correlation, and checks durable
+reopen/read-back plus scoped cleanup. This is local raw-ingress evidence only;
+it does not contact Resend or claim provider delivery.
+
 ## Integration boundary
 
 The identity service remains the authority for mailbox, outbound request,
@@ -189,8 +213,9 @@ metadata into the persistence service. The signed
 verified control-plane handoff. Both paths use migration
 `0003_mail_edge_observations`, which stores one payload-free row per
 `(provider,event_id)`, rejects conflicting replays, correlates an outbound
-request by opaque provider message reference when possible, and projects
-provider events alongside delivery attempts through `mail-relay`. The
+request by opaque provider message reference when possible, derives worker and
+trace scope from the matching durable outbound attempt, and projects provider
+events alongside delivery attempts through `mail-relay`. The
 orchestrator reduces that dashboard response to scalar trace/SLO rows, and the
 checker can consume the same dashboard through the signed identity client for
 durable read-back. Neither path imports message content or provider secrets.
@@ -203,7 +228,9 @@ predicate.
 ## Remaining evidence
 
 - configure the deployed Resend webhook secret/tolerance and exercise a real
-  provider callback through the raw-body ingress;
+  provider callback through the raw-body ingress (the local raw-provider
+  application boundary is certified; external callback evidence is still
+  open);
 - configure the signed identity read-back credentials and run the checker
   against an explicitly selected live model-backed worker and provider ingress;
   then read back a durable bounce observation from identity-service/Postgres;
@@ -236,6 +263,8 @@ predicate.
   [`mas/scripts/tests/test_check_gateway_worker_mail_edge_postgres.py`](../../mas/scripts/tests/test_check_gateway_worker_mail_edge_postgres.py)
 - Durable worker/mail-edge composition evidence:
   [`mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
+- Raw-provider composition evidence:
+  [`mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json)
 - Checker projection tests:
   [`mas/scripts/tests/test_check_mail_edge_observations.py`](../../mas/scripts/tests/test_check_mail_edge_observations.py)
 - Focused tests:

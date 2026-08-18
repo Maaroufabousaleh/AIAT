@@ -129,6 +129,15 @@ external provider delivery, selected live worker, recovery, and sandbox gates
 remain open. The evidence is indexed in the roadmap and retained at
 [`gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
 
+Commit `0e0a76f` adds the raw-provider follow-up. A durable outbound delivery
+attempt is the sole worker/trace correlation authority for the provider message;
+the real Resend/Svix raw-body route then projects delivered/bounced events and
+passes replay, conflict, tamper, reopen, payload-free join, and scoped cleanup
+checks. This closes the local provider-facing application boundary only;
+configured external callback, provider delivery/recovery, selected worker, and
+sandbox evidence remain open. The evidence is retained at
+[`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
+
 Commit `b2ae516` hardens the gateway-worker failure boundary. The maintained
 adapter now separates bounded input validation, retryable transient gateway
 statuses, and terminal provider rejections while retaining only status and
@@ -294,7 +303,10 @@ are indexed alongside it. Their dual-Postgres certificate reopens the worker
 and identity stores independently, rebuilds the payload-free cross-store
 evaluator, exercises replay/conflict/tamper behavior when requested, and cleans
 reserved rows; it does not claim raw external-provider callback, external
-delivery/recovery, selected live worker execution, or sandbox evidence.
+delivery/recovery, selected live worker execution, or sandbox evidence. The
+raw-provider extension `0e0a76f` additionally proves the provider-facing
+Resend/Svix route derives worker/trace scope from a durable provider-message
+attempt; external callback and delivery remain separate.
 
 The durable worker-run evidence group `acd3f06` adds the local Postgres
 certificate and maintained evidence

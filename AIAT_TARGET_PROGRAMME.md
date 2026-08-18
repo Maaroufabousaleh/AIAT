@@ -105,16 +105,19 @@ The core database migration graph has a single current head at `0036_native_trac
 | Outside-LAN access | **Partial** | Cloudflare tunnel and mail-edge/gateway deployment profiles exist. Production exposure, identity, TLS, and recovery certification remain operator-owned. |
 
 The durable local worker/mail-edge composition slice (`fa42284`, extended by
-`67f1599`) now runs the
+`67f1599` and `0e0a76f`) now runs the
 production `GatewayWorkerAdapter`/`WorkerRunController` against the worker
 Postgres store, persists normalized delivery/webhook/bounce observations in the
 identity Postgres store, optionally drives the signed delegated identity HTTP
-route, reopens both stores independently, and verifies a payload-free
-cross-store evidence join before scoped cleanup. This is local
-normalized-store/delegated-ingress evidence only; raw external-provider
+route, and in the raw-provider mode drives the Resend/Svix route using a
+durable provider-message attempt to derive worker/trace scope. Both stores are
+reopened independently and the payload-free cross-store evidence join passes
+before scoped cleanup. This is local
+normalized-store/provider-facing-ingress evidence only; raw external-provider
 callback, external provider delivery/recovery, selected live worker execution,
-and sandbox evidence remain separate gates. The retained report is
-[`gateway_worker_mail_edge_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
+and sandbox evidence remain separate gates. The retained reports are
+[`gateway_worker_mail_edge_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
+and [`gateway_worker_mail_edge_provider_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
 
 ### 2.2 Evidence that must be interpreted carefully
 

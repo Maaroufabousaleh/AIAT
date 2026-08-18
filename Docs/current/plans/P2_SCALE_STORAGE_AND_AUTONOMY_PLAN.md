@@ -481,11 +481,21 @@
   worker report/usage/trace projection, records normalized delivery,
   verified-webhook, and bounce observations, reopens both stores independently,
   passes the cross-store evaluator, and cleans only its fixture namespaces.
-  now optionally drives the signed `/v1/mail-edge/provider-webhook` route with
+  It now optionally drives the signed `/v1/mail-edge/provider-webhook` route with
   idempotent replay, conflict, and tamper checks. This closes local durable
   composition and delegated ingress; raw external provider callback, external
   provider delivery/recovery, selected live worker execution, and sandbox
   evidence remain open.
+- [x] Compose the durable worker/mail-edge certificate with the raw provider
+  ingress (`0e0a76f`). The `--provider-ingress` mode creates a scoped outbound
+  request and delivery attempt, verifies the exact Resend/Svix body at
+  `POST /v1/mail-edge/provider-webhook/resend`, derives worker/trace scope from
+  the durable provider-message join, checks duplicate/conflict/tamper behavior,
+  reopens both stores, and cleans outbound, identity, observation, audit, and
+  client fixtures to zero. This closes the local provider-facing application
+  boundary; external callback, provider delivery/recovery, selected worker,
+  and sandbox evidence remain open. Evidence is
+  [`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

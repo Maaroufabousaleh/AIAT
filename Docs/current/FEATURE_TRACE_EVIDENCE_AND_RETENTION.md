@@ -32,6 +32,11 @@ trace/SLO projection are implemented in `cfafe38`; the Resend/Svix raw-body
 verifier and provider-facing ingress route are implemented in `2d21a2f`; the
 live checker now classifies projected `mail.provider_webhook.<event>` spans in
 `29d4da5` and can read the signed identity dashboard projection in `074ef8a`.
+The durable worker/mail-edge composition certificate (`fa42284`, `67f1599`)
+now also has a raw-provider extension in `0e0a76f`: the provider-facing route
+derives worker/trace scope from a durable outbound attempt and survives
+dual-Postgres reopen, payload-free evaluation, and scoped cleanup. External
+provider callback, delivery, and live worker evidence remain open.
 The bounded `aiat.trace-incident.v1` summary and fail-closed fixture/live-safe
 checker are implemented in `c357fdf`; they classify scalar failure findings
 without turning partial coverage into a false pass. Commit `b4b7cef` exposes the
@@ -216,6 +221,13 @@ join and scoped cleanup leaves zero fixture rows. This closes local durable
 composition and delegated ingress only; raw external-provider callback,
 external delivery/recovery, selected live worker, and sandbox evidence remain
 separate.
+
+`0e0a76f` adds the raw-provider variant of this durable join. A scoped outbound
+delivery attempt carries the worker/trace scope; the real Resend/Svix raw-body
+route resolves the provider message to that attempt; and the normalized event
+rows, trace evidence, replay/conflict/tamper checks, independent reopen, and
+cleanup all pass. This certifies the local provider-facing application boundary
+without treating a fixture callback as external delivery or live recovery.
 
 The host-composition certificate (`38c99f4`) extends that local evidence to the
 AIAT host boundary without changing the evaluator contract. It observes native
