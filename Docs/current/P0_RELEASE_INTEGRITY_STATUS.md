@@ -1,9 +1,9 @@
 # P0 Release Integrity Status
 
 **Updated:** 2026-08-18
-- Current continuation refresh (`0417f73`) runs the static ledger at 57/57
+- Current continuation refresh (`b2d02ea`, aggregate evidence `b6176df`) runs the static ledger at 57/57
   pass and the configured Compose aggregation at 75 pass/0 fail/6 blocked
-  across 81 checks (`23:02:17Z`), with four pending evidence items and
+  across 81 checks (`23:31:51Z`, canonical host-loopback), with four pending evidence items and
   `NO-RELEASE`. The local Postgres host-execution, multi-host, lease,
   host-fencing, and queued-run loss checks pass serially after their harnesses
   were isolated with fixture labels and deterministic priorities; their scalar
