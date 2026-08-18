@@ -233,8 +233,10 @@ external client-language SDK compatibility yet.
   live failure/recovery proof remain open.
 - [x] Add `aiat.workflow-watchdog-recovery.v1` deterministic evidence for boot
   grace, downtime-aware watchdog timeout, universal failure transition,
-  recorded-safe-state retry, and terminal-state exclusion; native watchdog and
-  cold-crash recovery proof remain open.
+  recorded-safe-state retry, terminal-state exclusion, explicit human
+  cancellation, review-circuit escalation, node-timeout failure, and
+  invalid-transition rejection (`9972b3b`); native watchdog, storage-backed
+  transition history, and cold-crash recovery proof remain open.
 - [x] Exercise the local Compose project/flow UI golden path: the 59-test
   Playwright suite passes 58 tests with one explicit operator-owned DLQ fixture
   skip, including project workspace creation, schema-driven flow editing,

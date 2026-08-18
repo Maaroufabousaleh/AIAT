@@ -1720,6 +1720,12 @@ All project documentation available in the reviewed workspace was read and used 
   parallel/join/switch topology and traversal-semantic validation; duplicate
   join scheduling and unselected switch branches are rejected by the real
   traversal path, with no worker or storage mutation.
+- `mas/scripts/check_workflow_watchdog_recovery.py` and
+  `mas/packages/mas-core/mas_core/workflow/controller.py` — deterministic
+  workflow-control evidence for watchdog timeout, recorded-safe-state retry,
+  explicit cancellation, review-circuit escalation, node-timeout failure,
+  terminal-state exclusion, and invalid-transition rejection; storage-backed
+  and native/live recovery remain separate gates.
 - `mas/packages/mas-core/mas_core/workflow/templates.py`,
   `mas/packages/mas-core/mas_core/workflow/definition_tools.py`,
   `mas/apps/orchestrator-api/tests/test_flow_definition_lifecycle_api.py`,

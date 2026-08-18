@@ -1,6 +1,6 @@
 # Workflow Watchdog and Safe-Recovery Status
 
-**Updated:** 2026-08-11
+**Updated:** 2026-08-18
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Owning feature:** [Projects, Flows, Knowledge, and Evidence](FEATURE_PROJECTS_FLOWS_AND_EVIDENCE.md)
 **Scope:** personal/internal AIAT instance
@@ -8,8 +8,9 @@
 ## Reviewed implementation
 
 Commit `9007236` adds the deterministic watchdog and safe-retry review
-fixture. It exercises the real workflow helpers and pure controller without
-storage, worker dispatch, network calls, or state mutation.
+fixture; `9972b3b` extends it with workflow-control edge cases. It exercises
+the real workflow helpers and pure controller without storage, worker
+dispatch, network calls, or state mutation.
 
 The fixture records schema `aiat.workflow-watchdog-recovery.v1` and verifies:
 
@@ -19,7 +20,11 @@ The fixture records schema `aiat.workflow-watchdog-recovery.v1` and verifies:
 - an explicit retry restores the recorded safe state instead of guessing a
   new workflow stage; and
 - `FAILED`, `COMPLETED`, and `ARCHIVED` are excluded from automatic watchdog
-  re-entry.
+  re-entry;
+- explicit human cancellation reaches `ARCHIVED`;
+- review-circuit escalation and node timeout reach `FAILED` through the
+  universal failure transition; and
+- an event absent from the transition table is rejected fail-closed.
 
 The report explicitly records `storage: false`, `worker_dispatch: false`, and
 `mutation: false`. Resource licence or restriction notices remain metadata
