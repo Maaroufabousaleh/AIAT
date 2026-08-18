@@ -211,6 +211,12 @@
   coverage. The retained artifact is a synthetic report pointer, not model
   output; durable host storage, external provider dispatch, independent hosts,
   sandbox execution, and live recovery remain open.
+- [x] Certify gateway failure settlement through the host boundary
+  (`2abc02a`). The real host/controller/adapter fixture drives both a
+  retryable `429` and permanent `401`; each run settles `FAILED`, releases the
+  committed binding/reservation, retains only status/cause metadata, and keeps
+  injected provider detail out of evidence. This is local failure semantics,
+  not automatic live retry, provider recovery, durable host, or sandbox proof.
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports

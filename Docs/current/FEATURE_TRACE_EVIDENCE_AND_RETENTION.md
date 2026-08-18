@@ -213,6 +213,12 @@ after real host admission, claim, controller settlement, and release. The
 report is payload-free and explicitly in-memory; durable host storage,
 external-provider callbacks, independent hosts, sandbox execution, and live
 recovery remain separate evidence boundaries.
+`2abc02a` extends the same host boundary with bounded gateway failure traces:
+the real controller settles both a retryable `429` and permanent `401` case as
+`FAILED`, releases each committed binding, and preserves only status/cause
+metadata. The certificate excludes provider detail text from its run evidence
+and remains fixture-only; live retry/recovery and external-provider evidence
+remain open.
 
 The durable worker-run evidence slice is now separately certified by
 [`scripts/check_worker_run_postgres_evidence.py`](../../mas/scripts/check_worker_run_postgres_evidence.py)

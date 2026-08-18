@@ -110,6 +110,15 @@ independent-host, sandbox, or live recovery claim. The certificate is indexed
 in the roadmap and retained at
 [`gateway_worker_host_fixture.json`](../../mas/docs/provenance/gateway_worker_host_fixture.json).
 
+Commit `2abc02a` extends the maintained host certificate with transient and
+permanent gateway failure settlement. The real host/controller/adapter path
+settles a `429` and a `401` case as `FAILED`, releases each committed binding
+and reservation, and keeps provider detail text out of run evidence while
+retaining only status/cause metadata. This is local failure semantics only;
+automatic live retry, external provider recovery, durable host, and sandbox
+evidence remain open. The certificate is indexed in the roadmap and retained
+at [`gateway_worker_host_failure_fixture.json`](../../mas/docs/provenance/gateway_worker_host_failure_fixture.json).
+
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
 startup reconciliation and `AgentConfig`/health propagation (`569231f`),
