@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `6cf274000f40cc98e1032caf97dc594fa4026fa6` (latest grouped verification revision)
+**Base revision:** `1b48cab031b4a4ef3fc79a673c5a9c44a8298895` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -23,6 +23,15 @@ requires explicit operator opt-in. The retained live certificate
 binding/reservation release. It retains scalar status/usage metadata only; this
 does not add durable worker read-back, independent-host, sandbox, recovery, or
 mail-edge callback/bounce evidence to the release decision.
+
+The durable live recovery increment `def4fe9` adds a bounded adapter retry
+budget and retains [`provenance/gateway_worker_provider_recovery_live.json`](provenance/gateway_worker_provider_recovery_live.json).
+That certificate records one injected transient `429`, one forwarded
+`llama-3.3-70b-versatile`/`litellm` completion, `SUCCEEDED` durable settlement,
+dual-Postgres reopen, raw-ingress delivered/bounced replay/conflict/tamper
+checks, payload-free generated-text redaction, and zero residual fixture rows.
+It is retry-boundary evidence only; outage, external callback/delivery,
+independent-host, sandbox, and clean-worktree gates remain open.
 
 The continuation groups `8f46ed1`/`4d2ec12` reconcile the protocol artifact and
 authority documentation; `0dbfdb7`/`bf65cd3` align docs-index regression
