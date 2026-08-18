@@ -532,7 +532,7 @@ single frozen commit before production claims are made.
 - The same commit adds deterministic `aiat.model-profile-catalogue.v1`
   reconciliation, a fail-closed `--live` verifier, an idempotent conflict-
   preserving profile bootstrap, and the internal `omniroute-coding` LiteLLM
-  alias. Current 2026-08-18 local evidence retains 93 registered models, 94
+  alias. Current 2026-08-18 local evidence retains 93 registered models, 93
   persisted versions, 93 approved covered entries, and no pending registered
   model or reconciliation finding after the exact unreferenced local smoke
   fixture was removed following a zero-reference preflight. The explicit
