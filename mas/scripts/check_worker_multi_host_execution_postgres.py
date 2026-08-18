@@ -1,11 +1,14 @@
 """Certify concurrent native Worker Run execution across two worker hosts.
 
 This probe extends the committed-binding host executor with a deterministic
-two-host exercise.  It reserves two worker-plane hosts, binds two queued runs,
-executes them concurrently through ``WorkerHostExecutor``, reopens Postgres,
-and removes only its fixture namespace.  It proves multi-host native adapter
-execution and host-specific lease admission; it does not claim gVisor,
-Firecracker, provider, remote-runtime, or outage-recovery evidence.
+two-host exercise. It reserves two worker-plane hosts, binds two queued runs,
+executes them concurrently through ``WorkerHostExecutor``, races a duplicate
+host claim for one run, and replays both the terminal and alias idempotency
+requests without redispatch. It reopens Postgres and removes only its fixture
+namespace. It proves multi-host native adapter execution, host-specific lease
+admission, and bounded duplicate-effect protection; it does not claim gVisor,
+Firecracker, provider, remote-runtime, independent-machine, or outage-recovery
+evidence.
 """
 
 from __future__ import annotations
@@ -45,6 +48,8 @@ from mas_core.worker_contract.models import (  # noqa: E402
 from mas_core.worker_registry.host_executor import (  # noqa: E402
     HOST_EXECUTION_SCHEMA,
     HostExecutionRequest,
+    WorkerHostExecutionRejected,
+    WorkerHostExecutionResult,
     WorkerHostExecutor,
 )
 from mas_core.worker_registry.host_registry import WorkerHostRegistry  # noqa: E402
@@ -67,6 +72,7 @@ HOST_UUID_B = UUID("00000000-0000-4000-a000-000000000c32")
 WORKER_REGISTRY_ID = UUID("00000000-0000-4000-a000-000000000c33")
 RUN_A = UUID("00000000-0000-4000-a000-000000000c34")
 RUN_B = UUID("00000000-0000-4000-a000-000000000c35")
+ALIAS_RUN = UUID("00000000-0000-4000-a000-000000000c38")
 RESERVATION_A = UUID("00000000-0000-4000-a000-000000000c36")
 RESERVATION_B = UUID("00000000-0000-4000-a000-000000000c37")
 TOKEN_A = "aiat-multi-host-execution-token-a-v1"
@@ -87,6 +93,10 @@ IDEMPOTENCY_B = "aiat-cert-multi-host-execution-v1-idempotency-b"
 PAYLOAD_MARKER = "aiat multi-host fixture payload must never enter the evidence report"
 RUN_IDS = (RUN_A, RUN_B)
 TRACE_IDS = (TRACE_A, TRACE_B)
+
+_DISPATCH_COUNT = 0
+_RUN_A_STARTED: asyncio.Event | None = None
+_RUN_A_RELEASE: asyncio.Event | None = None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -252,6 +262,12 @@ async def _cleanup(storage: AgentStorage) -> dict[str, int]:
 
 
 async def _fixture_worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+    global _DISPATCH_COUNT
+    _DISPATCH_COUNT += 1
+    if request.run_id == RUN_A and _RUN_A_STARTED is not None:
+        _RUN_A_STARTED.set()
+        if _RUN_A_RELEASE is not None:
+            await _RUN_A_RELEASE.wait()
     return WorkerResult(
         run_id=request.run_id,
         worker_id=request.worker_id,
@@ -388,7 +404,11 @@ async def _run(dsn: str | None) -> dict[str, Any]:
     first_counts: dict[str, int] = {}
     cleanup_counts: dict[str, int] = {}
     remaining: dict[str, int] = {}
-    results: list[Any] = []
+    host_a_result: WorkerHostExecutionResult | None = None
+    host_b_result: WorkerHostExecutionResult | None = None
+    duplicate_attempt_error: Exception | None = None
+    replay_outcome: Any = None
+    alias_replay_outcome: Any = None
     durable_runs: list[dict[str, Any]] = []
     durable_bindings: list[dict[str, Any] | None] = []
     durable_usage: list[dict[str, Any]] = []
@@ -449,6 +469,10 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         await _create_run(storage, request_a)
         await _create_run(storage, request_b)
         mutation_performed = True
+        global _DISPATCH_COUNT, _RUN_A_STARTED, _RUN_A_RELEASE
+        _DISPATCH_COUNT = 0
+        _RUN_A_STARTED = asyncio.Event()
+        _RUN_A_RELEASE = asyncio.Event()
         binding_service = WorkerRunHostBindingService(storage)
         await binding_service.assign(
             _binding_request(
@@ -479,12 +503,19 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 worker_id=str(canonical_worker_id),
                 runtime_version="fixture-runtime-v1",
             ),
+            NativeWorkerAdapter(
+                _fixture_worker,
+                worker_id=str(canonical_worker_id),
+                runtime_version="fixture-runtime-v1",
+            ),
         ]
+        tasks: list[asyncio.Task[Any]] = []
         try:
             executor_a = WorkerHostExecutor(storage, binding_service=binding_service)
             executor_b = WorkerHostExecutor(storage, binding_service=binding_service)
-            results = list(
-                await asyncio.gather(
+            duplicate_executor = WorkerHostExecutor(storage, binding_service=binding_service)
+            tasks = [
+                asyncio.create_task(
                     executor_a.execute(
                         HostExecutionRequest(
                             run_id=RUN_A,
@@ -495,7 +526,22 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                         request_a,
                         adapters[0],
                         worker_registry_id=canonical_worker_id,
-                    ),
+                    )
+                ),
+                asyncio.create_task(
+                    duplicate_executor.execute(
+                        HostExecutionRequest(
+                            run_id=RUN_A,
+                            host_id=HOST_A,
+                            owner=f"{OWNER_A}-duplicate",
+                            lease_seconds=30,
+                        ),
+                        request_a,
+                        adapters[2],
+                        worker_registry_id=canonical_worker_id,
+                    )
+                ),
+                asyncio.create_task(
                     executor_b.execute(
                         HostExecutionRequest(
                             run_id=RUN_B,
@@ -506,14 +552,62 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                         request_b,
                         adapters[1],
                         worker_registry_id=canonical_worker_id,
-                    ),
-                )
+                    )
+                ),
+            ]
+            if _RUN_A_STARTED is None or _RUN_A_RELEASE is None:
+                raise RuntimeError("duplicate-effect dispatch gates were not initialized")
+            try:
+                await asyncio.wait_for(_RUN_A_STARTED.wait(), timeout=5)
+            finally:
+                _RUN_A_RELEASE.set()
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            host_a_results = [
+                item for item in gathered[:2] if isinstance(item, WorkerHostExecutionResult)
+            ]
+            host_a_errors = [
+                item for item in gathered[:2] if isinstance(item, Exception)
+            ]
+            if len(host_a_results) == 1:
+                host_a_result = host_a_results[0]
+            if len(host_a_errors) == 1:
+                duplicate_attempt_error = host_a_errors[0]
+            if isinstance(gathered[2], WorkerHostExecutionResult):
+                host_b_result = gathered[2]
+            elif isinstance(gathered[2], Exception):
+                raise gathered[2]
+        finally:
+            if _RUN_A_RELEASE is not None:
+                _RUN_A_RELEASE.set()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*(adapter.close() for adapter in adapters))
+        from mas_core.worker_contract.controller import WorkerRunController
+
+        replay_adapter = NativeWorkerAdapter(
+            _fixture_worker,
+            worker_id=str(canonical_worker_id),
+            runtime_version="fixture-runtime-v1",
+        )
+        try:
+            replay_controller = WorkerRunController(storage=storage)
+            replay_outcome = await replay_controller.execute(
+                request_a,
+                replay_adapter,
+                worker_registry_id=canonical_worker_id,
+            )
+            alias_replay_outcome = await replay_controller.execute(
+                request_a.model_copy(update={"run_id": ALIAS_RUN}),
+                replay_adapter,
+                worker_registry_id=canonical_worker_id,
             )
         finally:
-            await asyncio.gather(*(adapter.close() for adapter in adapters))
+            await replay_adapter.close()
+        if host_a_result is None or host_b_result is None:
+            raise RuntimeError("multi-host execution did not produce both successful host results")
         for trace_id, span_id, result in (
-            (TRACE_A, WORKER_SPAN_A, results[0]),
-            (TRACE_B, WORKER_SPAN_B, results[1]),
+            (TRACE_A, WORKER_SPAN_A, host_a_result),
+            (TRACE_B, WORKER_SPAN_B, host_b_result),
         ):
             await storage.create_native_trace_span(
                 trace_id=trace_id,
@@ -606,10 +700,25 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             sort_keys=True,
         )
     run_states = [str(row.get("state") or "unknown") for row in durable_runs]
+    host_results = [host_a_result, host_b_result]
     assigned_hosts = [
-        result.binding_before.get("host_id") if result else None for result in results
+        result.binding_before.get("host_id") if result else None for result in host_results
     ]
-    claim_states = [str((result.claimed if result else {}).get("state") or "unknown") for result in results]
+    claim_states = [
+        str((result.claimed if result else {}).get("state") or "unknown")
+        for result in host_results
+    ]
+    duplicate_rejection_reason = (
+        duplicate_attempt_error.reason_code
+        if isinstance(duplicate_attempt_error, WorkerHostExecutionRejected)
+        else type(duplicate_attempt_error).__name__
+        if duplicate_attempt_error is not None
+        else None
+    )
+    replay_state = str(getattr(replay_outcome, "state", "unknown"))
+    replay_run_id = str(getattr(replay_outcome, "run_id", ""))
+    alias_replay_state = str(getattr(alias_replay_outcome, "state", "unknown"))
+    alias_replay_run_id = str(getattr(alias_replay_outcome, "run_id", ""))
     binding_states = [str((binding or {}).get("state") or "unknown") for binding in durable_bindings]
     reservation_states = [
         str((binding or {}).get("reservation_state") or "unknown") for binding in durable_bindings
@@ -628,7 +737,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 and result.binding_before.get("current_host_lease_valid") is True
                 and result.binding_before.get("host_lease_generation")
                 == result.binding_before.get("current_host_lease_generation")
-                for result in results
+                for result in host_results
             ),
             all(value >= 6 for value in transition_counts.values()),
             all(value >= 2 for value in event_counts.values()),
@@ -637,6 +746,12 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             all(len(durable_spans[trace_id]) >= 3 for trace_id in TRACE_IDS),
             all(item.get("status") == "pass" for item in coverage.values()),
             payload_free,
+            _DISPATCH_COUNT == 2,
+            duplicate_rejection_reason == "worker_run_claim_failed",
+            replay_state == "SUCCEEDED",
+            replay_run_id == str(RUN_A),
+            alias_replay_state == "SUCCEEDED",
+            alias_replay_run_id == str(RUN_A),
             reopened_healthy,
             remaining
             == {
@@ -664,6 +779,17 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         "assigned_hosts": assigned_hosts,
         "run_states": run_states,
         "claim_states": claim_states,
+        "dispatch_count": _DISPATCH_COUNT,
+        "duplicate_attempt_count": 1,
+        "duplicate_rejection_reason": duplicate_rejection_reason,
+        "terminal_replay": {
+            "state": replay_state,
+            "run_id": replay_run_id,
+        },
+        "alias_replay": {
+            "state": alias_replay_state,
+            "run_id": alias_replay_run_id,
+        },
         "binding_states": binding_states,
         "reservation_states": reservation_states,
         "transition_counts": transition_counts,
@@ -689,12 +815,15 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         "external_network_access_performed": False,
         "external_provider_mutation_performed": False,
         "worker_dispatch_performed": True,
-        "scope": "two committed worker-plane bindings, concurrent native fixture execution on distinct hosts, durable evidence, reopen, release, and scoped cleanup",
+        "scope": "two committed worker-plane bindings, concurrent native fixture execution on distinct hosts, duplicate-claim rejection, terminal and alias replay, durable evidence, reopen, release, and scoped cleanup",
         "certification_boundary": {
             "distinct_worker_plane_hosts": "checked",
             "host_lease_generation_and_current_lease": "checked",
             "concurrent_worker_run_claims": "checked",
             "native_fixture_dispatch_on_each_host": "checked",
+            "duplicate_effect_protection": "checked",
+            "terminal_replay_without_redispatch": "checked",
+            "alias_replay_without_redispatch": "checked",
             "durable_usage_artifact_trace_evidence": "checked",
             "binding_and_reservation_release": "checked",
             "postgres_connection_reopen": "checked",
