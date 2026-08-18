@@ -152,6 +152,8 @@ class TestModelsMetadata:
         "infra_events",
         "capabilities",
         "worker_registry",
+        "worker_hosts",
+        "worker_host_reservations",
         "evaluation_reports",
         "project_usage_events",
         "worker_shell_versions",
@@ -179,6 +181,7 @@ class TestModelsMetadata:
         "worker_checkpoints",
         "worker_artifacts",
         "worker_usage_records",
+        "worker_run_host_bindings",
         "hiring_pipeline_stages",
         "approval_records",
         "update_monitoring_jobs",
@@ -1586,9 +1589,19 @@ class TestMemoryInit:
 
     def test_public_exports(self):
         from mas_core.memory import (
+            DEFAULT_RESOURCE_PROFILE_CONCURRENCY,
+            DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES,
+            ENCRYPTION_ALGORITHM,
+            MAX_MULTIPART_PARTS,
+            MAX_MULTIPART_PAYLOAD_BYTES,
+            MIN_PART_SIZE_BYTES,
             OBJECT_STORE_BACKUP_SCHEMA,
             OBJECT_STORE_CONFORMANCE_SCHEMA,
             OBJECT_STORE_COPY_SCHEMA,
+            OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA,
+            OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA,
+            OBJECT_STORE_MULTIPART_SCHEMA,
+            OBJECT_STORE_RESOURCE_PROFILE_SCHEMA,
             OBJECT_STORE_RESTORE_SCHEMA,
             AgentStorage,
             BackupManifest,
@@ -1596,18 +1609,32 @@ class TestMemoryInit:
             BlobClient,
             BlobRef,
             CheckpointStore,
+            EncryptedBackupManifest,
+            EncryptedBackupObject,
+            EncryptedRestoreVerification,
             InMemoryObjectStore,
+            MultipartObjectStoreAdapter,
+            MultipartUploadConfig,
+            MultipartUploadReport,
             ObjectStoreAdapter,
             ObjectStoreConformanceCase,
             ObjectStoreConformanceReport,
             ObjectStoreCopyCase,
             ObjectStoreCopyReport,
+            ObjectStoreResourceProfileConfig,
+            ObjectStoreResourceProfileReport,
             RestoreVerification,
+            assert_clean_restore_target,
             build_backup_manifest,
+            build_encrypted_backup,
             copy_manifest_objects,
             metadata,
+            replicate_encrypted_backup,
             run_object_store_conformance,
+            run_object_store_multipart_probe,
+            run_object_store_resource_profile,
             verify_and_copy_blobs,
+            verify_encrypted_backup,
             verify_restored_manifest,
         )
 
@@ -1630,10 +1657,34 @@ class TestMemoryInit:
         assert BackupManifest is not None
         assert BackupObject is not None
         assert RestoreVerification is not None
+        assert assert_clean_restore_target is not None
         assert build_backup_manifest is not None
         assert copy_manifest_objects is not None
         assert verify_restored_manifest is not None
         assert metadata is not None
+        assert DEFAULT_RESOURCE_PROFILE_CONCURRENCY > 0
+        assert DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES
+        assert MAX_MULTIPART_PARTS > 0
+        assert MAX_MULTIPART_PAYLOAD_BYTES > 0
+        assert MIN_PART_SIZE_BYTES > 0
+        assert ENCRYPTION_ALGORITHM
+        assert OBJECT_STORE_MULTIPART_SCHEMA
+        assert OBJECT_STORE_RESOURCE_PROFILE_SCHEMA
+        assert OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA
+        assert OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA
+        assert MultipartObjectStoreAdapter is not None
+        assert MultipartUploadConfig is not None
+        assert MultipartUploadReport is not None
+        assert run_object_store_multipart_probe is not None
+        assert ObjectStoreResourceProfileConfig is not None
+        assert ObjectStoreResourceProfileReport is not None
+        assert run_object_store_resource_profile is not None
+        assert EncryptedBackupManifest is not None
+        assert EncryptedBackupObject is not None
+        assert EncryptedRestoreVerification is not None
+        assert build_encrypted_backup is not None
+        assert replicate_encrypted_backup is not None
+        assert verify_encrypted_backup is not None
 
     def test_all_list(self):
         import mas_core.memory as mem
@@ -1653,11 +1704,35 @@ class TestMemoryInit:
             "ObjectStoreCopyCase",
             "ObjectStoreCopyReport",
             "verify_and_copy_blobs",
+            "MAX_MULTIPART_PARTS",
+            "MAX_MULTIPART_PAYLOAD_BYTES",
+            "MIN_PART_SIZE_BYTES",
+            "OBJECT_STORE_MULTIPART_SCHEMA",
+            "MultipartObjectStoreAdapter",
+            "MultipartUploadConfig",
+            "MultipartUploadReport",
+            "run_object_store_multipart_probe",
+            "DEFAULT_RESOURCE_PROFILE_CONCURRENCY",
+            "DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES",
+            "OBJECT_STORE_RESOURCE_PROFILE_SCHEMA",
+            "ObjectStoreResourceProfileConfig",
+            "ObjectStoreResourceProfileReport",
+            "run_object_store_resource_profile",
+            "ENCRYPTION_ALGORITHM",
+            "OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA",
+            "OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA",
+            "EncryptedBackupManifest",
+            "EncryptedBackupObject",
+            "EncryptedRestoreVerification",
+            "build_encrypted_backup",
+            "replicate_encrypted_backup",
+            "verify_encrypted_backup",
             "OBJECT_STORE_BACKUP_SCHEMA",
             "OBJECT_STORE_RESTORE_SCHEMA",
             "BackupManifest",
             "BackupObject",
             "RestoreVerification",
+            "assert_clean_restore_target",
             "build_backup_manifest",
             "copy_manifest_objects",
             "verify_restored_manifest",

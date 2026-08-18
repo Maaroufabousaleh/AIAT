@@ -25,8 +25,8 @@ def test_checked_in_api_and_protocol_contracts_match_runtime() -> None:
     assert report["status"] == "pass"
     assert report["openapi"]["path_count"] >= 200
     assert report["protocol"]["protocol_version"] == "aiat.v1"
-    assert report["python_sdk"]["model_count"] == 130
-    assert report["python_sdk"]["operation_count"] == 268
+    assert report["python_sdk"]["model_count"] == 135
+    assert report["python_sdk"]["operation_count"] == 271
 
 
 def test_dashboard_typescript_contract_is_not_stale() -> None:
@@ -38,8 +38,8 @@ def test_dashboard_typescript_contract_is_not_stale() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "130 models" in result.stdout
-    assert "268 operations" in result.stdout
+    assert "135 models" in result.stdout
+    assert "271 operations" in result.stdout
 
 
 def test_python_sdk_contract_is_not_stale() -> None:
@@ -51,5 +51,5 @@ def test_python_sdk_contract_is_not_stale() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "130 models" in result.stdout
-    assert "268 operations" in result.stdout
+    assert "135 models" in result.stdout
+    assert "271 operations" in result.stdout
