@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.worker-reconciliation-live-evidence.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T20:39:56Z",
-  "mode": "local-live",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "mode": "compose-live",
   "status": "pass",
   "source_command": "scripts/check_worker_reconciliation.py --live --json",
   "endpoint": "/capabilities/workers",
   "container": "mas-orchestrator-api-1",
-  "persisted_worker_count": 48,
+  "persisted_worker_count": 50,
   "default_worker_count": 39,
   "matched_default_worker_count": 39,
   "missing_default_worker_count": 0,
@@ -25,7 +25,7 @@
     "compose_import_probe_ref": "worker_runtime_readiness_live.json",
     "compose_locked_adapter_probe_ref": "runtime_adapter_conformance_live.json"
   },
-  "scope": "read-only persisted default-worker binding reconciliation; no database mutation",
+  "scope": "Read-only persisted default-worker binding reconciliation against mas-orchestrator-api-1; no database mutation",
   "certification_boundary": {
     "manifest_presence": "checked",
     "adapter_sandbox_model_source_pin_capability_bindings": "checked",

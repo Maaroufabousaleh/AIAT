@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.model-profile-catalogue-live-evidence.v1",
-  "observed_at": "2026-08-18T03:34:27Z",
-  "mode": "local-live",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "mode": "compose-live",
   "status": "pass_with_profile_findings",
   "source_command": "scripts/check_model_profile_catalogue.py --live --json --require-approved",
   "endpoint": "/model-profiles/catalogue",
@@ -27,9 +27,10 @@
   "coverage": "pending_persisted_profile_bindings",
   "findings_policy": "operator-visible model/profile reconciliation findings; no licence or resource restriction gate",
   "secret_policy": "credentials, provider keys, payloads, and raw profile records are omitted",
-  "scope": "read-only API catalogue reconciliation; no profile creation, approval, routing, or deployment mutation",
+  "scope": "Read-only Compose API catalogue reconciliation; no profile creation, approval, routing, or deployment mutation",
   "dispatch_performed": false,
   "provider_call_performed": false,
   "mutations_performed": false,
-  "provider_execution": "not_checked"
+  "provider_execution": "not_checked",
+  "container": "mas-orchestrator-api-1"
 }

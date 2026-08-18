@@ -1,10 +1,10 @@
 {
   "schema_version": "aiat.live-tool-trace-evidence.v1",
-  "observed_at": "2026-08-11T20:26:17Z",
-  "mode": "local-live",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "mode": "compose-live",
   "status": "pass",
   "scope": "one bounded time_now call with an existing project context and operator trace read-back through the configured published loopback port; only telemetry rows were created",
-  "trace_id_used": "aiat-live-tool-20260811-phase",
+  "trace_id_used": "aiat-live-tool-20260818-r1",
   "tool_service_endpoint_mode": "configured",
   "tool_name": "time_now",
   "tool_http_status": 200,
@@ -44,5 +44,7 @@
   "notice_codes": [
     "PARTIAL_TRACE_SOURCES"
   ],
-  "credentials_or_project_identifiers_emitted": false
+  "credentials_or_project_identifiers_emitted": false,
+  "container": "mas-orchestrator-api-1",
+  "scope": "One bounded time_now call plus operator trace read-back through the configured Compose service; only telemetry rows were created."
 }

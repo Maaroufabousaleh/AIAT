@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.metric-series-budget-live.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T20:45:21Z",
+  "observed_at": "2026-08-18T16:05:09Z",
   "environment": {
     "host_class": "WSL2 with Docker Desktop Linux engine",
     "orchestrator_url_configured": true,
@@ -26,6 +26,7 @@
   },
   "notices": [
     "This is the refreshed 31-series local orchestrator scrape; the separate durable 10,000-project certificate is retained at metric_series_many_projects.json, while clean native-Linux release-host scale evidence remains open.",
-    "No licence or resource metadata was evaluated as a gate."
+    "No licence or resource metadata was evaluated as a gate.",
+    "This run used the authenticated Compose orchestrator endpoint and retained only series counts, bounded label inventories, and policy violations."
   ]
 }

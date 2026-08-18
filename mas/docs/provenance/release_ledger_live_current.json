@@ -71,11 +71,13 @@
   ],
   "historical_configured_profile": {
     "ref": "release_ledger_live.json",
-    "total": 64,
-    "pass": 59,
+    "observed_at": "2026-08-18T16:05:09Z",
+    "total": 77,
+    "pass": 66,
     "fail": 0,
-    "blocked": 5,
-    "note": "Retained configured loopback evidence; it predates the aggregate native-preflight child and remains descriptive rather than a release approval."
+    "blocked": 11,
+    "pending": 4,
+    "note": "Latest configured Compose aggregation with operator environment supplied without output; it remains descriptive rather than a release approval."
   },
   "licence_metadata_is_gate": false,
   "bounded_resource_profile_evidence": {

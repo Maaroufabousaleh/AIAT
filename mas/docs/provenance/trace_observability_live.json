@@ -1,10 +1,10 @@
 {
   "schema_version": "aiat.live-trace-observability.v1",
-  "observed_at": "2026-08-11T20:26:17Z",
-  "mode": "local-live",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "mode": "compose-live",
   "service": "orchestrator-api",
   "database_migration_head": "0036_native_trace_spans",
-  "trace_id": "aiat-live-trace-20260811-phase",
+  "trace_id": "aiat-live-trace-20260818-r1",
   "request": {
     "method": "GET",
     "route": "/health",
@@ -41,5 +41,5 @@
     "PARTIAL_TRACE_SOURCES"
   ],
   "secret_values_printed": false,
-  "scope": "Local live transport/API observation only. Model/tool/audit/worker/integration writers, identity provider/webhook mail-edge or bounce, retention enforcement, and native multi-service/host coverage are not claimed by this probe. The single health request adds only its bounded telemetry rows; it does not create project, worker, provider, credential, or deployment state."
+  "scope": "One bounded Compose health request and operator-authenticated trace read-back through mas-orchestrator-api-1. Model/tool/audit/worker/integration writers, identity provider/webhook mail-edge or bounce, retention enforcement, and native multi-service/host coverage are not claimed by this probe. The request adds only bounded telemetry rows; it does not create project, worker, provider, credential, or deployment state."
 }

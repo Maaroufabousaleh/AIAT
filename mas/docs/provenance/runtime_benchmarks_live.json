@@ -1,6 +1,6 @@
 {
   "schema_version": "aiat.runtime-benchmark-live-evidence.v1",
-  "observed_at": "2026-08-11T20:41:13Z",
+  "observed_at": "2026-08-18T16:05:09Z",
   "status": "pass",
   "mode": "live",
   "scope": "orchestrator dependency-backed dry-run only",
@@ -12,7 +12,7 @@
       "catalogue_status": "available",
       "status": "dry_run_completed",
       "sandbox_required": "gvisor",
-      "elapsed_ms": 0.26,
+      "elapsed_ms": 3.56,
       "tasks_run": 1,
       "tasks_passed": 1
     },
@@ -21,7 +21,7 @@
       "catalogue_status": "available",
       "status": "dry_run_completed",
       "sandbox_required": "gvisor",
-      "elapsed_ms": 0.27,
+      "elapsed_ms": 3366.97,
       "tasks_run": 1,
       "tasks_passed": 1
     }
@@ -33,5 +33,6 @@
     "live_worker_run": "not_checked",
     "rollback": "not_checked"
   },
-  "secret_policy": "operator credentials, project IDs, provider values, and runtime output are omitted"
+  "secret_policy": "operator credentials, project IDs, provider values, and runtime output are omitted",
+  "container": "mas-orchestrator-api-1"
 }

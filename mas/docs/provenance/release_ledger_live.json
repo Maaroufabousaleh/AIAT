@@ -1,28 +1,29 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T20:50:30Z",
-  "profile": "live",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 64,
-    "pass": 59,
+    "total": 77,
+    "pass": 66,
     "fail": 0,
-    "blocked": 5
+    "blocked": 11
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "5 check(s) are externally blocked",
+    "11 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "aggregate_invocation": {
     "live_orchestrator_url_configured": true,
-    "check_timeout_seconds": 60,
+    "check_timeout_seconds": 180,
     "credentials_printed": false,
-    "environment_source": "local operator environment parsed without output",
-    "scope": "bounded release-evidence aggregation; no deployment mutation or credential output"
+    "environment_source": "local operator environment passed to bounded child checks without output",
+    "container": "mas-orchestrator-api-1",
+    "scope": "bounded release-evidence aggregation; no credential or dependency payload output"
   },
   "local_boundary_evidence": {
     "status": "pass",
@@ -36,17 +37,62 @@
     "execution_boundary": "orchestrator-container-on-mas_internal",
     "case_count": 8,
     "passed_case_count": 8,
-    "note": "The aggregate live child now invokes the checked-in MinIO conformance probe inside the orchestrator container, preserving the private endpoint and credential boundary; the eight scoped cases pass after credential-safe IAM reconciliation."
+    "note": "The configured aggregate MinIO conformance child passes. Provider-diverse multipart, resource-profile, and outage evidence is retained separately with its own corrected disposable fixtures."
   },
   "local_tool_trace_evidence": {
     "status": "pass",
     "aggregate_current_status": "pass",
     "ref": "tool_trace_live.json",
-    "trace_id": "aiat-live-tool-20260811-phase",
+    "trace_id": "aiat-live-tool-20260818-r1",
     "tool_name": "time_now",
     "native_tool_span_count": 1,
     "tool_usage_event_count": 1,
-    "note": "The bounded pure-tool probe uses an existing project context and creates only normal usage/native telemetry rows; the configured local loopback tool-service endpoint is recorded by the checker; no project identifier or response payload is retained."
+    "note": "One bounded pure-tool call through the Compose tool service reads back one project-usage event and one tool-service native span; no project identifier or response payload is retained."
+  },
+  "local_trace_transport_evidence": {
+    "status": "pass",
+    "aggregate_current_status": "pass",
+    "ref": "trace_observability_live.json",
+    "trace_id": "aiat-live-trace-20260818-r1",
+    "api_request_count": 1,
+    "native_span_count": 1,
+    "note": "One bounded /health request reads back one API-request row and one orchestrator_api native transport span; broader model, worker, mail-edge, and retention coverage remain separate."
+  },
+  "local_slo_capacity_evidence": {
+    "status": "observed",
+    "aggregate_current_status": "pass",
+    "ref": "slo_capacity_live.json",
+    "slo_status": "attention",
+    "capacity_status": "clear",
+    "capacity_confidence": "medium",
+    "observed_service_count": 5,
+    "observed_event_count": 46,
+    "notice_codes": ["SLO_POLICY_IS_DESCRIPTIVE", "SLO_SOURCES_NOT_OBSERVED"],
+    "note": "The API read models are reachable and schema-valid, but the SLO report remains descriptive/attention because native service sources are not observed."
+  },
+  "local_metric_series_evidence": {
+    "status": "pass",
+    "ref": "metric_series_live.json",
+    "total_series": 31,
+    "total_budget": 2000,
+    "project_id_label_present": false,
+    "violations": [],
+    "note": "The authenticated Compose scrape passes bounded AIAT-owned family and label policies."
+  },
+  "local_worker_reconciliation_evidence": {
+    "status": "pass",
+    "ref": "worker_reconciliation_live.json",
+    "persisted_worker_count": 50,
+    "default_worker_count": 39,
+    "matched_default_worker_count": 39,
+    "missing_default_worker_count": 0,
+    "binding_mismatch_count": 0,
+    "pending_security_findings": {
+      "workers": ["coding_worker", "tester"],
+      "finding_count": 316,
+      "status": "findings_review_required"
+    },
+    "note": "All 39 checked-in defaults match the live registry; the two security-review rows remain pending and are not waived by reconciliation."
   },
   "local_runtime_benchmark_evidence": {
     "status": "pass",
@@ -54,35 +100,7 @@
     "runtime_ids": ["langgraph", "crewai"],
     "tasks_run": 2,
     "tasks_passed": 2,
-    "note": "The aggregate runtime_benchmarks:live child and the retained direct probe passed deterministic dependency-backed dry-runs; sandbox, canary, live worker-run, and rollback remain separate."
-  },
-  "local_worker_reconciliation_evidence": {
-    "status": "pass",
-    "ref": "worker_reconciliation_live.json",
-    "default_worker_count": 39,
-    "matched_default_worker_count": 39,
-    "missing_default_worker_count": 0,
-    "binding_mismatch_count": 0,
-    "note": "The authenticated local live child matches every checked-in default worker to its persisted registry binding; security findings remain a separate technical evidence item."
-  },
-  "local_worker_runtime_evidence": {
-    "status": "pass",
-    "ref": "worker_runtime_readiness_live.json",
-    "worker_count": 39,
-    "container": "mas-orchestrator-api-1",
-    "transport": "docker-exec",
-    "required_runtime_blocker_count": 0,
-    "required_imports": {
-      "langgraph": true,
-      "crewai": true
-    },
-    "optional_imports": {
-      "agent_framework": false,
-      "autogen_agentchat": false,
-      "autogen_core": false,
-      "letta": false
-    },
-    "note": "The bounded live readiness child probes package imports inside the running orchestrator image; it does not certify worker canaries, sandboxing, live runs, or rollback."
+    "note": "Both dependency-backed dry-runs completed in the Compose orchestrator image; sandbox, canary, live worker-run, and rollback remain separate."
   },
   "local_model_profile_evidence": {
     "status": "pass_with_profile_findings",
@@ -95,27 +113,12 @@
     "profile_not_registered_count": 2,
     "finding_count": 2,
     "profile_coverage": "pending_persisted_profile_bindings",
-    "note": "The bounded read-only catalogue check passes its approval requirement against the local API; one registered model remains profile_pending and two persisted profile rows are not registered. These are operator-visible reconciliation findings, not licence or resource-restriction gates."
-  },
-  "local_trace_transport_evidence": {
-    "status": "pass",
-    "aggregate_current_status": "pass",
-    "ref": "trace_observability_live.json",
-    "trace_id": "aiat-live-trace-20260811-phase",
-    "api_request_count": 1,
-    "native_span_count": 1,
-    "note": "The configured local aggregate profile observes one /health API request plus one orchestrator_api native span for the retained bounded trace ID; broader deployment-wide model, worker, mail-edge, and retention coverage remain separate."
+    "note": "The approved-coverage requirement is met, while two persisted profile rows are not registered and one registered model remains pending; these are operator-visible reconciliation findings."
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The current configured local profile completed with 59 passes, zero failures, and five externally blocked checks across 64 checks; blockers are operator-selected worker certification, deployment image identity, gVisor/runtime availability, outbound relay, and self-improvement source.",
-    "The retained local transport and pure-tool evidence remain separate bounded passes; this run read back one API/native transport pair and one project-usage/native tool pair through configured loopback endpoints.",
-    "The runtime_benchmarks:live child passes LangGraph and CrewAI; its detailed bounded result is retained at runtime_benchmarks_live.json.",
-    "The model_profile_catalogue:live child passes the explicit approved-coverage requirement and reports 92 covered approved profile versions out of 94 persisted versions, one pending registered model, and two non-registered profile findings; the detailed secret-safe result is retained at model_profile_catalogue_live.json.",
-    "The object_store_conformance:live child passes all eight scoped cases through the checked-in Docker-exec private-network MinIO probe; the aggregate no longer times out on the host-only minio alias, and the local deployment evidence remains separate from provider-diverse migration or disaster-recovery proof.",
-    "The worker_runtime_readiness:live child passes required LangGraph/CrewAI import checks inside mas-orchestrator-api-1 with zero required blockers; optional MAF/AutoGen/Letta imports and worker certification remain separate evidence.",
-    "The worker_reconciliation:live child passes 39/39 persisted default bindings with zero missing rows or mismatches; this does not certify sandbox, canary, live-run, rollback, or security findings.",
-    "This summary does not replace the full machine-readable checker output or native-Linux release-host evidence.",
+    "The configured Compose profile completed with 66 passes, zero failures, and 11 externally blocked checks across 77 checks; native host, image identity, sandbox, Firecracker, provider configuration, credentials host DSN, outbound mail, default-worker certification, and self-improvement source remain blocked.",
+    "The separately retained MinIO/SeaweedFS resource and outage evidence remains valid and provider-diverse; aggregate child blocks caused only by host-side endpoint configuration do not change those verdicts.",
     "Licence and resource notices remain metadata-only and are not a release gate."
   ]
 }
