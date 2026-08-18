@@ -12,8 +12,8 @@ The AIAT MAS operational control is built into the orchestrator-api routes:
   GET  /system/logs/{container}
   PUT  /system/schedule
 
-The API-facing operator wrapper is `scripts/mas-ctl`; Compose lifecycle
-commands remain in `infra/compose/mas.sh`.
+The API-facing operator wrapper is `scripts/mas-ctl`; Compose and systemd
+service lifecycle commands remain in their host-owned wrappers.
 """
 
 from __future__ import annotations
@@ -426,7 +426,7 @@ async def test_system_status_diagnostic_fields(client):
 
 
 # ---------------------------------------------------------------------------
-# 10. Remaining production gaps documented as TODO tests
+# 10. Host-owned lifecycle boundary
 # ---------------------------------------------------------------------------
 
 
@@ -439,16 +439,19 @@ def test_mas_ctl_bootstrap_script_exists():
     assert script.stat().st_mode & 0o111
 
 
-def test_todo_no_service_restart_endpoint():
-    """
-    TODO (production gap): No /system/restart endpoint for individual service restart.
-    The /system/shutdown + /system/resume cycle restarts the whole system.
-    Individual service restart (e.g. just the tool-service) is not exposed via API.
-    """
-    pytest.skip(
-        "TODO: No per-service restart endpoint. "
-        "Full system shutdown/resume is the only restart path."
-    )
+def test_service_restart_remains_host_boundary():
+    """Per-service restart stays in the Compose/systemd host boundary."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    compose_wrapper = repo_root / "infra" / "compose" / "mas.sh"
+    systemd_wrapper = repo_root / "infra" / "systemd" / "masctl"
+    assert compose_wrapper.is_file()
+    assert systemd_wrapper.is_file()
+    assert 'restart)' in compose_wrapper.read_text(encoding="utf-8")
+    systemd_text = systemd_wrapper.read_text(encoding="utf-8")
+    assert 'restart)' in systemd_text
+    assert '"${compose[@]}" restart "$SERVICE_NAME"' in systemd_text
 
 
 @pytest.mark.anyio
