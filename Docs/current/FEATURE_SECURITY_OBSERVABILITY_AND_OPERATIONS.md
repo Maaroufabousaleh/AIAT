@@ -16,9 +16,13 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Non-root containers, resource limits, internal networks, read-only manifest mounts, and no published production Redis/Postgres ports.
 - Semgrep CLI and SkillSpector security evaluator policy; gVisor default and optional Firecracker profiles.
 - `check_sandbox_runtime_readiness.py` validates the 39 worker sandbox
-  declarations and provides a fail-closed Docker `runsc` registration probe;
-  optional digest-pinned smoke, network-denial, canary, and Firecracker checks
-  remain explicit evidence stages.
+  declarations, the 10 hardened external workers, and the AIAT-owned
+  `opencode-runtime` Compose boundary: internal-only networking, no host
+  publication, non-root/read-only execution, dropped capabilities,
+  `no-new-privileges`, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs
+  paths (`2c098f5`). It also provides a fail-closed Docker `runsc`
+  registration probe; optional digest-pinned smoke, network-denial, canary,
+  and Firecracker checks remain explicit evidence stages.
 - The AIAT-owned Firecracker contract (`5ed0a0b`) validates immutable
   kernel/rootfs digests, bounded CPU/memory/PID/disk/output/time limits,
   read-only rootfs, deny-by-default egress, opaque secret references, artifact
@@ -227,8 +231,8 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   reconciliation, SBOMs, vulnerability results, and clean-room pulls still
   need a native-Linux release run. A blocked Docker/configuration result is not
   a pass.
-- The sandbox declaration and `runsc` registration probe are implemented, but
-  gVisor was unavailable in the current host evidence. The Firecracker
+- The worker/Compose sandbox contract and `runsc` registration probe are
+  implemented, but gVisor was unavailable in the current host evidence. The Firecracker
   launch contract is implemented and statically checked, while digest-pinned
   smoke, network-denial, host-certified launcher, and live Firecracker
   certification remain open.

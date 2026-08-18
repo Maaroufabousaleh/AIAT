@@ -61,9 +61,11 @@ external client-language SDK compatibility yet.
   while security, sandbox, canary, live-run, and rollback evidence remain
   separate.
 - [x] Add `scripts/check_sandbox_runtime_readiness.py` with static worker
-  declaration reconciliation and fail-closed Docker `runsc` registration;
-  digest-pinned smoke, network-denial, canary, and Firecracker evidence remain
-  separate.
+  declaration reconciliation, AIAT-owned OpenCode Compose hardening
+  (internal-only network, non-root/read-only execution, dropped capabilities,
+  no-new-privileges, bounded resources, and noexec/nosuid tmpfs), and
+  fail-closed Docker `runsc` registration (`2c098f5`); digest-pinned smoke,
+  network-denial, canary, and Firecracker evidence remain separate.
 - [x] Add the read-only `scripts/check_runtime_benchmarks.py --live --json`
   probe for orchestrator dependency-backed LangGraph/CrewAI benchmarks. It
   sends deterministic configs, bounds third-party imports off the event loop,
@@ -165,7 +167,9 @@ external client-language SDK compatibility yet.
 - [x] Make the credential-free AIAT diff reviewer the default code-review
   adapter and publish a catalogue that keeps generic external candidates
   fail-closed until exact repository/revision/version evidence exists.
-- Complete OpenCode sandbox/security evidence and optionally certify OpenHands core.
+- [x] Reconcile the AIAT-owned OpenCode runtime Compose sandbox contract; complete
+  upstream OpenCode security disposition/rerun, digest-pinned gVisor smoke and
+  network denial, canary, and optional OpenHands core certification remain open.
 - Certify Docling/Spec Kit/Mermaid, Scrapling, Semgrep/SkillSpector, ccpm/GitHub Issues, OpenTofu/GitHub Actions, code-review, and SRE adapters; the shared bounded Semgrep/SkillSpector/TruffleHog scanner aliases are implemented, while Plane, OpenProject, Ansible, and other technically suitable resources remain selectable through the same normal adapter boundaries and need provider-specific certification.
 - [x] Keep `document.ingest` usable before the optional Docling extension is
   installed: the Docling runner is selected when present and the core profile
