@@ -100,6 +100,9 @@ def test_internal_coding_alias_is_registered_for_catalogue_reconciliation() -> N
     assert entry is not None
     assert entry.provider == "litellm"
     assert entry.extra["route_alias"] == "omniroute-coding"
+    assert entry.extra["profile_identity_aliases"] == [
+        {"provider": "aiat", "model_id": "aiat/omniroute-coding"}
+    ]
 
 
 def test_registry_profile_specs_cover_each_registered_model_once() -> None:

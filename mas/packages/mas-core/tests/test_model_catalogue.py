@@ -77,6 +77,35 @@ def test_catalogue_retains_provider_mismatch():
     assert report["findings"][0]["code"] == "PROFILE_PROVIDER_MISMATCH"
 
 
+def test_catalogue_matches_explicit_gateway_profile_identity_alias() -> None:
+    registry = ModelRegistry()
+    registry.register_provider(
+        ProviderConfig(provider_id="litellm", base_url="https://example.invalid")
+    )
+    registry.register(
+        ModelEntry(
+            model_id="omniroute-coding",
+            provider="litellm",
+            api_style=ApiStyle.CHAT_COMPLETIONS,
+            endpoint="/v1/chat/completions",
+            extra={
+                "profile_identity_aliases": [
+                    {"provider": "aiat", "model_id": "aiat/omniroute-coding"}
+                ]
+            },
+        )
+    )
+
+    report = build_model_profile_catalogue(
+        [_profile(model_id="aiat/omniroute-coding", provider_id="aiat")],
+        registry,
+    )
+
+    assert report["findings"] == []
+    assert report["covered_profile_version_count"] == 1
+    assert report["entries"][0]["profile_state"] == "approved_profile_present"
+
+
 def test_unknown_context_window_does_not_reject_a_governed_profile():
     profile = _profile(model_id="test-model")
     version = profile.versions[0].model_copy(update={"context_window": 0})

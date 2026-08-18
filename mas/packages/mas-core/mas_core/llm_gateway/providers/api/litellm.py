@@ -34,6 +34,15 @@ MODEL_REGISTRY.register(
         best_for=["code-generation", "code-review", "testing"],
         limits=["requires-running-litellm-and-omniroute"],
         compliance=["internal-gateway-alias"],
-        extra={"api_model_name": "omniroute-coding", "route_alias": "omniroute-coding"},
+        extra={
+            "api_model_name": "omniroute-coding",
+            "route_alias": "omniroute-coding",
+            "profile_identity_aliases": [
+                {
+                    "provider": "aiat",
+                    "model_id": "aiat/omniroute-coding",
+                }
+            ],
+        },
     )
 )

@@ -147,6 +147,23 @@ class ModelProfile(BaseModel):
         ]
 
 
+def _profile_identity_keys(model: Any) -> tuple[tuple[str, str], ...]:
+    """Return the canonical and explicitly declared profile identities."""
+
+    keys: list[tuple[str, str]] = [(str(model.provider), str(model.model_id))]
+    extra = model.extra if isinstance(getattr(model, "extra", None), dict) else {}
+    aliases = extra.get("profile_identity_aliases")
+    if isinstance(aliases, list):
+        for alias in aliases:
+            if not isinstance(alias, dict):
+                continue
+            provider_id = str(alias.get("provider") or "").strip()
+            model_id = str(alias.get("model_id") or "").strip()
+            if provider_id and model_id and (provider_id, model_id) not in keys:
+                keys.append((provider_id, model_id))
+    return tuple(keys)
+
+
 def build_model_profile_catalogue(
     profiles: Iterable[ModelProfile],
     registry: Any,
@@ -184,8 +201,12 @@ def build_model_profile_catalogue(
     registry_model_ids: set[str] = set()
     for model in sorted(registry.list_models(), key=lambda item: (item.provider, item.model_id)):
         registry_model_ids.add(model.model_id)
+        model_binding_rows: dict[tuple[str, str], dict[str, Any]] = {}
+        for identity_key in _profile_identity_keys(model):
+            for binding in bindings.get(identity_key, []):
+                model_binding_rows[(binding["profile_id"], binding["version"])] = binding
         model_bindings = sorted(
-            bindings.get((model.provider, model.model_id), []),
+            model_binding_rows.values(),
             key=lambda item: (item["profile_id"], item["version"]),
         )
         for binding in model_bindings:
