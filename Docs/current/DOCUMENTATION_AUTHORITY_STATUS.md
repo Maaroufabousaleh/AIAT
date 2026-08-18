@@ -222,6 +222,17 @@ read-backs, exact rollback, terminal outcome/history read-back, and scoped
 cleanup. This is local control-plane evidence only; selected worker/provider,
 budget, deployment, and live issue reconciliation remain separate gates.
 
+The bounded worker lease/recovery group `a413997` adds the maintained local
+Postgres certificate
+[`worker_lease_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_lease_recovery_postgres_evidence.json).
+It proves competing-claim denial, claimant-bound heartbeat, one explicitly
+simulated expiry/requeue, second-owner reclaim, terminal claim denial, durable
+transition/health read-back after connection reopen, and scoped cleanup. This
+is a queue-lease API certificate only; canonical host registration,
+placement/capacity, real host-loss/split-brain, gVisor/Firecracker, and live
+worker/provider evidence remain separate. Licence metadata remains
+informational and non-gating.
+
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
 real adapter accepts an explicit AIAT client boundary, and the deterministic

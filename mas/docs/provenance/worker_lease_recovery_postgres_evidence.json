@@ -1,0 +1,66 @@
+{
+  "schema_version": "aiat.worker-lease-recovery-postgres-certification.v1",
+  "evidence_at": "2026-08-18T00:03:59Z",
+  "commit": "a413997",
+  "mode": "local-postgres-worker-lease-recovery",
+  "status": "pass",
+  "command": "docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_worker_lease_recovery_postgres.py --json'",
+  "migration_version": "0036_native_trace_spans",
+  "initial_fixture_counts": {
+    "workers": 0,
+    "runs": 0,
+    "transitions": 0
+  },
+  "claim_exclusivity": {
+    "owner_a_claimed": true,
+    "owner_b_denied_while_lease_live": true
+  },
+  "heartbeat_owner_binding": {
+    "wrong_owner_denied": true,
+    "claim_owner_renewed": true
+  },
+  "lease_recovery": {
+    "host_loss_simulated_by_expiry": true,
+    "recovered_count": 1,
+    "reclaim_owner_b_succeeded": true,
+    "attempt_count_after_reclaim": 2
+  },
+  "terminal_claim_denial": true,
+  "durable_reopen": {
+    "healthy": true,
+    "run_state": "SUCCEEDED",
+    "worker_health_status": "healthy",
+    "transition_count": 8,
+    "recovery_transition_count": 1
+  },
+  "transition_states": [
+    "QUEUED->CLAIMED",
+    "CLAIMED->QUEUED",
+    "QUEUED->CLAIMED",
+    "CLAIMED->VALIDATING",
+    "VALIDATING->READY",
+    "READY->DISPATCHING",
+    "DISPATCHING->RUNNING",
+    "RUNNING->SUCCEEDED"
+  ],
+  "cleanup": {
+    "worker_runs_deleted": 1,
+    "workers_deleted": 1,
+    "remaining_workers": 0,
+    "remaining_runs": 0,
+    "remaining_transitions": 0
+  },
+  "payload_free": true,
+  "mutation_performed": true,
+  "local_database_access_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "worker_dispatch_performed": false,
+  "licence_metadata_is_gate": false,
+  "scope": "reserved local Postgres worker-run claim, heartbeat, lease expiry/requeue, reclaim, terminal denial, durable transition read-back, and scoped cleanup",
+  "boundary": [
+    "This certifies existing local queue lease/recovery APIs only.",
+    "Host loss is simulated by expiring one reserved fixture lease; no production host registry or placement service is claimed.",
+    "Canonical host registration, placement constraints, multi-host scheduling, gVisor/Firecracker host certification, and real host-loss/split-brain evidence remain open."
+  ]
+}

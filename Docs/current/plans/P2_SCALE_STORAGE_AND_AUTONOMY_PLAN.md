@@ -73,6 +73,16 @@
 
 ## Workstream 3 — multi-host and high-risk execution
 
+- [x] Certify the bounded local Postgres worker-run lease boundary with
+  [`check_worker_lease_recovery_postgres.py`](../../../mas/scripts/check_worker_lease_recovery_postgres.py)
+  (`a413997`) and retained evidence at
+  [`worker_lease_recovery_postgres_evidence.json`](../../../mas/docs/provenance/worker_lease_recovery_postgres_evidence.json).
+  The certificate proves live-lease claim exclusivity, owner-bound heartbeat,
+  one explicitly simulated expiry/requeue, second-owner reclaim, terminal
+  claim denial, durable transition read-back, and scoped cleanup. It is a
+  local queue API certificate only; it does not claim a host registry,
+  placement/capacity scheduler, real host-loss or split-brain proof, or
+  gVisor/Firecracker host certification.
 - Separate control/tool/data hosts from worker pools.
 - Add authenticated worker registration, leases, placement constraints, capacity, and health.
 - Certify gVisor across supported hosts.

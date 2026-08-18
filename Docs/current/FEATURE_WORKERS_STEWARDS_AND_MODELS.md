@@ -4,6 +4,10 @@
 **Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), and durable local Postgres worker-run/trace evidence (`acd3f06`) pass in fixture/local-deployment scope; current live selections are blocked and worker certification remains incomplete
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
+The bounded durable lease/recovery certificate `a413997` passes in local
+Compose scope; full worker certification and production multi-host evidence
+remain incomplete.
+
 ## Purpose
 
 AIAT keeps stable organisational workers while allowing their execution engines to evolve. A specialist is an AIAT shell backed by a certified adapter and pinned OSS runtime. One dedicated steward governs each external worker's documentation, compatibility, candidates, certification, rollout, and rollback.
@@ -13,6 +17,14 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Versioned `aiat.worker.v1` and `aiat.adapter.v1` protocol models and negotiation.
 - Normalized requests, capabilities, events, results, errors, artifacts, usage, tool responses, pause/resume/cancel, health, and readiness.
 - `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, and run APIs.
+- `scripts/check_worker_lease_recovery_postgres.py --json` certifies the existing
+  Postgres queue lease boundary against one reserved fixture: competing claims
+  are denied while a lease is live, heartbeats require the claimant, one
+  explicitly expired lease is requeued, a second owner reclaims it at attempt
+  two, terminal runs cannot be claimed again, and eight transitions survive a
+  connection reopen. The report is payload-free and removes only its reserved
+  rows; it does not implement or certify a host registry, placement service,
+  real host loss/split-brain behavior, gVisor, or Firecracker.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -413,6 +425,12 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   registration probe; prove gVisor smoke/network behaviour and optional
   Firecracker with real host evidence.
 - [x] Add a deterministic real-controller lifecycle fixture for checkpoint persistence, pause/resume/checkpoint reference, cold cancellation, cold-crash failure normalization, lease expiry/requeue, and artifact/usage-before-terminal ordering; database, sandbox, live worker, canary, and rollback proof remain separate evidence gates.
+- [x] Add bounded local Postgres lease/recovery evidence (`a413997`) for claim
+  exclusivity, owner-bound heartbeat renewal, one explicitly simulated host-loss
+  expiry/requeue, second-owner reclaim, terminal claim denial, durable transition
+  read-back, and scoped cleanup. Canonical host registration, placement,
+  multi-host scheduling, real host-loss/split-brain, gVisor, and Firecracker
+  evidence remain separate gates.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
   operator-selected worker/project, fails closed on missing activation
