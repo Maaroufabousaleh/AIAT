@@ -352,6 +352,30 @@ class HostCapacityReservationLedger:
             row = await self._host_and_reservation(connection, reservation_id, for_update=False)
         return public_reservation(row, host_key=str(row["host_key"])) if row else None
 
+    async def get_by_key(self, reservation_key: str) -> dict[str, Any] | None:
+        """Read one reservation by its globally idempotent key.
+
+        The scheduler uses this bounded projection before taking a fresh host
+        snapshot so replay returns the original host even if current ranking
+        has changed.  No credential, payload, or host lease-owner field is
+        exposed.
+        """
+
+        key, _ = self._validate_identity(reservation_key, "reservation-key-reader")
+        async with self._storage.engine.connect() as connection:
+            query = (
+                sa.select(t.worker_host_reservations, t.worker_hosts.c.host_id.label("host_key"))
+                .select_from(
+                    t.worker_host_reservations.join(
+                        t.worker_hosts,
+                        t.worker_hosts.c.id == t.worker_host_reservations.c.host_id,
+                    )
+                )
+                .where(t.worker_host_reservations.c.reservation_key == key)
+            )
+            row = (await connection.execute(query)).mappings().first()
+        return public_reservation(row, host_key=str(row["host_key"])) if row else None
+
     async def list_for_host(self, host_id: str) -> list[dict[str, Any]]:
         async with self._storage.engine.connect() as connection:
             rows = (

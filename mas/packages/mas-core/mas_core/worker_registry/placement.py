@@ -211,17 +211,32 @@ def select_host(
     eligible = [decision for decision in decisions if decision.eligible]
     if not eligible:
         return None, decisions
-    selected = sorted(
-        eligible,
-        key=lambda decision: (
-            -decision.priority,
-            -decision.free_slots,
-            -decision.free_memory_bytes,
-            -decision.free_gpus,
-            decision.host_id,
-        ),
-    )[0]
+    selected = rank_eligible_hosts(tuple(eligible))[0]
     return selected.host_id, decisions
+
+
+def rank_eligible_hosts(
+    decisions: tuple[PlacementDecision, ...],
+) -> tuple[PlacementDecision, ...]:
+    """Return eligible decisions in the canonical deterministic order.
+
+    The scheduler uses this order to try the preferred host first and then
+    safely fall back when a row-locked reservation observes a concurrent
+    capacity or lease change.  Non-eligible decisions are omitted.
+    """
+
+    return tuple(
+        sorted(
+            (decision for decision in decisions if decision.eligible),
+            key=lambda decision: (
+                -decision.priority,
+                -decision.free_slots,
+                -decision.free_memory_bytes,
+                -decision.free_gpus,
+                decision.host_id,
+            ),
+        )
+    )
 
 
 def build_placement_report(
@@ -281,5 +296,6 @@ __all__ = [
     "build_placement_report",
     "evaluate_host",
     "mapping_to_host_snapshot",
+    "rank_eligible_hosts",
     "select_host",
 ]
