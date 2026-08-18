@@ -1,17 +1,16 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `fa4228400f7f450d5918e5f850225ed6f4a8c059` (latest grouped implementation revision)
+**Base revision:** `303ec10e5e62551fb898e52ba65bfa8f8f0ebcd2` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
-The latest full grouped verification remains the `b8a0c73` snapshot (2026-08-18)
-with the static aggregation at 48/48 checks passing, two pending technical
-evidence items, and a dirty working tree; the conservative decision remains
-**NO-RELEASE**. The subsequent `fa42284` implementation certificate passed
-its focused Ruff/tests and live dual-Postgres evidence; the configured live
-profile is retained separately below. The
-current unconfigured live attempt is retained at
+The latest grouped verification at this revision (2026-08-18) confirms the
+static aggregation at 48/48 checks passing, two pending technical evidence
+items, and a dirty working tree; the conservative decision remains
+**NO-RELEASE**. The `fa42284` implementation certificate also passed its
+focused Ruff/tests and live dual-Postgres evidence; the configured live profile
+is retained separately below. The current unconfigured live attempt is retained at
 [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json)
 and is not silently substituted for the configured loopback evidence.
 
@@ -24,9 +23,9 @@ document production gateway-adapter host dispatch; `fa42284` adds the durable
 dual-Postgres gateway-worker/mail-edge composition certificate and evidence.
 The current
 retained release-environment manifest reports revision
-`b8a0c73bd7f26f16771d8e82d369fe6d0246df20`, two changed pre-existing memory
+`303ec10e5e62551fb898e52ba65bfa8f8f0ebcd2`, two changed pre-existing memory
 files, and digest
-`62a03e763e519adae730e1b9bdb19d3a77ed72cc993c2bcd7db435a0ae90aa47`.
+`81c444587dbf8f49eb484c3ec06f89af5bfdfdc1a573950beb6be1f246a3ba02`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
