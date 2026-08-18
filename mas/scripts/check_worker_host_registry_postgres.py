@@ -34,7 +34,7 @@ from mas_core.worker_registry.host_registry import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-registry-postgres-certification.v1"
-EXPECTED_MIGRATION = "0040_worker_run_skill_bundle_pin"
+EXPECTED_MIGRATION = "0041_worker_host_planes"
 HOST_ID = "aiat-cert-worker-host-registry-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-000000000971")
@@ -154,8 +154,9 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             host_id=HOST_ID,
             host_uuid=HOST_UUID,
             registration_token=TOKEN,
-            labels={"zone": "local", "pool": "control"},
+            labels={"zone": "local", "pool": "worker"},
             capabilities=["native", "gpu"],
+            host_plane="worker",
             sandbox_profile="gvisor",
             isolation_mode="gvisor",
             capacity={
@@ -217,6 +218,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         passed = all(
             (
                 registered["status"] == "REGISTERING",
+                registered["host_plane"] == "worker",
                 "auth_token_sha256" not in registered,
                 not wrong_auth,
                 right_auth,
@@ -244,6 +246,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "first_counts": first_counts,
             "registration": {
                 "status": registered["status"],
+                "host_plane": registered["host_plane"],
                 "credential_digest_persisted": True,
                 "credential_material_exposed": "auth_token_sha256" in registered,
                 "wrong_token_rejected": wrong_reregister_rejected,
@@ -261,6 +264,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "reopen_readback": {
                 "host_present": durable is not None,
                 "status": durable["status"] if durable else None,
+                "host_plane": durable["host_plane"] if durable else None,
                 "lease_valid": durable_snapshot.lease_valid,
             },
             "expired_lease_projection": {
@@ -277,6 +281,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "scope": "durable host registration, credential authentication, heartbeat lease renewal, placement snapshot projection, connection-reopen read-back, and expired-lease visibility",
             "boundary": {
                 "authenticated_registration": "checked",
+                "host_plane_persistence": "checked",
                 "heartbeat_lease": "checked",
                 "placement_snapshot_projection": "checked",
                 "credential_redaction": "checked",

@@ -13,6 +13,7 @@ def _host(host_id: str, **overrides: object) -> WorkerHostSnapshot:
     values: dict[str, object] = {
         "host_id": host_id,
         "status": "READY",
+        "host_plane": "worker",
         "labels": (("zone", "a"),),
         "capabilities": frozenset({"native", "gpu"}),
         "sandbox_profiles": frozenset({"standard", "gvisor"}),
@@ -64,6 +65,7 @@ def test_placement_fails_closed_on_status_lease_and_constraints() -> None:
             _host("draining", status="DRAINING"),
             _host("expired", lease_valid=False),
             _host("wrong-zone", labels=(("zone", "b"),)),
+            _host("control-plane", host_plane="control"),
         ),
         request=_request(),
     )
@@ -72,7 +74,12 @@ def test_placement_fails_closed_on_status_lease_and_constraints() -> None:
     assert report["selected_host_id"] is None
     assert report["eligible_host_count"] == 0
     reasons = {reason for decision in report["decisions"] for reason in decision["reason_codes"]}
-    assert {"host_not_ready", "host_lease_invalid", "placement_label_mismatch"} <= reasons
+    assert {
+        "host_not_ready",
+        "host_lease_invalid",
+        "placement_label_mismatch",
+        "host_plane_mismatch",
+    } <= reasons
 
 
 def test_placement_fails_closed_on_capacity() -> None:

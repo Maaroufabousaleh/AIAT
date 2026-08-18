@@ -50,7 +50,7 @@ from mas_core.worker_contract.models import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-run-postgres-evidence-certification.v1"
-EXPECTED_MIGRATION = "0040_worker_run_skill_bundle_pin"
+EXPECTED_MIGRATION = "0041_worker_host_planes"
 WORKER_NAME = "aiat-cert-worker-postgres-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 TRACE_ID = "aiat-cert-worker-postgres-v1-trace"

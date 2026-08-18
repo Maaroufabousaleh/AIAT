@@ -667,6 +667,7 @@ worker_hosts = sa.Table(
     sa.Column("id", sa.UUID(), primary_key=True),
     sa.Column("host_id", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False, server_default="REGISTERING"),
+    sa.Column("host_plane", sa.Text(), nullable=False, server_default="worker"),
     sa.Column("auth_token_sha256", sa.String(64), nullable=False),
     sa.Column("labels", JSONB(), nullable=False, server_default="{}"),
     sa.Column("capabilities", JSONB(), nullable=False, server_default="[]"),

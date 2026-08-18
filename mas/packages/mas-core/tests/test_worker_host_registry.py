@@ -18,6 +18,7 @@ def _row(**overrides: object) -> dict[str, object]:
         "id": "host-row",
         "host_id": "host-a",
         "status": "READY",
+        "host_plane": "worker",
         "auth_token_sha256": token_sha256("secret-token"),
         "labels": {"zone": "a"},
         "capabilities": ["native", "gpu"],
@@ -54,6 +55,7 @@ def test_public_host_projection_removes_credential_material() -> None:
     assert "lease_owner" not in row
     assert row["capacity"]["slots_total"] == 4
     assert row["lease_generation"] == 7
+    assert row["host_plane"] == "worker"
 
 
 def test_host_snapshot_projection_exposes_placement_profiles() -> None:

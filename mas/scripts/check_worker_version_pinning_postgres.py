@@ -36,7 +36,7 @@ if CORE_ROOT.exists() and str(CORE_ROOT) not in sys.path:
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-version-pinning-postgres-certification.v1"
-EXPECTED_MIGRATION = "0040_worker_run_skill_bundle_pin"
+EXPECTED_MIGRATION = "0041_worker_host_planes"
 WORKER_NAME = "aiat-cert-worker-version-pinning-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000971")

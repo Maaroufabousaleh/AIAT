@@ -47,7 +47,7 @@ from mas_core.worker_registry.placement import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-recovery-postgres-certification.v1"
-EXPECTED_MIGRATION = "0040_worker_run_skill_bundle_pin"
+EXPECTED_MIGRATION = "0041_worker_host_planes"
 HOST_ID = "aiat-cert-worker-host-recovery-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-0000000009c1")

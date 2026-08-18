@@ -20,6 +20,7 @@ def _host(
     host_id: str,
     *,
     status: str = "READY",
+    host_plane: str = "worker",
     zone: str = "a",
     lease_valid: bool = True,
     priority: int = 0,
@@ -31,6 +32,7 @@ def _host(
     return WorkerHostSnapshot(
         host_id=host_id,
         status=status,
+        host_plane=host_plane,
         labels=(("zone", zone),),
         capabilities=capabilities,
         sandbox_profiles=sandbox_profiles,
@@ -73,6 +75,7 @@ def build_report() -> dict[str, Any]:
         hosts=(
             _host("full", capacity=HostCapacity(1, 1, 1024, 1024, 0, 0)),
             _host("wrong-zone", zone="b", capabilities=frozenset({"native"})),
+            _host("control-plane", host_plane="control"),
         ),
         request=eligible_request,
     )
@@ -85,7 +88,16 @@ def build_report() -> dict[str, Any]:
         and eligible["selected_host_id"] == "host-a"
         and eligible["eligible_host_count"] == 2
     )
-    blocked_pass = blocked["status"] == "blocked" and blocked["selected_host_id"] is None
+    blocked_reasons = {
+        reason
+        for decision in blocked["decisions"]
+        for reason in decision["reason_codes"]
+    }
+    blocked_pass = (
+        blocked["status"] == "blocked"
+        and blocked["selected_host_id"] is None
+        and "host_plane_mismatch" in blocked_reasons
+    )
     duplicate_pass = duplicate["status"] == "blocked" and duplicate["eligible_host_count"] == 0
     return {
         "schema_version": CHECK_SCHEMA,
@@ -116,11 +128,12 @@ def build_report() -> dict[str, Any]:
         "external_provider_mutation_performed": False,
         "worker_dispatch_performed": False,
         "licence_metadata_is_gate": False,
-        "scope": "deterministic placement constraints, host health/lease filtering, and capacity ordering over explicit snapshots",
+        "scope": "deterministic placement constraints, host-plane separation, host health/lease filtering, and capacity ordering over explicit snapshots",
         "boundary": {
             "placement_predicate": "checked",
             "capacity_ordering": "checked",
             "duplicate_host_fail_closed": "checked",
+            "worker_host_plane_isolation": "checked",
             "durable_host_registration": "not_checked",
             "live_multi_host_scheduler": "not_checked",
             "lease_reservation_commit": "not_checked",

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 HOST_REGISTRY_SCHEMA = "aiat.worker-host-registry.v1"
 HOST_STATUSES = frozenset({"REGISTERING", "READY", "DRAINING", "OFFLINE", "REVOKED"})
+HOST_PLANES = frozenset({"control", "tool", "data", "worker"})
 _CAPACITY_FIELDS = (
     "slots_total",
     "slots_used",
@@ -51,6 +52,13 @@ def _validate_status(status: str) -> str:
     normalized = str(status or "").strip().upper()
     if normalized not in HOST_STATUSES:
         raise ValueError(f"unsupported worker-host status: {status!r}")
+    return normalized
+
+
+def _validate_host_plane(host_plane: str) -> str:
+    normalized = str(host_plane or "").strip().lower()
+    if normalized not in HOST_PLANES:
+        raise ValueError(f"unsupported worker-host plane: {host_plane!r}")
     return normalized
 
 
@@ -161,6 +169,7 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
         "id": row.get("id"),
         "host_id": str(row.get("host_id") or ""),
         "status": str(row.get("status") or ""),
+        "host_plane": _validate_host_plane(row.get("host_plane") or "worker"),
         "labels": dict(row.get("labels") or {}),
         "capabilities": sorted(str(value) for value in (row.get("capabilities") or [])),
         "sandbox_profile": str(row.get("sandbox_profile") or ""),
@@ -203,6 +212,7 @@ class WorkerHostRegistry:
         registration_token: str,
         labels: Mapping[str, Any] | None = None,
         capabilities: Sequence[str] | None = None,
+        host_plane: str = "worker",
         sandbox_profile: str = "standard",
         isolation_mode: str = "native",
         capacity: Mapping[str, Any] | None = None,
@@ -219,6 +229,7 @@ class WorkerHostRegistry:
         if int(priority) < 0:
             raise ValueError("priority cannot be negative")
         normalized_status = _validate_status(status)
+        normalized_host_plane = _validate_host_plane(host_plane)
         normalized_labels = _normalize_labels(labels)
         normalized_capabilities = _normalize_capabilities(capabilities)
         normalized_capacity = _normalize_capacity(capacity)
@@ -244,6 +255,7 @@ class WorkerHostRegistry:
                     .values(
                         labels=normalized_labels,
                         capabilities=normalized_capabilities,
+                        host_plane=normalized_host_plane,
                         sandbox_profile=str(sandbox_profile).strip() or "standard",
                         isolation_mode=str(isolation_mode).strip() or "native",
                         capacity=normalized_capacity,
@@ -274,6 +286,7 @@ class WorkerHostRegistry:
                         auth_token_sha256=digest,
                         labels=normalized_labels,
                         capabilities=normalized_capabilities,
+                        host_plane=normalized_host_plane,
                         sandbox_profile=str(sandbox_profile).strip() or "standard",
                         isolation_mode=str(isolation_mode).strip() or "native",
                         capacity=normalized_capacity,

@@ -15,6 +15,7 @@ from typing import Any
 
 PLACEMENT_SCHEMA = "aiat.worker-placement.v1"
 READY_HOST_STATUS = "READY"
+HOST_PLANES = frozenset({"control", "tool", "data", "worker"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +67,7 @@ class WorkerPlacementRequest:
     worker_id: str
     required_capabilities: frozenset[str] = frozenset()
     required_labels: tuple[tuple[str, str], ...] = ()
+    required_host_plane: str | None = "worker"
     required_sandbox_profile: str | None = None
     required_isolation_mode: str | None = None
     memory_bytes: int = 0
@@ -75,6 +77,10 @@ class WorkerPlacementRequest:
     def invalid(self) -> bool:
         return (
             not self.worker_id.strip()
+            or (
+                self.required_host_plane is not None
+                and self.required_host_plane not in HOST_PLANES
+            )
             or self.memory_bytes < 0
             or self.gpu_count < 0
             or self.slots < 1
@@ -87,6 +93,7 @@ class WorkerHostSnapshot:
 
     host_id: str
     status: str
+    host_plane: str = "worker"
     labels: tuple[tuple[str, str], ...] = ()
     capabilities: frozenset[str] = frozenset()
     sandbox_profiles: frozenset[str] = frozenset()
@@ -141,6 +148,10 @@ def evaluate_host(
         reasons.append("host_not_ready")
     if not host.lease_valid:
         reasons.append("host_lease_invalid")
+    if host.host_plane not in HOST_PLANES:
+        reasons.append("host_plane_invalid")
+    if request.required_host_plane and host.host_plane != request.required_host_plane:
+        reasons.append("host_plane_mismatch")
     if capacity.invalid():
         reasons.append("capacity_invalid")
 
@@ -258,7 +269,7 @@ def build_placement_report(
         "decisions": [decision.as_dict() for decision in decisions],
         "mutation_performed": False,
         "licence_metadata_is_gate": False,
-        "scope": "deterministic placement constraints and capacity evaluation over an explicit host snapshot; no registration, reservation, lease, or dispatch",
+        "scope": "deterministic placement constraints, host-plane separation, and capacity evaluation over an explicit host snapshot; no registration, reservation, lease, or dispatch",
     }
 
 
@@ -271,6 +282,7 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
     return WorkerHostSnapshot(
         host_id=str(value.get("host_id") or ""),
         status=str(value.get("status") or ""),
+        host_plane=str(value.get("host_plane") or "worker"),
         labels=tuple(sorted((str(key), str(item)) for key, item in (value.get("labels") or {}).items())),
         capabilities=frozenset(str(item) for item in (value.get("capabilities") or ())),
         sandbox_profiles=frozenset(str(item) for item in (value.get("sandbox_profiles") or ())),
@@ -291,6 +303,7 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
 
 __all__ = [
     "HostCapacity",
+    "HOST_PLANES",
     "PLACEMENT_SCHEMA",
     "PlacementDecision",
     "WorkerHostSnapshot",
