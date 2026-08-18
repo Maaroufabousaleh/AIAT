@@ -1,24 +1,24 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T21:15:26Z",
+  "observed_at": "2026-08-18T08:28:53Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 65,
-    "pass": 51,
+    "total": 67,
+    "pass": 52,
     "fail": 0,
-    "blocked": 14
+    "blocked": 15
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "14 check(s) are externally blocked",
+    "15 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "4d7a495aebc2a44a05637f5115596047231d7e5e",
+    "revision": "c06c7d3c7cbddcbd13a4dd369a0bd03a4e2b6a53",
     "working_tree_clean": false
   },
   "live_configuration": {
@@ -54,6 +54,7 @@
     "image_provenance:live",
     "metric_series_budget:live",
     "sandbox_runtime_readiness:live",
+    "firecracker_worker_pool_readiness:live",
     "runtime_benchmarks:live",
     "model_profile_catalogue:live",
     "outbound_mail_lifecycle:live",
