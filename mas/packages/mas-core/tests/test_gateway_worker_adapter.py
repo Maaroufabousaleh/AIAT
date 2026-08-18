@@ -27,6 +27,19 @@ class _FakeGateway:
         )
 
 
+class _OwnedGateway(_FakeGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+
 def _request(**task_input: Any) -> WorkerRunRequest:
     return WorkerRunRequest(
         idempotency_key="gateway-adapter-test",
@@ -81,6 +94,42 @@ async def test_gateway_worker_adapter_requires_exact_resolved_model() -> None:
     assert "resolved Model Profile" in readiness.blockers[0]
     assert gateway.calls == []
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_gateway_worker_adapter_manages_owned_gateway_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway = _OwnedGateway()
+    monkeypatch.setattr(
+        "mas_core.llm_gateway.client.LLMGatewayClient",
+        lambda _config: gateway,
+    )
+    adapter = GatewayWorkerAdapter(worker_id="gateway-worker", gateway_config=object())
+
+    outcome = await WorkerRunController().execute(_request(), adapter)
+
+    assert outcome.state == "SUCCEEDED"
+    assert gateway.started == 1
+    await adapter.close()
+    assert gateway.stopped == 1
+
+
+@pytest.mark.parametrize(
+    "task_input",
+    [
+        {"prompt": "x" * 32_001},
+        {"messages": [{"role": "user", "content": "ok"}] * 65},
+        {"messages": [{"role": "user", "content": "x" * 32_001}]},
+    ],
+)
+def test_gateway_worker_adapter_bounds_message_input(task_input: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="gateway (content|message) limit"):
+        GatewayWorkerAdapter._messages_from_request(_request(**task_input))
+
+
+@pytest.mark.parametrize("temperature", [float("nan"), float("inf"), float("-inf")])
+def test_gateway_worker_adapter_rejects_non_finite_temperature(temperature: float) -> None:
+    with pytest.raises(ValueError, match="temperature"):
+        GatewayWorkerAdapter._bounded_generation_options(_request(temperature=temperature))
 
 
 def test_gateway_transport_factory_uses_aiat_owned_secret_boundary() -> None:

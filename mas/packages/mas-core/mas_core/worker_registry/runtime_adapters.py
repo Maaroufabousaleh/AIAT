@@ -13,6 +13,7 @@ import hashlib
 import importlib
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -473,6 +474,8 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
     """
 
     runtime_type = "aiat_gateway"
+    _MAX_GATEWAY_MESSAGES = 64
+    _MAX_GATEWAY_CONTENT_CHARS = 32_000
 
     def __init__(
         self,
@@ -501,6 +504,7 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
         self.gateway_client = gateway_client
         self.provider_id = normalized_provider
         self._owns_gateway_client = owns_gateway_client
+        self._gateway_started = False
 
         async def runner(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
             return await self._run_gateway(request)
@@ -517,6 +521,16 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
             context=context,
             runtime_version=runtime_version,
         )
+
+    async def start(self, request: WorkerRunRequest) -> Any:
+        """Start an owned gateway client before accepting the worker run."""
+
+        if self._owns_gateway_client and not self._gateway_started:
+            starter = getattr(self.gateway_client, "start", None)
+            if callable(starter):
+                await starter()
+            self._gateway_started = True
+        return await super().start(request)
 
     async def readiness(self, request: WorkerRunRequest | None = None) -> WorkerReadiness:
         local = await super().readiness(request)
@@ -547,9 +561,14 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
             prompt = task_input.get("prompt")
             if not isinstance(prompt, str) or not prompt.strip():
                 raise ValueError("task_input requires a non-empty prompt or messages list")
-            return [{"role": "user", "content": prompt.strip()}]
+            content = prompt.strip()
+            if len(content) > GatewayWorkerAdapter._MAX_GATEWAY_CONTENT_CHARS:
+                raise ValueError("task_input.prompt exceeds the gateway content limit")
+            return [{"role": "user", "content": content}]
         if not isinstance(raw_messages, list) or not raw_messages:
             raise ValueError("task_input.messages must be a non-empty list")
+        if len(raw_messages) > GatewayWorkerAdapter._MAX_GATEWAY_MESSAGES:
+            raise ValueError("task_input.messages exceeds the gateway message limit")
         messages: list[dict[str, str]] = []
         for item in raw_messages:
             if not isinstance(item, dict):
@@ -558,7 +577,10 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
             content = item.get("content")
             if not role or not isinstance(content, str) or not content.strip():
                 raise ValueError("each task_input message requires role and content")
-            messages.append({"role": role, "content": content})
+            normalized_content = content.strip()
+            if len(normalized_content) > GatewayWorkerAdapter._MAX_GATEWAY_CONTENT_CHARS:
+                raise ValueError("task_input message content exceeds the gateway content limit")
+            messages.append({"role": role, "content": normalized_content})
         return messages
 
     @staticmethod
@@ -571,7 +593,7 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
             raise ValueError("max_tokens and temperature must be numeric") from exc
         if not 1 <= max_tokens <= 4096:
             raise ValueError("max_tokens must be between 1 and 4096")
-        if not 0 <= temperature <= 2:
+        if not math.isfinite(temperature) or not 0 <= temperature <= 2:
             raise ValueError("temperature must be between 0 and 2")
         return max_tokens, temperature
 
@@ -625,10 +647,11 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
 
     async def close(self) -> None:
         await super().close()
-        if self._owns_gateway_client:
+        if self._owns_gateway_client and self._gateway_started:
             stop = getattr(self.gateway_client, "stop", None)
             if callable(stop):
                 await stop()
+            self._gateway_started = False
 
 
 def _load_certified_callable(reference: str) -> Callable[..., Any]:
