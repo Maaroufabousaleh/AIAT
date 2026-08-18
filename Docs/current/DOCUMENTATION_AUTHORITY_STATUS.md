@@ -166,10 +166,11 @@ not a live-provider or release approval claim.
 
 The 2026-08-18 model-route refresh (`68e0b03`, repeatable checker `f6ed16f`)
 is indexed as read-only evidence: the local `/v1/models` route exposes all
-five AIAT aliases, while the API-owned catalogue reports 92/94 approved
-covered profile versions and retains two non-registered rows as findings. It
-records no provider call, completion, routing mutation, or activation
-decision; external provider execution and recovery remain open.
+five AIAT aliases, while the API-owned catalogue now reports complete 93/93
+approved covered profile versions with no findings after the exact
+unreferenced local smoke fixture was removed. It records no provider call,
+completion, routing mutation, or activation decision; external provider
+execution and recovery remain open.
 
 The latest maintained worker-host group is `6cef1b8` plus the pre-claim
 consistency hardening in `9a7db70` and durable adapter completion `8ed53df`:

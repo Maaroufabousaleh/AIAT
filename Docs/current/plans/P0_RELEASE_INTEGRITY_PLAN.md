@@ -4,7 +4,7 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-17):** in progress. The licence metadata boundary,
+**Current status (2026-08-18):** in progress. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -16,10 +16,12 @@ The deployed team-runner data-plane
 boundary now uses an authenticated control-plane storage API and fails closed
 when its startup health probe cannot reach durable storage. See the [P0 status
 record](../P0_RELEASE_INTEGRITY_STATUS.md).
-The refreshed local Docker-backed network matrix, local image budget probes,
-and configured current-ledger run are retained as descriptive evidence; native
-image/SBOM, clean native-Linux release-host metric scale, provider, recovery,
-and frozen clean-ledger evidence remain open.
+The refreshed local Docker-backed network matrix, provider-diverse resource/
+multipart/outage certificates, local image budget probes, complete 93/93 model
+profile read-back, and configured current-ledger run are retained as
+descriptive evidence; native image/SBOM, clean native-Linux release-host
+metric scale, provider-managed KMS, independent-host recovery, and frozen
+clean-ledger evidence remain open.
 
 ## Why this plan is first
 
@@ -202,10 +204,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   without retaining values; the current WSL run is explicitly blocked and is
   retained at [`native_release_preflight.json`](../../../mas/docs/provenance/native_release_preflight.json).
 - [x] Include the native preflight as the `release_environment:live` child in
-  the aggregate ledger (`4d7a495`) and retain the current unconfigured 65-check
+  the aggregate ledger (`4d7a495`) and retain the current unconfigured 77-check
   result at [`release_ledger_live_current.json`](../../../mas/docs/provenance/release_ledger_live_current.json);
-  the earlier configured loopback 64-check profile remains descriptive evidence
-  at [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
+  the configured 81-check profile (75 pass, 6 blocked, 4 pending) remains
+  descriptive evidence at [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
 - [x] Bound each child checker with a configurable, capped timeout; a timed-out
   live checker is recorded as `blocked` and never upgraded to pass.
 - [x] Run independent release-ledger child checks through a bounded concurrent
