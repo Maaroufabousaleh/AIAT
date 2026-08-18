@@ -126,6 +126,13 @@ uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --js
   --identity-ingress
 uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json \
   --provider-ingress
+uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json \
+  --live-provider --allow-external-provider --provider-ingress \
+  --worker-dsn "$AIAT_GATEWAY_WORKER_MAIL_EDGE_WORKER_DSN" \
+  --identity-dsn "$AIAT_GATEWAY_WORKER_MAIL_EDGE_IDENTITY_DSN" \
+  --gateway-url "$AIAT_LIVE_LLM_GATEWAY_URL" \
+  --api-key "$AIAT_LIVE_LLM_API_KEY" \
+  --model "$AIAT_LIVE_WORKER_MODEL"
 uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --url http://127.0.0.1:8000 \
   --api-key "$AIAT_OPERATOR_API_KEY" \
@@ -133,7 +140,13 @@ uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --trace-id "$AIAT_LIVE_WORKER_TRACE_ID"
 ```
 
-Fixture mode performs no network or state mutation. Live mode reads only
+Fixture mode performs no network or state mutation. The durable
+`--live-provider` mode is explicit-opt-in, reads the configured gateway's
+`/v1/models`, runs one exact model through the real durable worker/controller
+path, and redacts generated text before result persistence. Combining it with
+`--provider-ingress` exercises the local raw provider webhook and durable
+delivered/bounced read-back; it does not claim an external provider callback or
+delivery. Live mode reads only
 `GET /observability/traces/{trace_id}` and requires the operator to choose the
 representative worker and its trace. When `IDENTITY_SERVICE_URL` and
 `AIAT_IDENTITY_CLIENT_PRIVATE_KEY` are configured, it also performs a signed,

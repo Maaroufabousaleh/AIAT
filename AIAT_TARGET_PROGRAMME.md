@@ -369,6 +369,15 @@ or credentials. Durable Postgres, independent hosts, gVisor/Firecracker,
 provider recovery, and provider mail-edge callback evidence remain separate
 acceptance gates.
 
+Commit `17f6547` extends this boundary into
+[`check_gateway_worker_mail_edge_postgres.py`](mas/scripts/check_gateway_worker_mail_edge_postgres.py)
+with an explicit `--live-provider` mode. It validates the same exact model
+listing and operator opt-in, executes through the durable worker/controller
+and Postgres path, redacts generated content before durable `result_json`
+persistence, and can combine with `--provider-ingress` for local durable
+webhook/bounce read-back. The default remains fixture-only; no live durable
+certificate is claimed until configured worker and identity DSNs are supplied.
+
 The read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue still passes its approved-coverage requirement. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision; the two non-registered profile rows remain operator-visible reconciliation findings.
 
 ### 6.4 Dedicated External Worker Steward

@@ -235,6 +235,14 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   `SUCCEEDED` controller settlement, and binding/reservation release. Durable
   Postgres, independent hosts, gVisor/Firecracker, provider recovery, and
   mail-edge callback/bounce read-back remain separate gates.
+- `scripts/check_gateway_worker_mail_edge_postgres.py` (`17f6547`) now adds an
+  explicit `--live-provider` mode for the durable worker/mail-edge boundary.
+  It requires the same exact-model listing and operator opt-in, runs the real
+  gateway client through the durable worker/controller/Postgres path, redacts
+  generated content before `result_json` persistence, and can exercise the
+  existing raw provider ingress with `--provider-ingress`. Its default fixture
+  mode is unchanged; no live durable certificate is claimed until an operator
+  runs the mode with configured worker and identity Postgres DSNs.
 - The real gateway-client HTTP boundary is exercised by
   [`check_gateway_worker_http_fixture.py`](../../mas/scripts/check_gateway_worker_http_fixture.py)
   and [`gateway_worker_http_fixture.json`](../../mas/docs/provenance/gateway_worker_http_fixture.json)
@@ -264,7 +272,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   `/v1/mail-edge/provider-webhook` route with replay/conflict/tamper checks; it
   does not claim raw external-provider callback, external provider delivery,
   selected live worker execution, provider recovery, or gVisor/Firecracker
-  execution.
+  execution. Commit `17f6547` adds a separate explicit-opt-in live-provider
+  mode to this checker; it is fail-closed by default and currently has no
+  retained durable live certificate.
 - The same checker’s `--provider-ingress` mode (`0e0a76f`) creates a scoped
   durable outbound request and delivery attempt, sends delivered/bounced bodies
   through `POST /v1/mail-edge/provider-webhook/resend`, and derives worker/trace

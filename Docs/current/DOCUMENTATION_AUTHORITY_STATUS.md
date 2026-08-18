@@ -157,6 +157,14 @@ retaining only scalar usage/status/error metadata. Durable Postgres,
 independent-host, sandbox, recovery, and mail-edge callback/bounce evidence
 remain separate gates.
 
+Commit `17f6547` extends the maintained boundary into the durable
+`check_gateway_worker_mail_edge_postgres.py` checker. Its explicit
+`--live-provider` mode validates the configured exact model listing, runs the
+real gateway client through durable worker/controller/Postgres state, redacts
+generated content before `result_json` persistence, and can combine with
+`--provider-ingress` for local durable webhook/bounce read-back. The default is
+fail-closed and no configured live durable certificate is claimed yet.
+
 Commit `38c99f4` adds the maintained bounded host-composition certificate. It
 drives the real `WorkerHostExecutor`, `WorkerRunController`, and
 `GatewayWorkerAdapter` through an in-memory committed worker-plane binding,

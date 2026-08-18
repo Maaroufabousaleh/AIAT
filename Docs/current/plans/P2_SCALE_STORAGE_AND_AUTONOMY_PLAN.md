@@ -239,6 +239,13 @@
   `llama-3.3-70b-versatile` completion with `SUCCEEDED` settlement and
   binding/reservation release; durable Postgres, independent-host, sandbox,
   provider-recovery, and mail-edge callback/bounce gates remain separate.
+- [x] Add the explicit durable live-provider/mail-edge boundary
+  (`17f6547`) to [`check_gateway_worker_mail_edge_postgres.py`](../../../mas/scripts/check_gateway_worker_mail_edge_postgres.py).
+  `--live-provider` requires the same exact model listing and operator opt-in,
+  runs the real gateway client through durable worker/controller/Postgres
+  state, redacts generated content before result persistence, and can combine
+  with `--provider-ingress` for local durable webhook/bounce read-back. The
+  default remains fixture-only; no live durable certificate is claimed yet.
 - [ ] Prove durable external provider-backed model dispatch on the worker
   plane, multi-host Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
@@ -509,10 +516,11 @@
   boundary; external callback, provider delivery/recovery, selected worker,
   and sandbox evidence remain open. Evidence is
   [`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
-- [ ] Run the new checker against a selected live representative model-backed
-  worker and provider ingress, then read back a durable provider webhook and
-  bounce observation so the remaining SLO targets have deployment evidence
-  using [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
+- [ ] Run the new `17f6547` checker with `--live-provider` against a selected
+  live representative model-backed worker and `--provider-ingress`, then read
+  back a durable provider webhook and bounce observation so the remaining SLO
+  targets have deployment evidence using
+  [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
   direct model/artifact/integration spans, the fail-closed source evaluator,
   delivery-attempt correlation, metadata-only mail-edge contract, and local
   durable worker evidence are durable/queryable, but live source coverage
