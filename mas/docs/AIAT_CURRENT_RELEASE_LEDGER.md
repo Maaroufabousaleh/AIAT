@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `c10ec594c2ca4853652a569234d7a7bd574fb614` (latest grouped verification revision)
+**Base revision:** `b8a0c73bd7f26f16771d8e82d369fe6d0246df20` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -17,10 +17,12 @@ The continuation groups `8f46ed1`/`4d2ec12` reconcile the protocol artifact and
 authority documentation; `0dbfdb7`/`bf65cd3` align docs-index regression
 coverage; `dee1a7e`/`dbfda24` enforce and document the metadata-only licence
 detail surface; and `2360e07`/`c10ec59` verify and document the host-owned
-Compose/systemd service-restart boundary. The current release-environment
-manifest reports revision `c10ec594c2ca4853652a569234d7a7bd574fb614`, two
-changed pre-existing memory files, and digest
-`9b699e9d4cfb8f9fe5bdfb95d70ff9d021828c85c4ebce0fe340fe3fc6e0d69d`.
+Compose/systemd service-restart boundary; `8ed53df`/`b8a0c73` certify and
+document production gateway-adapter host dispatch. The current
+release-environment manifest reports revision
+`b8a0c73bd7f26f16771d8e82d369fe6d0246df20`, two changed pre-existing memory
+files, and digest
+`62a03e763e519adae730e1b9bdb19d3a77ed72cc993c2bcd7db435a0ae90aa47`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
