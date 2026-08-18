@@ -341,9 +341,10 @@
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports
-  92/94 approved covered profile versions, and `/v1/models` exposes all five
-  AIAT aliases; no completion request, provider call, routing mutation, or
-  activation decision is included. Evidence is
+  complete 93/93 approved covered profile versions with no findings after the
+  exact unreferenced local smoke fixture was removed, and `/v1/models` exposes
+  all five AIAT aliases; no completion request, provider call, routing
+  mutation, or activation decision is included. Evidence is
   [`model_profile_catalogue_live.json`](../../../mas/docs/provenance/model_profile_catalogue_live.json)
   and [`model_gateway_readiness_live.json`](../../../mas/docs/provenance/model_gateway_readiness_live.json).
 - [x] Add the explicit opt-in worker-plane provider boundary (`f999695`) in

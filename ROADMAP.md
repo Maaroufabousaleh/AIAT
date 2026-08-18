@@ -1030,7 +1030,7 @@ The codebase already includes:
   (`fe97b87`); timed-out live probes are recorded as `blocked`, keeping
   aggregate evidence finite without treating unavailable infrastructure as a pass.
 - `scripts/check_docs_index.py --json` verifies the maintained target,
-  eleven-feature/three-plan set, local Markdown links, roadmap references, and the
+  thirteen-feature/three-plan set, local Markdown links, roadmap references, and the
   personal/internal metadata-only policy; CI and the release ledger fail on
   documentation drift.
 - `scripts/check_runtime_install_profile.py --json` reconciles the default

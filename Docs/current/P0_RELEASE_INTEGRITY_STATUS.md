@@ -568,7 +568,7 @@ single frozen commit before production claims are made.
 
 - `scripts/check_release_ledger.py --json` (base aggregator `eff4eef`, native live-ledger gate `4d7a495`) now
   aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
-  The latest static run reports 54/54 configured
+  The latest static run reports 57/57 configured
   fixture/contract/documentation/release-environment/operator-pin/governance
   checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
@@ -585,17 +585,17 @@ single frozen commit before production claims are made.
 - `scripts/check_docs_index.py --json` passes the canonical target, thirteen current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
-- The current unconfigured local 2026-08-18 75-check profile records 57
-  passes, zero failures, 18 externally blocked probes, and four pending
+- The current unconfigured local 2026-08-18 77-check profile records 58
+  passes, zero failures, 19 externally blocked probes, and four pending
   evidence items with a bounded 60-second child-check timeout. The native
   release-host preflight is now the `release_environment:live` child and
   reports WSL2, missing `runsc`, dirty worktree, and absent immutable image
   refs as safe blockers; the new `object_store_provider_outage:live` child is
   also blocked until disposable provider configuration is supplied. The current summary is retained at
   [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json).
-  The configured loopback 64-check profile remains retained at
+  The configured 81-check profile remains retained at
   [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json)
-  with 59 passes and five blocked probes; both profiles yield
+  with 75 passes, six blocked probes, and four pending evidence items; both profiles yield
   `NO-RELEASE`. These are evidence records, not a release pass.
 
 ### CEO/service dashboard boundary
