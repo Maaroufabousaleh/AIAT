@@ -173,6 +173,12 @@
   and scoped cleanup. It uses local fixture identifiers and does not claim an
   external provider call, provider-backed recovery, independent hosts, or a
   hardened sandbox.
+- [x] Enforce pre-terminal model usage attribution (`199eb5b`): the canonical
+  worker controller compares successful result provider/model identifiers with
+  the immutable resolution snapshot before usage or terminal evidence is
+  persisted. Missing/incomplete snapshots and mismatches fail closed, while
+  legacy/native runs without a snapshot remain compatible. External provider
+  identity and hardened sandbox evidence remain separate.
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports
