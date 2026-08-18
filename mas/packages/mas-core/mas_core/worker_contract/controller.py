@@ -89,6 +89,7 @@ class WorkerRunController:
         worker_registry_id: UUID | None = None,
         worker_shell_version_id: UUID | None = None,
         adapter_id: UUID | None = None,
+        skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
     ) -> dict[str, Any]:
@@ -105,6 +106,7 @@ class WorkerRunController:
                 flow_node_execution_id=request.flow_node_execution_id,
                 worker_shell_version_id=worker_shell_version_id,
                 adapter_id=adapter_id,
+                skill_bundle_id=skill_bundle_id,
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
             )
@@ -119,6 +121,7 @@ class WorkerRunController:
             "state": "CREATED",
             "request_json": request.model_dump(mode="json"),
             "project_id": request.project_id,
+            "skill_bundle_id": skill_bundle_id,
             "created_at": datetime.now(UTC),
         }
         self._memory_runs[request.run_id] = row
@@ -373,6 +376,7 @@ class WorkerRunController:
         worker_registry_id: UUID | None = None,
         worker_shell_version_id: UUID | None = None,
         adapter_id: UUID | None = None,
+        skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
     ) -> WorkerRunOutcome:
@@ -381,6 +385,7 @@ class WorkerRunController:
             worker_registry_id=worker_registry_id,
             worker_shell_version_id=worker_shell_version_id,
             adapter_id=adapter_id,
+            skill_bundle_id=skill_bundle_id,
             steward_id=steward_id,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
         )

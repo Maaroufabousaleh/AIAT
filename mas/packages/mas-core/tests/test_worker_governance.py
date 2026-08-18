@@ -954,6 +954,34 @@ async def test_controller_returns_canonical_idempotent_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_controller_forwards_explicit_skill_bundle_pin() -> None:
+    bundle_id = uuid4()
+    worker_id = uuid4()
+    calls: list[dict[str, object]] = []
+
+    class Storage:
+        async def create_worker_run(self, **kwargs):
+            calls.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "CREATED", "skill_bundle_id": bundle_id}
+
+    request = WorkerRunRequest(
+        run_id=uuid4(),
+        idempotency_key="explicit-bundle-pin",
+        worker_id="worker",
+        task_type="test",
+    )
+    row = await WorkerRunController(storage=Storage()).create_run(
+        request,
+        worker_registry_id=worker_id,
+        skill_bundle_id=bundle_id,
+    )
+
+    assert row["skill_bundle_id"] == bundle_id
+    assert calls[0]["worker_id"] == worker_id
+    assert calls[0]["skill_bundle_id"] == bundle_id
+
+
+@pytest.mark.asyncio
 async def test_persistent_event_limit_is_passed_to_storage_boundary() -> None:
     class Storage:
         def __init__(self) -> None:

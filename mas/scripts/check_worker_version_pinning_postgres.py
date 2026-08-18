@@ -1,17 +1,16 @@
 """Certify bounded durable in-flight worker-version pinning in Postgres.
 
-The probe creates two immutable shell and adapter versions for one reserved
-worker, starts a real durable worker run on version one, advances the mutable
-worker registry pointers to version two, and creates a second queued run on
-version two.  It then reopens Postgres and verifies that the in-flight run
-still references its original shell, adapter, and steward rows while the
-registry and the new run reference the replacement versions.
+The probe creates two immutable shell, adapter, and skill-bundle versions for
+one reserved worker, starts a real durable worker run on version one, advances
+the mutable worker registry pointers to version two, and creates a second
+queued run on version two.  It then reopens Postgres and verifies that the
+in-flight run still references its original shell, adapter, bundle, and
+steward rows while the registry and the new run reference the replacement
+versions.
 
-This is storage-level pinning evidence only.  The current ``worker_runs``
-schema does not persist a ``skill_bundle_id`` column, so the report records
-that bundle pinning is not checked rather than inferring it from mutable
-worker state.  No worker, model, provider, sandbox, or network endpoint is
-called; task payload markers are never emitted.
+This is storage-level pinning evidence only.  No worker, model, provider,
+sandbox, or network endpoint is called; task payload markers are never
+emitted.
 """
 
 from __future__ import annotations
@@ -37,7 +36,7 @@ if CORE_ROOT.exists() and str(CORE_ROOT) not in sys.path:
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-version-pinning-postgres-certification.v1"
-EXPECTED_MIGRATION = "0039_worker_host_fencing"
+EXPECTED_MIGRATION = "0040_worker_run_skill_bundle_pin"
 WORKER_NAME = "aiat-cert-worker-version-pinning-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000971")
@@ -191,6 +190,7 @@ def _safe_run_projection(row: dict[str, Any] | None) -> dict[str, Any]:
         "attempt_count": int(row.get("attempt_count") or 0),
         "worker_shell_version_id": str(row.get("worker_shell_version_id")),
         "adapter_id": str(row.get("adapter_id")),
+        "skill_bundle_id": str(row.get("skill_bundle_id")),
         "steward_id": str(row.get("steward_id")),
     }
 
@@ -409,6 +409,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
     shell2_id = str((shell_v2 or {}).get("id"))
     adapter1_id = str((adapter_v1 or {}).get("id"))
     adapter2_id = str((adapter_v2 or {}).get("id"))
+    bundle1_id = str((bundle_v1 or {}).get("id"))
     bundle2_id = str((bundle_v2 or {}).get("id"))
     run1_projection = _safe_run_projection(run_v1)
     run2_projection = _safe_run_projection(run_v2)
@@ -425,12 +426,14 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         run1_projection.get("state") == "RUNNING"
         and run1_projection.get("worker_shell_version_id") == shell1_id
         and run1_projection.get("adapter_id") == adapter1_id
+        and run1_projection.get("skill_bundle_id") == bundle1_id
         and run1_projection.get("steward_id") == str(STEWARD_ID)
     )
     run_v2_pinned = (
         run2_projection.get("state") == "QUEUED"
         and run2_projection.get("worker_shell_version_id") == shell2_id
         and run2_projection.get("adapter_id") == adapter2_id
+        and run2_projection.get("skill_bundle_id") == bundle2_id
         and run2_projection.get("steward_id") == str(STEWARD_ID)
     )
     passed = (
@@ -468,11 +471,13 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "in_flight_run": {
                 "shell": (shell_v1 or {}).get("version"),
                 "adapter": (adapter_v1 or {}).get("version"),
+                "skill_bundle": (bundle_v1 or {}).get("semantic_version"),
                 "steward": "pin-steward-v1",
             },
             "queued_replacement_run": {
                 "shell": (shell_v2 or {}).get("version"),
                 "adapter": (adapter_v2 or {}).get("version"),
+                "skill_bundle": (bundle_v2 or {}).get("semantic_version"),
                 "steward": "pin-steward-v1",
             },
         },
@@ -481,12 +486,14 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         "new_queued_run_v2": run2_projection,
         "version_pin_checks": {
             "in_flight_shell_adapter_steward_pinned": run_v1_pinned,
+            "in_flight_skill_bundle_pinned": run_v1_pinned,
             "new_run_uses_replacement_shell_adapter": run_v2_pinned,
+            "new_run_uses_replacement_skill_bundle": run_v2_pinned,
             "registry_pointer_advanced_without_rewriting_in_flight_run": (
                 run1_projection.get("worker_shell_version_id") != active_v2["shell"]
                 and run1_projection.get("adapter_id") != active_v2["adapter"]
             ),
-            "skill_bundle_id_on_worker_run": "not_persisted_by_current_schema",
+            "skill_bundle_id_on_worker_run": "checked",
         },
         "durable_reopen": {
             "healthy": reopened_healthy,
@@ -507,11 +514,13 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "immutable_shell_version_records": "checked",
             "immutable_adapter_version_records": "checked",
             "in_flight_shell_adapter_steward_pin": "checked",
+            "in_flight_skill_bundle_pin": "checked",
             "registry_pointer_advance": "checked",
             "new_run_replacement_pin": "checked",
+            "new_run_replacement_skill_bundle_pin": "checked",
             "connection_reopen": "checked",
             "scoped_fixture_cleanup": "checked",
-            "skill_bundle_id_persisted_on_worker_run": "not_checked",
+            "skill_bundle_id_persisted_on_worker_run": "checked",
             "worker_dispatch": "not_checked",
             "live_worker_or_provider": "not_checked",
         },

@@ -1528,6 +1528,9 @@ worker_runs = sa.Table(
     sa.Column("flow_node_execution_id", sa.BigInteger(), sa.ForeignKey("flow_node_executions.id", ondelete="SET NULL")),
     sa.Column("worker_shell_version_id", sa.UUID(), sa.ForeignKey("worker_shell_versions.id", ondelete="RESTRICT")),
     sa.Column("adapter_id", sa.UUID(), sa.ForeignKey("runtime_adapters.id", ondelete="RESTRICT")),
+    # Immutable execution pin copied from the worker's active governed bundle
+    # at run creation.  NULL is retained only for legacy/un-governed runs.
+    sa.Column("skill_bundle_id", sa.UUID(), sa.ForeignKey("skill_bundles.id", ondelete="RESTRICT")),
     sa.Column("steward_id", sa.UUID(), sa.ForeignKey("steward_agents.id", ondelete="SET NULL")),
     sa.Column("model_resolution_snapshot_id", sa.UUID(), sa.ForeignKey("model_resolution_snapshots.id", ondelete="SET NULL")),
     sa.Column("task_type", sa.Text(), nullable=False),

@@ -8552,12 +8552,38 @@ class AgentStorage:
     async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.model_resolution_snapshots, t.model_resolution_snapshots.c.id, snapshot_id)
 
-    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
+    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, skill_bundle_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
             existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
             if existing:
                 return dict(existing)
-            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
+            worker = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if worker is None:
+                raise ValueError("worker registry record is required before creating a durable run")
+            effective_skill_bundle_id = skill_bundle_id or worker.get("active_skill_bundle_id")
+            if effective_skill_bundle_id is not None:
+                bundle = (
+                    await conn.execute(
+                        t.skill_bundles.select()
+                        .where(
+                            sa.and_(
+                                t.skill_bundles.c.id == effective_skill_bundle_id,
+                                t.skill_bundles.c.worker_id == worker_id,
+                            )
+                        )
+                    )
+                ).mappings().first()
+                if bundle is None:
+                    raise ValueError("skill bundle pin must belong to the worker registry record")
+                if steward_id is not None and bundle["steward_id"] != steward_id:
+                    raise ValueError("skill bundle pin must belong to the selected steward")
+            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "skill_bundle_id": effective_skill_bundle_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
             await conn.execute(t.worker_runs.insert().values(**values))
         return await self.get_worker_run(run_id)  # type: ignore[return-value]
 
