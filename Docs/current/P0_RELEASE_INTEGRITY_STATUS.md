@@ -78,6 +78,13 @@
   It remains timing/comparison evidence only; multipart, resource, outage,
   provider-managed encryption/KMS, clean-host, and disaster-recovery gates
   remain open.
+- Commit `a2f35de` adds the explicit multipart adapter boundary and checker.
+  The bounded live run passes 8 MiB and 16 MiB payloads with 5 MiB parts on
+  both MinIO and SeaweedFS, verifies checksum read-back and abort-without-
+  object, and cleans both prefixes to zero. Evidence is retained at
+  [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+  Resource, provider-outage, provider-managed encryption/KMS, clean-host, and
+  disaster-recovery gates remain open.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is

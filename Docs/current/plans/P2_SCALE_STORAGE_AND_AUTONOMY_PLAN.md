@@ -123,6 +123,13 @@
   [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
   Multipart, resource profiling, provider outage, provider-managed encryption,
   and clean-host/disaster-recovery gates remain open.
+- [x] Add the bounded multipart adapter boundary (`a2f35de`) and live checker:
+  Compose MinIO and disposable SeaweedFS each pass 8 MiB and 16 MiB payloads
+  with 5 MiB parts, checksum read-back, explicit abort-without-object, and
+  zero cleanup. Scalar evidence is retained at
+  [`object_store_multipart_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+  Resource profiling, provider outage, provider-managed encryption/KMS,
+  clean-host, disaster-recovery, and production cutover remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

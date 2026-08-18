@@ -83,6 +83,13 @@ operator-observed endpoints, checksum read-back, and zero remaining fixture
 objects. Multipart, resource, outage, provider-managed encryption/KMS,
 clean-host, disaster-recovery, and provider-selection decisions remain open.
 
+The same index now records the multipart adapter boundary from `a2f35de` at
+[`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+It covers 8 MiB and 16 MiB payloads split into 5 MiB parts on both
+operator-observed endpoints, verifies checksum read-back and explicit abort
+cleanup, and leaves zero fixture objects. Resource, provider outage, KMS,
+clean-host, disaster-recovery, and provider-selection decisions remain open.
+
 The same index now includes the verified-copy parity evidence
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json),
 which records three matching checksum/size copies from MinIO to SeaweedFS and

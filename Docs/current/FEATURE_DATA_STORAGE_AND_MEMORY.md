@@ -108,6 +108,14 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   post-delete prefix verification. Scalar evidence is retained at
   [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json);
   it remains local comparison evidence and does not select a provider.
+- The AIAT-owned multipart boundary (`a2f35de`) exposes explicit
+  create/part/complete/abort operations through the S3-compatible adapter and
+  deterministic fixture. The live checker passes 8 MiB and 16 MiB payloads
+  using 5 MiB parts on both MinIO and SeaweedFS, verifies checksum read-back,
+  abort-without-object, and zero cleanup; scalar evidence is retained at
+  [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+  This remains bounded adapter evidence, not outage, resource, KMS, or DR
+  certification.
 - The provider-pair checker was also exercised across the operator-observed
   MinIO/SeaweedFS topology. Its retained scalar evidence confirms three-object
   checksum dual-write, adapter-boundary primary-loss rejection, secondary-only
@@ -154,6 +162,8 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Migration checker tests: [`mas/scripts/tests/test_check_object_store_migration.py`](../../mas/scripts/tests/test_check_object_store_migration.py)
 - Benchmark contract: [`mas/packages/mas-core/mas_core/memory/object_store_benchmark.py`](../../mas/packages/mas-core/mas_core/memory/object_store_benchmark.py)
 - Benchmark fixture/live boundary: [`mas/scripts/check_object_store_benchmarks.py`](../../mas/scripts/check_object_store_benchmarks.py)
+- Multipart adapter contract: [`mas/packages/mas-core/mas_core/memory/object_store_multipart.py`](../../mas/packages/mas-core/mas_core/memory/object_store_multipart.py)
+- Multipart fixture/live boundary: [`mas/scripts/check_object_store_multipart.py`](../../mas/scripts/check_object_store_multipart.py)
 - Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Database migrations: [`mas/migrations/versions/`](../../mas/migrations/versions/)
@@ -252,10 +262,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
   change only after provider-certified retention parity, deployment-routing
   ownership, rollback authority, and outage/recovery evidence are available;
   the provider-diverse inventory/copy/dual-write rehearsal already passes.
-- Extend the benchmark beyond the retained serial and bounded 1 MiB/8 MiB
-  concurrency waves with multipart, resource, outage, and recovery comparison
-  evidence; current timings remain informational and do not close provider
-  selection or disaster-recovery gates.
+- Extend the benchmark beyond the retained serial, bounded 1 MiB/8 MiB
+  concurrency, and multipart waves with reliability, resource, outage, and
+  recovery comparison evidence; current observations remain informational and
+  do not close provider selection or disaster-recovery gates.
 - Run the encrypted envelope against a configured Garage, R2, B2, or other
   approved backend with provider-managed key custody/rotation evidence; the
   provider-neutral local certificate is already retained.

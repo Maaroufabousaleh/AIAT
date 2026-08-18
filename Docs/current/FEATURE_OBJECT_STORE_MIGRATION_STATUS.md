@@ -52,6 +52,11 @@ authority outside the helpers.
   cases at 1 MiB and 8 MiB, verifies post-delete prefix emptiness, and retains
   only scalar results; configuration rejects unsafe concurrency or payload
   budgets before provider mutation.
+- `a2f35de` — the S3-compatible adapter now exposes explicit multipart
+  create/part/complete/abort operations. The bounded checker runs 8 MiB and
+  16 MiB payloads with 5 MiB parts, verifies checksum read-back and an aborted
+  upload leaves no object, and keeps the provider-neutral helper separate from
+  routing authority.
 
 The governed workflow never deletes source objects or silently changes
 deployment routing. The bounded live checker deletes only its reserved
@@ -80,6 +85,8 @@ uv run --isolated python scripts/check_object_store_migration.py --json
 PYTHONPATH=scripts uv run --isolated pytest -q \
   scripts/tests/test_check_object_store_migration.py
 uv run --isolated python scripts/check_object_store_benchmarks.py --json
+uv run --isolated pytest packages/mas-core/tests/test_object_store_multipart.py -q
+uv run --isolated python scripts/check_object_store_multipart.py --json
 ```
 
 The backup/restore fixture now includes a regression proving that a stale
@@ -114,8 +121,16 @@ scoped cleanup. The follow-on bounded wave retains
 and passes sixteen 1 MiB/8 MiB concurrent cases across the same two endpoints,
 with four concurrent cases per size and zero remaining fixture objects. The
 topology is operator-observed and local; provider-managed durability/custody,
-multipart, resource profiling, actual process/network outage, clean-host/
-disaster recovery, and migration cutover/rollback remain open.
+resource profiling, actual process/network outage, clean-host/disaster
+recovery, and migration cutover/rollback remain open.
+
+The multipart follow-up retains scalar evidence at
+[`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+Compose MinIO and disposable SeaweedFS each pass 8 MiB and 16 MiB uploads with
+5 MiB parts, checksum read-back, explicit abort-without-object, and zero
+remaining fixture objects. This closes the bounded multipart adapter contract
+only; resource profiling, provider outage, provider-managed encryption/KMS,
+clean-host/disaster recovery, and production migration remain open.
 
 The verified-copy follow-up retains scalar evidence at
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
@@ -139,15 +154,15 @@ evidence remain open.
   change only after retention parity, deployment-routing ownership, rollback
   authority, and operator recovery evidence are defined. The provider-diverse
   rehearsal is complete, but it does not authorize a production cutover.
-- Extend `check_object_store_benchmarks.py --live` beyond the retained serial
-  and bounded 1 MiB/8 MiB concurrency waves with multipart, reliability,
-  resource, outage, and recovery comparison evidence. The current timings are
-  local disposable observations and do not justify a provider decision.
+- Extend the retained serial, bounded concurrency, and multipart waves with
+  reliability, resource, outage, and recovery comparison evidence. The current
+  timings and multipart observations are local disposable evidence and do not
+  justify a provider decision.
 - Add encrypted secondary backup and clean-environment disaster-recovery
   verification. The current empty-target preflight is a bounded safety check,
   not proof of a clean host, provider durability, or regional recovery.
-- Measure multipart/resource/outage behavior and compare any optional backend
-  before changing the MinIO default; large-object and bounded concurrency
+- Measure resource/outage behavior and compare any optional backend before
+  changing the MinIO default; large-object, bounded concurrency, and multipart
   behavior are now checked but do not close those remaining gates.
 - Prove Postgres/object-store consistency, lifecycle cleanup, orphan handling,
   and legal-hold behavior in a live recovery exercise.

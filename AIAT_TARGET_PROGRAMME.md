@@ -990,13 +990,17 @@ The bounded benchmark expansion in `6794b9f` also passes four concurrent
 checksum upload/read-back cases at each of 1 MiB and 8 MiB on both endpoints,
 with post-delete prefix verification; scalar evidence is retained at
 [`mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json`](mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
+The multipart adapter expansion in `a2f35de` passes 8 MiB and 16 MiB payloads
+with 5 MiB parts on both endpoints, checksum read-back, explicit abort without
+an object, and scoped cleanup; scalar evidence is retained at
+[`mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json`](mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
 The retained local MinIO report proves the scoped 8/8 contract on the running
 deployment and is reproducible through
 [`mas/infra/compose/scripts/check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh).
-A deployed MinIO/SeaweedFS adapter still needs provider-specific multipart,
-resource, outage, corruption, backup, and restore evidence before those
-capabilities are treated as certified; the bounded large-object/concurrency
-wave is checked but does not close those gates;
+A deployed MinIO/SeaweedFS adapter still needs broader resource, outage,
+corruption, backup, and restore evidence before those capabilities are treated
+as certified; bounded large-object/concurrency and multipart behavior are
+checked but do not close those gates;
 production routing, retention authority, and cutover remain outside this
 rehearsal.
 
@@ -1523,6 +1527,12 @@ The programme is organised around completing and hardening the existing architec
   [`object_store_benchmark_advanced_provider_diverse_evidence.json`](mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json)).
   Multipart, resource, outage, provider-managed encryption, and clean-host/
   disaster-recovery evidence remain separate gates.
+- [x] Add the bounded multipart object-store adapter/checker (`a2f35de`) for
+  5 MiB-part uploads of 8 MiB and 16 MiB payloads, explicit abort semantics,
+  checksum read-back, and cleanup across MinIO/SeaweedFS; evidence is
+  [`object_store_multipart_provider_diverse_evidence.json`](mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
+  Resource, provider-outage, provider-managed encryption, clean-host,
+  disaster-recovery, and production-cutover evidence remain separate gates.
 - Complete executive/KPI views using LiteLLM and OmniRoute without duplicating analytics authority.
 - [x] Add the descriptive SLO/capacity policy/report contracts over durable
   usage history; keep native service instrumentation, load/soak/chaos, and
