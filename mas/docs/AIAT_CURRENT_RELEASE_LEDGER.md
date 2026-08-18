@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `303ec10e5e62551fb898e52ba65bfa8f8f0ebcd2` (latest grouped verification revision)
+**Base revision:** `31a884e93744c72823b5350ce55920e5d71b0271` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -24,9 +24,9 @@ dual-Postgres gateway-worker/mail-edge composition certificate and `67f1599`
 extends it through signed delegated identity ingress.
 The current
 retained release-environment manifest reports revision
-`303ec10e5e62551fb898e52ba65bfa8f8f0ebcd2`, two changed pre-existing memory
+`31a884e93744c72823b5350ce55920e5d71b0271`, two changed pre-existing memory
 files, and digest
-`81c444587dbf8f49eb484c3ec06f89af5bfdfdc1a573950beb6be1f246a3ba02`.
+`f386bde778b476794299c03b282153047738e9cc65f3d96a3e0d59a0644c2475`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
