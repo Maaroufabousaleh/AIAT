@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T17:24:47Z",
+  "observed_at": "2026-08-18T17:44:34Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 77,
-    "pass": 70,
+    "total": 78,
+    "pass": 71,
     "fail": 0,
     "blocked": 7
   },
@@ -136,9 +136,23 @@
     "provider_managed_kms_status": "not_configured",
     "note": "The AIAT-owned Postgres credentials boundary passes through the private Compose API container; provider-managed KMS remains a separate operator-selected gate."
   },
+  "local_gateway_provider_recovery_evidence": {
+    "status": "pass",
+    "ref": "gateway_worker_provider_recovery_live.json",
+    "provider_id": "litellm",
+    "exact_model_id": "llama-3.3-70b-versatile",
+    "provider_attempts": 2,
+    "provider_retry_count": 1,
+    "external_provider_completion_attempt_count": 1,
+    "durable_reopen": true,
+    "provider_ingress_replay_conflict_tamper": "passed",
+    "cleanup_verified": true,
+    "note": "The retained live certificate is now validated by the release ledger. It proves one injected transient failure, one real provider completion, durable worker/identity reopen, payload-free scalar projection, and zero fixture residue; external provider outage/restore, callback/delivery confirmation, independent-host, and sandbox evidence remain open."
+  },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The configured Compose profile completed with 70 passes, zero failures, and 7 externally blocked checks across 77 checks; native host, image identity, sandbox, Firecracker, outbound mail, default-worker certification, and self-improvement source remain blocked.",
+    "The configured Compose profile completed with 71 passes, zero failures, and 7 externally blocked checks across 78 checks; native host, image identity, sandbox, Firecracker, outbound mail, default-worker certification, and self-improvement source remain blocked.",
+    "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "Licence and resource notices remain metadata-only and are not a release gate."
   ]
