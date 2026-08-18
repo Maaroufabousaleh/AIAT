@@ -952,6 +952,42 @@ class TestCLIModel:
 
 class TestFallback:
     @pytest.mark.asyncio
+    async def test_fallback_recovers_from_transport_outage(self):
+        reg = _make_registry()
+        config = _make_legacy_config()
+        client = LLMGatewayClient(
+            config,
+            registry=reg,
+            rate_limit_tracker=RateLimitTracker(cooldown_base_s=60),
+        )
+        seen: list[str] = []
+
+        async def mock_post(_self, url, **kwargs):
+            del kwargs
+            seen.append(url)
+            if len(seen) == 1:
+                raise httpx.ConnectError("provider unavailable")
+            return _ok_chat_response("recovered reply", "test-gpt4o")
+
+        with (
+            patch.object(httpx.AsyncClient, "post", new=mock_post),
+            patch.object(
+                client.model_selector,
+                "fallback_chain",
+                return_value=["test-pickle", "test-gpt4o"],
+            ),
+        ):
+            async with client:
+                resp = await client.chat_completion_with_fallback(
+                    [{"role": "user", "content": "hi"}],
+                    model="test-pickle",
+                )
+
+        assert resp.text == "recovered reply"
+        assert len(seen) == 2
+        assert client.rate_limits.is_in_cooldown("test-pickle", provider="test_zen")
+
+    @pytest.mark.asyncio
     async def test_fallback_skips_cooling_model_and_uses_sibling(self):
         reg = _make_registry()
         config = _make_legacy_config()

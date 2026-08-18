@@ -2432,7 +2432,7 @@ class LLMGatewayClient:
                         tried,
                     )
                 return resp
-            except (LLMRateLimited, LLMGatewayError, httpx.TimeoutException) as exc:
+            except (LLMRateLimited, LLMGatewayError, httpx.TransportError) as exc:
                 logger.warning(
                     "Fallback: model '%s' failed (%s), trying next in chain",
                     candidate,
