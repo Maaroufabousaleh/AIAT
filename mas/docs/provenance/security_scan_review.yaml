@@ -1,0 +1,114 @@
+schema_version: aiat.security-scan-review.v1
+programme_scope: personal-internal-only
+
+# This register makes the open technical review work explicit. It is not a
+# waiver, a scan result, or an activation approval. Licence/restriction data
+# remains metadata-only and is intentionally absent from the review predicate.
+policy:
+  security_scan_is_technical_gate: true
+  unresolved_findings_block_activation: true
+  review_register_is_not_a_waiver: true
+  licence_metadata_is_gate: false
+
+reviews:
+  - id: opencode-1.17.13-semgrep-2026-08-10-review
+    scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10
+    owner: personal-operator
+    status: open
+    gate_status: blocked
+    next_action: >-
+      Review every finding and engine warning against the exact source
+      revision in an isolated review run, record a technical disposition, and
+      rerun the bounded scan before either coding_worker or tester can activate.
+    engine_warning_action: >-
+      Re-run the scanner with a supported ruleset and capture a warning-free
+      result or a bounded explanation for each warning before activation.
+    rule_groups:
+      - id: path-resolution
+        rules:
+          - javascript.lang.security.audit.path-join-resolve-traversal
+        finding_count: 261
+        next_action: >-
+          Reproduce path traversal cases and verify canonicalization,
+          workspace-root containment, and symlink handling at every file-input
+          boundary.
+      - id: dynamic-regexp
+        rules:
+          - javascript.lang.security.audit.detect-non-literal-regexp
+        finding_count: 13
+        next_action: >-
+          Review every dynamic pattern for bounded input, escaping, and denial
+          of regular-expression abuse.
+      - id: string-sanitization
+        rules:
+          - javascript.audit.detect-replaceall-sanitization
+        finding_count: 11
+        next_action: >-
+          Confirm each replacement is an intentional complete sanitization
+          boundary and add focused adversarial tests where it is not.
+      - id: workflow-shell-input
+        rules:
+          - yaml.github-actions.security.gha-curl-pipe-shell
+          - yaml.github-actions.security.run-shell-injection
+        finding_count: 12
+        next_action: >-
+          Replace untrusted workflow interpolation and curl-to-shell paths with
+          pinned, reviewed actions and explicit argument boundaries.
+      - id: unsafe-formatting
+        rules:
+          - javascript.lang.security.audit.unsafe-formatstring
+        finding_count: 6
+        next_action: >-
+          Trace untrusted format strings and require safe structured formatting
+          at every reported call site.
+      - id: process-launch
+        rules:
+          - javascript.lang.security.audit.spawn-shell-true
+          - javascript.lang.security.detect-child-process
+        finding_count: 5
+        next_action: >-
+          Require argv-only launch, executable allowlists, bounded environment,
+          and sandbox coverage for every child-process path.
+      - id: transport-verification
+        rules:
+          - problem-based-packs.insecure-transport.js-node.bypass-tls-verification
+        finding_count: 2
+        next_action: >-
+          Remove or narrowly justify TLS-verification bypasses and prove
+          certificate validation in the provider and callback paths.
+      - id: dependency-freshness
+        rules:
+          - package_managers.bun.bun-missing-minimum-release-age
+        finding_count: 1
+        next_action: >-
+          Confirm dependency-age policy and pin an acceptable release or record
+          an explicit technical exception for operator review.
+      - id: workflow-action-pinning
+        rules:
+          - yaml.github-actions.security.github-actions-mutable-action-tag
+        finding_count: 1
+        next_action: >-
+          Pin each workflow action to an immutable commit and rerun the exact
+          source scan.
+      - id: object-key-safety
+        rules:
+          - javascript.lang.security.audit.prototype-pollution
+        finding_count: 1
+        next_action: >-
+          Validate untrusted object keys and prove prototype-safe merge and
+          deserialization behavior.
+      - id: container-identity
+        rules:
+          - dockerfile.security.missing-user-entrypoint
+          - dockerfile.security.missing-user
+        finding_count: 2
+        next_action: >-
+          Set an explicit non-root runtime identity and verify entrypoint
+          privilege boundaries in the isolated image build.
+      - id: cors-policy
+        rules:
+          - javascript.express.security.cors-misconfiguration
+        finding_count: 1
+        next_action: >-
+          Restrict origins, credentials, and methods to the explicit AIAT
+          control-plane boundary and add a negative preflight test.
