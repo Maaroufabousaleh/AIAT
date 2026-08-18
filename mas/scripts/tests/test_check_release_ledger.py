@@ -32,6 +32,7 @@ def test_inventory_registers_retained_object_store_live_evidence() -> None:
         if check.retained_evidence_path
     }
     assert set(retained) == {
+        "gateway_provider_recovery",
         "object_store_multipart",
         "object_store_resource_profile",
         "object_store_provider_outage",
@@ -74,6 +75,19 @@ def test_retained_multipart_and_outage_evidence_pass() -> None:
             "pass",
             "retained live evidence validated",
         )
+
+
+def test_retained_gateway_provider_recovery_evidence_passes() -> None:
+    spec = _spec(
+        "docs/provenance/gateway_worker_provider_recovery_live.json",
+        "aiat.gateway-worker-provider-recovery-live.v1",
+        "gateway_provider_recovery",
+    )
+    status, reason, payload = _validate_retained_live_evidence(spec)
+    assert status == "pass"
+    assert reason == "retained live evidence validated"
+    assert payload is not None
+    assert _run_retained_live_evidence(spec)["summary"]["provider_retry_count"] == 1
 
 
 def test_retained_evidence_missing_file_is_blocked(monkeypatch, tmp_path) -> None:

@@ -189,6 +189,34 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
         "provider_managed_kms_checked",
         "cleanup_counts",
         "remaining_fixture_counts",
+        "worker_cleanup_deleted_counts",
+        "remaining_worker_fixture_counts",
+        "remaining_identity_fixture_rows",
+        "remaining_identity_client_rows",
+        "live_provider",
+        "provider_recovery",
+        "provider_recovery_injected",
+        "provider_id",
+        "exact_model_id",
+        "gateway_model_count",
+        "gateway_call_count",
+        "provider_attempts",
+        "provider_retry_count",
+        "external_provider_completion_attempt_count",
+        "external_network_access_performed",
+        "external_provider_call_performed",
+        "external_provider_mutation_performed",
+        "controller_terminal_state",
+        "run_state",
+        "durable_reopen",
+        "provider_ingress_statuses",
+        "provider_ingress_idempotent_duplicate",
+        "provider_ingress_conflict_rejected",
+        "provider_ingress_tampered_rejected",
+        "worker_mail_edge_coverage_status",
+        "worker_mail_edge_trace_item_count",
+        "generated_text_retained",
+        "certification_boundary",
         "credential_names",
         "error_count",
         "measurement_source",
@@ -409,19 +437,21 @@ def _validate_retained_live_evidence(spec: CheckSpec) -> tuple[str, str, dict[st
     if raw.get("licence_metadata_is_gate") not in {False, None}:
         problems.append("licence metadata must remain non-gating")
 
-    provider_rows = _retained_provider_rows(raw)
-    if provider_rows is None:
-        problems.append("provider results are missing or malformed")
-    else:
-        names = [str(row.get("name")) for row in provider_rows]
-        if len(names) != 2 or set(names) != {"minio", "seaweedfs"}:
-            problems.append("evidence must cover exactly MinIO and SeaweedFS")
-        for row in provider_rows:
-            if row.get("status") != "pass":
-                problems.append(f"{row.get('name', 'provider')} did not pass")
-                continue
-            if row.get("error_count", 0) != 0:
-                problems.append(f"{row.get('name', 'provider')} reported errors")
+    provider_rows: list[dict[str, Any]] | None = None
+    if spec.check_id.startswith("object_store_"):
+        provider_rows = _retained_provider_rows(raw)
+        if provider_rows is None:
+            problems.append("provider results are missing or malformed")
+        else:
+            names = [str(row.get("name")) for row in provider_rows]
+            if len(names) != 2 or set(names) != {"minio", "seaweedfs"}:
+                problems.append("evidence must cover exactly MinIO and SeaweedFS")
+            for row in provider_rows:
+                if row.get("status") != "pass":
+                    problems.append(f"{row.get('name', 'provider')} did not pass")
+                    continue
+                if row.get("error_count", 0) != 0:
+                    problems.append(f"{row.get('name', 'provider')} reported errors")
 
     if spec.check_id == "object_store_resource_profile":
         if raw.get("invalid_run_excluded") is not True:
@@ -472,6 +502,75 @@ def _validate_retained_live_evidence(spec: CheckSpec) -> tuple[str, str, dict[st
                 and row.get("checksum_readback_verified") is not True
             ):
                 problems.append(f"{row.get('name', 'provider')} recovery read-back is not verified")
+    elif spec.check_id == "gateway_provider_recovery":
+        required_true = (
+            "live_provider",
+            "provider_recovery",
+            "provider_recovery_injected",
+            "external_network_access_performed",
+            "external_provider_call_performed",
+            "payload_free",
+        )
+        for field in required_true:
+            if raw.get(field) is not True:
+                problems.append(f"gateway recovery field {field} is not verified")
+        if raw.get("external_provider_mutation_performed") is not False:
+            problems.append("external provider mutation must be false")
+        if raw.get("generated_text_retained") is not False:
+            problems.append("generated text must not be retained")
+        if raw.get("provider_attempts") != 2 or raw.get("provider_retry_count") != 1:
+            problems.append("gateway recovery must record two attempts and one retry")
+        if raw.get("external_provider_completion_attempt_count") != 1:
+            problems.append("gateway recovery must record one provider completion attempt")
+        if raw.get("controller_terminal_state") != "SUCCEEDED" or raw.get("run_state") != "SUCCEEDED":
+            problems.append("gateway recovery did not settle the worker run successfully")
+        durable = raw.get("durable_reopen")
+        if not isinstance(durable, dict):
+            problems.append("durable reopen evidence is missing")
+        else:
+            for field in ("worker_healthy", "identity_healthy", "worker_run_present"):
+                if durable.get(field) is not True:
+                    problems.append(f"durable reopen field {field} is not verified")
+            for field in ("worker_usage_count", "worker_artifact_count", "native_span_count", "mail_observation_count"):
+                value = durable.get(field)
+                if not isinstance(value, int) or value < 1:
+                    problems.append(f"durable reopen field {field} is incomplete")
+        ingress = raw.get("provider_ingress_statuses")
+        if ingress != {"delivered": 200, "bounced": 200, "duplicate": 200, "conflict": 409, "tampered": 401}:
+            problems.append("provider ingress status evidence is incomplete")
+        for field in (
+            "provider_ingress_idempotent_duplicate",
+            "provider_ingress_conflict_rejected",
+            "provider_ingress_tampered_rejected",
+        ):
+            if raw.get(field) is not True:
+                problems.append(f"provider ingress field {field} is not verified")
+        if raw.get("worker_mail_edge_coverage_status") != "pass":
+            problems.append("worker/mail-edge coverage did not pass")
+        remaining_worker = raw.get("remaining_worker_fixture_counts")
+        if not isinstance(remaining_worker, dict) or any(value != 0 for value in remaining_worker.values()):
+            problems.append("worker fixture cleanup is not zero-residue")
+        for field in ("remaining_identity_fixture_rows", "remaining_identity_client_rows"):
+            if raw.get(field) != 0:
+                problems.append(f"{field} is not zero")
+        boundaries = raw.get("certification_boundary")
+        if not isinstance(boundaries, dict):
+            problems.append("certification boundary is missing")
+        else:
+            required_boundaries = (
+                "selected_live_worker",
+                "external_provider_model_listing",
+                "external_provider_dispatch",
+                "provider_backed_transient_recovery",
+                "durable_worker_usage_artifact_trace",
+                "worker_postgres_connection_reopen",
+                "identity_postgres_connection_reopen",
+                "payload_free_projection",
+                "scoped_cleanup",
+            )
+            for field in required_boundaries:
+                if boundaries.get(field) != "checked":
+                    problems.append(f"certification boundary {field} is not checked")
 
     if problems:
         return "fail", "; ".join(dict.fromkeys(problems)), raw
