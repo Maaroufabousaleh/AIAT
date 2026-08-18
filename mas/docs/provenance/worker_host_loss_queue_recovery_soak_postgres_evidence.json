@@ -1,0 +1,119 @@
+{
+  "schema_version": "aiat.worker-host-loss-queue-recovery-soak-postgres-certification.v1",
+  "evidence_commit": "424805c",
+  "observed_at": "2026-08-18T12:07:59.484Z",
+  "status": "pass",
+  "mode": "local-postgres-worker-host-loss-queue-recovery-soak",
+  "iteration_count": 3,
+  "completed_iteration_count": 3,
+  "passed_iteration_count": 3,
+  "separate_child_process_invocations": 3,
+  "duration_ms": {
+    "minimum": 2171.133,
+    "maximum": 2211.613,
+    "mean": 2188.805
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "status": "pass",
+      "return_code": 0,
+      "duration_ms": 2183.669,
+      "run_state": "SUCCEEDED",
+      "attempt_count": 2,
+      "stale_executor_rejection": "run_host_reservation_not_committed",
+      "transition_count": 8,
+      "event_count": 2,
+      "usage_count": 1,
+      "artifact_count": 1,
+      "native_span_count": 3,
+      "durable_reopen_healthy": true,
+      "payload_free": true,
+      "remaining_fixture_counts": {
+        "bindings": 0,
+        "hosts": 0,
+        "reservations": 0,
+        "runs": 0,
+        "spans": 0,
+        "workers": 0
+      }
+    },
+    {
+      "iteration": 2,
+      "status": "pass",
+      "return_code": 0,
+      "duration_ms": 2171.133,
+      "run_state": "SUCCEEDED",
+      "attempt_count": 2,
+      "stale_executor_rejection": "run_host_reservation_not_committed",
+      "transition_count": 8,
+      "event_count": 2,
+      "usage_count": 1,
+      "artifact_count": 1,
+      "native_span_count": 3,
+      "durable_reopen_healthy": true,
+      "payload_free": true,
+      "remaining_fixture_counts": {
+        "bindings": 0,
+        "hosts": 0,
+        "reservations": 0,
+        "runs": 0,
+        "spans": 0,
+        "workers": 0
+      }
+    },
+    {
+      "iteration": 3,
+      "status": "pass",
+      "return_code": 0,
+      "duration_ms": 2211.613,
+      "run_state": "SUCCEEDED",
+      "attempt_count": 2,
+      "stale_executor_rejection": "run_host_reservation_not_committed",
+      "transition_count": 8,
+      "event_count": 2,
+      "usage_count": 1,
+      "artifact_count": 1,
+      "native_span_count": 3,
+      "durable_reopen_healthy": true,
+      "payload_free": true,
+      "remaining_fixture_counts": {
+        "bindings": 0,
+        "hosts": 0,
+        "reservations": 0,
+        "runs": 0,
+        "spans": 0,
+        "workers": 0
+      }
+    }
+  ],
+  "mutation_performed": true,
+  "local_database_access_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "exercised": [
+      "existing production worker-host-loss/requeue/reassignment checker",
+      "three sequential invocations in separate child processes",
+      "durable Postgres reopen per iteration",
+      "zero residual fixture rows per iteration",
+      "scalar-only parent projection without fixture payload"
+    ],
+    "not_checked": [
+      "independent deployed hosts",
+      "split-brain fencing across hosts",
+      "gVisor or Firecracker runtime isolation",
+      "external provider or provider-outage recovery",
+      "clean-host recovery",
+      "deployment-wide load, chaos, or disaster recovery"
+    ]
+  },
+  "notes": [
+    "This is a bounded same-host local Compose/Postgres recovery soak, not an independent-host or production-disaster-recovery certificate.",
+    "The checker receives the database DSN through the container environment and does not retain it in this evidence.",
+    "No fixture payload, host identifier, process identifier, credential, or raw child output is retained.",
+    "Licence metadata is recorded only as metadata and is not an activation or release gate."
+  ]
+}
