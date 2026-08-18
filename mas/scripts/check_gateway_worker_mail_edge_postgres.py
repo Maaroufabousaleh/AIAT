@@ -10,8 +10,14 @@ real signed identity-service HTTP route, including duplicate/conflict/tamper
 checks. With ``--provider-ingress``, a durable outbound attempt supplies the
 provider-message correlation and the events are written through the real
 Resend/Svix raw-body route, including the same replay/conflict/tamper checks.
-The gateway and mail observations are bounded local fixtures: no external
-provider, network endpoint, SMTP relay, sandbox, or live worker is contacted.
+The default gateway and mail observations are bounded local fixtures: no
+external provider, network endpoint, SMTP relay, sandbox, or live worker is
+contacted. With ``--live-provider`` and explicit opt-in, the checker first
+reads the configured gateway's model listing, runs one exact selected model
+through the durable worker/controller path, redacts generated content before
+durable result persistence, and can exercise the local raw-provider ingress
+with ``--provider-ingress``. That mode still does not claim an external mail
+callback or delivery.
 
 The checker requires separate worker and identity-service Postgres DSNs.  It
 exits with status 2 when either database is not configured, unavailable, or
@@ -42,16 +48,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 MAS_ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = MAS_ROOT / "packages" / "mas-core"
 IDENTITY_ROOT = MAS_ROOT / "apps" / "identity-service"
-for _path in (CORE_ROOT, IDENTITY_ROOT):
+SCRIPTS_ROOT = MAS_ROOT / "scripts"
+for _path in (CORE_ROOT, IDENTITY_ROOT, SCRIPTS_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+import check_gateway_worker_provider_live as _provider_live  # noqa: E402
 from identity_service.clients.auth import SignedClient  # noqa: E402
 from identity_service.config import IdentitySettings  # noqa: E402
 from identity_service.main import create_app  # noqa: E402
 from identity_service.models import IdentityState  # noqa: E402
 from identity_service.store import PostgresIdentityStore  # noqa: E402
 
+from mas_core.llm_gateway import LLMConfig, LLMGatewayClient  # noqa: E402
 from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats  # noqa: E402
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 from mas_core.observability.mail_edge import (  # noqa: E402
@@ -83,6 +92,9 @@ IDEMPOTENCY_KEY = "aiat-cert-gateway-mail-edge-postgres-v1-idempotency"
 WORKER_ID_TEXT = str(WORKER_ID)
 PROVIDER_ID = "fixture-provider"
 MODEL_ID = "fixture/model-v1"
+LIVE_PROMPT = "Reply with exactly the single word: ready"
+LIVE_MAX_TOKENS = 16
+LIVE_TEMPERATURE = 0.0
 EVENT_PREFIX = "aiat-cert-gateway-mail-edge-postgres-v1-"
 PAYLOAD_MARKER = "gateway worker mail-edge postgres payload must never persist"
 TIMESTAMP = "2026-08-18T12:00:00Z"
@@ -111,9 +123,68 @@ class _FixtureGateway:
         )
 
 
+class _RedactingGateway:
+    """Discard generated content while retaining scalar request/usage metadata."""
+
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat_completion(self, **kwargs: Any) -> ChatResponse:
+        self.calls.append(
+            {
+                "model": str(kwargs.get("model") or ""),
+                "max_tokens": int(kwargs.get("max_tokens") or 0),
+                "temperature": float(kwargs.get("temperature") or 0),
+                "message_count": len(kwargs.get("messages") or []),
+            }
+        )
+        response = await self.delegate.chat_completion(**kwargs)
+        return ChatResponse(
+            model=str(getattr(response, "model", "") or ""),
+            finish_reason=str(getattr(response, "finish_reason", "stop") or "stop"),
+            message=ChatMessage(role="assistant", content=None),
+            usage=getattr(response, "usage", UsageStats()),
+            tool_calls=[],
+            extra={},
+        )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit JSON evidence")
+    parser.add_argument(
+        "--live-provider",
+        action="store_true",
+        help="use the explicitly selected external gateway model instead of the fixture gateway",
+    )
+    parser.add_argument(
+        "--allow-external-provider",
+        action="store_true",
+        default=_provider_live._truthy(os.getenv("AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH")),
+        help="explicitly permit one bounded external provider completion",
+    )
+    parser.add_argument(
+        "--gateway-url",
+        default=_provider_live._configured_url(),
+        help="live AIAT gateway URL for --live-provider",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=_provider_live._configured_key(),
+        help="live gateway bearer key for --live-provider",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.getenv("AIAT_LIVE_WORKER_MODEL", ""),
+        help="exact selected model for --live-provider; auto is rejected",
+    )
+    parser.add_argument(
+        "--provider-id",
+        default=os.getenv("AIAT_LIVE_WORKER_PROVIDER_ID", "litellm"),
+        help="provider identity recorded in live usage metadata",
+    )
+    parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument(
         "--identity-ingress",
         action="store_true",
@@ -670,18 +741,98 @@ async def _run(
     *,
     identity_ingress: bool = False,
     provider_ingress: bool = False,
+    live_provider: bool = False,
+    allow_external_provider: bool = False,
+    gateway_url: str | None = None,
+    api_key: str | None = None,
+    model_id: str | None = None,
+    provider_id: str | None = None,
+    timeout_s: float = 30.0,
+    gateway_client: Any | None = None,
+    listed_model_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     if identity_ingress and provider_ingress:
         return _blocked(
             "gateway_worker_mail_edge_ingress_modes_are_mutually_exclusive"
         )
+    if live_provider:
+        if not allow_external_provider:
+            return _blocked(
+                "external_provider_dispatch_requires_explicit_opt_in",
+                live_provider=True,
+                opt_in_environment="AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH",
+            )
+        selected_model = str(model_id or "").strip()
+        if not selected_model or selected_model.lower() == "auto":
+            return _blocked(
+                "selected_exact_model_id_is_required",
+                live_provider=True,
+            )
+        if not str(provider_id or "").strip():
+            return _blocked("provider_id_is_required", live_provider=True)
+        if timeout_s < 1 or timeout_s > 120:
+            return _blocked(
+                "timeout_must_be_between_one_and_120_seconds",
+                live_provider=True,
+            )
     worker_url = _normalize_dsn(worker_dsn)
     identity_url = _normalize_dsn(identity_dsn)
     if worker_url is None or identity_url is None:
         return _blocked(
             "gateway_worker_mail_edge_postgres_database_not_configured",
+            live_provider=live_provider,
             worker_database_configured=worker_url is not None,
             identity_database_configured=identity_url is not None,
+        )
+
+    selected_model = str(model_id or "").strip() if live_provider else MODEL_ID
+    selected_provider = str(provider_id or "").strip() if live_provider else PROVIDER_ID
+    selected_gateway_url = str(gateway_url or "").strip().rstrip("/")
+    selected_api_key = str(api_key or "").strip()
+    gateway_model_count: int | None = None
+    if live_provider and gateway_client is None:
+        if not _provider_live._validate_url(selected_gateway_url):
+            return _blocked(
+                "live_gateway_url_is_missing_or_invalid",
+                live_provider=True,
+            )
+        if not selected_api_key:
+            return _blocked(
+                "live_gateway_api_key_is_missing",
+                live_provider=True,
+            )
+        try:
+            listed_model_ids, gateway_model_count = await _provider_live._listed_models(
+                gateway_url=selected_gateway_url,
+                api_key=selected_api_key,
+                timeout_s=timeout_s,
+            )
+        except httpx.HTTPStatusError as exc:
+            return _blocked(
+                "live_gateway_model_listing_rejected",
+                live_provider=True,
+                gateway_http_status=exc.response.status_code,
+                network_access_performed=True,
+                external_network_access_performed=True,
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            return _blocked(
+                "live_gateway_model_listing_unavailable",
+                live_provider=True,
+                error_type=type(exc).__name__,
+                network_access_performed=True,
+                external_network_access_performed=True,
+            )
+    elif live_provider:
+        gateway_model_count = len(listed_model_ids or set())
+    if live_provider and selected_model not in (listed_model_ids or set()):
+        return _blocked(
+            "selected_model_is_not_listed_by_live_gateway",
+            live_provider=True,
+            selected_model_id=selected_model,
+            gateway_model_count=gateway_model_count,
+            network_access_performed=gateway_client is None,
+            external_network_access_performed=gateway_client is None,
         )
 
     worker = AgentStorage(worker_url)
@@ -716,6 +867,8 @@ async def _run(
     provider_ingress_idempotent_duplicate = False
     provider_ingress_conflict_rejected = False
     provider_ingress_tampered_rejected = False
+    live_gateway: LLMGatewayClient | Any | None = gateway_client if live_provider else None
+    live_gateway_owned = False
     try:
         await worker.connect()
         if not await identity.healthcheck():
@@ -735,20 +888,40 @@ async def _run(
                 local_database_access_performed=True,
                 network_access_performed=True,
             )
+        if live_provider and live_gateway is None:
+            live_gateway = LLMGatewayClient(
+                LLMConfig.model_construct(
+                    backend="litellm",
+                    gateway_url=selected_gateway_url,
+                    api_key=selected_api_key,
+                    default_model=selected_model,
+                    timeout_s=timeout_s,
+                    max_retries=1,
+                    retry_min_wait_s=0.25,
+                    retry_max_wait_s=1.0,
+                )
+            )
+            await live_gateway.start()
+            live_gateway_owned = True
         await _cleanup_worker(worker)
         await _cleanup_identity(identity)
         registered = await worker.register_worker(
             name=WORKER_NAME,
             worker_id=WORKER_ID,
             adapter_type="aiat_gateway",
-            adapter_config={"fixture": "gateway-mail-edge-postgres", "provider_id": PROVIDER_ID},
+            adapter_config={
+                "fixture": "gateway-mail-edge-postgres" if not live_provider else None,
+                "provider_id": selected_provider,
+                "selected_model_id": selected_model,
+                "live_provider": live_provider,
+            },
             sandbox_profile="standard",
             status="ACTIVE",
-            version="fixture-v1",
-            source_repo="internal-fixture",
-            source_revision="gateway-mail-edge-postgres-v1",
-            version_pin="fixture-v1",
-            evaluation_status="fixture-only",
+            version="fixture-v1" if not live_provider else "live-provider-v1",
+            source_repo="internal-fixture" if not live_provider else "configured-gateway",
+            source_revision="gateway-mail-edge-postgres-v1" if not live_provider else "operator-selected",
+            version_pin="fixture-v1" if not live_provider else "operator-selected",
+            evaluation_status="fixture-only" if not live_provider else "operator-opt-in",
             adapter_entrypoint="GatewayWorkerAdapter",
             isolation_mode="native",
             model_mode="aiat_gateway",
@@ -758,21 +931,33 @@ async def _run(
             run_id=RUN_ID,
             idempotency_key=IDEMPOTENCY_KEY,
             worker_id=str(canonical_worker_id),
-            task_type="gateway_worker_mail_edge_postgres_fixture",
-            task_input={
-                "prompt": "return a bounded durable worker/mail-edge fixture answer",
-                "max_tokens": 32,
-                "temperature": 0.2,
-                "private_marker": PAYLOAD_MARKER,
-            },
+            task_type=(
+                "gateway_worker_provider_mail_edge_live"
+                if live_provider
+                else "gateway_worker_mail_edge_postgres_fixture"
+            ),
+            task_input=(
+                {
+                    "prompt": LIVE_PROMPT,
+                    "max_tokens": LIVE_MAX_TOKENS,
+                    "temperature": LIVE_TEMPERATURE,
+                }
+                if live_provider
+                else {
+                    "prompt": "return a bounded durable worker/mail-edge fixture answer",
+                    "max_tokens": 32,
+                    "temperature": 0.2,
+                    "private_marker": PAYLOAD_MARKER,
+                }
+            ),
             trace_id=TRACE_ID,
             span_id=SPAN_ID,
             resolved_model_profile=ModelProfileReference(
                 profile_id="gateway-mail-edge-postgres-profile-v1",
-                version="fixture-v1",
-                exact_model_id=MODEL_ID,
+                version="operator-selected" if live_provider else "fixture-v1",
+                exact_model_id=selected_model,
             ),
-            timeout_seconds=30,
+            timeout_seconds=max(1, min(120, int(timeout_s))),
         )
         controller = WorkerRunController(storage=worker)
         await controller.create_run(request, worker_registry_id=canonical_worker_id)
@@ -794,12 +979,20 @@ async def _run(
             trace_id=TRACE_ID,
             span_id=SPAN_ID,
         )
-        gateway = _FixtureGateway()
+        gateway = (
+            _RedactingGateway(live_gateway)
+            if live_provider and live_gateway is not None
+            else _FixtureGateway()
+        )
         adapter = GatewayWorkerAdapter(
             worker_id=str(canonical_worker_id),
-            provider_id=PROVIDER_ID,
+            provider_id=selected_provider,
             gateway_client=gateway,
-            runtime_version="gateway-mail-edge-postgres-fixture-v1",
+            runtime_version=(
+                "gateway-worker-provider-mail-edge-live-v1"
+                if live_provider
+                else "gateway-mail-edge-postgres-fixture-v1"
+            ),
         )
         try:
             outcome = await controller.execute(
@@ -820,19 +1013,27 @@ async def _run(
             status="success" if outcome.state == "SUCCEEDED" else "failure",
             started_at=datetime.now(UTC),
             ended_at=datetime.now(UTC),
-            attributes={"run_state": outcome.state, "fixture": True},
+            attributes={
+                "run_state": outcome.state,
+                "fixture": not live_provider,
+                "live_provider": live_provider,
+            },
         )
         await worker.create_native_trace_span(
             trace_id=TRACE_ID,
             span_id=INTEGRATION_SPAN_ID,
             parent_span_id=SPAN_ID,
             source_kind="integration",
-            operation="mail.provider_webhook.fixture",
+            operation=(
+                "mail.provider_webhook.live_provider"
+                if live_provider
+                else "mail.provider_webhook.fixture"
+            ),
             service="identity_service",
             status="success",
             started_at=datetime.now(UTC),
             ended_at=datetime.now(UTC),
-            attributes={"event_count": 3, "fixture": True},
+            attributes={"event_count": 3, "fixture": not live_provider},
         )
         outbound_request_id: UUID | None = None
         if provider_ingress:
@@ -1014,6 +1215,9 @@ async def _run(
                 await _cleanup_identity_client(identity)
         with suppress(Exception):
             await identity.close()
+        if live_gateway_owned and live_gateway is not None:
+            with suppress(Exception):
+                await live_gateway.stop()
 
     observations = _safe_mail_rows(durable_mail_rows)
     integration_rows = [
@@ -1042,14 +1246,23 @@ async def _run(
         require_integration=True,
         require_mail_edge=True,
     )
+    payload_projection: dict[str, Any] = {
+        "evidence": evidence.model_dump(mode="json"),
+        "mail_rows": durable_mail_rows,
+        "spans": durable_spans,
+    }
+    if live_provider:
+        payload_projection["durable_run"] = durable_run
     payload_free = PAYLOAD_MARKER not in json.dumps(
-        {
-            "evidence": evidence.model_dump(mode="json"),
-            "mail_rows": durable_mail_rows,
-            "spans": durable_spans,
-        },
+        payload_projection,
         default=str,
         sort_keys=True,
+    )
+    stored_output = ((durable_run or {}).get("result_json") or {}).get("output")
+    generated_text_retained = bool(
+        live_provider
+        and isinstance(stored_output, dict)
+        and str(stored_output.get("text") or "").strip()
     )
     run_state = str((run_row or {}).get("state") or "unknown")
     usage = durable_usage[0] if durable_usage else {}
@@ -1066,9 +1279,10 @@ async def _run(
             len(durable_spans) >= 3,
             len(observations) == 3,
             combined["status"] == "pass",
-            usage.get("provider_id") == PROVIDER_ID,
-            usage.get("exact_model_id") == MODEL_ID,
+            usage.get("provider_id") == selected_provider,
+            usage.get("exact_model_id") == selected_model,
             payload_free,
+            not generated_text_retained,
             worker_reopened,
             identity_reopened,
             worker_remaining == {"workers": 0, "runs": 0, "artifacts": 0, "usage": 0, "spans": 0},
@@ -1119,9 +1333,14 @@ async def _run(
     return {
         "schema_version": CHECK_SCHEMA,
         "coverage_schema": WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
-        "mode": "local-dual-postgres-worker-mail-edge",
+        "mode": (
+            "live-dual-postgres-worker-mail-edge"
+            if live_provider
+            else "local-dual-postgres-worker-mail-edge"
+        ),
         "identity_ingress": identity_ingress,
         "provider_ingress": provider_ingress,
+        "live_provider": live_provider,
         "status": "pass" if passed else "fail",
         "observed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "worker_migration_version": worker_migration,
@@ -1135,8 +1354,14 @@ async def _run(
         "mail_observation_count": len(observations),
         "worker_id": WORKER_ID_TEXT,
         "trace_id": TRACE_ID,
-        "provider_id": PROVIDER_ID,
-        "exact_model_id": MODEL_ID,
+        "provider_id": selected_provider,
+        "exact_model_id": selected_model,
+        "gateway_model_count": gateway_model_count,
+        "external_provider_call_performed": bool(
+            live_provider and gateway_client is None and gateway_calls and outcome is not None
+            and outcome.state == "SUCCEEDED"
+        ),
+        "generated_text_retained": generated_text_retained,
         "worker_mail_edge_coverage": combined,
         "trace_source_counts": evidence.source_counts,
         "trace_item_count": evidence.item_count,
@@ -1168,11 +1393,14 @@ async def _run(
         "mutation_performed": True,
         "local_database_access_performed": True,
         "network_access_performed": True,
-        "external_network_access_performed": False,
+        "external_network_access_performed": bool(live_provider and gateway_client is None),
         "external_provider_mutation_performed": False,
         "scope": "production GatewayWorkerAdapter/WorkerRunController, durable worker evidence, normalized identity mail-edge observations, optional signed or Resend/Svix raw-body ingress, provider-message trace correlation, dual-Postgres reopen/read-back, payload-free worker/mail-edge join, and scoped cleanup",
         "certification_boundary": {
-            "gateway_worker_adapter_fixture_dispatch": "checked",
+            "gateway_worker_adapter_fixture_dispatch": "not_checked" if live_provider else "checked",
+            "selected_live_worker": "checked" if live_provider else "not_checked",
+            "external_provider_model_listing": "checked" if live_provider else "not_checked",
+            "external_provider_dispatch": "checked" if live_provider else "not_checked",
             "durable_worker_usage_artifact_trace": "checked",
             "normalized_delivery_webhook_bounce_observations": "checked",
             "identity_signed_http_ingress": "checked" if identity_ingress else "not_checked",
@@ -1184,7 +1412,6 @@ async def _run(
             "payload_free_projection": "checked",
             "scoped_cleanup": "checked",
             "external_provider_callback": "not_checked",
-            "selected_live_worker": "not_checked",
             "provider_backed_recovery": "not_checked",
             "sandbox_runtime_gvisor_or_firecracker": "not_checked",
         },
@@ -1200,6 +1427,13 @@ def main(argv: list[str] | None = None) -> int:
             args.identity_dsn,
             identity_ingress=args.identity_ingress,
             provider_ingress=args.provider_ingress,
+            live_provider=args.live_provider,
+            allow_external_provider=args.allow_external_provider,
+            gateway_url=args.gateway_url,
+            api_key=args.api_key,
+            model_id=args.model,
+            provider_id=args.provider_id,
+            timeout_s=args.timeout,
         )
     )
     if args.json:

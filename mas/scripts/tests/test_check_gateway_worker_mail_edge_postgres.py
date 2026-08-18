@@ -30,6 +30,59 @@ def test_checker_blocks_without_both_database_dsns() -> None:
     assert report["licence_metadata_is_gate"] is False
 
 
+def test_live_provider_mode_blocks_before_database_or_network_without_opt_in() -> None:
+    module = _module()
+    report = asyncio.run(
+        module._run(
+            None,
+            None,
+            live_provider=True,
+            model_id="llama-3.3-70b-versatile",
+            provider_id="litellm",
+        )
+    )
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "external_provider_dispatch_requires_explicit_opt_in"
+    assert report["mutation_performed"] is False
+    assert report["external_network_access_performed"] is False
+    assert report["licence_metadata_is_gate"] is False
+
+
+def test_redacting_gateway_keeps_usage_but_discards_generated_text() -> None:
+    module = _module()
+
+    class _Gateway:
+        async def chat_completion(self, **kwargs):
+            return module.ChatResponse(
+                model=kwargs["model"],
+                message=module.ChatMessage(role="assistant", content="secret output"),
+                usage=module.UsageStats(prompt_tokens=5, completion_tokens=2, total_tokens=7),
+            )
+
+    gateway = module._RedactingGateway(_Gateway())
+    response = asyncio.run(
+        gateway.chat_completion(
+            model="llama-3.3-70b-versatile",
+            max_tokens=16,
+            temperature=0.0,
+            messages=[{"role": "user", "content": "ready"}],
+        )
+    )
+
+    assert response.text == ""
+    assert response.message.content is None
+    assert response.usage.total_tokens == 7
+    assert gateway.calls == [
+        {
+            "model": "llama-3.3-70b-versatile",
+            "max_tokens": 16,
+            "temperature": 0.0,
+            "message_count": 1,
+        }
+    ]
+
+
 def test_fixture_observations_are_correlated_and_payload_free() -> None:
     module = _module()
     observations = module._fixture_observations()
