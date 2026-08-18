@@ -85,6 +85,17 @@
   [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
   Resource, provider-outage, provider-managed encryption/KMS, clean-host, and
   disaster-recovery gates remain open.
+- Commit `3791b3f`, ledger registration `bb0fa8f`, and fresh evidence `c90fc13`
+  add the bounded `aiat.object-store-resource-profile.v1` wave. Compose MinIO
+  and disposable SeaweedFS 4.42 each pass eight 1 MiB/8 MiB checksum cases at
+  concurrency four with identical procfs RSS/wall/CPU sampling, zero errors,
+  and zero cleanup residue. The same fresh reserved namespace passes 8 MiB/16
+  MiB multipart upload/read-back with 5 MiB parts and explicit abort cleanup.
+  The earlier nonexistent-network-alias attempt is classified as invalid test
+  harness/configuration execution and is excluded from provider evidence and
+  verdicts. This is scalar comparison evidence only; production resource
+  budgets/portability, outage, KMS, clean-host, and disaster-recovery gates
+  remain open.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is
@@ -524,7 +535,7 @@ single frozen commit before production claims are made.
 
 - `scripts/check_release_ledger.py --json` (base aggregator `eff4eef`, native live-ledger gate `4d7a495`) now
   aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
-  The latest static run reports 52/52 configured
+  The latest static run reports 53/53 configured
   fixture/contract/documentation/release-environment/operator-pin/governance
   checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
@@ -541,8 +552,8 @@ single frozen commit before production claims are made.
 - `scripts/check_docs_index.py --json` passes the canonical target, thirteen current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
-- The current unconfigured local 2026-08-18 71-check profile records 55
-  passes, zero failures, 16 externally blocked probes, and four pending
+- The current unconfigured local 2026-08-18 73-check profile records 56
+  passes, zero failures, 17 externally blocked probes, and four pending
   evidence items with a bounded 60-second child-check timeout. The native
   release-host preflight is now the `release_environment:live` child and
   reports WSL2, missing `runsc`, dirty worktree, and absent immutable image
@@ -812,7 +823,7 @@ single frozen commit before production claims are made.
 | Outbound-mail lifecycle fixture | PASS (static/unit/fixture; relay live open) | `uv run --isolated pytest packages/mas-core/tests/test_outbound_mail_lifecycle.py -q`; `uv run --isolated python scripts/check_outbound_mail_lifecycle.py --json` drives the actual `IdentityService` through approval pause, request/submission idempotency, definitive provider-failure retry, ambiguous-outage reconciliation hold, and secret-safe output without external relay calls |
 | Self-improvement candidate detection | PASS (static/unit/fixture; live signal sources open) | Commit `4d8dddf`; `uv run --isolated pytest packages/mas-core/tests/test_improvement_candidates.py -q`; `uv run --isolated python scripts/check_self_improvement_candidates.py --json` reconciles defect, metric, upstream-update, cost, and operator-goal signals with deterministic deduplication/risk/budget mapping, conflicting-ID rejection, secret-safe metadata, and zero project/budget/credential/deployment side effects |
 | Self-improvement lifecycle persistence | PASS (local Compose Postgres certificate; live worker/provider boundary open) | Commit `10983c8`; `uv run --isolated pytest mas/scripts/tests/test_check_self_improvement_postgres_evidence.py -q` plus focused self-improvement/storage tests and Ruff pass. `docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_self_improvement_postgres_evidence.py --json'` reaches migration `0036_native_trace_spans`, persists the canonical project and revisioned lifecycle through six technical gates, rejects a stale CAS snapshot, records human approval, verifies five checksum/size read-backs, promotes and exactly rolls back, persists a terminal outcome/history, reopens the durable row, and removes only the reserved project; evidence is [`provenance/self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json). This is local control-plane evidence only; selected model-backed worker, provider callback, budget settlement, deployment, and live issue reconciliation remain open; licence metadata is informational only |
-| Machine-readable release ledger | PASS (52/52 static aggregation; native live-ledger gate `4d7a495`); BLOCKED (current unconfigured live profile and retained configured profile) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 52/52 static checks passing, including the bounded multipart contract child, two pending worker security findings-review evidence items, and `NO-RELEASE`. The current unconfigured 71-check `--live --json` snapshot records 55 pass/16 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the configured loopback 64-check snapshot remains at [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json) with 59 pass/5 blocked. The native preflight, Firecracker readiness, multipart live configuration block, and security-review children are included in the live aggregate and never expose credentials; licence metadata remains non-gating. |
+| Machine-readable release ledger | PASS (53/53 static aggregation; native live-ledger gate `4d7a495`); BLOCKED (current unconfigured live profile and retained configured profile) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 53/53 static checks passing, including the bounded multipart and resource-profile children, two pending worker security findings-review evidence items, and `NO-RELEASE`. The current unconfigured 73-check `--live --json` snapshot records 56 pass/17 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the configured loopback 64-check snapshot remains at [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json) with 59 pass/5 blocked. The native preflight, Firecracker readiness, multipart/resource-profile configuration blocks, and security-review children are included in the live aggregate and never expose credentials; the independently retained corrected resource evidence is scalar-only and does not change `NO-RELEASE`; licence metadata remains non-gating. |
 | Release environment manifest | PASS (secret-safe static identity; refreshed policy input) | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with fifteen input hashes, including the network-boundary policy, security review register, tool identities, environment-presence flags, and a deterministic per-revision manifest digest without printing values or credentials. The report records the current branch, revision, changed-path count, and dirty state; its digest must be captured again for the eventual frozen release commit. |
 | Native release-host preflight | BLOCKED (current local WSL2 host) | The opt-in `uv run --isolated python scripts/check_release_environment.py --require-native-linux --json` check fails closed unless the host is native Linux, Docker/Compose v2 and `runsc` are available, the tree is clean, and all ten deployment image refs are digest-pinned. The current WSL2 result is retained at [`provenance/native_release_preflight.json`](../../mas/docs/provenance/native_release_preflight.json) with safe blockers for host identity, `runsc`, dirty state, and absent image refs. It is a prerequisite diagnostic only; native network, image/SBOM, scan, recovery, and provider evidence remain open, and licence metadata is non-gating. |
 

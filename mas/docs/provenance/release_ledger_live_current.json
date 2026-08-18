@@ -1,27 +1,27 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T14:08:29.400181Z",
+  "observed_at": "2026-08-18T14:34:57.392513Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 71,
-    "pass": 55,
+    "total": 73,
+    "pass": 56,
     "fail": 0,
-    "blocked": 16
+    "blocked": 17
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "16 check(s) are externally blocked",
+    "17 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "a19aff1d9f62fe3b6ce8cb45c80064289f6167b2",
+    "revision": "c90fc13e7a972b4b57f4b701dcc4adf597c4a156",
     "working_tree_clean": false
   },
-  "manifest_digest": "07794fa4525939d75d46788fd9168f90be2eb69e490f027f9353c144829106cd",
+  "manifest_digest": "33c5e76afb9e9d611be5bbffed2f84eb8ac6c58faa650309b79c1e4937c37c66",
   "live_configuration": {
     "orchestrator_url_configured": false,
     "credentials_printed": false,
@@ -60,7 +60,8 @@
     "model_profile_catalogue:live",
     "outbound_mail_lifecycle:live",
     "self_improvement_candidate_detection:live",
-    "object_store_multipart:live"
+    "object_store_multipart:live",
+    "object_store_resource_profile:live"
   ],
   "pending_evidence": [
     "coding_worker security scan findings require review in static and live reconciliation rows",
@@ -75,5 +76,15 @@
     "note": "Retained configured loopback evidence; it predates the aggregate native-preflight child and remains descriptive rather than a release approval."
   },
   "licence_metadata_is_gate": false,
+  "bounded_resource_profile_evidence": {
+    "status": "pass",
+    "evidence_ref": "object_store_resource_profile_provider_diverse_evidence.json",
+    "providers": ["minio", "seaweedfs"],
+    "case_count_per_provider": 8,
+    "measurement_source": "procfs",
+    "cleanup_verified": true,
+    "invalid_run_excluded": true,
+    "aggregate_live_child_status": "blocked_missing_configuration"
+  },
   "secret_policy": "credentials, image values, URLs, and dependency payloads are never retained"
 }
