@@ -1,6 +1,6 @@
 # Object-Store Migration Review Status
 
-**Updated:** 2026-08-11
+**Updated:** 2026-08-18
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Owning feature:** [Data, Storage, Memory, and Retention](FEATURE_DATA_STORAGE_AND_MEMORY.md)
 **Scope:** personal/internal AIAT instance
@@ -25,6 +25,11 @@ authority outside the helpers.
 - `93bf755` — restore-copy safety hardening: the fixture/live runner and
   governed migration workflow perform a non-mutating empty-target preflight,
   and `clean_target_verified` is retained in restore evidence.
+- `351444a` — bounded `aiat.object-store-provider-pair.v1` dual-endpoint
+  recovery checker and focused tests. It performs checksum-bearing dual-write,
+  rejects a simulated unavailable primary at the adapter boundary, restores
+  from the secondary into a clean recovery bucket, and cleans all reserved
+  prefixes.
 
 The helpers never delete source objects, silently change deployment routing,
 copy credentials into reports, or treat licence/restriction metadata as a
@@ -63,10 +68,20 @@ and
 Those reports document local deployment evidence only; they do not certify a
 provider pair or disaster recovery.
 
+The live provider-pair certificate at
+[`object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
+(`f385bd7`) records three objects dual-written between the existing Compose
+MinIO endpoint and a disposable local MinIO endpoint, secondary-only clean
+restore after the primary adapter failure probe, payload-free output, and zero
+remaining objects. Both endpoints are MinIO; provider-diverse durability,
+actual provider process/network outage, provider-managed encryption/KMS,
+clean-host recovery, and disaster recovery remain separate gates.
+
 ## Remaining gates
 
-- Run verified copy and the migration workflow against a provider-certified
-  pair with retention, routing, and rollback evidence.
+- Run verified copy and the migration workflow against a provider-diverse,
+  provider-certified pair with retention, routing, and rollback evidence; the
+  same-provider dual-endpoint prerequisite is now retained above.
 - Run `check_object_store_benchmarks.py --live` with the current MinIO and
   SeaweedFS endpoints and retain reliability/resource/concurrency,
   large-object/multipart, outage, and recovery comparison evidence. The

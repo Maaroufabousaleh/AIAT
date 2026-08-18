@@ -57,6 +57,15 @@ fresh Python process and removes its temporary fixtures; it is explicitly
 local clean-process evidence, not provider-pair, KMS, clean-host, outage, or
 disaster-recovery evidence.
 
+The storage evidence index now also includes the bounded provider-pair
+certificate (`351444a`, retained in
+[`object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)).
+It exercises checksum dual-write and secondary-only clean recovery between
+two local MinIO endpoints after an adapter-boundary primary failure probe.
+Because both endpoints are MinIO and no provider process is stopped, this does
+not establish provider-diverse durability, actual outage recovery, KMS,
+clean-host, or disaster-recovery evidence.
+
 The worker evidence index now includes the bounded same-host recovery soak
 (`424805c`) at
 [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).

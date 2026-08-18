@@ -77,6 +77,18 @@
   [`object_store_clean_environment_restore_evidence.json`](../../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
   (`59294c0`). This is not clean-host/filesystem, provider-pair, KMS, outage,
   or disaster-recovery evidence.
+- [x] Exercise a bounded two-endpoint object-store provider-pair recovery
+  boundary (`351444a`) with
+  [`check_object_store_provider_pair.py`](../../../mas/scripts/check_object_store_provider_pair.py)
+  and retained evidence at
+  [`object_store_provider_pair_evidence.json`](../../../mas/docs/provenance/object_store_provider_pair_evidence.json).
+  The live certificate dual-writes three checksum-bearing objects from the
+  Compose MinIO endpoint to a disposable MinIO endpoint, rejects the primary
+  adapter at the failure boundary, restores from the secondary into a clean
+  recovery bucket, and cleans all prefixes to zero. This is same-provider
+  local evidence; provider-diverse durability, actual provider outage,
+  provider-managed encryption/KMS, clean-host, and disaster recovery remain
+  open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

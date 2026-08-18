@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, and same-provider backup/restore rehearsal pass; provider-pair comparison, provider-managed encryption, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, same-provider backup/restore rehearsal, and bounded dual-endpoint provider-pair recovery certificate pass; provider-diverse comparison, provider-managed encryption, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -71,6 +71,14 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   logical keys, checksums, sizes, and content types. The fixture runner copies
   source objects to a backup adapter, restores them to a clean target, and
   requires exact key-set and read-back checksum parity.
+- The bounded `aiat.object-store-provider-pair.v1` checker (`351444a`) now
+  exercises three checksum-bearing objects across two configured S3-compatible
+  endpoints: clean-target dual-write, a rejected primary adapter after the
+  copy, secondary-only recovery into a clean bucket, and zero-row cleanup.
+  The retained live certificate uses two local MinIO endpoints and is
+  explicitly same-provider evidence; it does not claim provider diversity,
+  an actual provider process/network outage, KMS, clean-host recovery, or
+  disaster recovery.
 - The AIAT-owned `aiat.object-store-encrypted-backup.v1` envelope encrypts
   source bytes with AES-256-GCM before they reach a backup adapter. Its
   manifest retains only plaintext/ciphertext checksums and sizes, nonces, an
@@ -116,6 +124,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Migration workflow fixture and guarded live boundary: [`mas/scripts/check_object_store_migration.py`](../../mas/scripts/check_object_store_migration.py)
 - Benchmark contract: [`mas/packages/mas-core/mas_core/memory/object_store_benchmark.py`](../../mas/packages/mas-core/mas_core/memory/object_store_benchmark.py)
 - Benchmark fixture/live boundary: [`mas/scripts/check_object_store_benchmarks.py`](../../mas/scripts/check_object_store_benchmarks.py)
+- Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Database migrations: [`mas/migrations/versions/`](../../mas/migrations/versions/)
 - Blob tools: [`mas/apps/tool-service/tool_service/tools/infra.py`](../../mas/apps/tool-service/tool_service/tools/infra.py)
@@ -145,7 +154,10 @@ Migration requires dual-read/write or verified-copy tooling, checksum parity, mu
 
 The checked-in fixture report is a static/unit contract result. In addition,
 the retained local MinIO run is deployment evidence for the scoped contract;
-it is not a claim about a provider pair or disaster recovery. The same command
+it is not a claim about provider diversity or disaster recovery. The new
+provider-pair certificate is a bounded two-endpoint MinIO exercise with
+secondary-only recovery after adapter-boundary primary failure; it is not an
+actual provider process/network outage certificate. The same command
 can be run without Docker using the deterministic fixture or with `--live`
 against a disposable provider adapter.
 The live path reports unavailable configuration/service state as `blocked` and

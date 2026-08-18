@@ -558,9 +558,15 @@ single frozen commit before production claims are made.
   The pinned, credential-safe reconciliation helper is committed as `5558f3c`.
   Restore-copy safety hardening `93bf755` now rejects a non-empty target prefix
   before mutation and records `clean_target_verified` in restore evidence.
-  Provider-pair, provider-managed encryption, clean-host, and disaster-recovery
-  evidence remain open; the AIAT-owned encrypted envelope and local
-  fresh-process restore prerequisite are retained separately above.
+  The bounded provider-pair group `351444a` now dual-writes three objects from
+  the Compose MinIO endpoint to a disposable MinIO endpoint, rejects a
+  simulated unavailable primary at the AIAT adapter boundary, restores from
+  the secondary into a clean bucket, and cleans all prefixes to zero; evidence
+  is [`object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json).
+  Both endpoints are MinIO, so provider-diverse durability, actual provider
+  process/network outage, provider-managed encryption, clean-host, and
+  disaster-recovery evidence remain open; the AIAT-owned encrypted envelope
+  and local fresh-process restore prerequisite are retained separately above.
 
 ### Immutable release inputs and image profiles
 
