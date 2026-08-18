@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `1b48cab031b4a4ef3fc79a673c5a9c44a8298895` (latest grouped verification revision)
+**Base revision:** `d1eada9fcec2120bc5a94f027c2db82cd5b5e9d3` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
