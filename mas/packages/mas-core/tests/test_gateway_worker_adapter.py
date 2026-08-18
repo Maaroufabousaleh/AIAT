@@ -49,6 +49,21 @@ class _ErrorGateway:
         raise self.error
 
 
+class _TransientThenSuccessGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat_completion(self, **kwargs: Any) -> ChatResponse:
+        self.calls += 1
+        if self.calls == 1:
+            raise LLMGatewayError(429, "transient fixture detail")
+        return ChatResponse(
+            model=str(kwargs["model"]),
+            message=ChatMessage(role="assistant", content="recovered fixture answer"),
+            usage=UsageStats(prompt_tokens=5, completion_tokens=2, total_tokens=7),
+        )
+
+
 def _request(**task_input: Any) -> WorkerRunRequest:
     return WorkerRunRequest(
         idempotency_key="gateway-adapter-test",
@@ -134,6 +149,30 @@ async def test_gateway_worker_adapter_classifies_dispatch_failures(
     assert result.error.terminal is terminal
     assert "provider secret" not in result.error.message
     assert "provider secret" not in str(result.error.details)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_gateway_worker_adapter_retries_transient_provider_failure() -> None:
+    gateway = _TransientThenSuccessGateway()
+    adapter = GatewayWorkerAdapter(
+        worker_id="gateway-worker",
+        provider_id="fixture-provider",
+        gateway_client=gateway,
+        max_provider_retries=1,
+    )
+
+    outcome = await WorkerRunController().execute(_request(), adapter)
+
+    assert outcome.state == "SUCCEEDED"
+    assert outcome.result is not None
+    assert outcome.result.replay_metadata == {
+        "adapter_type": "aiat_gateway",
+        "gateway_backend": "unknown",
+        "provider_attempts": 2,
+        "provider_retry_count": 1,
+    }
+    assert gateway.calls == 2
     await adapter.close()
 
 

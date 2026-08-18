@@ -49,6 +49,55 @@ def test_live_provider_mode_blocks_before_database_or_network_without_opt_in() -
     assert report["licence_metadata_is_gate"] is False
 
 
+def test_provider_recovery_requires_live_provider_mode() -> None:
+    module = _module()
+    report = asyncio.run(
+        module._run(
+            None,
+            None,
+            provider_recovery=True,
+            model_id="llama-3.3-70b-versatile",
+            provider_id="litellm",
+        )
+    )
+
+    assert report["status"] == "blocked"
+    assert report["reason"] == "provider_recovery_requires_live_provider"
+    assert report["mutation_performed"] is False
+    assert report["external_network_access_performed"] is False
+
+
+def test_transient_once_gateway_injects_only_one_failure() -> None:
+    module = _module()
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat_completion(self, **kwargs):
+            self.calls += 1
+            return module.ChatResponse(
+                model=kwargs["model"],
+                message=module.ChatMessage(role="assistant", content="recovered"),
+                usage=module.UsageStats(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            )
+
+    delegate = _Gateway()
+    gateway = module._TransientOnceGateway(delegate)
+    try:
+        asyncio.run(gateway.chat_completion(model="fixture/model-v1"))
+    except module.LLMGatewayError as exc:
+        assert exc.status_code == 429
+    else:
+        raise AssertionError("the first recovery attempt must be transient")
+    response = asyncio.run(gateway.chat_completion(model="fixture/model-v1"))
+
+    assert response.text == "recovered"
+    assert gateway.injected is True
+    assert gateway.forwarded_calls == 1
+    assert delegate.calls == 1
+
+
 def test_redacting_gateway_keeps_usage_but_discards_generated_text() -> None:
     module = _module()
 

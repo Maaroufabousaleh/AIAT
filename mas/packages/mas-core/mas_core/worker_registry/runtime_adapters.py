@@ -487,6 +487,9 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
         capabilities: WorkerCapabilities | None = None,
         context: AdapterContext | None = None,
         runtime_version: str | None = None,
+        max_provider_retries: int = 0,
+        retry_min_wait_s: float = 0.0,
+        retry_max_wait_s: float = 1.0,
     ) -> None:
         from mas_core.llm_gateway.client import LLMGatewayClient
         from mas_core.llm_gateway.models import LLMConfig
@@ -494,6 +497,14 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
         normalized_provider = str(provider_id).strip()
         if not normalized_provider:
             raise ValueError("gateway worker provider_id must not be blank")
+        if not 0 <= int(max_provider_retries) <= 3:
+            raise ValueError("max_provider_retries must be between 0 and 3")
+        if not 0 <= float(retry_min_wait_s) <= 30:
+            raise ValueError("retry_min_wait_s must be between 0 and 30 seconds")
+        if not 0 <= float(retry_max_wait_s) <= 60:
+            raise ValueError("retry_max_wait_s must be between 0 and 60 seconds")
+        if float(retry_max_wait_s) < float(retry_min_wait_s):
+            raise ValueError("retry_max_wait_s must be at least retry_min_wait_s")
         owns_gateway_client = gateway_client is None
         if gateway_client is None:
             if gateway_config is None:
@@ -505,6 +516,9 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
         self.provider_id = normalized_provider
         self._owns_gateway_client = owns_gateway_client
         self._gateway_started = False
+        self.max_provider_retries = int(max_provider_retries)
+        self.retry_min_wait_s = float(retry_min_wait_s)
+        self.retry_max_wait_s = float(retry_max_wait_s)
 
         async def runner(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
             return await self._run_gateway(request)
@@ -617,19 +631,43 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
                     details={"cause_type": type(exc).__name__},
                 ),
             )
-        try:
-            response = await self.gateway_client.chat_completion(
-                messages=messages,
-                model=model_id,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        except Exception as exc:
-            from mas_core.llm_gateway.client import (
-                RETRYABLE_LLM_STATUS_CODES,
-                LLMGatewayError,
-            )
+        from mas_core.llm_gateway.client import (
+            RETRYABLE_LLM_STATUS_CODES,
+            LLMGatewayError,
+        )
 
+        provider_attempts = 0
+        last_error: Exception | None = None
+        response: Any | None = None
+        for attempt in range(self.max_provider_retries + 1):
+            provider_attempts = attempt + 1
+            try:
+                response = await self.gateway_client.chat_completion(
+                    messages=messages,
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if isinstance(exc, LLMGatewayError):
+                    status_code = int(exc.status_code)
+                    retryable = status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
+                else:
+                    status_code = 0
+                    retryable = True
+                if not retryable or attempt >= self.max_provider_retries:
+                    break
+                wait_s = min(
+                    self.retry_max_wait_s,
+                    self.retry_min_wait_s * (2**attempt),
+                )
+                if wait_s > 0:
+                    await asyncio.sleep(wait_s)
+
+        if response is None:
+            exc = last_error or RuntimeError("gateway dispatch returned no response")
             if isinstance(exc, LLMGatewayError):
                 status_code = int(exc.status_code)
                 retryable = status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
@@ -651,7 +689,11 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
                         retryable=retryable,
                         terminal=not retryable,
                         category="provider",
-                        details={"status_code": status_code},
+                        details={
+                            "status_code": status_code,
+                            "provider_attempts": provider_attempts,
+                            "provider_retry_count": max(0, provider_attempts - 1),
+                        },
                         cause_type=type(exc).__name__,
                     ),
                 )
@@ -664,7 +706,11 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
                     message="AIAT model gateway dispatch failed",
                     retryable=True,
                     category="provider",
-                    details={"cause_type": type(exc).__name__},
+                    details={
+                        "cause_type": type(exc).__name__,
+                        "provider_attempts": provider_attempts,
+                        "provider_retry_count": max(0, provider_attempts - 1),
+                    },
                 ),
             )
         usage = getattr(response, "usage", None)
@@ -687,6 +733,8 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
             replay_metadata={
                 "adapter_type": self.runtime_type,
                 "gateway_backend": str(getattr(getattr(self.gateway_client, "_config", None), "backend", "unknown")),
+                "provider_attempts": provider_attempts,
+                "provider_retry_count": max(0, provider_attempts - 1),
             },
         )
 

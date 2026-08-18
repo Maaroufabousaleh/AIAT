@@ -61,6 +61,7 @@ from identity_service.models import IdentityState  # noqa: E402
 from identity_service.store import PostgresIdentityStore  # noqa: E402
 
 from mas_core.llm_gateway import LLMConfig, LLMGatewayClient  # noqa: E402
+from mas_core.llm_gateway.client import LLMGatewayError  # noqa: E402
 from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats  # noqa: E402
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 from mas_core.observability.mail_edge import (  # noqa: E402
@@ -150,6 +151,22 @@ class _RedactingGateway:
         )
 
 
+class _TransientOnceGateway:
+    """Inject one bounded transient failure before the real gateway call."""
+
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.injected = False
+        self.forwarded_calls = 0
+
+    async def chat_completion(self, **kwargs: Any) -> ChatResponse:
+        if not self.injected:
+            self.injected = True
+            raise LLMGatewayError(429, "synthetic transient recovery probe")
+        self.forwarded_calls += 1
+        return await self.delegate.chat_completion(**kwargs)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit JSON evidence")
@@ -194,6 +211,11 @@ def _parser() -> argparse.ArgumentParser:
         "--provider-ingress",
         action="store_true",
         help="exercise the raw-body Resend/Svix provider-facing HTTP ingress",
+    )
+    parser.add_argument(
+        "--provider-recovery",
+        action="store_true",
+        help="inject one transient gateway failure, then retry one live provider call",
     )
     parser.add_argument(
         "--worker-dsn",
@@ -748,6 +770,7 @@ async def _run(
     model_id: str | None = None,
     provider_id: str | None = None,
     timeout_s: float = 30.0,
+    provider_recovery: bool = False,
     gateway_client: Any | None = None,
     listed_model_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -775,6 +798,8 @@ async def _run(
                 "timeout_must_be_between_one_and_120_seconds",
                 live_provider=True,
             )
+    if provider_recovery and not live_provider:
+        return _blocked("provider_recovery_requires_live_provider")
     worker_url = _normalize_dsn(worker_dsn)
     identity_url = _normalize_dsn(identity_dsn)
     if worker_url is None or identity_url is None:
@@ -869,6 +894,9 @@ async def _run(
     provider_ingress_tampered_rejected = False
     live_gateway: LLMGatewayClient | Any | None = gateway_client if live_provider else None
     live_gateway_owned = False
+    recovery_gateway: _TransientOnceGateway | None = None
+    provider_attempts = 0
+    provider_retry_count = 0
     try:
         await worker.connect()
         if not await identity.healthcheck():
@@ -979,11 +1007,14 @@ async def _run(
             trace_id=TRACE_ID,
             span_id=SPAN_ID,
         )
-        gateway = (
-            _RedactingGateway(live_gateway)
-            if live_provider and live_gateway is not None
-            else _FixtureGateway()
-        )
+        if live_provider and live_gateway is not None:
+            gateway_delegate: Any = live_gateway
+            if provider_recovery:
+                recovery_gateway = _TransientOnceGateway(gateway_delegate)
+                gateway_delegate = recovery_gateway
+            gateway = _RedactingGateway(gateway_delegate)
+        else:
+            gateway = _FixtureGateway()
         adapter = GatewayWorkerAdapter(
             worker_id=str(canonical_worker_id),
             provider_id=selected_provider,
@@ -993,6 +1024,7 @@ async def _run(
                 if live_provider
                 else "gateway-mail-edge-postgres-fixture-v1"
             ),
+            max_provider_retries=1 if provider_recovery else 0,
         )
         try:
             outcome = await controller.execute(
@@ -1003,6 +1035,9 @@ async def _run(
         finally:
             await adapter.close()
         gateway_calls = len(gateway.calls)
+        replay_metadata = getattr(outcome.result, "replay_metadata", {}) or {}
+        provider_attempts = int(replay_metadata.get("provider_attempts") or 0)
+        provider_retry_count = int(replay_metadata.get("provider_retry_count") or 0)
         await worker.create_native_trace_span(
             trace_id=TRACE_ID,
             span_id=WORKER_SPAN_ID,
@@ -1272,7 +1307,9 @@ async def _run(
             identity_migration == EXPECTED_IDENTITY_MIGRATION,
             outcome is not None and outcome.state == "SUCCEEDED",
             run_state == "SUCCEEDED",
-            gateway_calls == 1,
+            gateway_calls == (2 if provider_recovery else 1),
+            provider_attempts == (2 if provider_recovery else 1),
+            provider_retry_count == (1 if provider_recovery else 0),
             durable_run is not None,
             len(durable_usage) == 1,
             len(durable_artifacts) == 1,
@@ -1334,13 +1371,16 @@ async def _run(
         "schema_version": CHECK_SCHEMA,
         "coverage_schema": WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
         "mode": (
-            "live-dual-postgres-worker-mail-edge"
+            "live-dual-postgres-worker-mail-edge-provider-recovery"
+            if live_provider and provider_recovery
+            else "live-dual-postgres-worker-mail-edge"
             if live_provider
             else "local-dual-postgres-worker-mail-edge"
         ),
         "identity_ingress": identity_ingress,
         "provider_ingress": provider_ingress,
         "live_provider": live_provider,
+        "provider_recovery": provider_recovery,
         "status": "pass" if passed else "fail",
         "observed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "worker_migration_version": worker_migration,
@@ -1348,6 +1388,16 @@ async def _run(
         "controller_terminal_state": outcome.state if outcome is not None else None,
         "run_state": run_state,
         "gateway_call_count": gateway_calls,
+        "provider_attempts": provider_attempts,
+        "provider_retry_count": provider_retry_count,
+        "provider_recovery_injected": bool(recovery_gateway and recovery_gateway.injected),
+        "external_provider_completion_attempt_count": (
+            recovery_gateway.forwarded_calls
+            if recovery_gateway is not None
+            else gateway_calls
+            if live_provider and gateway_client is None
+            else 0
+        ),
         "worker_usage_count": len(durable_usage),
         "worker_artifact_count": len(durable_artifacts),
         "native_span_count": len(durable_spans),
@@ -1412,7 +1462,7 @@ async def _run(
             "payload_free_projection": "checked",
             "scoped_cleanup": "checked",
             "external_provider_callback": "not_checked",
-            "provider_backed_recovery": "not_checked",
+            "provider_backed_recovery": "checked" if provider_recovery else "not_checked",
             "sandbox_runtime_gvisor_or_firecracker": "not_checked",
         },
         "licence_metadata_is_gate": False,
@@ -1434,6 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
             model_id=args.model,
             provider_id=args.provider_id,
             timeout_s=args.timeout,
+            provider_recovery=args.provider_recovery,
         )
     )
     if args.json:
