@@ -3,11 +3,12 @@
 **Baseline:** 2026-08-17
 
 **Status:** local Compose Postgres single-host, concurrent two-host native,
-fenced host-loss queue-recovery, and selected model-resolution host-execution
-certification complete; deployed runtime, sandbox, provider, and
-independent-host recovery evidence remain open
+fenced host-loss queue-recovery, selected model-resolution host-execution, and
+the fail-closed Firecracker launch contract are implemented; deployed runtime,
+host-certified sandbox, provider, and independent-host recovery evidence remain
+open
 
-**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`, `9a7db70`
+**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -27,6 +28,17 @@ two distinct durable worker-host records, and explicit queue recovery after a
 fenced host lease is lost. It keeps gVisor, Firecracker, external providers,
 remote runtimes, and independent-host outage recovery as separate evidence
 boundaries.
+
+The high-risk launch contract in
+[`firecracker.py`](../../mas/packages/mas-core/mas_core/worker_registry/firecracker.py)
+and [`FirecrackerAdapter`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py)
+(`5ed0a0b`) validates immutable kernel/rootfs digests, bounded vCPU/memory/PID/
+disk/output/time limits, read-only rootfs, deny-by-default egress, opaque
+secret references, artifact output, and cleanup. The adapter emits argv only
+through an explicitly named certified launcher; it never falls back to Docker,
+runc, or gVisor. Static readiness passes, while the current live probe is
+blocked because the launcher and Firecracker binary are unavailable. Evidence
+is [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json).
 
 ## Contract
 

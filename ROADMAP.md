@@ -69,6 +69,18 @@ evidence; provider outage recovery, external callback/delivery confirmation,
 independent hosts, gVisor/Firecracker, and broader runtime evidence remain
 open.
 
+Commit `5ed0a0b` adds the AIAT-owned fail-closed Firecracker launch contract.
+`FirecrackerLaunchSpec` validates immutable kernel/rootfs digests, bounded
+CPU/memory/PID/disk/output/time limits, read-only rootfs, deny-by-default
+egress, opaque secret references, artifact output, and mandatory cleanup;
+`FirecrackerAdapter` emits argv only through an explicitly named certified
+launcher and never falls back to Docker, runc, or gVisor. Static readiness
+passes, while the current host certificate
+[`firecracker_worker_pool_readiness.json`](mas/docs/provenance/firecracker_worker_pool_readiness.json)
+is blocked because both the certified launcher and Firecracker binary are
+unavailable. Real microVM smoke/network, provider, and recovery evidence
+remain open.
+
 The follow-on durable composition certificate `fa42284`, extended by
 `67f1599`, now runs the same production gateway adapter/controller against the
 worker Postgres store and the normalized identity mail-edge store, optionally
@@ -91,8 +103,9 @@ recovery evidence through migration `0039_worker_host_fencing`. Commit `73c0bda`
 adds the first real local execution edge: a committed worker-plane binding is
 admitted, claimed, executed through the native fixture adapter, released, and
 read back after a Postgres connection reopen. Multi-host runtime dispatch,
-host-pool separation, provider-backed recovery, gVisor, and Firecracker remain
-open.
+host-pool separation, provider-backed recovery, gVisor, and live Firecracker
+operation remain open; the bounded Firecracker launch contract is now explicit
+and separately certified at the static/readiness level by `5ed0a0b`.
 
 Commit `f9c717b` now adds the bounded concurrent native slice: two distinct
 durable worker-host identities each receive a committed reservation and execute
@@ -2052,7 +2065,10 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    multi-host selection/scheduling (`d9917f8`), durable Worker Run host
    assignment (`08f1610e`), and durable host
    fencing/recovery (`72e59ec`); [ ] prove live worker dispatch, provider/
-   sandbox recovery, and Firecracker worker pools.
+   sandbox recovery, and Firecracker worker pools. [x] Define the fail-closed
+   Firecracker launch contract and readiness checker (`5ed0a0b`); [ ] provide
+   a host-certified launcher, real microVM smoke/network evidence, and
+   provider/recovery proof.
 4. [x] Certify the bounded governed self-improvement lifecycle and exact
    rollback against local Compose Postgres (`10983c8`); [ ] complete the live
    issue/worker/provider/deployment lifecycle and independent recovery proof.

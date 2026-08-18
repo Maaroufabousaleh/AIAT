@@ -263,7 +263,15 @@
   single-worker certificate to independent/multi-host Firecracker/gVisor
   operation and provider-backed recovery.
 - Certify gVisor across supported hosts.
-- Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
+- [x] Define the AIAT-owned Firecracker high-risk launch contract and
+  fail-closed pool-readiness checker (`5ed0a0b`). The contract requires
+  immutable kernel/rootfs digests, bounded vCPU/memory/PID/disk/output/time
+  limits, read-only rootfs, deny-by-default egress, opaque secret references,
+  artifact output, and mandatory cleanup. The adapter emits argv only through
+  an explicitly named certified launcher; it never falls back to Docker/runc.
+  Static contract evidence passes, while the current host remains blocked by
+  the missing launcher and Firecracker binary; real microVM smoke/network,
+  provider, and recovery evidence remain open.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
   pinning with migration `0040_worker_run_skill_bundle_pin` and
   [`check_worker_version_pinning_postgres.py`](../../../mas/scripts/check_worker_version_pinning_postgres.py)

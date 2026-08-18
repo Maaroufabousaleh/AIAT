@@ -73,6 +73,27 @@ sandbox_profile: gvisor
 no runc fallback
 ```
 
-Optional higher-isolation mode:
-- Firecracker remains a future/high-risk-worker option. It should not replace
-  the default gVisor gate for these default tools.
+## Firecracker high-risk worker boundary
+
+Firecracker is an optional high-risk worker mode, not a replacement for the
+default gVisor gate for these default tools. The AIAT-owned launch contract is
+implemented by `5ed0a0b` in
+`mas_core.worker_registry.firecracker.FirecrackerLaunchSpec` and
+`FirecrackerAdapter`. It requires immutable kernel/rootfs digests, bounded
+vCPU/memory/PID/disk/output/time limits, read-only rootfs, deny-by-default
+egress, opaque secret references, artifact output, and cleanup. The adapter
+constructs argv only for an explicitly named certified launcher; Docker, runc,
+and gVisor fallback are prohibited.
+
+Run the read-only readiness check from `mas/`:
+
+```bash
+uv run --isolated python scripts/check_firecracker_worker_pool.py --live --json
+```
+
+The current host result is static-pass/live-blocked because neither
+`aiat-firecracker-launcher` nor `firecracker` is installed. No launch, network
+probe, mutation, or weaker-runtime fallback is attempted. Retained evidence:
+[`firecracker_worker_pool_readiness.json`](../../docs/provenance/firecracker_worker_pool_readiness.json).
+Host certification must add real microVM smoke/network, provider, and recovery
+evidence before high-risk pools are enabled.

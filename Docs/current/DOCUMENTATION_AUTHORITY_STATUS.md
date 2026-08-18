@@ -40,6 +40,15 @@ scoped cleanup. Broader provider outage, external callback/delivery,
 independent-host, and sandbox evidence remain explicitly separate roadmap
 items.
 
+The same maintained evidence set now includes the Firecracker high-risk worker
+contract/readiness certificate
+[`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json)
+(`5ed0a0b`). It records static contract pass and current-host live blocking
+because the certified launcher and Firecracker binary are unavailable. This
+is a launch-boundary/readiness result only; host-certified microVM smoke,
+network, provider, recovery, and gVisor evidence remain separate. The adapter
+does not fall back to a weaker runtime.
+
 ## Machine-checked status
 
 The current workspace reports:

@@ -19,6 +19,13 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   declarations and provides a fail-closed Docker `runsc` registration probe;
   optional digest-pinned smoke, network-denial, canary, and Firecracker checks
   remain explicit evidence stages.
+- The AIAT-owned Firecracker contract (`5ed0a0b`) validates immutable
+  kernel/rootfs digests, bounded CPU/memory/PID/disk/output/time limits,
+  read-only rootfs, deny-by-default egress, opaque secret references, artifact
+  output, and cleanup. Its adapter requires an explicitly named certified
+  launcher and never falls back to Docker/runc/gVisor; the current readiness
+  certificate is static-pass/live-blocked because the host lacks the launcher
+  and Firecracker binary.
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
 - Health/metrics endpoints, structured logging helpers, traces/metrics modules, LiteLLM and OmniRoute services/pages, optional Prometheus dev profile, and Playwright/API health tooling.
 - The read-only `GET /system/diagnostics` route performs a database `SELECT 1`, router/tool-service `/health` probes, and a non-mutating object-store `head_bucket` check when endpoint credentials are configured. It returns only bounded status, latency, HTTP/connection flags, and exception type; dependency payloads, URLs, credentials, and error text are never returned. A failed dependency yields an HTTP 200 `degraded` report, while missing control-plane storage remains a 503 boundary. Focused API coverage exercises healthy, degraded, unconfigured, unavailable-storage, and payload-redaction cases (`2860838`).
@@ -219,8 +226,10 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   need a native-Linux release run. A blocked Docker/configuration result is not
   a pass.
 - The sandbox declaration and `runsc` registration probe are implemented, but
-  gVisor was unavailable in the current host evidence; digest-pinned smoke,
-  network-denial, and Firecracker live certification remain open.
+  gVisor was unavailable in the current host evidence. The Firecracker
+  launch contract is implemented and statically checked, while digest-pinned
+  smoke, network-denial, host-certified launcher, and live Firecracker
+  certification remain open.
 - A historical tool-service image was approximately 19.3 GB because Docling/Torch/CUDA and browser assets were combined. The core/extension profile split and explicit image ceilings are now checked in. A local Linux engine probe measured core at 267,957,904 bytes with 26,836 ms/112.3 MiB health startup and extensions at 4,155,668,123 bytes with 29,913 ms/137.7 MiB; the secret-safe record is [`mas/docs/provenance/image_budgets_live.json`](../../mas/docs/provenance/image_budgets_live.json). Compressed archive size, clean native-Linux build/pull, SBOM, and vulnerability evidence remain open.
 - [x] HTTP request trace propagation is bounded and context-safe in the
   orchestrator API, message router, and tool service; envelope correlation IDs

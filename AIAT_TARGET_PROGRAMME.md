@@ -855,6 +855,15 @@ The default external-worker sandbox is gVisor. Firecracker is the optional high-
 
 If the required host runtime is absent, high-risk work is blocked. Falling back silently to ordinary Docker is prohibited.
 
+The AIAT-owned Firecracker launch contract is implemented in
+`5ed0a0b`: immutable kernel/rootfs digests, bounded CPU/memory/PID/disk/output/
+wall-clock limits, read-only rootfs, deny-by-default egress, opaque secret
+references, artifact output, and mandatory cleanup are validated before a
+launcher command can be constructed. The current host-side readiness
+certificate [`firecracker_worker_pool_readiness.json`](mas/docs/provenance/firecracker_worker_pool_readiness.json)
+passes the static contract but is blocked because the certified launcher and
+Firecracker binary are unavailable; no weaker runtime fallback is permitted.
+
 ### 12.3 Network architecture
 
 Team runners communicate only with the router, tool service, orchestrator, and approved gateway endpoints on the worker network. They do not connect directly to Redis, Postgres, PgBouncer, object storage, identity database, or provider APIs. Checkpoints, usage events, documents, and review metadata cross the data-plane boundary through the typed, operation-allowlisted control-plane storage API; a runner fails startup if that durable path is unavailable.
