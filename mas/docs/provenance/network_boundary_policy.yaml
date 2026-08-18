@@ -1,0 +1,66 @@
+schema_version: aiat.network-boundary-policy.v1
+programme_scope: personal-internal-only
+
+# This is the source of truth for the runner deny/allow matrix. It describes
+# network and process boundaries only; it does not contain licence metadata.
+runner:
+  service_prefix: team-
+  ceo_service: team-exec-ceo
+  network: workers
+  identity_env:
+    ceo: AIAT_CEO_API_KEY
+    worker: AIAT_WORKER_API_KEY
+  forbidden_env_names:
+    - MAS_API_KEY
+    - PGBOUNCER_DSN
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_SESSION_TOKEN
+  forbidden_env_prefixes:
+    - MINIO_
+  forbidden_mounts:
+    - /var/run/docker.sock
+
+networks:
+  internal:
+    internal: true
+  workers:
+    internal: true
+
+protected_services:
+  - service: redis
+    network: internal
+    port: 6379
+  - service: postgres
+    network: internal
+    port: 5432
+  - service: pgbouncer
+    network: internal
+    port: 5432
+  - service: minio
+    network: internal
+    port: 9000
+  - service: opencode-runtime
+    network: internal
+    port: 4096
+
+allowed_gateways:
+  - service: message-router
+    network: workers
+    port: 8001
+  - service: tool-service
+    network: workers
+    port: 8002
+  - service: orchestrator-api
+    network: workers
+    port: 8000
+  - service: litellm
+    network: workers
+    port: 4000
+
+external_denied_targets:
+  - host: 1.1.1.1
+    port: 443
+
+identity_service_defaults:
+  port: 5432
