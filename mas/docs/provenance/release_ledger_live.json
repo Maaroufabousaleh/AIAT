@@ -1,24 +1,24 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T23:31:51.459014+00:00",
+  "observed_at": "2026-08-18T23:57:08.541404+00:00",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
     "total": 81,
-    "pass": 75,
+    "pass": 76,
     "fail": 0,
-    "blocked": 6
+    "blocked": 5
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "6 check(s) are externally blocked",
+    "5 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "b2d02ea71db3e7974c0cf403e483ef55b8b11dd1",
+    "revision": "296d89b7918f18032616bb35d83f179bcf46fa86",
     "working_tree_clean": false,
     "changed_path_count": 2
   },
@@ -26,7 +26,7 @@
     "live_orchestrator_url_configured": true,
     "check_timeout_seconds": 120,
     "credentials_printed": false,
-    "environment_source": "local operator environment passed to bounded child checks without output",
+    "environment_source": "local operator environment passed to bounded child checks without output; operator key alias resolved from AIAT_OPERATOR_API_KEY",
     "container": "mas-orchestrator-api-1",
     "scope": "bounded release-evidence aggregation; no credential or dependency payload output"
   },
@@ -63,6 +63,18 @@
     "native_tool_span_count": 1,
     "tool_usage_event_count": 1,
     "note": "One bounded pure-tool call through the Compose tool service reads back one project-usage event and one tool-service native span; no project identifier or response payload is retained."
+  },
+  "local_image_identity_evidence": {
+    "status": "pass",
+    "ref": "image_provenance_local_identity.json",
+    "image_count": 10,
+    "matched_digest_count": 10,
+    "sbom_status": "not_checked",
+    "scan_status": "not_checked",
+    "source_revision_status": "not_checked",
+    "lock_hash_status": "not_checked",
+    "native_clean_build_status": "not_checked",
+    "note": "All ten supplied digest references match local Docker RepoDigests. This local identity observation does not certify deployment SBOM, vulnerability scan, source/lock, clean-build, or native release evidence."
   },
   "local_trace_transport_evidence": {
     "status": "pass",
@@ -195,8 +207,9 @@
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The canonical host-loopback configured Compose profile was rerun at 2026-08-18T23:31:51Z against revision b2d02ea with 75 passes, zero failures, and 6 externally blocked checks across 81 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
+    "The canonical host-loopback configured Compose profile was rerun at 2026-08-18T23:57:08Z against revision 296d89b with 76 passes, zero failures, and 5 externally blocked checks across 81 checks; image identity, trace, tool-trace, and SLO children pass locally, while native host, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
     "An earlier host-run invocation using Compose-internal service URLs was excluded as a harness/environment URL configuration error; it did not change provider or release verdicts.",
+    "A subsequent aggregate invocation using MAS_API_KEY in place of the distinct AIAT_OPERATOR_API_KEY produced a 403 trace read-back and one failed child; that key-alias harness/configuration run is excluded. The corrected operator-key rerun above passed the trace, tool-trace, and SLO children.",
     "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "The model-profile catalogue now has complete 93/93 persisted coverage after bounded removal of one unreferenced local smoke fixture; this does not certify provider execution or alter any other gate.",
