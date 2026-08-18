@@ -1,0 +1,47 @@
+{
+  "case_count": 12,
+  "cases": {
+    "cancel_transitions_to_terminal": "pass",
+    "completed_flow_reaches_terminal": "pass",
+    "join_scheduled_once": "pass",
+    "join_waits_for_one_branch": "pass",
+    "parallel_branches_activate": "pass",
+    "parallel_fanout": "pass",
+    "safe_retry_restores_last_safe_node": "pass",
+    "start_activates_start_node": "pass",
+    "switch_activates": "pass",
+    "switch_routes_selected_case": "pass",
+    "timeout_records_escalation": "pass",
+    "timeout_safe_retry_reenters_flow": "pass"
+  },
+  "cleanup": {
+    "flows_deleted": 2,
+    "flows_remaining": 0,
+    "projects_deleted": 3,
+    "projects_remaining": 0
+  },
+  "cleanup_verified": true,
+  "cold_crash_recovery_status": "not_checked",
+  "evidence_commit": "27247f4395c009d655cd9b6f8d87571335e3fa49",
+  "external_network_access_performed": true,
+  "external_provider_mutation_performed": false,
+  "failed_case_count": 0,
+  "failure_classification": {
+    "harness_configuration_failure": "not_observed",
+    "infrastructure_environment_failure": "not_observed",
+    "provider_functional_failure": "not_observed",
+    "provider_resource_limit_failure": "not_checked"
+  },
+  "flow_fixture_count": 2,
+  "licence_metadata_is_gate": false,
+  "mode": "live",
+  "mutation_performed": true,
+  "native_watchdog_status": "not_checked",
+  "observed_at": "2026-08-18T19:31:23.955404Z",
+  "passed_case_count": 12,
+  "payload_free": true,
+  "project_fixture_count": 3,
+  "schema_version": "aiat.flow-runtime-live.v1",
+  "secret_free": true,
+  "status": "pass"
+}

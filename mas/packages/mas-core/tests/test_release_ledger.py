@@ -152,6 +152,11 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert candidates["summary"]["passed_case_count"] == 6
     flow_semantics = next(row for row in report["checks"] if row["id"] == "flow_execution_semantics")
     assert flow_semantics["status"] == "pass"
+    flow_runtime = next(row for row in report["checks"] if row["id"] == "flow_runtime_live")
+    assert flow_runtime["status"] == "pass"
+    assert flow_runtime["summary"]["case_count"] == 8
+    assert flow_runtime["summary"]["passed_case_count"] == 8
+    assert flow_runtime["summary"]["cleanup_verified"] is False
     flow_binding = next(row for row in report["checks"] if row["id"] == "flow_worker_binding")
     assert flow_binding["status"] == "pass"
     watchdog = next(row for row in report["checks"] if row["id"] == "workflow_watchdog_recovery")

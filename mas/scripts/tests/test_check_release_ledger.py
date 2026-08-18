@@ -34,11 +34,28 @@ def test_inventory_registers_retained_object_store_live_evidence() -> None:
     assert set(retained) == {
         "default_worker_bindings",
         "gateway_provider_recovery",
+        "flow_runtime_live",
         "object_store_multipart",
         "object_store_resource_profile",
         "object_store_provider_outage",
     }
     assert retained["object_store_resource_profile"][1] == "aiat.object-store-resource-profile.v1"
+
+
+def test_retained_flow_runtime_evidence_passes_scalar_gate() -> None:
+    spec = _spec(
+        "docs/provenance/flow_runtime_live_evidence.json",
+        "aiat.flow-runtime-live.v1",
+        "flow_runtime_live",
+    )
+    status, reason, payload = _validate_retained_live_evidence(spec)
+    assert status == "pass"
+    assert reason == "retained live evidence validated"
+    assert payload is not None
+    summary = _run_retained_live_evidence(spec)["summary"]
+    assert summary["case_count"] == 12
+    assert summary["passed_case_count"] == 12
+    assert summary["cleanup_verified"] is True
 
 
 def test_retained_default_worker_binding_evidence_passes_without_certifying_workers() -> None:

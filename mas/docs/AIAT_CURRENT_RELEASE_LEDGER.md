@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `c568b87` (latest reviewed implementation/evidence revision)
+**Base revision:** `27247f4` (latest reviewed implementation/evidence revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -16,7 +16,7 @@ the bounded multipart object-store boundary (`a2f35de`), the guarded provider-di
 resource profile (`3791b3f`), the corrected live provider-process outage/recovery
 wave (`d92b3dc`/`407a4f9`), the live AIAT credentials-manager boundary certificate
 (`12ba7c7`/`1808a15`), the fresh configured Compose trace/metrics/worker/runtime/model
-read-backs (`cb47e3b`), and the static aggregation at 55/55 checks passing, four pending
+read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), and the static aggregation at 57/57 checks passing, two pending
 evidence items, and a dirty working tree;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
@@ -25,9 +25,9 @@ dual-Postgres evidence; the configured live profile
 is retained separately below. The current unconfigured live attempt is retained at
 [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json)
 and is not silently substituted for the configured Compose evidence. The latest
-configured 78-check aggregation (2026-08-18T18:24:42Z) is retained at
+configured 81-check aggregation (2026-08-18T19:36:57Z) is retained at
 [`provenance/release_ledger_live.json`](provenance/release_ledger_live.json) with
-72 passes, zero failures, 6 blocked checks, and four pending evidence items;
+75 passes, zero failures, 6 blocked checks, and four pending evidence items;
 it remains descriptive and does not change **NO-RELEASE**.
 
 The local durable provider-shaped recovery group (`1679341`, `9c7e76d`) also
@@ -485,7 +485,8 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Flow definition lifecycle | static/API (preparatory P1) | PASS | Commit `234adfb`; new and updated definitions persist the explicit node-schema version, and export/hash, deterministic diff, import, publish, deprecate, compatible migration, and explicitly mapped active-node graph-rewrite endpoints are covered by `apps/orchestrator-api/tests/test_flows.py`; live recovery remains open |
 | Flow-instance recovery boundary | static + guarded live API probe | PASS (blocked without instance/API) | `uv run --isolated pytest packages/mas-core/tests/test_flow_instance_recovery.py -q`; `scripts/check_flow_instance_recovery.py` is read-only by default, requires `--confirm` for state-changing actions, validates post-action state/execution history, and returns exit 2 when URL/instance/live evidence is absent; full worker/project/UI recovery remains open |
 | Flow control-topology contract | static/unit/fixture (preparatory P1) | PASS | `uv run --isolated pytest packages/mas-core/tests/test_flow_node_schema.py -q`; `uv run --isolated python scripts/check_flow_topology.py --json` reconciles parallel branch declarations, join fan-in, and switch case targets with persisted edges; no worker dispatch/storage mutation occurs and live fan-out/recovery remains open |
-| Flow execution semantics contract | static/unit/fixture (preparatory P1) | PASS (deterministic traversal; live open) | `uv run --isolated pytest packages/mas-core/tests/test_flow_execution_semantics.py -q`; `uv run --isolated python scripts/check_flow_execution_semantics.py --json` drives the real traversal engine through fan-out, one-branch join waiting, single join scheduling, selected switch routing, and unknown-case blocking; duplicate join scheduling and completed-join reactivation are prevented, while live fan-out/join/watchdog/recovery evidence remains open |
+| Flow execution semantics contract | static/unit/fixture (preparatory P1) | PASS (deterministic traversal; live certificate retained) | `uv run --isolated pytest packages/mas-core/tests/test_flow_execution_semantics.py -q`; `uv run --isolated python scripts/check_flow_execution_semantics.py --json` drives the real traversal engine through fan-out, one-branch join waiting, single join scheduling, switch-node activation/selected routing, and unknown-case blocking; duplicate join scheduling and completed-join reactivation are prevented. The live API certificate below covers the bounded transition path; native watchdog, cold-crash, worker-canary, sandbox, and provider recovery remain separate |
+| Live flow runtime execution/recovery certificate | local Compose API + Postgres + scalar retained evidence | PASS (12/12 cases; native recovery open) | Commit `27247f4`; `scripts/check_flow_runtime_live.py --live --confirm --json` passed parallel fan-out, one-branch join waiting, single join scheduling, switch activation/selection, terminal end handling, cancellation, timeout/escalation, and safe retry against the real API. Two disposable flow fixtures and three project fixtures were deleted with zero remaining residue; [`provenance/flow_runtime_live_evidence.json`](provenance/flow_runtime_live_evidence.json) is payload/secret-free. Native watchdog, cold-crash, worker-canary, sandbox, and provider evidence remain separate |
 | Durable flow-instance recovery evidence | local Compose Postgres + unit/checker | PASS (local durable recovery; native/live open) | Commit `1f20132`; the reserved `check_flow_instance_recovery_postgres.py` reaches migration `0042_worker_run_host_binding`, preserves superseded retry history, preserves context across a flow switch while resetting execution authority, retries a cancelled instance, reopens Postgres, and removes three projects/two flows/three instances with zero remaining rows. Evidence is [`provenance/flow_instance_recovery_postgres_evidence.json`](provenance/flow_instance_recovery_postgres_evidence.json); native watchdog, worker/provider canary, durable audit authority, UI, and cold-crash recovery remain open |
 | Governed asynchronous flow-task binding | static/unit/fixture (preparatory P1) | PASS (binding contract; live open) | Commit `234adfb`; `uv run --isolated pytest packages/mas-core/tests/test_flow_worker_binding.py packages/mas-core/tests/test_flow_retry_persistence.py apps/orchestrator-api/tests/test_flows.py -q`; `uv run --isolated python scripts/check_flow_worker_binding.py --json` proves queued/claimed/running Worker Runs keep their task active, terminal states settle, parallel bindings remain copy-on-write, safe retry re-enters governed dispatch, and unknown states fail closed; both API retry paths preserve prior executions as `SUPERSEDED`, and the API now fails closed when evidence-preserving retry storage is absent; live worker canary/recovery remains open |
 | Watchdog and safe-retry recovery semantics | static/unit/fixture (preparatory P1) | PASS (controller contract; live open) | Commit `9972b3b`; `uv run --isolated pytest packages/mas-core/tests/test_workflow_watchdog_recovery.py -q`; `uv run --isolated python scripts/check_workflow_watchdog_recovery.py --json` proves boot grace, downtime-aware timeout, watchdog failure transition, recorded-safe-state retry, terminal-state exclusion, explicit human cancellation, review-circuit escalation, node-timeout failure, and invalid-transition rejection without storage/worker mutation; native watchdog, storage-backed transition history, and cold-recovery remain open |

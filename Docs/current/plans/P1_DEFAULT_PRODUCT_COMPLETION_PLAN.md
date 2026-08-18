@@ -206,7 +206,8 @@ external client-language SDK compatibility yet.
 - [x] Publish built-in evidence-policy metadata, evaluate required artifact kinds, and include worker-run/repository resources in operator dry-run validation.
 - [x] Configure evidence policies by company/project/flow/milestone and persist the selected policy at each scope; company-manifest defaults, project defaults/milestone overrides, flow metadata resolution, and core checks are implemented. `resolve_evidence_policy_selection` and `check_evidence_policy_resolution.py` now make the precedence contract deterministic and release-checkable without using licence metadata as a gate.
 - [x] Feed first terminal issue completion observations into durable agent profiles exactly once and persist a sprint-level retrospective KPI snapshot with source/profile lineage through the existing project KPI surface.
-- Complete live parallel/join, switch, escalation, timeout, cancel, watchdog, cold-crash, and safe retry proofs.
+- [x] Add the live `aiat.flow-runtime-live.v1` certificate over the real Compose orchestrator API: 12/12 scalar cases cover parallel fan-out, one-branch join waiting, single join scheduling, switch activation/selection, terminal end handling, cancellation, timeout/escalation, and safe retry; two flow fixtures and three project fixtures are removed with zero residue. Native watchdog, cold-crash, worker-canary, sandbox, and provider evidence remain separate.
+- Complete native watchdog, cold-crash, and worker-canary recovery proofs.
 - [x] Add `scripts/check_flow_instance_recovery.py` for read-only flow-instance
   status/execution-history evidence and explicit-confirmation action checks;
   full project, worker canary, UI, and live failure/recovery proofs remain.
@@ -218,9 +219,11 @@ external client-language SDK compatibility yet.
 - [x] Reconcile declared parallel branches, join fan-in, and switch case targets with persisted flow edges; `aiat.flow-topology-check.v1` covers valid/invalid definitions without worker dispatch or storage mutation. Live fan-out/join synchronization and crash/watchdog recovery remain separate evidence gates.
 - [x] Add `aiat.flow-execution-semantics.v1` and focused tests over the real
   traversal engine: parallel fan-out, one-branch join waiting, single join
-  scheduling, switch case selection, and unknown-case blocking. Duplicate
-  join scheduling and completed-join reactivation are fixed; live fan-out,
-  join synchronization, watchdog, crash, and recovery evidence remain open.
+  scheduling, switch-node activation and case selection, and unknown-case
+  blocking. Duplicate join scheduling and completed-join reactivation are
+  fixed; the live API transition certificate is retained separately, while
+  native watchdog, cold-crash, worker-canary, sandbox, and provider recovery
+  evidence remain open.
 - [x] Preserve governed flow tasks while asynchronous Worker Runs are queued or
   running through the shared `aiat.flow-worker-binding.v1` contract; terminal
   settlement is authoritative, parallel node bindings are copy-on-write, safe

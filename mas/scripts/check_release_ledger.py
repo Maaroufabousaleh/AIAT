@@ -208,8 +208,13 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
         "external_provider_mutation_performed",
         "case_count",
         "passed_case_count",
+        "failed_case_count",
         "secret_safe_report",
         "payload_free",
+        "flow_fixture_count",
+        "project_fixture_count",
+        "native_watchdog_status",
+        "cold_crash_recovery_status",
         "controller_terminal_state",
         "run_state",
         "durable_reopen",
@@ -604,6 +609,20 @@ def _validate_retained_live_evidence(spec: CheckSpec) -> tuple[str, str, dict[st
             ):
                 if boundaries.get(field) != "checked":
                     problems.append(f"binding certification boundary {field} is not checked")
+    elif spec.check_id == "flow_runtime_live":
+        if raw.get("cleanup_verified") is not True:
+            problems.append("flow runtime cleanup is not verified")
+        if raw.get("case_count") != raw.get("passed_case_count") or raw.get("failed_case_count") != 0:
+            problems.append("flow runtime cases are not all passing")
+        if raw.get("external_provider_mutation_performed") is not False:
+            problems.append("flow runtime certificate must not mutate an external provider")
+        if raw.get("native_watchdog_status") != "not_checked":
+            problems.append("native watchdog status must remain a separate gate")
+        if raw.get("cold_crash_recovery_status") != "not_checked":
+            problems.append("cold-crash recovery status must remain a separate gate")
+        cleanup = raw.get("cleanup")
+        if not isinstance(cleanup, dict) or cleanup.get("projects_remaining") != 0 or cleanup.get("flows_remaining") != 0:
+            problems.append("flow runtime fixture cleanup is not zero-residue")
 
     if problems:
         return "fail", "; ".join(dict.fromkeys(problems)), raw

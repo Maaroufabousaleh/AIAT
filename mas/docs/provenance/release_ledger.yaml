@@ -241,6 +241,14 @@ checks:
     category: contract
     script: scripts/check_flow_execution_semantics.py
     args: [--json]
+  - id: flow_runtime_live
+    category: recovery
+    script: scripts/check_flow_runtime_live.py
+    args: [--json]
+    live_args: [--live, --confirm, --json]
+    retained_live_evidence:
+      path: docs/provenance/flow_runtime_live_evidence.json
+      schema_version: aiat.flow-runtime-live.v1
   - id: flow_worker_binding
     category: contract
     script: scripts/check_flow_worker_binding.py
