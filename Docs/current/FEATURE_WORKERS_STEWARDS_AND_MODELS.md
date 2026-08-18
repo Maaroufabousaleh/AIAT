@@ -37,12 +37,15 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   rows; it does not implement or certify a host registry, placement service,
   real host loss/split-brain behavior, gVisor, or Firecracker.
 - `scripts/check_worker_version_pinning_postgres.py --json` certifies the
-  durable in-flight pin boundary: a `RUNNING` version-one run retains its
-  shell, adapter, and steward references after the mutable registry advances
-  to version two, and a new queued run reads the replacement shell/adapter.
-  The report survives a Postgres connection reopen, is payload-free, and
-  cleans its reserved version/run graph. The current `worker_runs` schema has
-  no `skill_bundle_id` column, so full bundle pinning remains explicitly open.
+  complete durable in-flight version pin boundary at migration
+  `0040_worker_run_skill_bundle_pin`: a `RUNNING` version-one run retains its
+  shell, adapter, skill bundle, and steward references after the mutable
+  registry advances to version two, and a new queued run reads the complete
+  replacement set. Durable run creation snapshots the active bundle while
+  holding the worker row lock and rejects a bundle belonging to another
+  worker or steward. The report survives a Postgres connection reopen, is
+  payload-free, and cleans its reserved version/run graph. Live worker
+  dispatch, host-loss recovery, and multi-host execution remain separate.
 - `mas_core.worker_registry.placement` and `scripts/check_worker_placement.py`
   define the deterministic `aiat.worker-placement.v1` predicate. It filters
   unready or expired hosts, enforces labels/capabilities/sandbox/isolation and
@@ -410,7 +413,8 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 8. Obtain the required independent and human approvals.
 9. Run shadow, read-only canary, and bounded live canary stages.
 10. Promote exact active pointers or roll back to exact prior pointers.
-11. Keep in-flight runs pinned to the versions with which they started.
+11. Keep in-flight runs pinned to the exact shell, adapter, skill bundle, and
+    steward versions with which they started.
 
 ## Default runtime policy
 

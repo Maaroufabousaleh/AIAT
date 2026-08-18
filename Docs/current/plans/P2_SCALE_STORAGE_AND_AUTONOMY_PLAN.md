@@ -124,13 +124,14 @@
   recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
-- [x] Prove durable in-flight shell/adapter/steward version pinning with
+- [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
+  pinning with migration `0040_worker_run_skill_bundle_pin` and
   [`check_worker_version_pinning_postgres.py`](../../../mas/scripts/check_worker_version_pinning_postgres.py)
-  (`dbf6d10`, label-readback follow-up `8bb0a91`) and retained evidence at
+  (`6a10b0e`) and retained evidence at
   [`worker_version_pinning_postgres_evidence.json`](../../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
   A version-one `RUNNING` run remains pinned while the registry advances and a
-  new queued run uses version two; the current `worker_runs` schema has no
-  `skill_bundle_id`, so full bundle pinning remains open.
+  new queued run uses the complete version-two set; run creation snapshots the
+  active bundle under the worker-row lock and validates ownership.
 - Prove host loss, split-brain avoidance, queue recovery, and complete run-version pinning across all governed version records.
 
 ## Workstream 4 — guarded self-improvement
