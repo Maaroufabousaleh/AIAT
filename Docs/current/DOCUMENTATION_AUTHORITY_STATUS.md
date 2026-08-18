@@ -13,7 +13,7 @@ set is intentionally smaller:
 
 - one normative target programme (`AIAT_TARGET_PROGRAMME.md`);
 - one root navigation/delivery roadmap (`ROADMAP.md`);
-- twelve current feature specifications;
+- thirteen current feature specifications;
 - three ordered plans; and
 - focused implementation/review status notes linked from the roadmap.
 
@@ -32,9 +32,9 @@ remain independent controls.
 The current workspace reports:
 
 ```text
-canonical features: 12
+canonical features: 13
 canonical plans: 3
-maintained documents: 21
+maintained documents: 22
 licence metadata is a gate: false
 ```
 
@@ -299,6 +299,17 @@ replays assignment keys, settles owner-bound commit/release transitions, and
 survives connection reopen. It is assignment authority only: live runtime,
 provider, sandbox, and worker dispatch remain separate; licence metadata is
 informational and non-gating.
+
+The committed worker-plane host-execution group `73c0bda` adds the maintained
+[Worker-Plane Host Execution feature](FEATURE_WORKER_HOST_EXECUTION.md),
+`aiat.worker-host-execution.v1`, and the local certificate
+[`worker_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_execution_postgres_evidence.json).
+The certificate admits a committed binding, claims and executes a queued run
+through the canonical native fixture controller, releases the binding and
+reservation, reopens Postgres, verifies payload-free usage/artifact/trace
+evidence, and cleans the reserved namespace. Selected model-backed execution,
+deployed sandbox, provider, and multi-host recovery remain open; licence
+metadata is informational and non-gating.
 
 The host-fencing/recovery group `72e59ec` adds migration
 `0039_worker_host_fencing` and the maintained

@@ -132,8 +132,18 @@
   make worker placement fail closed on non-worker planes through migration
   `0041_worker_host_planes` (`3fb15db`; host-plane/placement evidence is
   retained in the worker-host and placement certificates).
-- [ ] Prove live dispatch on the worker plane, multi-host Firecracker/gVisor
-  operation, and provider-backed recovery.
+- [x] Add the committed-binding `aiat.worker-host-execution.v1` boundary
+  (`73c0bda`). `WorkerHostExecutor` admits only a committed worker-plane
+  binding whose reservation, host status, lease generation, and current lease
+  are valid; it claims the queued run, delegates to `WorkerRunController`, and
+  releases the binding after terminal execution. The local Postgres certificate
+  at [`worker_host_execution_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_execution_postgres_evidence.json)
+  proves native fixture dispatch, durable usage/artifact/trace evidence,
+  connection-reopen read-back, payload-free projection, release settlement, and
+  scoped cleanup. This is an AIAT-owned local execution edge, not proof of a
+  deployed sandbox or external provider.
+- [ ] Prove selected model-backed dispatch on the worker plane, multi-host
+  Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version

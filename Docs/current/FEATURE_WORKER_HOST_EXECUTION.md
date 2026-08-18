@@ -1,0 +1,135 @@
+# Worker-Plane Host Execution Feature
+
+**Baseline:** 2026-08-17
+
+**Status:** local Compose Postgres certification complete; deployed runtime,
+sandbox, provider, and multi-host recovery evidence remain open
+
+**Implementation:** `73c0bda`
+
+**Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
+**Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
+
+## Purpose
+
+This feature is the AIAT-owned execution edge between durable worker placement
+and the existing `WorkerRunController`. It lets a host process execute a run
+only after the control plane has committed a run-to-reservation binding. The
+host process is still an untrusted execution boundary; it receives no control-
+plane authority from this wrapper.
+
+The feature is deliberately narrower than a provider or sandbox integration. It
+certifies the local host admission and native adapter lifecycle, while keeping
+gVisor, Firecracker, external providers, remote runtimes, and outage recovery as
+separate evidence boundaries.
+
+## Contract
+
+The implementation is in
+[`host_executor.py`](../../mas/packages/mas-core/mas_core/worker_registry/host_executor.py)
+and exposes `aiat.worker-host-execution.v1`.
+
+`HostExecutionRequest` carries only the run UUID, authenticated host identity,
+execution owner, and bounded Worker Run lease duration. `WorkerHostExecutor`
+requires all of the following before claiming work:
+
+1. A binding exists for the requested run.
+2. Binding and reservation state are both `COMMITTED`.
+3. Binding host identity matches the requesting host.
+4. Binding worker identity matches the selected worker registry row.
+5. The binding host plane is exactly `worker` and the host is `READY`.
+6. The binding lease generation equals the current host lease generation.
+7. The current host lease is valid at the admission read.
+
+Admission rejects a missing, stale, released, cross-plane, cross-host,
+cross-worker, or generation-mismatched binding with a stable reason code. No
+runtime is started before the checks and the atomic Worker Run claim succeed.
+
+## Execution sequence
+
+```text
+committed binding
+      │
+      ├─ read host plane/status/generation/lease
+      ├─ claim queued Worker Run as host owner
+      ├─ WorkerRunController.execute(request, adapter)
+      │     └─ readiness → negotiation → dispatch → evidence → terminal state
+      └─ release committed reservation and binding
+```
+
+The claim owner is the binding owner, making host admission, queue lease, and
+release auditable under one bounded identity. Controller terminal handling
+remains authoritative for artifact/usage persistence and terminal state. The
+binding service now permits the required `COMMITTED → RELEASED` transition and
+keeps replay idempotent.
+
+## Durable evidence
+
+The reserved live checker is
+[`check_worker_host_execution_postgres.py`](../../mas/scripts/check_worker_host_execution_postgres.py).
+It registers one deterministic worker and worker-plane host, creates a queued
+run, commits the binding, executes the real native fixture adapter through the
+host executor, reads the run/binding/usage/artifact/trace records through a new
+Postgres connection, and removes only its fixture namespace.
+
+Evidence is retained at
+[`worker_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_execution_postgres_evidence.json).
+The latest pass records:
+
+| Signal | Observed |
+| --- | --- |
+| Migration | `0042_worker_run_host_binding` |
+| Worker Run claim / terminal state | `CLAIMED` / `SUCCEEDED` |
+| Admission | worker plane, generation `1 == 1`, current host lease valid |
+| Binding / reservation settlement | `COMMITTED` before execution, `RELEASED` after execution |
+| Durable evidence | one usage row, one artifact row, three native spans, payload-free projection |
+| Reopen and cleanup | healthy read-back; all fixture counts return to zero |
+| External effects | no external network or provider mutation; native fixture dispatch only |
+
+The report intentionally says sandbox runtime, external provider/remote runtime,
+and provider-backed recovery are `not_checked`. A native fixture is not a claim
+that gVisor or Firecracker is active.
+
+## Tests and operation
+
+Focused unit and checker tests are in
+[`test_host_executor.py`](../../mas/packages/mas-core/tests/test_host_executor.py)
+and
+[`test_check_worker_host_execution_postgres.py`](../../mas/scripts/tests/test_check_worker_host_execution_postgres.py).
+Run the bounded checks from `mas/`:
+
+```bash
+uv run --isolated ruff check \
+  packages/mas-core/mas_core/worker_registry/host_executor.py \
+  packages/mas-core/mas_core/worker_registry/run_host_binding.py \
+  packages/mas-core/tests/test_host_executor.py \
+  scripts/check_worker_host_execution_postgres.py \
+  scripts/tests/test_check_worker_host_execution_postgres.py
+uv run --isolated pytest -q \
+  packages/mas-core/tests/test_host_executor.py \
+  packages/mas-core/tests/test_run_host_binding.py \
+  scripts/tests/test_check_worker_host_execution_postgres.py
+docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_execution_postgres.py --json
+```
+
+The deployed command requires migration `0042_worker_run_host_binding` and a
+local Postgres DSN. It is a certification probe, not an automatic production
+dispatcher. A production host integration must supply an authenticated host
+identity, adapter/runtime selection, sandbox profile, bounded mounts/network,
+artifact policy, and recovery policy before it can claim a real run.
+
+## Open boundaries
+
+- Connect the executor to a selected, approved model-backed worker without
+  bypassing worker shell, adapter, skill-bundle, steward, model, budget, or
+  human-approval controls.
+- Prove two or more real worker hosts with concurrent admission, host loss,
+  split-brain fencing, requeue, and duplicate-effect protection.
+- Certify gVisor on supported hosts and independently certify Firecracker for
+  high-risk profiles.
+- Add provider-backed execution, callback/bounce evidence, outage recovery, and
+  restore/rollback exercises.
+
+The canonical resource metadata catalogue remains the only place for third-party
+source and licence metadata; this execution contract does not use that metadata
+as an admission predicate. See [Third-party notices](../../THIRD_PARTY_NOTICES.md).
