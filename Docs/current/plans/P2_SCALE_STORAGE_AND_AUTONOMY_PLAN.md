@@ -444,6 +444,14 @@
   This closes local durable worker evidence only; live model/provider,
   external callback/bounce, retention, sandbox, canary/rollback, and outage
   evidence remain separate.
+- [x] Compose the real gateway worker/controller with the independent
+  worker-trace and mail-edge evaluators (`6ebb12c`). The local certificate
+  [`gateway_worker_mail_edge_fixture.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json)
+  proves exact fixture provider/model attribution, observed scalar worker and
+  integration sources, and verified delivered/bounced events through a
+  payload-free non-mutating report. It is local composition evidence only;
+  external provider dispatch, durable provider callback/read-back, live worker
+  execution, sandbox, and host-runtime evidence remain open.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

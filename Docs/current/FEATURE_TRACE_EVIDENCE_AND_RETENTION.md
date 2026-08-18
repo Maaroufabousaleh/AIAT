@@ -69,6 +69,13 @@ cleanup; evidence is
 Production hold-registry authority, archive storage, erasure, durable audit,
 project-wide narrowing, provider-diverse recovery, and restore rollback remain
 open.
+`6ebb12c` adds a local gateway-worker/mail-edge composition certificate. It runs
+the real `GatewayWorkerAdapter` and `WorkerRunController`, projects bounded
+worker usage/artifact/native-span rows, and feeds verified delivered/bounced
+observations to the independent join evaluator. Evidence is
+[`gateway_worker_mail_edge_fixture.json`](../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json).
+This is local fixture composition only; durable provider read-back, external
+provider execution, live worker dispatch, and sandbox evidence remain open.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -182,6 +189,13 @@ non-mutating, and retained at
 [`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
 This is an explicit evidence join, not a live worker/provider certification or
 an activation/release gate.
+
+The local gateway-worker composition certificate (`6ebb12c`) uses the same
+join without selecting a live worker: the real adapter/controller lifecycle
+produces exact fixture provider/model usage, while scalar worker sources and
+verified delivery/bounce observations are evaluated together. Its report is
+payload-free and non-mutating; it does not upgrade the join to durable provider
+callback, external provider, live worker, or sandbox evidence.
 
 The durable worker-run evidence slice is now separately certified by
 [`scripts/check_worker_run_postgres_evidence.py`](../../mas/scripts/check_worker_run_postgres_evidence.py)

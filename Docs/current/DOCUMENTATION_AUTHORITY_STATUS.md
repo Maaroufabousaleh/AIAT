@@ -84,6 +84,15 @@ in the roadmap and retained at
 [`gateway_worker_adapter_fixture.json`](../../mas/docs/provenance/gateway_worker_adapter_fixture.json)
 and [`gateway_worker_http_fixture.json`](../../mas/docs/provenance/gateway_worker_http_fixture.json).
 
+Commit `6ebb12c` adds the maintained local gateway-worker/mail-edge
+composition certificate and checker. It runs the real gateway adapter and
+controller, records exact fixture provider/model usage, and joins scalar
+worker/integration sources with verified delivered and bounced observations.
+The payload-free report is indexed at
+[`gateway_worker_mail_edge_fixture.json`](../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json);
+durable provider callback/read-back, external provider execution, live worker,
+and sandbox evidence remain explicitly open.
+
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
 startup reconciliation and `AgentConfig`/health propagation (`569231f`),
@@ -211,6 +220,12 @@ It composes worker source coverage with explicit trace/worker-scoped,
 payload-free mail observations and remains a fixture-only evidence contract;
 it does not certify a live worker, provider callback, durable worker record, or
 bounce read-back.
+
+The follow-on local composition group `6ebb12c` is also indexed by the
+gateway-worker, trace-evidence, and mail-edge feature specifications. It is a
+real adapter/controller fixture plus scalar evaluator composition, not a claim
+of live provider delivery, durable webhook/bounce read-back, or sandbox
+execution.
 
 The durable worker-run evidence group `acd3f06` adds the local Postgres
 certificate and maintained evidence

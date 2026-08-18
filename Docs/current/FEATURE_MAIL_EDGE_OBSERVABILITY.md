@@ -6,8 +6,8 @@ webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
 projected-provider trace parser, optional signed identity-dashboard read-back,
 and the real local ASGI ingress certificates are implemented in `85369fe`,
-`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, and
-`1d8aed5`. The
+`cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, `1d8aed5`,
+and `6ebb12c`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
@@ -70,6 +70,15 @@ dispatch a worker. The deterministic certificate is retained at
 [`worker_mail_edge_coverage_fixture.json`](../../mas/docs/provenance/worker_mail_edge_coverage_fixture.json).
 This join is local fixture evidence and does not claim external provider
 delivery, durable worker execution, or live bounce read-back.
+
+`6ebb12c` adds a local gateway-worker composition certificate on top of this
+join. The real `GatewayWorkerAdapter` and `WorkerRunController` produce exact
+fixture provider/model usage and bounded worker sources; verified delivered and
+bounced observations then pass the mail-edge evaluator. Evidence is
+[`gateway_worker_mail_edge_fixture.json`](../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json).
+The certificate is non-mutating and local-only, so deployed provider callback,
+durable provider read-back, selected live worker, and sandbox evidence remain
+open.
 
 ## Checker and live boundary
 
