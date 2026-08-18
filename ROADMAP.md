@@ -593,7 +593,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Selected steward/candidate certification-readiness preflight | [`check_worker_steward_readiness.py`](mas/scripts/check_worker_steward_readiness.py), [`worker_steward_readiness.py`](mas/packages/mas-core/mas_core/worker_registry/worker_steward_readiness.py), [`test_worker_steward_readiness.py`](mas/packages/mas-core/tests/test_worker_steward_readiness.py) |
 | Team-runner agent→worker manifest identity bindings | [`check_team_worker_manifest_refs.py`](mas/scripts/check_team_worker_manifest_refs.py), [`team_manifest_refs.py`](mas/packages/mas-core/mas_core/worker_registry/team_manifest_refs.py), [`team_runner/main.py`](mas/apps/team-runner/team_runner/main.py), [`agent_runtime/config.py`](mas/packages/mas-core/mas_core/agent_runtime/config.py), [`test_team_worker_manifest_refs.py`](mas/packages/mas-core/tests/test_team_worker_manifest_refs.py), [`test_team_config.py`](mas/apps/team-runner/tests/test_team_config.py), [`mas/teams/`](mas/teams/) |
 | Third-party and production-image metadata/evidence | [Third-party notices](THIRD_PARTY_NOTICES.md), [component provenance](mas/docs/provenance/third_party_components.yaml), [production images](mas/docs/provenance/production_images.yaml), [image budgets](mas/infra/docker/image-budgets.yaml), [`check_image_provenance.py`](mas/scripts/check_image_provenance.py), [`check_image_budgets.py`](mas/scripts/check_image_budgets.py) |
-| Deterministic API/protocol/dashboard/Python SDK contracts | [API contract artifact](mas/schemas/http/orchestrator.openapi.json), [dashboard types](mas/apps/mas-dashboard/lib/generated/orchestrator-api.ts), [Python SDK](mas/packages/mas-api-sdk/mas_api_sdk/generated.py), [contract provenance](mas/docs/provenance/api_contract.yaml), [`check_api_contract.py`](mas/scripts/check_api_contract.py), [`generate_typescript_api.py`](mas/scripts/generate_typescript_api.py), [`generate_python_api.py`](mas/scripts/generate_python_api.py) |
+| Deterministic API/protocol/dashboard/Python SDK contracts | [API contract artifact](mas/schemas/http/orchestrator.openapi.json), [protocol schema](mas/packages/mas-core/schemas/protocol/aiat.v1.schema.json), [dashboard types](mas/apps/mas-dashboard/lib/generated/orchestrator-api.ts), [Python SDK](mas/packages/mas-api-sdk/mas_api_sdk/generated.py), [contract provenance](mas/docs/provenance/api_contract.yaml), [`check_api_contract.py`](mas/scripts/check_api_contract.py), [`generate_typescript_api.py`](mas/scripts/generate_typescript_api.py), [`generate_python_api.py`](mas/scripts/generate_python_api.py); `8f46ed1` reconciles the runtime and checked-in `aiat_gateway` transport enum |
 | Executive model/budget reconciliation and role views | [`aiat.executive-reconciliation.v1` / `aiat.executive-views.v1`](mas/packages/mas-core/mas_core/observability/executive_reconciliation.py), [`/executive/reconciliation`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/views/{role}`](mas/apps/orchestrator-api/orchestrator_api/main.py), [System Overview](<mas/apps/mas-dashboard/app/(dashboard)/page.tsx>) |
 | Executive write actions | [`aiat.executive-action.v1`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/cfo/model-overrides`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/cto/worker-runs`](mas/apps/orchestrator-api/orchestrator_api/main.py), [`/executive/actions/ceo/privileged-actions`](mas/apps/orchestrator-api/orchestrator_api/main.py), [dashboard proxies](mas/apps/mas-dashboard/app/api/executive/actions/) |
 | CEO evidence envelope and citation route | [`aiat.ceo-evidence.v1`](mas/apps/orchestrator-api/orchestrator_api/main.py), [CEO chat](<mas/apps/mas-dashboard/app/(dashboard)/ceo/chat/page.tsx>), [dedicated evidence record](<mas/apps/mas-dashboard/app/(dashboard)/evidence/[kind]/[id]/page.tsx>), [`test_ceo_chat.py`](mas/apps/orchestrator-api/tests/test_ceo_chat.py) |
@@ -702,7 +702,10 @@ The codebase already includes:
 - the generated dashboard and Python SDK contract surfaces both contain 135
   models and 271 operation records tied to the same OpenAPI/provenance hash;
   the three role-scoped executive action routes and typed retention-plan
-  response are included in that export.
+  response are included in that export. Commit `8f46ed1` reconciles the
+  checked-in `aiat.v1` `WorkerManifest.transport` enum with the runtime
+  `aiat_gateway` transport and updates the protocol provenance hash without
+  changing the API path/model/operation counts.
 - the 11 shipped authority/manager prompts resolve only concrete, policy-allowed
   tools; review submissions publish canonical `REVIEW_RESPONSE` envelopes and
   privileged CEO requests use the audited control-plane route.
@@ -820,11 +823,14 @@ tool-service profile split and opt-in browser dependency boundary (`b24ca0c`, `e
 reconciliation, the bounded metric contract (`90a7d82`) and lifecycle wiring
 (`cbeb9db`), and the secret-safe release-environment/provenance input group
 (`64771b5`) plus the bounded release-ledger aggregator (`eff4eef`)
-implemented; the latest static ledger run is 48/48 pass with two pending
+implemented; `8f46ed1` reconciles the checked-in `aiat.v1`
+`WorkerManifest.transport` enum with runtime `aiat_gateway` and records the
+matching protocol provenance hash; the latest static ledger run is 48/48 pass
+with two pending
 technical evidence items and `NO-RELEASE`; the read-only secret-safe
 `/system/diagnostics` route, typed retention-plan response, and regenerated
 238-path/271-operation API contract are covered by focused tests
-(`2860838`, `f8829d6`, `b3fca97`, `9a80c6c`), and the API-facing
+(`2860838`, `f8829d6`, `b3fca97`, `9a80c6c`, `8f46ed1`), and the API-facing
 `scripts/mas-ctl` status/diagnostics/bootstrap wrapper is covered by six
 deterministic CLI cases (`380daf5`); message-router sender role/team coherence
 is enforced before dedupe/enqueue with static and mocked-router coverage

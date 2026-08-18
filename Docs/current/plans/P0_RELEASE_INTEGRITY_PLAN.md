@@ -236,8 +236,10 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - `uv run --isolated pytest packages/mas-api-sdk/tests -q` passes the generated
   SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
   238 OpenAPI paths, 135 models, and 271 operations with matching generated
-  TypeScript/Python hashes, including the typed read-only retention-plan
-  response.
+  TypeScript/Python/protocol hashes, including the typed read-only
+  retention-plan response. Commit `8f46ed1` reconciles the checked-in
+  `aiat.v1` `WorkerManifest.transport` enum with the runtime `aiat_gateway`
+  transport without changing the API counts.
 - `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six
   deterministic CLI cases; the focused operational API suite now verifies the
   executable bootstrap wrapper is present, leaving only the separate

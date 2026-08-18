@@ -52,6 +52,14 @@ uv run --isolated python scripts/check_docs_index.py --json
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
+The API/protocol contract reconciliation `8f46ed1` is now recorded across the
+maintained authority set: the checked-in `aiat.v1` schema's
+`WorkerManifest.transport` enum includes the runtime `aiat_gateway` transport,
+and `scripts/check_api_contract.py --json` passes against the updated protocol
+provenance hash. The OpenAPI, dashboard, and Python SDK counts remain 238
+paths, 135 models, and 271 operations; this is contract-integrity evidence,
+not a live-provider or release approval claim.
+
 The 2026-08-18 model-route refresh (`68e0b03`, repeatable checker `f6ed16f`)
 is indexed as read-only evidence: the local `/v1/models` route exposes all
 five AIAT aliases, while the API-owned catalogue reports 92/94 approved
