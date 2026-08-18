@@ -22,6 +22,7 @@ import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from mas_core.memory import BlobClient, BlobRef, InMemoryObjectStore
 
@@ -249,6 +250,23 @@ async def _connect(spec: ProviderSpec, *, bucket: str, timeout: float) -> BlobCl
         raise
 
 
+async def _tcp_reachable(endpoint: str, *, timeout: float) -> None:
+    """Check only the provider TCP listener, without opening an S3 session."""
+
+    parsed = urlsplit(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HarnessError("provider endpoint must be an http(s) URL with a host")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(parsed.hostname, port),
+        timeout=timeout,
+    )
+    del reader
+    writer.close()
+    with suppress(Exception):
+        await writer.wait_closed()
+
+
 async def _remaining(client: BlobClient, *, project_id: str, bucket: str, timeout: float) -> int:
     return len(await _timed(client.list_objects(project_id, bucket=bucket), timeout))
 
@@ -307,16 +325,7 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
         controller.stop()
         stage = "outage-probe"
         try:
-            outage_probe = await _connect(spec, bucket=plan.bucket, timeout=plan.operation_timeout_seconds)
-            try:
-                await _remaining(
-                    outage_probe,
-                    project_id=plan.project_id,
-                    bucket=plan.bucket,
-                    timeout=plan.operation_timeout_seconds,
-                )
-            finally:
-                await _close(outage_probe)
+            await _tcp_reachable(spec.endpoint, timeout=plan.operation_timeout_seconds)
         except Exception as exc:
             outage_observed = True
             outage_error_type = _error_type(exc)
@@ -333,6 +342,7 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
         deadline = asyncio.get_running_loop().time() + plan.recovery_timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
             try:
+                await _tcp_reachable(spec.endpoint, timeout=plan.operation_timeout_seconds)
                 recovery_client = await _connect(
                     spec, bucket=plan.bucket, timeout=plan.operation_timeout_seconds
                 )
