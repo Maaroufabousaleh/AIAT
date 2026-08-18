@@ -7,9 +7,11 @@ from typing import Any
 import pytest
 
 from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats
+from mas_core.protocols.worker_manifest import WorkerRuntime
 from mas_core.worker_contract.controller import WorkerRunController
 from mas_core.worker_contract.models import ModelProfileReference, WorkerRunRequest
 from mas_core.worker_registry.runtime_adapters import GatewayWorkerAdapter, adapter_for_transport
+from mas_core.worker_registry.runtime_catalog import RUNTIME_CATALOG
 
 
 class _FakeGateway:
@@ -95,3 +97,8 @@ def test_gateway_transport_factory_uses_aiat_owned_secret_boundary() -> None:
     assert isinstance(adapter, GatewayWorkerAdapter)
     assert adapter.provider_id == "fixture-provider"
     assert adapter.gateway_client._config.gateway_url == "http://fixture-gateway"
+
+
+def test_gateway_transport_is_declared_in_the_worker_manifest_contract() -> None:
+    assert WorkerRuntime(transport="aiat_gateway").transport == "aiat_gateway"
+    assert "aiat_gateway" in RUNTIME_CATALOG["builtin"].supported_transports

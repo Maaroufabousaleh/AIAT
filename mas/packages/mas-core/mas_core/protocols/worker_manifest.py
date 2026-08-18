@@ -33,7 +33,7 @@ class WorkerMetadata(BaseModel):
 
 
 class WorkerRuntime(BaseModel):
-    transport: Literal["native", "process", "http", "oci", "mcp", "opencode", "human"] = "process"
+    transport: Literal["native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "human"] = "process"
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=300, ge=1)
     stop_grace_seconds: int = Field(default=60, ge=1)

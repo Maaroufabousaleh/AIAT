@@ -39,7 +39,7 @@ DEFAULT_NOTICES = PROGRAMME_ROOT / "THIRD_PARTY_NOTICES.md"
 CHECK_SCHEMA = "aiat.worker-reconciliation.v1"
 
 SUPPORTED_TRANSPORTS = frozenset(
-    {"native", "process", "http", "oci", "mcp", "opencode", "human"}
+    {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "human"}
 )
 CONCRETE_VERSION_RE = re.compile(r"^(?:v)?\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?$")
 

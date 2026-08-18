@@ -25,7 +25,7 @@ class RuntimeDefinition:
 RUNTIME_CATALOG: dict[str, RuntimeDefinition] = {
     "builtin": RuntimeDefinition(
         "builtin",
-        supported_transports=("native", "process", "human"),
+        supported_transports=("native", "process", "aiat_gateway", "human"),
         supported_isolation_modes=("native",),
     ),
     "langgraph": RuntimeDefinition(
