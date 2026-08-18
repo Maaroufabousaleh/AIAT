@@ -61,6 +61,16 @@ evidence. `8ed53df` now runs that durable certificate through the production
 provider/model identifiers are local fixtures; external provider execution,
 sandbox, and independent-host recovery remain separate boundaries.
 
+`fa42284` adds a durable dual-Postgres worker/mail-edge composition
+certificate. The production `GatewayWorkerAdapter` and `WorkerRunController`
+record exact fixture usage and payload-free worker evidence; normalized
+delivery, verified webhook, and bounce observations are persisted by the
+identity store; both stores are reopened independently; and the cross-store
+evaluator passes before scoped cleanup. This composes the normalized
+identity-store path only: HTTP provider ingress, external provider delivery,
+selected live worker execution, sandbox certification, and full worker
+certification remain separate.
+
 ## Purpose
 
 AIAT keeps stable organisational workers while allowing their execution engines to evolve. A specialist is an AIAT shell backed by a certified adapter and pinned OSS runtime. One dedicated steward governs each external worker's documentation, compatibility, candidates, certification, rollout, and rollback.
@@ -214,6 +224,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   This is local composition evidence only: it does not certify a durable
   provider callback/read-back, external provider, live worker, sandbox, or
   host runtime.
+- The durable composition checker
+  [`check_gateway_worker_mail_edge_postgres.py`](../../mas/scripts/check_gateway_worker_mail_edge_postgres.py)
+  (`fa42284`) runs the production gateway adapter/controller against the worker
+  Postgres store and records normalized delivery/webhook/bounce observations in
+  the identity Postgres store. Independent connection reopen/read-back checks
+  verify exact provider/model usage, payload-free worker/mail-edge correlation,
+  and zero remaining fixture rows after scoped cleanup. This is local
+  dual-Postgres composition evidence; it does not claim HTTP ingress, external
+  provider delivery, selected live worker execution, provider recovery, or
+  gVisor/Firecracker execution.
 - `GatewayWorkerAdapter` now classifies dispatch failures before they reach the
   controller: bounded input errors are terminal validation failures, known
   transient gateway statuses (`408`, `409`, `412`, `425`, `429`, and `5xx`) are

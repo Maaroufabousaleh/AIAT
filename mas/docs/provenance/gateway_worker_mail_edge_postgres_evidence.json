@@ -13,6 +13,7 @@
     "worker_postgres_connection_reopen": "checked",
     "worker_trace_mail_edge_correlation": "checked"
   },
+  "commit": "fa42284",
   "controller_terminal_state": "SUCCEEDED",
   "coverage_schema": "aiat.worker-mail-edge-coverage.v1",
   "durable_reopen": {

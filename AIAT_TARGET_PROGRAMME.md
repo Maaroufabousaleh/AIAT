@@ -104,6 +104,16 @@ The core database migration graph has a single current head at `0036_native_trac
 | Self-development | **Guarded contract, authenticated project API, durable local Postgres lifecycle/outcome snapshot, artifact manifest/read-back evidence, and canonical storage writer implemented; live worker/provider lifecycle pending** | Candidate generation, certification, shadow/canary rollout, rollback, worker upgrades, capability evaluation, and approvals exist. The `aiat.self-improvement.v1` contract creates a typed canonical project request, authenticated `POST /projects/self-improvement` validates creator/company scope, `AgentStorage.create_self_improvement_project` delegates it through the canonical project writer, project config stores a revisioned lifecycle snapshot and project-history entries, and authenticated lifecycle reference/action endpoints link canonical issue/worker-run/artifact/budget/branch/SBOM/deployment/evidence records and apply guarded transitions without copying authority. Coding/testing/review/security/migration/rollback gates remain independent, human promotion is required, exact prior-version rollback passes in deterministic and reserved local Postgres certificates, terminal outcome actions persist bounded cost/incident/rollback/KPI learning with idempotent IDs, and normalized worker-result records now produce the frozen five-kind artifact manifest with checksum/size read-back evidence. The local certificate is [`self_improvement_postgres_evidence.json`](mas/docs/provenance/self_improvement_postgres_evidence.json); selected live worker/provider execution and deployment integration remain open. |
 | Outside-LAN access | **Partial** | Cloudflare tunnel and mail-edge/gateway deployment profiles exist. Production exposure, identity, TLS, and recovery certification remain operator-owned. |
 
+The durable local worker/mail-edge composition slice (`fa42284`) now runs the
+production `GatewayWorkerAdapter`/`WorkerRunController` against the worker
+Postgres store, persists normalized delivery/webhook/bounce observations in the
+identity Postgres store, reopens both stores independently, and verifies a
+payload-free cross-store evidence join before scoped cleanup. This is local
+normalized-store composition evidence only; HTTP provider ingress, external
+provider delivery/recovery, selected live worker execution, and sandbox
+evidence remain separate gates. The retained report is
+[`gateway_worker_mail_edge_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
+
 ### 2.2 Evidence that must be interpreted carefully
 
 The July 2026 live ledger disposed all 199 planned rows: 132 pass, 45 partial, 1 fail, 11 blocked, and 10 deferred. It is valuable historical evidence, not a current release certificate. Code and Compose changed after that run.

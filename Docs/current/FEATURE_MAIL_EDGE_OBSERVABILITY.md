@@ -1,13 +1,14 @@
 # Mail-Edge and Provider Observation Feature Specification
 
-**Baseline:** 2026-08-17
+**Baseline:** 2026-08-18
 **Status:** the payload-free `aiat.mail-edge-observation.v1` contract, provider
 webhook normalizer, coverage evaluator, fail-closed fixture/live checker,
 identity-service persistence/projection path, Resend/Svix raw-body verifier, and
 projected-provider trace parser, optional signed identity-dashboard read-back,
-and the real local ASGI ingress certificates are implemented in `85369fe`,
+and the real local ASGI ingress certificates, plus the durable dual-Postgres
+worker/mail-edge composition certificate, are implemented in `85369fe`,
 `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, `1d8aed5`,
-and `6ebb12c`. The
+`6ebb12c`, and `fa42284`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
@@ -80,6 +81,19 @@ The certificate is non-mutating and local-only, so deployed provider callback,
 durable provider read-back, selected live worker, and sandbox evidence remain
 open.
 
+`fa42284` adds the durable dual-Postgres composition certificate. It runs the
+production `GatewayWorkerAdapter` and `WorkerRunController` against the worker
+database, records a payload-free report artifact, usage row, and native worker,
+model, and integration spans, then records normalized delivery,
+verified-delivery, and bounce observations through `PostgresIdentityStore` in
+the identity database. Independent worker and identity connection reopen/read-
+back checks rebuild the payload-free `aiat.worker-mail-edge-coverage.v1` join,
+and scoped cleanup leaves zero fixture rows. This intentionally composes the
+normalized identity-store boundary rather than claiming the HTTP ingress or a
+live provider callback; selected live worker/provider delivery, recovery, and
+sandbox evidence remain open. Evidence is
+[`gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
+
 ## Checker and live boundary
 
 From `mas/`:
@@ -89,6 +103,7 @@ uv run --isolated pytest packages/mas-core/tests/test_mail_edge.py -q
 uv run --isolated python scripts/check_mail_edge_observations.py --json
 uv run --isolated python scripts/check_worker_mail_edge_coverage.py --json \
   --require-integration
+uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json
 uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --url http://127.0.0.1:8000 \
   --api-key "$AIAT_OPERATOR_API_KEY" \
@@ -148,6 +163,15 @@ delete mutations in the private Compose Postgres service, but does not contact
 an external provider, SMTP relay, model worker, or external network. It does
 not close the live provider, worker, or outage/restore gates.
 
+The durable worker/mail-edge composition certificate in `fa42284` uses two
+explicit database DSNs (`AIAT_GATEWAY_WORKER_MAIL_EDGE_WORKER_DSN` and
+`AIAT_GATEWAY_WORKER_MAIL_EDGE_IDENTITY_DSN`). It runs the production gateway
+adapter/controller and normalized identity-store writes, closes and reopens
+both stores independently, checks exact provider/model usage and payload-free
+cross-store correlation, and cleans only its reserved namespaces. It is a
+local dual-database composition check, not a provider callback, HTTP-ingress,
+selected-worker, or sandbox check.
+
 ## Integration boundary
 
 The identity service remains the authority for mailbox, outbound request,
@@ -201,6 +225,12 @@ predicate.
   [`mas/scripts/tests/test_check_mail_edge_postgres_ingress.py`](../../mas/scripts/tests/test_check_mail_edge_postgres_ingress.py)
 - Durable Postgres evidence:
   [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json)
+- Durable worker/mail-edge composition checker:
+  [`mas/scripts/check_gateway_worker_mail_edge_postgres.py`](../../mas/scripts/check_gateway_worker_mail_edge_postgres.py)
+- Durable worker/mail-edge composition test:
+  [`mas/scripts/tests/test_check_gateway_worker_mail_edge_postgres.py`](../../mas/scripts/tests/test_check_gateway_worker_mail_edge_postgres.py)
+- Durable worker/mail-edge composition evidence:
+  [`mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
 - Checker projection tests:
   [`mas/scripts/tests/test_check_mail_edge_observations.py`](../../mas/scripts/tests/test_check_mail_edge_observations.py)
 - Focused tests:

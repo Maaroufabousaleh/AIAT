@@ -473,6 +473,16 @@
   payload-free non-mutating report. It is local composition evidence only;
   external provider dispatch, durable provider callback/read-back, live worker
   execution, sandbox, and host-runtime evidence remain open.
+- [x] Certify durable gateway-worker/mail-edge composition across the worker
+  and identity Postgres stores (`fa42284`). The certificate
+  [`gateway_worker_mail_edge_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
+  runs the production gateway adapter/controller, persists a payload-free
+  worker report/usage/trace projection, records normalized delivery,
+  verified-webhook, and bounce observations, reopens both stores independently,
+  passes the cross-store evaluator, and cleans only its fixture namespaces.
+  This closes local durable composition; HTTP provider ingress, external
+  provider delivery/recovery, selected live worker execution, and sandbox
+  evidence remain open.
 - [ ] Run the new checker against a selected live representative model-backed
   worker and provider ingress, then read back a durable provider webhook and
   bounce observation so the remaining SLO targets have deployment evidence

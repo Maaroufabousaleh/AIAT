@@ -117,6 +117,16 @@ The payload-free report is indexed at
 durable provider callback/read-back, external provider execution, live worker,
 and sandbox evidence remain explicitly open.
 
+Commit `fa42284` adds the durable dual-Postgres composition certificate. The
+production gateway adapter/controller persists payload-free worker evidence in
+the worker store, normalized delivery/webhook/bounce observations in the
+identity store, and rebuilds the cross-store evaluator after independent
+connection reopen. Its scoped cleanup leaves zero fixture rows. This is
+normalized identity-store composition evidence only; HTTP provider ingress,
+external provider delivery, selected live worker, recovery, and sandbox gates
+remain open. The evidence is indexed in the roadmap and retained at
+[`gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
+
 Commit `b2ae516` hardens the gateway-worker failure boundary. The maintained
 adapter now separates bounded input validation, retryable transient gateway
 statuses, and terminal provider rejections while retaining only status and
@@ -276,6 +286,12 @@ gateway-worker, trace-evidence, and mail-edge feature specifications. It is a
 real adapter/controller fixture plus scalar evaluator composition, not a claim
 of live provider delivery, durable webhook/bounce read-back, or sandbox
 execution.
+
+The durable composition group `fa42284` is indexed alongside it. Its
+dual-Postgres certificate reopens the worker and identity stores independently,
+rebuilds the payload-free cross-store evaluator, and cleans its reserved rows;
+it does not claim HTTP provider ingress, external delivery/recovery, selected
+live worker execution, or sandbox evidence.
 
 The durable worker-run evidence group `acd3f06` adds the local Postgres
 certificate and maintained evidence
