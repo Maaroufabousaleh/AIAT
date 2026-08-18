@@ -80,7 +80,7 @@ The storage index now also records the bounded advanced benchmark wave from
 [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
 It covers 1 MiB and 8 MiB payloads with four concurrent cases per size on both
 operator-observed endpoints, checksum read-back, and zero remaining fixture
-objects. Multipart, resource, outage, provider-managed encryption/KMS,
+objects. Resource, outage, provider-managed encryption/KMS,
 clean-host, disaster-recovery, and provider-selection decisions remain open.
 
 The same index now records the multipart adapter boundary from `a2f35de` at

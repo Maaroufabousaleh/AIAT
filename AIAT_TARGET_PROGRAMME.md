@@ -1525,7 +1525,7 @@ The programme is organised around completing and hardening the existing architec
   four concurrent cases per size on MinIO and SeaweedFS, checksum read-back,
   and post-delete cleanup verification (`6794b9f`; scalar evidence at
   [`object_store_benchmark_advanced_provider_diverse_evidence.json`](mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json)).
-  Multipart, resource, outage, provider-managed encryption, and clean-host/
+  Resource, outage, provider-managed encryption, and clean-host/
   disaster-recovery evidence remain separate gates.
 - [x] Add the bounded multipart object-store adapter/checker (`a2f35de`) for
   5 MiB-part uploads of 8 MiB and 16 MiB payloads, explicit abort semantics,

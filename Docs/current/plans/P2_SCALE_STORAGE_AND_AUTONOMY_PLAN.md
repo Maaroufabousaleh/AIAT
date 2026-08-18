@@ -28,8 +28,8 @@
   measures disposable upload/download checksum read-back and cleanup for
   named MinIO and SeaweedFS configurations without printing credentials or
   selecting a provider; the actual provider comparison still requires live
-  endpoints and reliability/resource/concurrency/large-object/multipart/
-  metadata/outage/recovery evidence.
+  endpoints and reliability/resource/concurrency/large-object/metadata/
+  outage/recovery evidence.
 - [x] Implement the deterministic checksum-verified copy/parity helper
   (`aiat.object-store-copy.v1`) over explicit `BlobRef` inputs.
 - [x] Add an explicit `--live` copy/parity runner that inventories
@@ -97,8 +97,8 @@
   and benchmark evidence at
   [`object_store_provider_benchmark_evidence.json`](../../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
   All three pair objects and six benchmark cases pass checksum read-back and
-  scoped cleanup; provider durability/custody, outage, KMS, clean-host,
-  large-object, and migration cutover evidence remain open.
+  scoped cleanup; provider durability/custody, resource profiling, outage,
+  KMS, clean-host, and migration cutover evidence remain open.
 - [x] Run the live verified-copy/parity helper across the same MinIO/SeaweedFS
   topology. Three reserved source objects copy with matching checksum/size
   read-back, the source is preserved until explicit cleanup, and both source
@@ -121,8 +121,8 @@
   and four concurrent 8 MiB cases, with checksum read-back, post-delete prefix
   verification, and scalar-only evidence at
   [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
-  Multipart, resource profiling, provider outage, provider-managed encryption,
-  and clean-host/disaster-recovery gates remain open.
+  Resource profiling, provider outage, provider-managed encryption, and
+  clean-host/disaster-recovery gates remain open.
 - [x] Add the bounded multipart adapter boundary (`a2f35de`) and live checker:
   Compose MinIO and disposable SeaweedFS each pass 8 MiB and 16 MiB payloads
   with 5 MiB parts, checksum read-back, explicit abort-without-object, and
