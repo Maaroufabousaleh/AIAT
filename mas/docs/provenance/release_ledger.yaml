@@ -205,6 +205,10 @@ checks:
     category: recovery
     script: scripts/check_gateway_provider_recovery.py
     args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/gateway_worker_provider_recovery_live.json
+      schema_version: aiat.gateway-worker-provider-recovery-live.v1
   - id: external_account_action_policy
     category: governance
     script: scripts/check_external_account_action_policy.py

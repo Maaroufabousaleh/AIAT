@@ -41,6 +41,7 @@
   "worker_mail_edge_coverage_status": "pass",
   "worker_mail_edge_trace_item_count": 9,
   "payload_free": true,
+  "secret_free": true,
   "generated_text_retained": false,
   "worker_cleanup_deleted_counts": {
     "workers": 1,
