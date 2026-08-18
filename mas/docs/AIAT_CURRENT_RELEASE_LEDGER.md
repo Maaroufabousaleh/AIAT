@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `f52fde6e2c2d0611b283853925f4e82eb038ff9d` (latest documentation/evidence revision)
+**Base revision:** `6f5b5b8d82121cbdcaebdc71b4755dfebcdc3c0a` (latest documentation/evidence revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -77,6 +77,14 @@ zero cleanup. This is operator-observed endpoint diversity and comparison
 evidence only; provider durability/custody, KMS, actual outage, clean-host,
 disaster recovery, large-object/multipart, and migration cutover remain open.
 
+The verified-copy follow-up (`6f5b5b8`, evidence
+`object_store_copy_provider_diverse_evidence.json`) also passes. Three
+reserved objects are inventoried on Compose MinIO, copied to disposable
+SeaweedFS with matching checksums and sizes, preserved until explicit cleanup,
+and removed from both prefixes. This is parity evidence only; retention
+parity, cutover/rollback, actual outage, clean-host, and disaster-recovery
+gates remain open.
+
 The security review increment `23e908e` adds a machine-checked register for
 the exact OpenCode/Semgrep evidence. It maps all 15 rule groups to exactly 316
 findings, records a personal-operator owner and next action, and tracks the 54
@@ -136,12 +144,13 @@ restore prerequisite; `424805c` adds and documents the bounded same-host
 worker-loss recovery soak; `351444a`/`f385bd7`/`3833631` add, retain, and
 document the bounded same-host object-store provider-pair recovery boundary;
 `f52fde6` retains and documents the provider-diverse MinIO/SeaweedFS adapter
-and benchmark follow-up.
+and benchmark follow-up; `6f5b5b8` retains and documents heterogeneous
+verified-copy parity.
 The retained release-environment manifest from the latest unconfigured live
-run reports revision `f52fde6e2c2d0611b283853925f4e82eb038ff9d`, two changed
+run reports revision `6f5b5b8d82121cbdcaebdc71b4755dfebcdc3c0a`, two changed
 pre-existing memory files, fifteen tracked inputs (including the boundary
 policy), and digest
-`8696c9b701e3f254ff8e81cce3a83ff26cece6ff048f3dc828935995adfaf4db`.
+`24fe3d9b881935d577f979e9d0782e009d445c81c385a897a1b043584d1d3c9a`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -290,6 +299,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Object-store backup/restore manifest | static/unit fixture + local same-provider live rehearsal | PASS (fixture + refreshed local MinIO rehearsal; provider-diverse open) | Restore safety group `93bf755`; the secret-safe local rehearsal was refreshed 2026-08-11 in `22c736d`; `uv run --isolated pytest packages/mas-core/tests/test_object_store_backup.py -q` includes a non-empty-target regression; `uv run --isolated python scripts/check_object_store_backup_restore.py --json` proves `aiat.object-store-backup.v1` source → backup → empty-target preflight → clean-target restore with exact key/checksum parity and `clean_target_verified: true`; `bash infra/compose/scripts/check-minio-backup-restore.sh` passes two disposable objects with manifest/read-back parity and scoped cleanup, retained at [`provenance/object_store_backup_restore_live.json`](provenance/object_store_backup_restore_live.json); the explicit three-provider `--live --json` runner still blocks without separate providers, encryption, retention, provider durability, and clean-environment disaster-recovery evidence |
 | Object-store provider-pair recovery | static/unit + live same-host MinIO pair | PASS (bounded adapter-boundary recovery; provider-diverse/open outage gates) | Commits `351444a`, `f385bd7`, and `3833631`; `uv run --isolated ruff check scripts/check_object_store_provider_pair.py scripts/tests/test_check_object_store_provider_pair.py`, `PYTHONPATH=scripts uv run --isolated pytest -q scripts/tests/test_check_object_store_provider_pair.py`, and the fixture runner pass `aiat.object-store-provider-pair.v1`. The live rehearsal dual-writes three checksum-bearing objects, rejects a simulated primary loss at the AIAT adapter boundary, restores from the secondary into a clean target with zero primary calls, and cleans all three reserved prefixes to zero; scalar-only evidence is [`provenance/object_store_provider_pair_evidence.json`](provenance/object_store_provider_pair_evidence.json). It uses two local MinIO endpoints and does not claim provider-diverse durability, a provider process/network outage, provider-managed SSE/KMS, clean-host restore, or disaster recovery; licence metadata remains non-gating |
 | Object-store provider-diverse pair and benchmark | live disposable MinIO + SeaweedFS adapter boundary | PASS (endpoint-diversity/comparison observation; durability and migration open) | Evidence/docs group `f52fde6` retains [`provenance/object_store_provider_pair_provider_diverse_evidence.json`](provenance/object_store_provider_pair_provider_diverse_evidence.json) and [`provenance/object_store_provider_benchmark_evidence.json`](provenance/object_store_provider_benchmark_evidence.json). Compose MinIO and disposable SeaweedFS 4.42 each pass three checksum cases at sizes 1/32/4096 bytes; the pair checker passes three-object dual-write, adapter-boundary primary-loss rejection, secondary-only clean restore, and zero cleanup. No provider process is stopped; provider durability/custody, KMS, actual outage, clean-host/disaster recovery, large-object/multipart, and migration cutover remain open; licence metadata remains non-gating |
+| Object-store verified copy/parity | live disposable MinIO → SeaweedFS adapter boundary | PASS (three-object checksum/size parity; migration approval open) | Evidence/docs group `6f5b5b8` retains [`provenance/object_store_copy_provider_diverse_evidence.json`](provenance/object_store_copy_provider_diverse_evidence.json). The live source inventory copies three reserved objects from Compose MinIO to disposable SeaweedFS, reads back matching checksums/sizes, preserves source until explicit cleanup, and leaves zero source/target objects. Retention parity, cutover/rollback, actual outage, clean-host/disaster recovery, and licence metadata remain non-gating/open as applicable |
 | Object-store encrypted backup and fresh-process restore | static/unit fixture | PASS (AIAT-owned envelope plus local fresh-process prerequisite; provider-managed/external open) | Commits `91504dd` and `b0f27f6`; `uv run --isolated pytest packages/mas-core/tests/test_object_store_encryption.py -q`, `uv run --isolated python scripts/check_object_store_encryption.py --json`, and `uv run --isolated python scripts/check_object_store_clean_environment_restore.py --json` pass AES-256-GCM encryption before adapter write, opaque key-ID-only manifest projection, ciphertext checksum/read-back, wrong-key/tamper rejection, clean-target refusal before mutation, distinct-process bundle restore through fresh adapters, payload-free evidence, and scoped cleanup. Evidence is [`provenance/object_store_encryption_evidence.json`](provenance/object_store_encryption_evidence.json) and [`provenance/object_store_clean_environment_restore_evidence.json`](provenance/object_store_clean_environment_restore_evidence.json); provider-managed SSE/KMS, external Garage/R2/B2, key custody/rotation, provider-pair, clean-host/disaster-recovery, and outage evidence remain open; licence metadata is non-gating |
 | Metric-series budget | static + local live scrape + durable many-project scrape | PASS (static + refreshed local scrape + durable certificate) | `541d6e0` preserves bounded resume-time reconciliation for legacy storage doubles; `eefe08f` adds the per-scrape durable reconciliation hook and scoped many-project checker; `uv run --isolated python scripts/check_metric_series_budget.py --json` exercises 10,000 synthetic projects with 2,000-total/32-project-state budgets and no `project_id` label, while `docker exec mas-orchestrator-api-1 python /tmp/check_metric_series_many_projects.py --json` certifies 10,000 durable local Postgres rows, 31 bounded series, all 18 state values, no `project_id` label, scoped cleanup, and baseline restoration; retained at [`provenance/metric_series_live.json`](provenance/metric_series_live.json) and [`provenance/metric_series_many_projects.json`](provenance/metric_series_many_projects.json). Clean native-Linux release-host scale evidence remains open |
 | Tool-service image budget and dependency profile | static contract + local build/resource probe | PASS (static + local Linux probe; native release open) | Contract `b24ca0c`; dependency/profile boundary `e6ee8b8`; `apps/tool-service/pyproject.toml` keeps Playwright in the opt-in `browser` extra while the core gateway remains browser-free, and `Dockerfile.tool-service` keeps browser/Docling/Semgrep in the separately budgeted `extensions` profile with exact uv `0.4.30`; `uv run --isolated pytest packages/mas-core/tests/test_image_budgets.py apps/tool-service/tests/test_default_shipped_tool_catalog.py -q` and `uv run --isolated python scripts/check_image_budgets.py --json` pass the profile ceilings. Retained local measurements are core `267957904` bytes and extensions `4155668123` bytes, with bounded loopback `/health` probes at 26,836 ms/112.3 MiB and 29,913 ms/137.7 MiB respectively. Evidence is [`provenance/image_budgets_live.json`](provenance/image_budgets_live.json); compressed archive size, clean native-Linux build/pull, and vulnerability/SBOM evidence remain open |
