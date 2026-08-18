@@ -730,7 +730,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             migration_version == EXPECTED_MIGRATION,
             len(child_reports) == 2,
             all(report.get("status") == "pass" for report in child_reports),
-            all(int(report.get("return_code") or 1) == 0 for report in child_reports),
+            all(int(report.get("return_code", 1)) == 0 for report in child_reports),
             len(set(pids)) == 2 and all(pid > 0 for pid in pids),
             run_states == ["SUCCEEDED", "SUCCEEDED"],
             assigned_hosts == [HOST_A, HOST_B],
