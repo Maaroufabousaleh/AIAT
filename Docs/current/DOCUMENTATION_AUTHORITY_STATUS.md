@@ -17,6 +17,12 @@ set is intentionally smaller:
 - three ordered plans; and
 - focused implementation/review status notes linked from the roadmap.
 
+The current implementation verification also includes `dc8a19e`: the
+supported repository regression suite passes after its storage metadata and
+generated API contract assertions were reconciled to the implemented
+worker-host tables and 135-model/271-operation artifact set. This is a
+contract-test repair only; it does not promote any blocked live release gate.
+
 Historical research, live-test ledgers, deployment runbooks, prompts, and
 provider setup guides remain useful evidence or operating references. They do
 not override the target programme. Where a historical document mentions a

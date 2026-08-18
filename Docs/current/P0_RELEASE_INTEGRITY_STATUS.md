@@ -29,6 +29,12 @@
   extension (`9972b3b`) also passes deterministic cancellation, escalation,
   timeout, retry, and invalid-transition checks; it does not close native/live
   recovery.
+- The supported repository regression suite is green after `dc8a19e` repaired
+  stale expectations for the implemented worker-host tables and the current
+  135-model/271-operation generated API contract. The focused storage,
+  object-store, host-registry, SDK, and API contract slices pass; this is a
+  test-contract repair and does not alter the live-gate blockers or
+  `NO-RELEASE` decision.
 - Commit `def4fe9` adds a bounded provider retry boundary to the production
   `GatewayWorkerAdapter`. Its configured live certificate
   [`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)
