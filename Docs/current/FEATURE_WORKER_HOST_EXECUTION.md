@@ -2,10 +2,11 @@
 
 **Baseline:** 2026-08-17
 
-**Status:** local Compose Postgres certification complete; deployed runtime,
-sandbox, provider, and multi-host recovery evidence remain open
+**Status:** local Compose Postgres single-host and concurrent two-host native
+certification complete; deployed runtime, sandbox, provider, and host-recovery
+evidence remain open
 
-**Implementation:** `73c0bda`
+**Implementation:** `73c0bda`, `f9c717b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -19,7 +20,8 @@ host process is still an untrusted execution boundary; it receives no control-
 plane authority from this wrapper.
 
 The feature is deliberately narrower than a provider or sandbox integration. It
-certifies the local host admission and native adapter lifecycle, while keeping
+certifies local host admission, native adapter lifecycle, and concurrent
+execution against two distinct durable worker-host records, while keeping
 gVisor, Firecracker, external providers, remote runtimes, and outage recovery as
 separate evidence boundaries.
 
@@ -90,6 +92,21 @@ The report intentionally says sandbox runtime, external provider/remote runtime,
 and provider-backed recovery are `not_checked`. A native fixture is not a claim
 that gVisor or Firecracker is active.
 
+### Concurrent multi-host native certificate
+
+[`check_worker_multi_host_execution_postgres.py`](../../mas/scripts/check_worker_multi_host_execution_postgres.py)
+extends the same boundary with two queued runs, two separately reserved
+worker-plane host records, and two concurrent `WorkerHostExecutor` calls. The
+live certificate is retained at
+[`worker_multi_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json).
+It records both host-specific lease generations as current, two `CLAIMED` and
+`SUCCEEDED` runs, released bindings and reservations, two usage rows, two
+artifacts, three native spans per trace, payload-free coverage, Postgres
+reopen/read-back, and zero remaining fixture rows. This is a deterministic
+native fixture running through two AIAT host identities; it is not evidence that
+two independently deployed machines, gVisor, Firecracker, an external provider,
+or host-loss recovery is active.
+
 ## Tests and operation
 
 Focused unit and checker tests are in
@@ -104,12 +121,16 @@ uv run --isolated ruff check \
   packages/mas-core/mas_core/worker_registry/run_host_binding.py \
   packages/mas-core/tests/test_host_executor.py \
   scripts/check_worker_host_execution_postgres.py \
-  scripts/tests/test_check_worker_host_execution_postgres.py
+  scripts/tests/test_check_worker_host_execution_postgres.py \
+  scripts/check_worker_multi_host_execution_postgres.py \
+  scripts/tests/test_check_worker_multi_host_execution_postgres.py
 uv run --isolated pytest -q \
   packages/mas-core/tests/test_host_executor.py \
   packages/mas-core/tests/test_run_host_binding.py \
-  scripts/tests/test_check_worker_host_execution_postgres.py
+  scripts/tests/test_check_worker_host_execution_postgres.py \
+  scripts/tests/test_check_worker_multi_host_execution_postgres.py
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_execution_postgres.py --json
+docker exec mas-orchestrator-api-1 python /tmp/check_worker_multi_host_execution_postgres.py --json
 ```
 
 The deployed command requires migration `0042_worker_run_host_binding` and a
@@ -123,8 +144,9 @@ artifact policy, and recovery policy before it can claim a real run.
 - Connect the executor to a selected, approved model-backed worker without
   bypassing worker shell, adapter, skill-bundle, steward, model, budget, or
   human-approval controls.
-- Prove two or more real worker hosts with concurrent admission, host loss,
-  split-brain fencing, requeue, and duplicate-effect protection.
+- Replace the deterministic two-host fixture with two independently deployed
+  worker hosts and prove concurrent admission, host loss, split-brain fencing,
+  requeue, and duplicate-effect protection.
 - Certify gVisor on supported hosts and independently certify Firecracker for
   high-risk profiles.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and

@@ -142,6 +142,16 @@
   connection-reopen read-back, payload-free projection, release settlement, and
   scoped cleanup. This is an AIAT-owned local execution edge, not proof of a
   deployed sandbox or external provider.
+- [x] Certify concurrent native execution across two distinct durable
+  worker-plane host identities (`f9c717b`) with
+  [`check_worker_multi_host_execution_postgres.py`](../../../mas/scripts/check_worker_multi_host_execution_postgres.py)
+  and retained evidence at
+  [`worker_multi_host_execution_postgres_evidence.json`](../../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json).
+  The local Compose certificate commits two reservations, claims and completes
+  two runs concurrently through `WorkerHostExecutor`, verifies lease-generation
+  fencing, durable usage/artifact/trace coverage after Postgres reopen, releases
+  both bindings, and cleans its fixture namespace. It is not independent-host,
+  sandbox, provider, or outage-recovery evidence.
 - [ ] Prove selected model-backed dispatch on the worker plane, multi-host
   Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.

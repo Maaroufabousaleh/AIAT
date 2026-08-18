@@ -311,6 +311,17 @@ evidence, and cleans the reserved namespace. Selected model-backed execution,
 deployed sandbox, provider, and multi-host recovery remain open; licence
 metadata is informational and non-gating.
 
+The concurrent multi-host native execution group `f9c717b` adds the maintained
+Postgres certificate
+[`worker_multi_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json)
+and checker. It proves two separately reserved worker-plane host identities can
+claim and complete two native fixture runs concurrently, preserve host lease
+generation/current-lease equality, release both bindings/reservations, reopen
+Postgres, retain payload-free usage/artifact/trace coverage, and clean the
+fixture namespace. It is local two-identity fixture evidence, not independent
+machine, sandbox, provider, selected-model, or host-loss recovery evidence;
+licence metadata remains informational and non-gating.
+
 The host-fencing/recovery group `72e59ec` adds migration
 `0039_worker_host_fencing` and the maintained
 [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)
