@@ -305,6 +305,17 @@ async def _run(
     result = outcome.result
     usage = result.usage if result is not None and result.success else None
     error = result.error if result is not None and not result.success else None
+    if error is None:
+        # Timeout/cancellation settlement intentionally returns no
+        # ``WorkerResult``; the controller's bounded storage projection still
+        # contains the safe error envelope. Never surface its message text.
+        error = storage.run.get("error_json")
+
+    def _error_value(name: str) -> Any:
+        if isinstance(error, dict):
+            return error.get(name)
+        return getattr(error, name, None)
+
     passed = all(
         (
             outcome.state == "SUCCEEDED",
@@ -342,10 +353,10 @@ async def _run(
             "exact_model_id": getattr(usage, "exact_model_id", None),
         },
         "error": {
-            "code": getattr(error, "code", None),
-            "category": getattr(error, "category", None),
-            "retryable": getattr(error, "retryable", None),
-            "terminal": getattr(error, "terminal", None),
+            "code": _error_value("code"),
+            "category": _error_value("category"),
+            "retryable": _error_value("retryable"),
+            "terminal": _error_value("terminal"),
         },
         "host_admission": {
             "host_id": HOST_ID,
