@@ -1,14 +1,15 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `02c59fe786c54ee5a753a33e5948585bb44b6662` (latest grouped verification revision)
+**Base revision:** `2ad5d4c1c9ffa40288219cd1f6cb7eed9fa2fc7e` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 The latest grouped verification at this revision (2026-08-18) confirms the
-policy-backed network boundary matrix, the deterministic workflow-control
-extension (`9972b3b`), and the static aggregation at 51/51 checks passing, two
-pending technical evidence items, and a dirty working tree;
+policy-backed network boundary matrix, the durable local Postgres flow-instance
+recovery certificate (`1f20132`), the deterministic workflow-control extension
+(`9972b3b`), and the static aggregation at 51/51 checks passing, two pending
+technical evidence items, and a dirty working tree;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
 raw-provider composition certificate passed their focused Ruff/tests and live
@@ -61,12 +62,13 @@ document production gateway-adapter host dispatch; `fa42284` adds the durable
 dual-Postgres gateway-worker/mail-edge composition certificate and `67f1599`
 extends it through signed delegated identity ingress; `0e0a76f` adds the
 raw-provider composition mode with durable provider-message worker/trace
-correlation.
+correlation; `1f20132` adds the reserved local Postgres flow-instance recovery
+certificate, and `2ad5d4c` records its evidence and target-programme updates.
 The retained release-environment manifest from the latest unconfigured live
-run reports revision `02c59fe786c54ee5a753a33e5948585bb44b6662`, two changed
+run reports revision `2ad5d4c1c9ffa40288219cd1f6cb7eed9fa2fc7e`, two changed
 pre-existing memory files, fifteen tracked inputs (including the boundary
 policy), and digest
-`7cffab884eac938f95bc4633e5030ebb00f4c05b49d496e2736d2e3680240a2d`.
+`ce7dce8d07a6cde2824a74364ed48b5f436739140116210dfbe7b273758dbf94`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -89,7 +91,7 @@ and `cb1c665`, `fcb0f4b`, `7828b48`, `6b0413b`, `140af1c`, `89091c1`, `83e39e6`,
 `b07299b`, `038d5f2`, `85369fe`, `f8829d6`, `b3fca97`, `9a80c6c`, and
 `1d8aed5`, `10983c8`, `a413997`, `dbf6d10`, `8bb0a91`, `db22e60`,
 `500fc57`, `7dfba8c`, `232c0bb`, `d9917f8`, `72e59ec`, `08f1610e`, and
-`3116efe`, `9972b3b`, and `02c59fe` are
+`3116efe`, `9972b3b`, `02c59fe`, `1f20132`, and `2ad5d4c` are
 also recorded
 in the rows below with separate documentation commits. The focused
 worker-registry policy group `d8cafbb` is recorded below as well; aggregate
