@@ -156,10 +156,11 @@ provider-pair, clean-host/disaster-recovery, and outage evidence remain open.
 The current resource/release continuation supersedes the older aggregate
 snapshot above: `3791b3f`/`bb0fa8f`/`c90fc13` retain the corrected two-provider
 resource and multipart wave, `d92b3dc`/`407a4f9` retain the corrected actual
-provider-process outage/recovery wave, and the current unconfigured aggregate
-records 54/54 static checks plus 57 pass, 0 fail, 18 blocked, and 4 pending
-across 75 live checks at `2026-08-18T15:21:28Z` (native preflight refresh
-`5ac3ea9`). It remains `NO-RELEASE` because the aggregate live child is
+provider-process outage/recovery wave, `12ba7c7`/`1808a15` retain the live
+AIAT credentials-manager boundary certificate, and the current unconfigured
+aggregate records 55/55 static checks plus 58 pass, 0 fail, 19 blocked, and
+4 pending across 77 live checks at `2026-08-18T15:53:05Z` (native preflight
+refresh `5ac3ea9`). It remains `NO-RELEASE` because the aggregate live child is
 unconfigured and the other independent gates remain open.
 
 The preceding grouped verification (`2cb59ef`, based on the image-contract
