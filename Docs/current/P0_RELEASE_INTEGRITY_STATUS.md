@@ -8,6 +8,14 @@
   production `GatewayWorkerAdapter` over a bounded local gateway fixture
   (`8ed53df`). The release decision remains `NO-RELEASE` because live evidence,
   two pending worker security reviews, and a clean worktree are still absent.
+- Commit `def4fe9` adds a bounded provider retry boundary to the production
+  `GatewayWorkerAdapter`. Its configured live certificate
+  [`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)
+  passes one injected transient `429`, one forwarded provider completion,
+  durable dual-Postgres reopen, raw-ingress replay/conflict/tamper checks,
+  payload-free generated-text redaction, and zero residual rows. This is
+  retry-boundary evidence only; provider outage, external callback/delivery,
+  independent-host, and sandbox evidence remain open.
 - Governance denial-state recovery (`888fde3`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied combined reads hide Refresh/Retry and executive action forms while preserving only last-known read context. Native/live ACL and WCAG evidence remain open.
 - PM integrations denial-state recovery (`7373360`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied reads hide Refresh/Retry and lifecycle-plan mutations while preserving only last-known reconciliation context. Native/live ACL and provider evidence remain open.
 - Hiring Board denial-state recovery (`553f196`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied worker reads hide Refresh/Retry and registration, evaluation, status, drain, and deletion controls while preserving only last-known rows. Native/live ACL and worker evidence remain open.

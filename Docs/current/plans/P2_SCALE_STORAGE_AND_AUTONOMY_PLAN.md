@@ -250,6 +250,15 @@
   (`17f6547`) records one successful configured run with dual-Postgres reopen,
   delivered/bounced raw provider-ingress read-back, payload-free projection,
   generated-text redaction, and zero residual fixture rows.
+- [x] Add a bounded provider-backed transient-recovery edge (`def4fe9`).
+  `GatewayWorkerAdapter` now accepts a small explicit retry budget and retains
+  only scalar attempt/retry metadata. The live durable checker can inject one
+  transient `429` before forwarding exactly one selected-provider completion;
+  its retained certificate proves `SUCCEEDED` settlement, dual-Postgres
+  reopen, payload-free redaction, raw provider-ingress replay/conflict/tamper
+  handling, and zero residual fixture rows. This is retry-boundary evidence,
+  not independent-host loss, provider outage, external callback/delivery
+  confirmation, or sandbox evidence.
 - [ ] Extend durable external provider-backed dispatch beyond the retained
   single-worker certificate to independent/multi-host Firecracker/gVisor
   operation and provider-backed recovery.

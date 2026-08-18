@@ -56,6 +56,19 @@ delivered/bounced raw-ingress status, payload-free projection, generated-text
 redaction, and zero residual rows. External provider callback/delivery,
 provider-backed recovery, and sandbox remain open.
 
+Commit `def4fe9` adds the bounded provider-retry boundary to the same durable
+checker. With explicit `--provider-recovery`, it injects one transient `429`
+before forwarding exactly one selected-provider completion through the
+production `GatewayWorkerAdapter`, retains scalar attempt/retry metadata, and
+repeats the dual-Postgres reopen, raw-ingress replay/conflict/tamper,
+payload-free redaction, and cleanup checks. The retained
+[`gateway_worker_provider_recovery_live.json`](mas/docs/provenance/gateway_worker_provider_recovery_live.json)
+certificate records `SUCCEEDED`, two adapter attempts, one forwarded provider
+completion, and zero residual rows. This closes only bounded retry-boundary
+evidence; provider outage recovery, external callback/delivery confirmation,
+independent hosts, gVisor/Firecracker, and broader runtime evidence remain
+open.
+
 The follow-on durable composition certificate `fa42284`, extended by
 `67f1599`, now runs the same production gateway adapter/controller against the
 worker Postgres store and the normalized identity mail-edge store, optionally

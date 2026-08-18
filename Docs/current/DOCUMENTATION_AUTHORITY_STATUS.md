@@ -32,6 +32,14 @@ reconciled in the current documentation pass: its former legal-risk appendix
 now redirects exact resource terms and notices to the provenance catalogue,
 and its technical comparison remains design input only.
 
+The live worker evidence set now includes the bounded provider-retry
+certificate [`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)
+(`def4fe9`). It records one injected transient failure, one forwarded provider
+completion, durable dual-Postgres read-back, payload-free redaction, and
+scoped cleanup. Broader provider outage, external callback/delivery,
+independent-host, and sandbox evidence remain explicitly separate roadmap
+items.
+
 ## Machine-checked status
 
 The current workspace reports:

@@ -9,14 +9,15 @@ and the real local ASGI ingress certificates, plus the durable dual-Postgres
 worker/mail-edge composition certificate and raw-provider composition follow-up,
 are implemented in `85369fe`,
 `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, `1d8aed5`,
-`6ebb12c`, `fa42284`, `67f1599`, and `0e0a76f`. The
+`6ebb12c`, `fa42284`, `67f1599`, `0e0a76f`, and `def4fe9`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
 and
 [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
-Live provider configuration/callback delivery, selected model-backed worker,
-external bounce read-back, and deployment evidence remain open; local Postgres
+Live provider configuration/callback delivery, external bounce confirmation,
+and deployment evidence remain open. A bounded selected model-backed worker
+and transient retry certificate is retained separately; local Postgres
 durability is certified only for the rebuilt Compose identity profile.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -121,6 +122,18 @@ bounced observations, replay/conflict/tamper outcomes, generated-text
 redaction, payload-free coverage, and zero residual fixture rows. It does not
 claim an external provider callback/delivery, recovery, or sandbox.
 
+`def4fe9` adds the explicit `--provider-recovery` option. It injects one
+transient `429` before the adapter forwards exactly one selected-provider
+completion, retains only scalar attempt/retry metadata, and combines with
+`--provider-ingress` for the same durable delivered/bounced read-back and
+replay/conflict/tamper checks. The retained
+[`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)
+certificate records `provider_attempts: 2`, `provider_retry_count: 1`, one
+forwarded provider completion, `SUCCEEDED` settlement, dual-Postgres reopen,
+payload-free generated-text redaction, and zero residual rows. This is bounded
+retry-boundary evidence; external callback/delivery confirmation, provider
+outage recovery, independent hosts, and sandbox evidence remain open.
+
 ## Checker and live boundary
 
 From `mas/`:
@@ -141,6 +154,12 @@ uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --js
   --gateway-url "$AIAT_LIVE_LLM_GATEWAY_URL" \
   --api-key "$AIAT_LIVE_LLM_API_KEY" \
   --model "$AIAT_LIVE_WORKER_MODEL"
+uv run --isolated python scripts/check_gateway_worker_mail_edge_postgres.py --json \
+  --live-provider --allow-external-provider --provider-recovery \
+  --provider-ingress --worker-dsn "$AIAT_GATEWAY_WORKER_MAIL_EDGE_WORKER_DSN" \
+  --identity-dsn "$AIAT_GATEWAY_WORKER_MAIL_EDGE_IDENTITY_DSN" \
+  --gateway-url "$AIAT_LIVE_LLM_GATEWAY_URL" \
+  --api-key "$AIAT_LIVE_LLM_API_KEY" --model "$AIAT_LIVE_WORKER_MODEL"
 uv run --isolated python scripts/check_mail_edge_observations.py --live --json \
   --url http://127.0.0.1:8000 \
   --api-key "$AIAT_OPERATOR_API_KEY" \
