@@ -49,6 +49,12 @@ Run from `mas/`:
 uv run --isolated python scripts/check_docs_index.py --json
 ```
 
+The regression test at
+[`test_docs_index.py`](../../mas/packages/mas-core/tests/test_docs_index.py)
+now asserts the current thirteen-feature/three-plan authority set, so the
+machine check and its test cannot silently drift back to the previous
+eleven-feature count (`0dbfdb7`).
+
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
