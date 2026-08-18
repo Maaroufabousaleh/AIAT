@@ -36,6 +36,12 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     bindings = next(row for row in report["checks"] if row["id"] == "default_worker_bindings")
     assert bindings["status"] == "pass"
     assert bindings["summary"] == {"errors": [], "status": "pass"}
+    firecracker = next(
+        row for row in report["checks"] if row["id"] == "firecracker_worker_pool_readiness"
+    )
+    assert firecracker["category"] == "integration"
+    assert firecracker["status"] == "pass"
+    assert firecracker["summary"] == {"status": "pass", "mode": "static"}
     evidence_resolution = next(row for row in report["checks"] if row["id"] == "evidence_policy_resolution")
     assert evidence_resolution["status"] == "pass"
     assert evidence_resolution["summary"] == {
