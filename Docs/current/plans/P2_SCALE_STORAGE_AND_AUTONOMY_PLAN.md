@@ -83,6 +83,13 @@
   local queue API certificate only; it does not claim a host registry,
   placement/capacity scheduler, real host-loss or split-brain proof, or
   gVisor/Firecracker host certification.
+- [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
+  checker with host health/lease, labels, capabilities, sandbox/isolation,
+  slot/memory/GPU capacity, priority ordering, and duplicate-ID rejection
+  (`db22e60`; evidence at
+  [`worker_placement_contract.json`](../../../mas/docs/provenance/worker_placement_contract.json)).
+  This is a pure read-only contract; durable host registration, reservation/
+  commit, live multi-host scheduling, and host-loss evidence remain open.
 - Separate control/tool/data hosts from worker pools.
 - Add authenticated worker registration, leases, placement constraints, capacity, and health.
 - Certify gVisor across supported hosts.

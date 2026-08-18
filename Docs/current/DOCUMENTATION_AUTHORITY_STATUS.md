@@ -243,6 +243,16 @@ schema does not persist a skill-bundle ID, so complete bundle pinning and
 multi-host version evidence remain separate; licence metadata remains
 informational and non-gating.
 
+The deterministic placement group `db22e60` adds the maintained
+[`worker_placement_contract.json`](../../mas/docs/provenance/worker_placement_contract.json)
+certificate and the `aiat.worker-placement.v1` policy module. Its pure
+predicate filters explicit host snapshots by readiness/lease, labels,
+capabilities, sandbox/isolation, and slot/memory/GPU capacity, applies stable
+priority/free-capacity ordering, and rejects duplicate host IDs without
+mutation or dispatch. Durable host registration, reservation/commit, live
+multi-host scheduling, host-loss/split-brain, and Firecracker evidence remain
+separate; licence metadata remains informational and non-gating.
+
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
 real adapter accepts an explicit AIAT client boundary, and the deterministic

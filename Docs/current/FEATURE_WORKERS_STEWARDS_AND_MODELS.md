@@ -32,6 +32,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   The report survives a Postgres connection reopen, is payload-free, and
   cleans its reserved version/run graph. The current `worker_runs` schema has
   no `skill_bundle_id` column, so full bundle pinning remains explicitly open.
+- `mas_core.worker_registry.placement` and `scripts/check_worker_placement.py`
+  define the deterministic `aiat.worker-placement.v1` predicate. It filters
+  unready or expired hosts, enforces labels/capabilities/sandbox/isolation and
+  slot/memory/GPU capacity, chooses deterministically by priority and remaining
+  capacity, and fails closed on duplicate host IDs. The contract is pure and
+  non-mutating; durable host registration, lease reservation/commit, and a live
+  multi-host scheduler remain separate integration work.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -443,6 +450,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   advances to a replacement version. The current worker-run schema does not
   persist a skill-bundle ID, so bundle-level pinning and full multi-host
   rollout/version evidence remain separate gates.
+- [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
+  checker (`db22e60`) for host health/lease, labels, capabilities,
+  sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection.
+  It is a pure read-only contract; durable host registration, reservation,
+  live multi-host scheduling, and host-loss evidence remain open.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
   operator-selected worker/project, fails closed on missing activation

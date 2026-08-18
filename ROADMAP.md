@@ -488,6 +488,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Worker readiness health-read hardening | [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py), [`test_check_worker_run_readiness.py`](mas/scripts/tests/test_check_worker_run_readiness.py), and commits `2eea80a`, `dac268c` |
 | Durable worker-run lease/recovery evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_lease_recovery_postgres.py`](mas/scripts/check_worker_lease_recovery_postgres.py), [`test_check_worker_lease_recovery_postgres.py`](mas/scripts/tests/test_check_worker_lease_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_lease_recovery_postgres_evidence.json) |
 | Durable in-flight worker-version pinning | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json) |
+| Deterministic worker placement policy | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`placement.py`](mas/packages/mas-core/mas_core/worker_registry/placement.py), [`check_worker_placement.py`](mas/scripts/check_worker_placement.py), [local evidence](mas/docs/provenance/worker_placement_contract.json) |
 | Model-profile catalogue dashboard proxy | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py) |
 | Default worker implementation binding matrix | [`check_default_worker_bindings.py`](mas/scripts/check_default_worker_bindings.py), [`test_default_worker_bindings.py`](mas/packages/mas-core/tests/test_default_worker_bindings.py), [worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Default runtime packaging contract | [`check_runtime_install_profile.py`](mas/scripts/check_runtime_install_profile.py), [`pyproject.toml`](mas/apps/orchestrator-api/pyproject.toml), [`uv.lock`](mas/uv.lock), and [orchestrator Dockerfile](mas/infra/docker/Dockerfile.orchestrator-api) |
@@ -1211,6 +1212,15 @@ shell-v2 / adapter-v2 and a new queued run uses the replacement shell/adapter.
 The current `worker_runs` schema has no `skill_bundle_id`, so complete bundle
 pinning and multi-host version evidence remain open.
 
+`db22e60` adds the pure, deterministic `aiat.worker-placement.v1` predicate
+and fixture checker. It filters explicit host snapshots by readiness and
+lease validity, labels, capabilities, sandbox/isolation support, and
+slot/memory/GPU capacity, then chooses deterministically by priority and free
+capacity while failing closed on duplicate host IDs. This is a non-mutating
+policy certificate; durable host registration, reservation/commit, live
+multi-host scheduling, host-loss/split-brain, and Firecracker evidence remain
+open.
+
 **Progress:** the provider-neutral `aiat.object-store-conformance.v1` fixture
 and offline report command pass against the deterministic in-memory adapter.
 The `aiat.object-store-copy.v1` helper also verifies explicit source/target
@@ -1762,10 +1772,11 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    optional routing changes remain separate follow-up work.
 2. Certify optional memory/workflow services only where justified.
 3. [x] Certify the bounded local Postgres worker lease/recovery boundary
-   (`a413997`) and shell/adapter/steward in-flight version pinning
-   (`dbf6d10`, `8bb0a91`); [ ] add canonical multi-host host registration,
-   placement and capacity, complete bundle pinning, real host-loss/split-brain
-   proof, and Firecracker worker pools.
+   (`a413997`), shell/adapter/steward in-flight version pinning
+   (`dbf6d10`, `8bb0a91`), and deterministic placement policy (`db22e60`);
+   [ ] add canonical multi-host host registration, reservation/commit,
+   complete bundle pinning, live scheduling, real host-loss/split-brain proof,
+   and Firecracker worker pools.
 4. [x] Certify the bounded governed self-improvement lifecycle and exact
    rollback against local Compose Postgres (`10983c8`); [ ] complete the live
    issue/worker/provider/deployment lifecycle and independent recovery proof.
