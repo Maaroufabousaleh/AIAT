@@ -2,11 +2,12 @@
 
 **Baseline:** 2026-08-17
 
-**Status:** local Compose Postgres single-host, concurrent two-host native, and
-fenced host-loss queue-recovery certification complete; deployed runtime,
-sandbox, provider, and independent-host recovery evidence remain open
+**Status:** local Compose Postgres single-host, concurrent two-host native,
+fenced host-loss queue-recovery, and selected model-resolution host-execution
+certification complete; deployed runtime, sandbox, provider, and
+independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `893293a`
+**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -20,11 +21,12 @@ host process is still an untrusted execution boundary; it receives no control-
 plane authority from this wrapper.
 
 The feature is deliberately narrower than a provider or sandbox integration. It
-certifies local host admission, native adapter lifecycle, concurrent execution
-against two distinct durable worker-host records, and explicit queue recovery
-after a fenced host lease is lost. It keeps gVisor, Firecracker, external
-providers, remote runtimes, and independent-host outage recovery as separate
-evidence boundaries.
+certifies local host admission, deterministic model-profile resolution and
+snapshot propagation, native adapter lifecycle, concurrent execution against
+two distinct durable worker-host records, and explicit queue recovery after a
+fenced host lease is lost. It keeps gVisor, Firecracker, external providers,
+remote runtimes, and independent-host outage recovery as separate evidence
+boundaries.
 
 ## Contract
 
@@ -125,6 +127,22 @@ cleans the fixture namespace. The recovery report is host-filtered so unrelated
 expired hosts are not mutated. This is AIAT-owned local recovery evidence, not
 independent-machine, sandbox, provider, or provider-backed recovery evidence.
 
+### Selected model-resolution host certificate
+
+[`check_worker_host_model_resolution_postgres.py`](../../mas/scripts/check_worker_host_model_resolution_postgres.py)
+adds the local model-backed contract edge. It creates an approved AIAT Model
+Profile and version, resolves it through `ModelProfileResolver`, persists the
+immutable resolution snapshot, and carries requested/resolved references and
+the snapshot ID through a committed worker-host execution. The live fixture
+reads the worker `aiat_gateway` mode, exact provider/model usage attribution,
+terminal evidence, released binding, and snapshot back after a Postgres
+connection reopen; payload-free trace coverage and scoped cleanup pass. Evidence
+is retained at
+[`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
+The provider and model are local deterministic fixture identifiers: this closes
+AIAT control-plane resolution and propagation only, not a network provider call,
+provider outage recovery, independent hosts, gVisor, or Firecracker.
+
 ## Tests and operation
 
 Focused unit and checker tests are in
@@ -143,16 +161,20 @@ uv run --isolated ruff check \
   scripts/check_worker_multi_host_execution_postgres.py \
   scripts/tests/test_check_worker_multi_host_execution_postgres.py \
   scripts/check_worker_host_loss_queue_recovery_postgres.py \
-  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py
+  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py \
+  scripts/check_worker_host_model_resolution_postgres.py \
+  scripts/tests/test_check_worker_host_model_resolution_postgres.py
 uv run --isolated pytest -q \
   packages/mas-core/tests/test_host_executor.py \
   packages/mas-core/tests/test_run_host_binding.py \
   scripts/tests/test_check_worker_host_execution_postgres.py \
   scripts/tests/test_check_worker_multi_host_execution_postgres.py \
-  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py
+  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py \
+  scripts/tests/test_check_worker_host_model_resolution_postgres.py
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_execution_postgres.py --json
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_multi_host_execution_postgres.py --json
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_loss_queue_recovery_postgres.py --json
+docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_model_resolution_postgres.py --json
 ```
 
 The deployed command requires migration `0042_worker_run_host_binding` and a
@@ -163,9 +185,10 @@ artifact policy, and recovery policy before it can claim a real run.
 
 ## Open boundaries
 
-- Connect the executor to a selected, approved model-backed worker without
-  bypassing worker shell, adapter, skill-bundle, steward, model, budget, or
-  human-approval controls.
+- Connect the selected model-resolution snapshot to a real provider-backed
+  worker without bypassing worker shell, adapter, skill-bundle, steward, model,
+  budget, or human-approval controls; the local fixture path is already
+  certified.
 - Replace the deterministic two-host fixture with two independently deployed
   worker hosts and prove concurrent admission, host loss, split-brain fencing,
   requeue, and duplicate-effect protection under real host/process boundaries.

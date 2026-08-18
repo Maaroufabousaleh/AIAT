@@ -1,14 +1,15 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), and concurrent two-host native execution (`f9c717b`) pass in fixture/local-deployment scope; selected model-backed live selections are blocked and full worker certification remains incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), and selected model-resolution host execution (`6cef1b8`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 The fenced host-loss queue-recovery group `893293a` now extends the local
 worker-plane evidence: host-filtered fencing expires only the reserved lost
 host, the canonical Worker Run recovery loop requeues the expired claim, a
 stale executor is rejected before dispatch, and the binding is reassigned to
 an alternate host for a native retry at attempt two. Independent deployed
-hosts, selected model-backed dispatch, sandbox, provider, and provider-backed
-recovery remain incomplete.
+hosts, external provider-backed dispatch, sandbox, provider, and
+provider-backed recovery remain incomplete; selected local model-resolution
+propagation is certified below.
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
@@ -32,7 +33,12 @@ Firecracker remain incomplete. Commit `73c0bda` now adds the first local
 host-executor certificate: a committed worker-plane binding is admitted,
 claimed, executed through the canonical native adapter lifecycle, released, and
 read back after a Postgres connection reopen. This does not claim a deployed
-sandbox, provider call, or multi-host runtime.
+sandbox, provider call, or multi-host runtime. Commit `6cef1b8` now adds the
+selected model-resolution host certificate: an approved profile/version is
+resolved deterministically, persisted as a snapshot, carried through the
+worker request and durable run, and attributed in exact provider/model usage
+evidence. The provider/model identifiers are local fixtures; external provider
+execution, sandbox, and independent-host recovery remain separate boundaries.
 
 ## Purpose
 
@@ -112,7 +118,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   queued run, delegates to `WorkerRunController`, and releases the binding in
   terminal paths. The local certificate is retained at
   [`worker_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_execution_postgres_evidence.json).
-  It proves native fixture dispatch only; selected model-backed dispatch,
+  It proves native fixture dispatch only; external provider-backed selected-model dispatch,
   deployed gVisor/Firecracker, provider execution, and multi-host recovery
   remain separate.
 - `scripts/check_worker_multi_host_execution_postgres.py` extends the host
@@ -124,7 +130,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   durable result before scoped cleanup. Evidence is retained at
   [`worker_multi_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json).
   This closes only the local concurrent native boundary; independent deployed
-  hosts, selected model-backed dispatch, gVisor/Firecracker, provider execution,
+  hosts, external provider-backed selected-model dispatch, gVisor/Firecracker, provider execution,
   and host-loss recovery remain separate.
 - `WorkerRunHostBindingService.reassign_after_host_loss()` and the optional
   host filter on `HostLeaseRecovery.reconcile_expired_hosts()` implement the
@@ -135,6 +141,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   completes the native retry at attempt two, and verifies durable evidence
   after reopen and scoped cleanup. Independent deployed hosts, sandbox,
   provider, and provider-backed recovery remain separate.
+- `scripts/check_worker_host_model_resolution_postgres.py` certifies the local
+  selected-model control-plane edge at migration `0042_worker_run_host_binding`.
+  It persists an approved Model Profile/version and deterministic
+  `ModelResolutionSnapshot`, carries requested/resolved references through a
+  committed worker-host run, and verifies `aiat_gateway` mode plus exact
+  provider/model usage attribution after Postgres reopen. Payload-free trace
+  coverage, binding release, and scoped cleanup pass; external provider calls,
+  provider-backed recovery, gVisor, Firecracker, and independent hosts remain
+  open. Evidence is retained at
+  [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -543,7 +559,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   host heartbeat/lease state are now covered by `500fc57`; durable capacity
   reservation/commit/expiry is covered by `232c0bb`; deterministic multi-host
   selection/fallback is covered by `d9917f8`; host fencing/recovery is covered
-  by `72e59ec`; selected model-backed dispatch, gVisor, and Firecracker
+  by `72e59ec`; external provider-backed selected-model dispatch, gVisor, and Firecracker
   evidence remain separate gates.
 - [x] Certify durable in-flight shell/adapter/skill-bundle/steward version
   pinning (`6a10b0e`, migration `0040_worker_run_skill_bundle_pin`) while the
@@ -570,7 +586,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   It enforces host lease/readiness, row-locked capacity limits, idempotent
   keys, commit/release/expiry transitions, scalar capacity read-back, and
   scoped cleanup; scheduler selection/fallback and replay are covered by
-  `d9917f8`, while selected model-backed dispatch remains open.
+  `d9917f8`, while external provider-backed selected-model dispatch remains open.
 - [x] Connect the durable registry and reservation ledger through the
   authenticated `aiat.worker-host-scheduler.v1` layer (`d9917f8`; evidence at
   [`worker_host_scheduler_postgres_evidence.json`](../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json)).
@@ -592,7 +608,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   matching current host lease generation, claims the queued run, delegates to
   the canonical controller, releases the binding, and preserves payload-free
   durable evidence through connection reopen. This certifies a local native
-  fixture path; selected model-backed dispatch, deployed sandbox, provider,
+  fixture path; external provider-backed selected-model dispatch, deployed sandbox, provider,
   and multi-host recovery remain open.
 - [x] Certify concurrent native execution across two distinct durable
   worker-plane host identities (`f9c717b`; evidence at
@@ -601,7 +617,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   `WorkerHostExecutor`, verifies host-specific lease fencing, durable usage,
   artifact, and trace coverage after Postgres reopen, releases both bindings,
   and cleans its fixture namespace. It does not claim independent machines,
-  gVisor/Firecracker, selected model-backed dispatch, provider recovery, or
+  gVisor/Firecracker, external provider-backed selected-model dispatch, provider recovery, or
   host-loss/split-brain recovery.
 - [x] Add bounded fenced host-loss queue recovery (`893293a`; evidence at
   [`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json)).
@@ -617,7 +633,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
   Re-registration and expired-lease reconciliation fence stale heartbeats and
   expire reservations from the lost incarnation before placement can select a
-  host; selected model-backed dispatch and high-risk sandbox evidence remain
+  host; external provider-backed selected-model dispatch and high-risk sandbox evidence remain
   separate.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an

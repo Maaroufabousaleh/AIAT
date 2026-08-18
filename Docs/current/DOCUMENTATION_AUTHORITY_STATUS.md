@@ -47,6 +47,15 @@ uv run --isolated python scripts/check_docs_index.py --json
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
+The latest maintained worker-host group is `6cef1b8`: the selected
+model-resolution certificate now records approved profile/version selection,
+durable snapshot propagation, exact fixture provider/model attribution, host
+execution evidence, Postgres reopen, and scoped cleanup. This is local
+control-plane evidence only; external provider, hardened sandbox, and
+independent-host evidence remain open. The evidence is indexed in the roadmap
+and retained at
+[`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
+
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
 startup reconciliation and `AgentConfig`/health propagation (`569231f`),

@@ -161,8 +161,19 @@
   queued binding to an alternate host, completes a native retry at attempt two,
   reopens Postgres, and cleans only its fixture namespace. Independent hosts,
   sandbox, provider, and provider-backed recovery remain open.
-- [ ] Prove selected model-backed dispatch on the worker plane, multi-host
-  Firecracker/gVisor operation, and provider-backed recovery.
+- [x] Certify selected Model Profile/version resolution and snapshot
+  propagation through a committed worker-host run (`6cef1b8`) with
+  [`check_worker_host_model_resolution_postgres.py`](../../../mas/scripts/check_worker_host_model_resolution_postgres.py)
+  and retained evidence at
+  [`worker_host_model_resolution_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
+  The local certificate proves deterministic approved-profile selection,
+  durable snapshot/reference propagation, `aiat_gateway` worker attribution,
+  exact provider/model usage, Postgres reopen, payload-free coverage, release,
+  and scoped cleanup. It uses local fixture identifiers and does not claim an
+  external provider call, provider-backed recovery, independent hosts, or a
+  hardened sandbox.
+- [ ] Prove external provider-backed model dispatch on the worker plane,
+  multi-host Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
