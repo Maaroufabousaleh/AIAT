@@ -293,7 +293,15 @@ external client-language SDK compatibility yet.
   ambiguous-outage reconciliation hold, and secret-safe output pass without
   an external relay call; live send/receive/bounce/outage/restore evidence
   remains separate.
-- Complete provider-specific external-account conformance, outage, and restore evidence.
+- [x] Add payload-free provider-specific mocked conformance for the real Stalwart
+  and Resend adapters through `scripts/check_identity_provider_conformance.py`.
+  The checker covers passwordless mailbox provisioning/reconciliation, separate
+  mail-service authentication, submission/cancellation, relay-domain validation,
+  webhook normalization, and transient/permanent failure classification without
+  provider network or mutation; external account, outage, and restore evidence
+  remain separate live gates.
+- Complete provider-specific external-account, outage, and restore evidence
+  against operator-selected live endpoints.
 
 **Done when:** a project can collaborate through certified mail, PM, and GitHub paths without provider secrets in workers or ambiguity about canonical state.
 

@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T18:48:59Z",
+  "observed_at": "2026-08-18T19:12:52Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 78,
-    "pass": 72,
+    "total": 79,
+    "pass": 73,
     "fail": 0,
     "blocked": 6
   },
@@ -18,9 +18,9 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "7853622c1849e647e1c1c2bde147d0a2351ce84e",
+    "revision": "c568b87cb73da6250afec0291f6072b6dd9797f1",
     "working_tree_clean": false,
-    "changed_path_count": 2
+    "changed_path_count": 6
   },
   "aggregate_invocation": {
     "live_orchestrator_url_configured": true,
@@ -155,9 +155,21 @@
     "cleanup_verified": true,
     "note": "The retained live certificate is now validated by the release ledger. It proves one injected transient failure, one real provider completion, durable worker/identity reopen, payload-free scalar projection, and zero fixture residue; external provider outage/restore, callback/delivery confirmation, independent-host, and sandbox evidence remain open."
   },
+  "local_identity_provider_evidence": {
+    "status": "pass",
+    "ref": "scripts/check_identity_provider_conformance.py",
+    "mode": "mocked-provider-conformance",
+    "providers": ["resend", "stalwart"],
+    "case_count": 11,
+    "passed_case_count": 11,
+    "external_network_access_performed": false,
+    "external_provider_mutation_performed": false,
+    "payload_free": true,
+    "note": "The bounded fixture drives the real Stalwart/Resend adapters through provider-shaped mocked HTTP. External account, delivery, outage, and restore evidence remain separate live gates."
+  },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The configured Compose profile completed with 72 passes, zero failures, and 6 externally blocked checks across 78 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live default-worker binding reconciliation passes, while worker canary/sandbox/rollback certification remains separate.",
+    "The configured Compose profile completed with 73 passes, zero failures, and 6 externally blocked checks across 79 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live default-worker binding reconciliation passes, while worker canary/sandbox/rollback certification remains separate.",
     "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "Licence and resource notices remain metadata-only and are not a release gate."
