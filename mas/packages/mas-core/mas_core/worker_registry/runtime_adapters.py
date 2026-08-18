@@ -46,6 +46,7 @@ from mas_core.worker_contract import (
     WorkerUsage,
     issue_opencode_tool_grant,
 )
+from mas_core.worker_registry.firecracker import FirecrackerLaunchSpec
 
 logger = logging.getLogger(__name__)
 
@@ -829,6 +830,65 @@ class OCIAdapter(ProcessAdapter):
         super().__init__(command, worker_id=worker_id, **kwargs)
         self.image = image
         self.sandbox_profile = sandbox_profile
+
+
+class FirecrackerAdapter(ProcessAdapter):
+    """Run a worker through an AIAT-certified Firecracker launcher.
+
+    The adapter only constructs a validated argv and delegates execution to a
+    launcher supplied by the host profile. It never accepts secret values or
+    falls back to Docker/runc when the launcher is unavailable.
+    """
+
+    runtime_type = "firecracker"
+
+    def __init__(
+        self,
+        *,
+        worker_id: str,
+        kernel_path: str,
+        kernel_sha256: str,
+        rootfs_path: str,
+        rootfs_sha256: str,
+        artifact_dir: str,
+        launcher: str = "aiat-firecracker-launcher",
+        network_mode: str = "egress-deny-all",
+        egress_allowlist: tuple[str, ...] | list[str] = (),
+        vcpu_count: int = 1,
+        memory_mib: int = 512,
+        pids_limit: int = 256,
+        disk_limit_mb: int = 1024,
+        output_limit_bytes: int = 4 * 1024 * 1024,
+        wall_clock_seconds: int = 300,
+        secret_refs: tuple[str, ...] | list[str] = (),
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        spec = FirecrackerLaunchSpec(
+            launcher=launcher,
+            kernel_path=kernel_path,
+            kernel_sha256=kernel_sha256,
+            rootfs_path=rootfs_path,
+            rootfs_sha256=rootfs_sha256,
+            artifact_dir=artifact_dir,
+            network_mode=network_mode,  # type: ignore[arg-type]
+            egress_allowlist=tuple(egress_allowlist),
+            vcpu_count=vcpu_count,
+            memory_mib=memory_mib,
+            pids_limit=pids_limit,
+            disk_limit_mb=disk_limit_mb,
+            output_limit_bytes=output_limit_bytes,
+            wall_clock_seconds=wall_clock_seconds,
+            secret_refs=tuple(secret_refs),
+        )
+        super().__init__(
+            spec.argv(),
+            worker_id=worker_id,
+            context=context,
+            runtime_version=runtime_version,
+        )
+        self.launch_spec = spec
+        self.sandbox_profile = "firecracker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1683,6 +1743,27 @@ def adapter_for_transport(
         )
         return MCPAdapter(mcp, worker_id=worker_id, context=context)
     if normalized == "oci":
+        if str(config.get("sandbox_profile") or "").strip().lower() == "firecracker":
+            return FirecrackerAdapter(
+                worker_id=worker_id,
+                context=context,
+                launcher=str(config.get("launcher") or "aiat-firecracker-launcher"),
+                kernel_path=str(config["kernel_path"]),
+                kernel_sha256=str(config["kernel_sha256"]),
+                rootfs_path=str(config["rootfs_path"]),
+                rootfs_sha256=str(config["rootfs_sha256"]),
+                artifact_dir=str(config["artifact_dir"]),
+                network_mode=str(config.get("network_mode") or "egress-deny-all"),
+                egress_allowlist=tuple(config.get("egress_allowlist") or ()),
+                vcpu_count=int(config.get("vcpu_count", 1)),
+                memory_mib=int(config.get("memory_mib", 512)),
+                pids_limit=int(config.get("pids_limit", 256)),
+                disk_limit_mb=int(config.get("disk_limit_mb", 1024)),
+                output_limit_bytes=int(config.get("output_limit_bytes", 4 * 1024 * 1024)),
+                wall_clock_seconds=int(config.get("wall_clock_seconds", 300)),
+                secret_refs=tuple(config.get("secret_refs") or ()),
+                runtime_version=config.get("runtime_version"),
+            )
         return OCIAdapter(
             config["image"],
             worker_id=worker_id,
