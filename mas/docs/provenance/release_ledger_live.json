@@ -1,19 +1,19 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T17:58:53Z",
+  "observed_at": "2026-08-18T18:24:42Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
     "total": 78,
-    "pass": 71,
+    "pass": 72,
     "fail": 0,
-    "blocked": 7
+    "blocked": 6
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "7 check(s) are externally blocked",
+    "6 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
@@ -97,6 +97,7 @@
     "matched_default_worker_count": 39,
     "missing_default_worker_count": 0,
     "binding_mismatch_count": 0,
+    "default_binding_gate": "pass",
     "pending_security_findings": {
       "workers": ["coding_worker", "tester"],
       "finding_count": 316,
@@ -151,7 +152,7 @@
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The configured Compose profile completed with 71 passes, zero failures, and 7 externally blocked checks across 78 checks; native host, image identity, sandbox, Firecracker, outbound mail, default-worker certification, and self-improvement source remain blocked.",
+    "The configured Compose profile completed with 72 passes, zero failures, and 6 externally blocked checks across 78 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live default-worker binding reconciliation passes, while worker canary/sandbox/rollback certification remains separate.",
     "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "Licence and resource notices remain metadata-only and are not a release gate."
