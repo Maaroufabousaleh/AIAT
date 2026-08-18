@@ -323,7 +323,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             host_id=HOST_NAME,
             host_uuid=HOST_UUID,
             registration_token=TOKEN,
-            labels={"pool": "worker"},
+            labels={"pool": "worker", "fixture": "host-execution"},
             capabilities=["native"],
             host_plane="worker",
             sandbox_profile="standard",
@@ -336,6 +336,12 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 "gpu_total": 0,
                 "gpu_used": 0,
             },
+            # This certificate passes through the normal scheduler but must
+            # admit its own deterministic host even when other disposable
+            # worker fixtures are present in the shared Compose database.
+            # The executor still verifies the committed host identity; the
+            # elevated priority only removes cross-fixture selection races.
+            priority=100,
             metadata={"fixture": "host-execution"},
         )
         await registry.heartbeat(
@@ -373,7 +379,10 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 worker_id=str(canonical_worker_id),
                 required_host_plane="worker",
                 required_capabilities=frozenset({"native"}),
-                required_labels=(("pool", "worker"),),
+                required_labels=(
+                    ("pool", "worker"),
+                    ("fixture", "host-execution"),
+                ),
                 required_sandbox_profile="standard",
                 required_isolation_mode="native",
                 slots=1,

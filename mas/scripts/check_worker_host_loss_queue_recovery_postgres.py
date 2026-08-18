@@ -278,7 +278,7 @@ def _request() -> WorkerRunRequest:
 
 async def _register_hosts(registry: WorkerHostRegistry) -> None:
     common = {
-        "labels": {"pool": "worker"},
+        "labels": {"pool": "worker", "fixture": "host-loss-queue-recovery"},
         "capabilities": ["native"],
         "host_plane": "worker",
         "sandbox_profile": "standard",
@@ -297,14 +297,18 @@ async def _register_hosts(registry: WorkerHostRegistry) -> None:
         host_id=HOST_A,
         host_uuid=HOST_UUID_A,
         registration_token=TOKEN_A,
-        priority=2,
+        # Keep this recovery certificate isolated when other disposable
+        # worker fixtures share the Compose database.  The alternate host is
+        # still lower priority than A, while both remain above unrelated
+        # fixtures so the binding/reassignment assertions address this pair.
+        priority=100,
         **common,
     )
     registered_b = await registry.register_host(
         host_id=HOST_B,
         host_uuid=HOST_UUID_B,
         registration_token=TOKEN_B,
-        priority=1,
+        priority=99,
         **common,
     )
     await registry.heartbeat(
@@ -333,7 +337,10 @@ def _binding_request(
             worker_id=str(WORKER_REGISTRY_ID),
             required_host_plane="worker",
             required_capabilities=frozenset({"native"}),
-            required_labels=(("pool", "worker"),),
+            required_labels=(
+                ("pool", "worker"),
+                ("fixture", "host-loss-queue-recovery"),
+            ),
             required_sandbox_profile="standard",
             required_isolation_mode="native",
             slots=1,
