@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from contextlib import suppress
@@ -39,6 +40,10 @@ PAYLOAD_MARKER = "aiat object-store outage fixture payload must never enter evid
 
 class HarnessError(RuntimeError):
     """A test setup or disposable-container identity failure."""
+
+
+class ProviderFunctionalError(RuntimeError):
+    """A provider operation failed after the harness was proven valid."""
 
 
 class ContainerController(Protocol):
@@ -78,6 +83,7 @@ class DockerContainerController:
         self.spec = spec
         self.project_id = project_id
         self._docker = shutil.which("docker")
+        self._volume_names: tuple[str, ...] = ()
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         if not self._docker:
@@ -132,8 +138,16 @@ class DockerContainerController:
         assert value is not None
         self._validate_metadata(value)
         mounts = value.get("Mounts") or []
-        if mounts:
-            raise HarnessError("outage fixture container must not use persistent mounts")
+        volume_names: list[str] = []
+        for mount in mounts:
+            if (
+                mount.get("Type") != "volume"
+                or mount.get("Destination") != "/data"
+                or not re.fullmatch(r"[0-9a-f]{64}", str(mount.get("Name") or ""))
+            ):
+                raise HarnessError("outage fixture storage must be an anonymous disposable volume")
+            volume_names.append(str(mount["Name"]))
+        self._volume_names = tuple(volume_names)
 
     def _running(self) -> bool:
         value = self._inspect()
@@ -158,11 +172,23 @@ class DockerContainerController:
     def remove(self) -> None:
         value = self._inspect(allow_missing=True)
         if value is None:
+            for volume_name in self._volume_names:
+                if self._run("volume", "inspect", volume_name).returncode == 0:
+                    self._run("volume", "rm", volume_name)
+            if any(self._run("volume", "inspect", name).returncode == 0 for name in self._volume_names):
+                raise HarnessError("disposable provider volume was not removed")
             return
         self._validate_metadata(value)
+        self.validate()
         result = self._run("rm", "--force", "--volumes", self.spec.container_name)
         if result.returncode != 0 or self._inspect(allow_missing=True) is not None:
             raise HarnessError("disposable provider container was not removed")
+        for volume_name in self._volume_names:
+            volume = self._run("volume", "inspect", volume_name)
+            if volume.returncode == 0:
+                self._run("volume", "rm", volume_name)
+            if self._run("volume", "inspect", volume_name).returncode == 0:
+                raise HarnessError("disposable provider volume was not removed")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -286,6 +312,7 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
     refs: list[BlobRef] = []
     outage_observed = False
     recovery_observed = False
+    recovery_endpoint_observed = False
     cleanup_deleted = 0
     remaining_before_cleanup: int | None = None
     remaining_after_cleanup: int | None = None
@@ -343,17 +370,23 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
         while asyncio.get_running_loop().time() < deadline:
             try:
                 await _tcp_reachable(spec.endpoint, timeout=plan.operation_timeout_seconds)
+                recovery_endpoint_observed = True
                 recovery_client = await _connect(
                     spec, bucket=plan.bucket, timeout=plan.operation_timeout_seconds
                 )
-                if await _remaining(
+                remaining_after_restart = await _remaining(
                     recovery_client,
                     project_id=plan.project_id,
                     bucket=plan.bucket,
                     timeout=plan.operation_timeout_seconds,
-                ) == len(refs):
+                )
+                if remaining_after_restart == len(refs):
                     recovery_observed = True
                     break
+                failure_classification["provider_functional_failure"] = (
+                    "provider restarted but did not retain the reserved object set"
+                )
+                raise ProviderFunctionalError("provider restart lost the reserved object set")
             except Exception:
                 await _close(recovery_client)
                 recovery_client = None
@@ -401,11 +434,12 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
             outage_error_type=outage_error_type,
             restart_verified=started_again,
             recovery_readback_verified=recovery_observed,
+            recovery_endpoint_observed=recovery_endpoint_observed,
             cleanup_deleted_count=cleanup_deleted,
             remaining_fixture_count=remaining_after_cleanup,
             cleanup_verified=remaining_after_cleanup == 0,
             container_removed=False,
-            disposable_storage_state="no persistent mounts; container removal verified in finalizer",
+            disposable_storage_state="anonymous disposable volume; container and volume removal verified in finalizer",
             failure_classification=failure_classification,
             scope="real provider process stop/restart, checksum read-back, and scoped cleanup",
         )
@@ -420,6 +454,7 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
             error_type=_error_type(exc),
             process_outage_observed=outage_observed,
             recovery_readback_verified=recovery_observed,
+            recovery_endpoint_observed=recovery_endpoint_observed,
             cleanup_deleted_count=cleanup_deleted,
             remaining_fixture_count=remaining_after_cleanup,
             cleanup_verified=False,
@@ -427,7 +462,11 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
             failure_classification=failure_classification,
         )
     except Exception as exc:  # pragma: no cover - external provider boundary
-        if stage in {"connect", "outage-probe", "recovery", "restart"}:
+        if isinstance(exc, ProviderFunctionalError):
+            failure_classification["provider_functional_failure"] = (
+                "provider restarted but did not retain the reserved object set"
+            )
+        elif stage in {"connect", "outage-probe", "recovery", "restart"}:
             failure_classification["infrastructure_or_environment_failure"] = (
                 "provider endpoint or Docker runtime was unavailable during the bounded workflow"
             )
@@ -444,6 +483,7 @@ async def _run_live_provider(spec: ProviderSpec, plan: OutagePlan) -> dict[str, 
             error_type=_error_type(exc),
             process_outage_observed=outage_observed,
             recovery_readback_verified=recovery_observed,
+            recovery_endpoint_observed=recovery_endpoint_observed,
             cleanup_deleted_count=cleanup_deleted,
             remaining_fixture_count=remaining_after_cleanup,
             cleanup_verified=False,
