@@ -89,8 +89,15 @@ def public_run_host_binding(
         "worker_id": row.get("worker_id"),
         "host_uuid": row.get("host_id"),
         "host_id": host_key if host_key is not None else row.get("host_key"),
+        "host_plane": str(row.get("host_plane") or ""),
+        "host_status": str(row.get("host_status") or ""),
         "reservation_id": row.get("reservation_id"),
         "host_lease_generation": int(row.get("host_lease_generation") or 1),
+        "current_host_lease_generation": int(
+            row.get("current_host_lease_generation")
+            or row.get("host_lease_generation")
+            or 1
+        ),
         "assignment_key": str(row.get("assignment_key") or ""),
         "owner": str(row.get("owner") or ""),
         "state": str(row.get("state") or ""),
@@ -100,6 +107,7 @@ def public_run_host_binding(
         "reservation_lease_valid": reservation_lease_valid
         if reservation_lease_valid is not None
         else row.get("reservation_lease_valid"),
+        "current_host_lease_valid": row.get("current_host_lease_valid"),
         "metadata": dict(row.get("metadata") or {}),
         "created_at": row.get("created_at"),
         "committed_at": row.get("committed_at"),
@@ -134,6 +142,10 @@ class WorkerRunHostBindingService:
             sa.select(
                 t.worker_run_host_bindings,
                 t.worker_hosts.c.host_id.label("host_key"),
+                t.worker_hosts.c.host_plane,
+                t.worker_hosts.c.status.label("host_status"),
+                t.worker_hosts.c.lease_generation.label("current_host_lease_generation"),
+                t.worker_hosts.c.lease_expires_at.label("current_host_lease_expires_at"),
                 t.worker_host_reservations.c.state.label("reservation_state"),
                 t.worker_host_reservations.c.lease_expires_at.label("reservation_lease_expires_at"),
             )
@@ -158,12 +170,20 @@ class WorkerRunHostBindingService:
             return None
         values = dict(row)
         expires_at = values.get("reservation_lease_expires_at")
+        host_expires_at = values.get("current_host_lease_expires_at")
         if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
+        if isinstance(host_expires_at, datetime) and host_expires_at.tzinfo is None:
+            host_expires_at = host_expires_at.replace(tzinfo=UTC)
         values["reservation_lease_valid"] = (
             values.get("reservation_state") == "RESERVED"
             and isinstance(expires_at, datetime)
             and expires_at > self._now()
+        )
+        values["current_host_lease_valid"] = (
+            values.get("host_status") == "READY"
+            and isinstance(host_expires_at, datetime)
+            and host_expires_at > self._now()
         )
         return values
 
@@ -292,7 +312,8 @@ class WorkerRunHostBindingService:
         state = str(existing.get("state") or "")
         if state == target:
             return {**existing, "idempotent_replay": True}
-        if state != "ASSIGNED":
+        transitionable = state == "ASSIGNED" or (target == "RELEASED" and state == "COMMITTED")
+        if not transitionable:
             raise RunHostBindingRejected("run_host_binding_not_transitionable")
         reservation_id = existing.get("reservation_id")
         if not isinstance(reservation_id, UUID):
@@ -304,6 +325,11 @@ class WorkerRunHostBindingService:
         from ..memory import models as t
 
         now = self._now()
+        state_clause = (
+            t.worker_run_host_bindings.c.state == "ASSIGNED"
+            if target == "COMMITTED"
+            else t.worker_run_host_bindings.c.state.in_(("ASSIGNED", "COMMITTED"))
+        )
         async with self._storage.engine.begin() as connection:
             await connection.execute(
                 t.worker_run_host_bindings.update()
@@ -311,7 +337,7 @@ class WorkerRunHostBindingService:
                     sa.and_(
                         t.worker_run_host_bindings.c.run_id == normalized_run_id,
                         t.worker_run_host_bindings.c.owner == actor,
-                        t.worker_run_host_bindings.c.state == "ASSIGNED",
+                        state_clause,
                     )
                 )
                 .values(
