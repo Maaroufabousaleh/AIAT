@@ -54,6 +54,7 @@
   "external_provider_mutation_performed": true,
   "local_database_access_performed": false,
   "payload_free": true,
+  "secret_free": true,
   "licence_metadata_is_gate": false,
   "certification_boundary": {
     "single_request_checksum_baseline": "checked by prior benchmark evidence",

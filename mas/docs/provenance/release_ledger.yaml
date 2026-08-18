@@ -165,16 +165,25 @@ checks:
     script: scripts/check_object_store_multipart.py
     args: [--json]
     live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_multipart_provider_diverse_evidence.json
+      schema_version: aiat.object-store-multipart.v1
   - id: object_store_resource_profile
     category: operations
     script: scripts/check_object_store_resource_profile.py
     args: [--json]
     live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_resource_profile_provider_diverse_evidence.json
+      schema_version: aiat.object-store-resource-profile.v1
   - id: object_store_provider_outage
     category: recovery
     script: scripts/check_object_store_provider_outage.py
     args: [--json]
     live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_provider_outage_live_evidence.json
+      schema_version: aiat.object-store-provider-outage.v1
   - id: credentials_manager_live
     category: security
     script: scripts/check_credentials_manager_live.py
