@@ -151,6 +151,14 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
         "mode": "fixture",
         "status": "pass",
     }
+    resource_profile = next(
+        row for row in report["checks"] if row["id"] == "object_store_resource_profile"
+    )
+    assert resource_profile["category"] == "operations"
+    assert resource_profile["status"] == "pass"
+    assert resource_profile["summary"]["measurement_source"] in {"procfs", "resource"}
+    assert resource_profile["summary"]["cleanup_verified"] is True
+    assert resource_profile["summary"]["error_count"] == 0
     runtime_profile = next(row for row in report["checks"] if row["id"] == "runtime_install_profile")
     assert runtime_profile["status"] == "pass"
     assert runtime_profile["summary"]["locked_versions"] == {

@@ -165,6 +165,11 @@ checks:
     script: scripts/check_object_store_multipart.py
     args: [--json]
     live_args: [--live, --json]
+  - id: object_store_resource_profile
+    category: operations
+    script: scripts/check_object_store_resource_profile.py
+    args: [--json]
+    live_args: [--live, --json]
   - id: provider_conformance
     category: contract
     script: scripts/check_provider_conformance.py
