@@ -2560,6 +2560,7 @@
                 "oci",
                 "mcp",
                 "opencode",
+                "aiat_gateway",
                 "human"
               ],
               "title": "Transport",

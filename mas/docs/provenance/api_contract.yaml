@@ -16,7 +16,7 @@ openapi:
 protocol:
   artifact: mas/packages/mas-core/schemas/protocol/aiat.v1.schema.json
   protocol_version: aiat.v1
-  sha256: 1c69427b868da88b3889a2c8b6701a99de0c01001b054121203bdd433b29a8f7
+  sha256: 03412f2347bb5396f260d9d75fa4d494d228af7703ccd42e7bd473ccaf8c4263
 
 typescript:
   artifact: apps/mas-dashboard/lib/generated/orchestrator-api.ts
