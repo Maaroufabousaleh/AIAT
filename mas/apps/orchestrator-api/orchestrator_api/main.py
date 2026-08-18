@@ -12141,7 +12141,16 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         if current_status in ("COMPLETED", "FAILED", "CANCELLED"):
             raise HTTPException(409, f"Instance is already in terminal state: {current_status}")
 
-        await storage.update_flow_instance(instance_id, status="CANCELLED")
+        # Cancellation is terminal: clear execution authority so no stale
+        # active node can be resumed or mistaken for work still in flight.
+        # Node-execution history remains available for the explicit retry
+        # boundary, which supersedes prior attempts instead of deleting them.
+        await storage.update_flow_instance(
+            instance_id,
+            status="CANCELLED",
+            active_node_ids=[],
+            completed_at=datetime.now(tz=UTC),
+        )
         cancelled_instance = await storage.get_flow_instance(instance_id)
         if cancelled_instance is None:
             raise HTTPException(404, f"Flow instance {instance_id} not found")

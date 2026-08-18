@@ -26,6 +26,7 @@ def test_flow_execution_semantics_fixture_covers_parallel_join_and_switch() -> N
     assert report["checks"]["parallel_join"]["cases"]["join_once"] == ["join"]
     assert report["checks"]["parallel_join"]["cases"]["end_after_join"] == ["end"]
     assert report["checks"]["switch_routing"]["cases"] == {
+        "activation": ["switch"],
         "ok": ["ok"],
         "fail": ["fail"],
     }

@@ -470,6 +470,8 @@ async def test_flow_instance_action_cancel(client):
     _patch(storage)
     r = await client.post(f"/flows/instances/{INSTANCE_ID}/action", json={"action": "cancel"})
     assert r.status_code == 200
+    assert storage.update_flow_instance.await_args.kwargs["status"] == "CANCELLED"
+    assert storage.update_flow_instance.await_args.kwargs["active_node_ids"] == []
 
 
 @pytest.mark.anyio

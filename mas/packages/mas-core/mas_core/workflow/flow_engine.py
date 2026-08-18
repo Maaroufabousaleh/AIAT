@@ -524,14 +524,14 @@ def get_next_nodes(
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.SWITCH:
-                switch_key = target_node.config.get("switch_key", "")
-                switch_cases = target_node.config.get("switch_cases", {})
-                context_value = (context or {}).get(switch_key)
-                matched_target = (
-                    switch_cases.get(str(context_value)) if context_value is not None else None
-                )
-                if matched_target and matched_target not in completed_node_ids:
-                    next_ids.append(matched_target)
+                # A switch is a real control node, not an implicit edge.
+                # Activate it first so the runtime can persist an execution
+                # record and let the completed switch select exactly one case
+                # through the source-node branch above.  Routing directly from
+                # the predecessor skipped the switch execution entirely and
+                # blocked when its context value was not set until completion.
+                if target not in completed_node_ids:
+                    next_ids.append(target)
 
             else:
                 if target not in completed_node_ids:

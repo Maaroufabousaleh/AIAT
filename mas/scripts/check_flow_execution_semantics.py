@@ -94,12 +94,14 @@ def build_report() -> dict[str, Any]:
     )
 
     switch_cases = {
+        "activation": _ids(switch, {"start"}),
         "ok": _ids(switch, {"start", "switch"}, {"result": "ok"}),
         "fail": _ids(switch, {"start", "switch"}, {"result": "fail"}),
     }
     unknown_result = get_next_nodes(switch, {"start", "switch"}, set(), {"result": "unknown"})
     switch_passed = (
         not switch_errors
+        and switch_cases["activation"] == ["switch"]
         and switch_cases["ok"] == ["ok"]
         and switch_cases["fail"] == ["fail"]
         and unknown_result.is_blocked
