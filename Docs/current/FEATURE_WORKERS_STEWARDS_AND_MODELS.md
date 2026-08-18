@@ -426,16 +426,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   profile coverage exists. Licence and restriction metadata is outside this
   operational catalogue and cannot fail it.
 - The refreshed 2026-08-18 local read-only catalogue evidence observes 93
-  registered models, 94 persisted profile versions, and 92 approved covered
-  versions. The `/v1/models` route exposes nine models including all five AIAT
+  registered models, 94 persisted profile versions, and 93 approved covered
+  versions with no pending registered model. The explicit profile identity
+  alias for `aiat/omniroute-coding` now reconciles to the canonical
+  `litellm/omniroute-coding` registry entry; the `/v1/models` route exposes nine models including all five AIAT
   aliases (`auto`, `omniroute-auto`, `omniroute-free`, `omniroute-coding`, and
   `omniroute-smart`). The repeatable
   [`check_model_gateway_readiness.py`](../../mas/scripts/check_model_gateway_readiness.py)
   performs only this route read and retains
   [`model_gateway_readiness_live.json`](../../mas/docs/provenance/model_gateway_readiness_live.json).
-  One registered model remains `profile_pending` and two
-  persisted rows are not registered; these are explicit operator-visible
-  reconciliation findings, not a licence/resource restriction gate. The
+  One operator-owned stale persisted row (`local/test-model-1`) remains an
+  explicit reconciliation finding, not a licence/resource restriction gate. The
   bounded result is retained at
   [`mas/docs/provenance/model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json),
   with no dispatch or provider call performed.
@@ -959,7 +960,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   not mutate runtime state.
 - Measure both tool-service profiles on native Linux and publish cold-build, compressed/uncompressed size, startup, memory, and vulnerability evidence against the checked-in budget.
 - [x] Add focused model-override expiry and terminal budget-settlement replay tests, align gateway retry/fallback status classification with the shared transient provider vocabulary, and persist model/provider cooldown evidence; broader reservation/settlement chaos and live provider failover evidence remain open.
-- [x] Export and reconcile the deterministic runtime/profile catalogue, add the bounded executive reconciliation report, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, role-scoped `aiat.executive-action.v1` CFO/CTO/CEO writes, and audit reservation/settlement invariants; local live evidence now observes approved persisted coverage (92/94) while one pending model and two non-registered rows remain findings; provider-specific live failover/recovery, broader governance forms, and broader budget-settlement chaos tests remain.
+- [x] Export and reconcile the deterministic runtime/profile catalogue, add the bounded executive reconciliation report, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, role-scoped `aiat.executive-action.v1` CFO/CTO/CEO writes, and audit reservation/settlement invariants; local live evidence now observes approved persisted coverage (93/94), with the explicit OpenCode/LiteLLM identity alias reconciled and one operator-owned stale profile row retained as a finding; provider-specific live failover/recovery, broader governance forms, and broader budget-settlement chaos tests remain.
 - [x] Add a fail-closed `--live` model-profile catalogue verifier with an explicit `--require-approved` gate; the local API passes the approval requirement and the read-only `/v1/models` route exposes all five AIAT aliases (`68e0b03`, repeatable checker `f6ed16f`), while provider health/recovery and clean environment evidence remain operator work.
 - [x] Add an idempotent, conflict-preserving bootstrap for the shipped
   `opencode-phase0b-coding` profile plus every registered model identity, and

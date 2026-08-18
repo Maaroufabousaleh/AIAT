@@ -523,12 +523,14 @@ single frozen commit before production claims are made.
   reconciliation, a fail-closed `--live` verifier, an idempotent conflict-
   preserving profile bootstrap, and the internal `omniroute-coding` LiteLLM
   alias. Current 2026-08-18 local evidence retains 93 registered models, 94
-  persisted versions, 92 approved covered entries, one pending model, and two
-  non-registered profile findings. The same read-only run sees nine `/v1/models`
+  persisted versions, 93 approved covered entries, and no pending registered
+  model. The explicit `aiat/omniroute-coding` profile identity now reconciles
+  to the canonical `litellm/omniroute-coding` registry entry; one operator-owned
+  stale profile row remains an explicit finding. The same read-only run sees nine `/v1/models`
   entries and all five AIAT aliases; the repeatable route-only checker is
   `f6ed16f` with evidence at
   [`model_gateway_readiness_live.json`](../../mas/docs/provenance/model_gateway_readiness_live.json),
-  while the profile report is refreshed in `68e0b03` at
+  while the profile report is refreshed in `db51dac` at
   [`model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json).
   These are operator-visible reconciliation findings, not licence/resource
   restrictions; no dispatch or provider call was performed and provider
