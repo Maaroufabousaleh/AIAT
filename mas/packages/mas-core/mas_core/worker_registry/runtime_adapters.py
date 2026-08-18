@@ -460,6 +460,177 @@ class CrewAIAdapter(NativeWorkerAdapter):
     runtime_type = "crewai"
 
 
+class GatewayWorkerAdapter(NativeWorkerAdapter):
+    """Run a bounded model-backed worker through AIAT's gateway.
+
+    The adapter owns no provider credentials and never selects a model on its
+    own.  The controller supplies an immutable ``resolved_model_profile``;
+    readiness rejects requests without an exact model ID, and the normalized
+    result records the adapter's configured provider identity for the
+    controller's snapshot-attribution check.  A real gateway client may be
+    injected for tests or a host-certified deployment; the default client is
+    created from an AIAT-owned ``LLMConfig``.
+    """
+
+    runtime_type = "aiat_gateway"
+
+    def __init__(
+        self,
+        *,
+        worker_id: str,
+        provider_id: str = "litellm",
+        gateway_client: Any | None = None,
+        gateway_config: Any | None = None,
+        capabilities: WorkerCapabilities | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        from mas_core.llm_gateway.client import LLMGatewayClient
+        from mas_core.llm_gateway.models import LLMConfig
+
+        normalized_provider = str(provider_id).strip()
+        if not normalized_provider:
+            raise ValueError("gateway worker provider_id must not be blank")
+        owns_gateway_client = gateway_client is None
+        if gateway_client is None:
+            if gateway_config is None:
+                gateway_config = LLMConfig()
+            elif isinstance(gateway_config, dict):
+                gateway_config = LLMConfig(**gateway_config)
+            gateway_client = LLMGatewayClient(gateway_config)
+        self.gateway_client = gateway_client
+        self.provider_id = normalized_provider
+        self._owns_gateway_client = owns_gateway_client
+
+        async def runner(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+            return await self._run_gateway(request)
+
+        super().__init__(
+            runner,
+            worker_id=worker_id,
+            capabilities=capabilities
+            or _external_capabilities(
+                checkpoint_mode=CheckpointMode.UNSUPPORTED,
+                model_mode=ModelMode.AIAT_GATEWAY,
+                capability_names=["model.chat"],
+            ),
+            context=context,
+            runtime_version=runtime_version,
+        )
+
+    async def readiness(self, request: WorkerRunRequest | None = None) -> WorkerReadiness:
+        local = await super().readiness(request)
+        blockers = list(local.blockers)
+        checks = dict(local.checks)
+        checks["gateway_client_configured"] = self.gateway_client is not None
+        checks["resolved_model_profile"] = False
+        if request is None or request.resolved_model_profile is None:
+            blockers.append("AIAT gateway worker requires a resolved Model Profile")
+        else:
+            model_id = str(request.resolved_model_profile.exact_model_id or "").strip()
+            if not model_id or model_id.lower() == "auto":
+                blockers.append("AIAT gateway worker requires an exact resolved model ID")
+            else:
+                checks["resolved_model_profile"] = True
+        return WorkerReadiness(
+            worker_id=self.worker_id,
+            ready=not blockers,
+            checks=checks,
+            blockers=blockers,
+        )
+
+    @staticmethod
+    def _messages_from_request(request: WorkerRunRequest) -> list[dict[str, str]]:
+        task_input = request.task_input if isinstance(request.task_input, dict) else {}
+        raw_messages = task_input.get("messages")
+        if raw_messages is None:
+            prompt = task_input.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("task_input requires a non-empty prompt or messages list")
+            return [{"role": "user", "content": prompt.strip()}]
+        if not isinstance(raw_messages, list) or not raw_messages:
+            raise ValueError("task_input.messages must be a non-empty list")
+        messages: list[dict[str, str]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                raise ValueError("each task_input message must be an object")
+            role = str(item.get("role") or "").strip()
+            content = item.get("content")
+            if not role or not isinstance(content, str) or not content.strip():
+                raise ValueError("each task_input message requires role and content")
+            messages.append({"role": role, "content": content})
+        return messages
+
+    @staticmethod
+    def _bounded_generation_options(request: WorkerRunRequest) -> tuple[int, float]:
+        task_input = request.task_input if isinstance(request.task_input, dict) else {}
+        try:
+            max_tokens = int(task_input.get("max_tokens", 256))
+            temperature = float(task_input.get("temperature", 0.2))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_tokens and temperature must be numeric") from exc
+        if not 1 <= max_tokens <= 4096:
+            raise ValueError("max_tokens must be between 1 and 4096")
+        if not 0 <= temperature <= 2:
+            raise ValueError("temperature must be between 0 and 2")
+        return max_tokens, temperature
+
+    async def _run_gateway(self, request: WorkerRunRequest) -> WorkerResult:
+        profile = request.resolved_model_profile
+        model_id = str(profile.exact_model_id or "").strip() if profile is not None else ""
+        try:
+            messages = self._messages_from_request(request)
+            max_tokens, temperature = self._bounded_generation_options(request)
+            response = await self.gateway_client.chat_completion(
+                messages=messages,
+                model=model_id,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="MODEL_GATEWAY_DISPATCH_FAILED",
+                    message="AIAT model gateway dispatch failed",
+                    retryable=True,
+                    category="provider",
+                    details={"cause_type": type(exc).__name__},
+                ),
+            )
+        usage = getattr(response, "usage", None)
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=self.worker_id,
+            success=True,
+            output={
+                "text": str(getattr(response, "text", "") or ""),
+                "finish_reason": str(getattr(response, "finish_reason", "stop") or "stop"),
+            },
+            usage=WorkerUsage(
+                prompt_tokens=max(0, int(getattr(usage, "prompt_tokens", 0) or 0)),
+                completion_tokens=max(0, int(getattr(usage, "completion_tokens", 0) or 0)),
+                total_tokens=max(0, int(getattr(usage, "total_tokens", 0) or 0)),
+                cost_usd=max(0.0, float(getattr(usage, "estimated_cost_usd", 0.0) or 0.0)),
+                provider=self.provider_id,
+                exact_model_id=model_id,
+            ),
+            replay_metadata={
+                "adapter_type": self.runtime_type,
+                "gateway_backend": str(getattr(getattr(self.gateway_client, "_config", None), "backend", "unknown")),
+            },
+        )
+
+    async def close(self) -> None:
+        await super().close()
+        if self._owns_gateway_client:
+            stop = getattr(self.gateway_client, "stop", None)
+            if callable(stop):
+                await stop()
+
+
 def _load_certified_callable(reference: str) -> Callable[..., Any]:
     module_name, separator, attribute = reference.partition(":")
     if not separator or not module_name or not attribute or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", module_name) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", attribute):
@@ -1406,6 +1577,29 @@ def adapter_for_transport(
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),
             pids_limit=int(config.get("pids_limit", 256)),
+        )
+    if normalized in {"aiat_gateway", "gateway"}:
+        from mas_core.llm_gateway.models import LLMConfig
+
+        context_secrets = context.secrets if context is not None else {}
+        gateway_config = LLMConfig(
+            gateway_url=str(config.get("gateway_url") or "http://litellm:4000"),
+            default_model=str(config.get("default_model") or "auto"),
+            api_key=str(
+                context_secrets.get("llm_api_key")
+                or context_secrets.get("LLM_API_KEY")
+                or ""
+            ),
+            backend=str(config.get("backend") or "litellm"),
+            timeout_s=float(config.get("timeout_s", 120.0)),
+            max_retries=int(config.get("max_retries", 3)),
+        )
+        return GatewayWorkerAdapter(
+            worker_id=worker_id,
+            provider_id=str(config.get("provider_id") or "litellm"),
+            gateway_config=gateway_config,
+            context=context,
+            runtime_version=config.get("runtime_version"),
         )
     if normalized in {"native", "langgraph", "crewai"}:
         reference = str(config.get("implementation_ref") or config.get("entrypoint") or "")
