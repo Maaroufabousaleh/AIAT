@@ -1,9 +1,9 @@
 # P0 Release Integrity Status
 
 **Updated:** 2026-08-18
-- Current continuation refresh (`04521e7`) runs the static ledger at 57/57
+- Current continuation refresh (`e040402`) runs the static ledger at 57/57
   pass and the configured Compose aggregation at 75 pass/0 fail/6 blocked
-  across 81 checks (`20:47:26Z`), with four pending evidence items and
+  across 81 checks (`21:07:56Z`), with four pending evidence items and
   `NO-RELEASE`. The local Postgres host-execution, multi-host, lease,
   host-fencing, and queued-run loss checks pass serially after their harnesses
   were isolated with fixture labels and deterministic priorities; their scalar
@@ -116,9 +116,9 @@
   verified; earlier development attempts are excluded. This closes the local
   process-outage gate only, not KMS, independent-host, clean-host, or disaster
   recovery.
-- The AIAT credentials-manager live certificate (`12ba7c7`, evidence
+- The AIAT credentials-manager live certificate (`12ba7c7`, scalar evidence
   [`credentials_manager_live_evidence.json`](../../mas/docs/provenance/credentials_manager_live_evidence.json),
-  release child `credentials_manager_live` registered in `d101901`) passes
+  refreshed at 2026-08-18T21:08:32Z against `e040402`; release child `credentials_manager_live` registered in `d101901`) passes
   against Compose Postgres. Ciphertext-at-rest, metadata-only projection,
   policy denial, approved server-side resolution, one-use approval,
   rate-limit denial, audit persistence, and zero fixture residue are verified;
