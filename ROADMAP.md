@@ -1257,7 +1257,10 @@ out, or dispatches; licence metadata remains informational only.
 The new `scripts/check_runtime_adapter_conformance.py --live --json` probe
 passes both actual framework adapter classes in Compose (LangGraph `0.6.11`,
 CrewAI `1.6.1`) with exact lock parity for bounded no-model
-lifecycle/message translation. Representative model-backed canaries, sandbox,
+lifecycle/message translation. Commit `c51b37d` closes a real translation gap:
+CrewAI now carries project context and message history, and both framework
+adapters normalize an absent project ID to `null`; the refreshed scalar
+evidence records both fields. Representative model-backed canaries, sandbox,
 live worker-run, and rollback evidence remain open.
 
 The document adapter also has a coherent local fallback contract: the optional
@@ -1277,7 +1280,8 @@ Required outcomes:
 - [x] Compose package/lifecycle and exact lock-parity conformance is recorded
   for the LangGraph and CrewAI adapters at
   [`runtime_adapter_conformance_live.json`](mas/docs/provenance/runtime_adapter_conformance_live.json)
-  (LangGraph `0.6.11`, CrewAI `1.6.1`); representative model-backed canaries,
+  (LangGraph `0.6.11`, CrewAI `1.6.1`), including project-context and message-
+  history preservation after `c51b37d`; representative model-backed canaries,
   sandbox, live-run, and rollback certification remain open.
 - [x] sandbox declarations require hardened profiles for external workers and
   have a fail-closed `runsc` registration verifier; host smoke/network and
