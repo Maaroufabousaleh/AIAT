@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,25 @@ UPGRADE_SPEC = importlib.util.spec_from_file_location(
 assert UPGRADE_SPEC and UPGRADE_SPEC.loader
 upgrade = importlib.util.module_from_spec(UPGRADE_SPEC)
 UPGRADE_SPEC.loader.exec_module(upgrade)
+
+
+@pytest.fixture(autouse=True)
+def _allow_unprivileged_fixture_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model root-owned 0600 temporary artifacts when tests run unprivileged."""
+
+    if os.geteuid() == 0:
+        return
+    original_stat = Path.stat
+
+    def stat_fixture(path: Path, *args, **kwargs):
+        details = original_stat(path, *args, **kwargs)
+        if str(path).startswith("/tmp/") and stat.S_IMODE(details.st_mode) == 0o600:
+            values = list(details)
+            values[4] = 0  # st_uid: model the root-owned deployment artifact
+            return os.stat_result(values)
+        return details
+
+    monkeypatch.setattr(Path, "stat", stat_fixture)
 
 
 def inspect_fixture(*, secret: str = "re_protected_test_secret") -> dict:
@@ -1385,9 +1405,15 @@ def test_failure_diagnose_is_read_only_and_reports_recovered_source(
     args = action_args(tmp_path)
     args.backup_dir.mkdir(mode=0o700)
     manifest = manifest_for(source_snapshot())
-    upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).write_text(
+    failure_path = upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME)
+    failure_path.write_text(
         json.dumps(safe_failure_artifact()) + "\n", encoding="utf-8"
     )
+    # The production reader requires root-owned 0600 artifacts.  This
+    # read-only diagnostic test runs as the unprivileged repository user, so
+    # bypass only that ownership check for the fixture; the command's real
+    # root gate remains covered by the surrounding tests.
+    monkeypatch.setattr(upgrade, "load_protected_artifact", migration.load_json)
     monkeypatch.setattr(upgrade, "require_root", lambda: None)
     monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
     monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})
@@ -1462,9 +1488,11 @@ def test_governed_retry_refuses_when_prior_target_exists(
     args.backup_dir.mkdir(mode=0o700)
     manifest = manifest_for(source_snapshot())
     artifact = safe_failure_artifact(target_created=True)
-    upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME).write_text(
+    failure_path = upgrade.cutover_state_path(args, upgrade.CUTOVER_FAILURE_NAME)
+    failure_path.write_text(
         json.dumps(artifact) + "\n", encoding="utf-8"
     )
+    failure_path.chmod(0o600)
     monkeypatch.setattr(upgrade, "require_root", lambda: None)
     monkeypatch.setattr(upgrade, "read_manifest", lambda *_: manifest)
     monkeypatch.setattr(upgrade, "read_backup_success", lambda *_: {})

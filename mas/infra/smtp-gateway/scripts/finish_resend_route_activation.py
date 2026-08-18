@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-WORKSPACE = Path("/mnt/c/projects/AIAT")
+# Resolve the repository from this checked-in script instead of assuming a
+# case-sensitive host path.  The previous hard-coded `/mnt/c/projects/AIAT`
+# path caused safe traceback projection to discard every frame on the actual
+# `/mnt/c/projects/aiat` workspace and omitted required line metadata.
+WORKSPACE = Path(__file__).resolve().parents[4]
 GATEWAY = WORKSPACE / "mas/infra/smtp-gateway"
 PROFILE = GATEWAY / "profiles/oci-e2.1-micro-host.env.active"
 ROUTE_SCRIPT = GATEWAY / "scripts/configure-stalwart-resend-route.sh"

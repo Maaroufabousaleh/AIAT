@@ -23,6 +23,7 @@ def _route(name: str, kind: str = "Relay") -> dict[str, Any]:
         "@type": kind,
         "address": "smtp.resend.com",
         "port": 465,
+        "protocol": "smtp",
         "implicitTls": True,
         "allowInvalidCerts": False,
         "authUsername": "resend",
@@ -60,14 +61,31 @@ def _run_verifier(routes: list[dict[str, Any]]) -> subprocess.CompletedProcess[s
             request = json.loads(self.rfile.read(length))
             method = request["methodCalls"][0][0]
             if method == "x:MtaRoute/get":
-                body = {"methodResponses": [["x:MtaRoute/get", {"list": routes}, "routes"]]}
+                body = {
+                    "methodResponses": [["x:MtaRoute/get", {"list": routes}, "routes"]],
+                    "sessionState": "session-state",
+                }
             else:
                 body = {
                     "methodResponses": [[
                         "x:MtaOutboundStrategy/get",
-                        {"list": [{"id": "singleton", "route": {"else": "'resend-relay'"}}]},
+                        {
+                            "list": [{
+                                "id": "singleton",
+                                "route": {
+                                    "match": {
+                                        "0": {
+                                            "if": "is_local_domain(rcpt_domain)",
+                                            "then": "'local'",
+                                        }
+                                    },
+                                    "else": "'resend-relay'",
+                                },
+                            }]
+                        },
                         "strategy",
-                    ]]
+                    ]],
+                    "sessionState": "session-state",
                 }
             payload = json.dumps(body).encode()
             self.send_response(200)
