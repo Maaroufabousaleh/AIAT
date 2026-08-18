@@ -175,6 +175,11 @@ checks:
     script: scripts/check_object_store_provider_outage.py
     args: [--json]
     live_args: [--live, --json]
+  - id: credentials_manager_live
+    category: security
+    script: scripts/check_credentials_manager_live.py
+    args: [--json]
+    live_args: [--live, --json]
   - id: provider_conformance
     category: contract
     script: scripts/check_provider_conformance.py
