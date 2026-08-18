@@ -431,6 +431,15 @@ worker/steward/model-profile/snapshot row. Independent host/process execution,
 live dispatch, provider recovery, and sandbox evidence remain separate;
 licence metadata remains informational and non-gating.
 
+The local process-isolation group `cec6558`/`520c6bf` adds the maintained
+[`worker_independent_process_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json)
+certificate. Two separate child Python processes reconnect to Postgres and
+settle separate committed worker-host bindings through the production executor
+and controller; the parent verifies distinct process IDs, durable reopen,
+payload-free usage/artifact/trace coverage, and zero-row cleanup. It is a local
+same-host process prerequisite only; independent deployed hosts, host-loss,
+provider, and sandbox evidence remain open.
+
 The deterministic placement group `db22e60`, extended by `3fb15db`, adds the maintained
 [`worker_placement_contract.json`](../../mas/docs/provenance/worker_placement_contract.json)
 certificate and the `aiat.worker-placement.v1` policy module. Its pure

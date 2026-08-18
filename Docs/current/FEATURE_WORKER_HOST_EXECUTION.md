@@ -128,6 +128,20 @@ running through two AIAT host identities; it is not evidence that two
 independently deployed machines, gVisor, Firecracker, an external provider, or
 host-loss recovery is active.
 
+### Independent process execution certificate
+
+[`check_worker_independent_process_execution_postgres.py`](../../mas/scripts/check_worker_independent_process_execution_postgres.py)
+launches two separate Python child processes on the local Compose host. Each
+child reconnects to Postgres and executes one committed worker-plane binding
+through the production `WorkerHostExecutor` and `WorkerRunController`; the
+parent reopens the store, verifies two `SUCCEEDED` runs, two usage rows, two
+artifacts, three native spans per trace, payload-free coverage, distinct child
+process IDs, and zero remaining fixture rows. Evidence is retained at
+[`worker_independent_process_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json).
+This closes the local process-isolation prerequisite only. It does not claim
+independent deployed machines, host-loss/split-brain recovery, external
+provider execution, or gVisor/Firecracker operation.
+
 ### Fenced host-loss queue recovery certificate
 
 The recovery extension is implemented by

@@ -37,6 +37,14 @@
   This is local retry evidence; external provider outage/restore, callback or
   delivery confirmation, independent host/process recovery, and sandbox
   evidence remain open.
+- Commits `cec6558` and `520c6bf` add a local process-isolation certificate:
+  two separate Python child processes reconnect to Postgres and settle two
+  committed worker-host bindings through the production executor/controller;
+  the parent verifies distinct process IDs, durable payload-free evidence,
+  reopen, and zero-row cleanup. This is same-host process evidence only;
+  independent deployed hosts, host-loss/split-brain, provider, and sandbox
+  gates remain open. Evidence is retained at
+  [`worker_independent_process_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json).
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery

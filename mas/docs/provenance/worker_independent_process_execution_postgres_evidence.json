@@ -1,0 +1,93 @@
+{
+  "schema_version": "aiat.worker-independent-process-execution-postgres-certification.v1",
+  "evidence_commit": "520c6bf",
+  "observed_at": "2026-08-18T11:11:00.506567Z",
+  "status": "pass",
+  "mode": "local-postgres-independent-worker-processes",
+  "command": "docker exec mas-orchestrator-api-1 python3 /tmp/check_worker_independent_process_execution_postgres.py --json",
+  "migration_version": "0042_worker_run_host_binding",
+  "child_process_count": 2,
+  "child_process_ids": [
+    19057,
+    19059
+  ],
+  "child_reports": [
+    {
+      "status": "pass",
+      "run_id": "00000000-0000-4000-a000-000000000d34",
+      "host_id": "aiat-cert-independent-process-worker-v1-a",
+      "terminal_state": "SUCCEEDED",
+      "return_code": 0
+    },
+    {
+      "status": "pass",
+      "run_id": "00000000-0000-4000-a000-000000000d35",
+      "host_id": "aiat-cert-independent-process-worker-v1-b",
+      "terminal_state": "SUCCEEDED",
+      "return_code": 0
+    }
+  ],
+  "controller_terminal_states": [
+    "SUCCEEDED",
+    "SUCCEEDED"
+  ],
+  "worker_usage_count": 2,
+  "worker_artifact_count": 2,
+  "native_span_counts": {
+    "aiat-cert-independent-process-execution-v1-trace-a": 3,
+    "aiat-cert-independent-process-execution-v1-trace-b": 3
+  },
+  "payload_free": true,
+  "durable_reopen": {
+    "healthy": true,
+    "run_count": 2,
+    "usage_count": 2,
+    "artifact_count": 2,
+    "trace_counts": {
+      "aiat-cert-independent-process-execution-v1-trace-a": 3,
+      "aiat-cert-independent-process-execution-v1-trace-b": 3
+    }
+  },
+  "cleanup_deleted_counts": {
+    "artifacts": 2,
+    "bindings": 2,
+    "hosts": 0,
+    "reservations": 2,
+    "spans": 6,
+    "worker_artifacts": 2,
+    "worker_runs": 2,
+    "workers": 1
+  },
+  "remaining_fixture_counts": {
+    "workers": 0,
+    "runs": 0,
+    "bindings": 0,
+    "reservations": 0,
+    "hosts": 0,
+    "usage": 0,
+    "artifacts": 0,
+    "spans": 0
+  },
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "certification_boundary": {
+    "independent_python_processes": "checked",
+    "durable_worker_host_bindings": "checked",
+    "production_worker_host_executor": "checked",
+    "production_worker_run_controller": "checked",
+    "worker_postgres_connection_reopen": "checked",
+    "payload_free_trace_projection": "checked",
+    "scoped_cleanup": "checked",
+    "independent_deployed_hosts": "not_checked",
+    "host_loss_or_split_brain": "not_checked",
+    "external_provider_dispatch": "not_checked",
+    "provider_outage_recovery": "not_checked",
+    "sandbox_runtime_gvisor_or_firecracker": "not_checked"
+  },
+  "licence_metadata_is_gate": false,
+  "notes": [
+    "Two separate child Python processes claimed and settled separate durable worker-host bindings on the same Compose host; their process IDs were distinct.",
+    "The certificate retains only scalar process, host, state, usage, artifact, trace, reopen, and cleanup metadata; fixture payload content is excluded from the evidence projection.",
+    "This is a local process-boundary prerequisite, not independent-machine, host-loss, split-brain, provider, Firecracker, or gVisor evidence."
+  ]
+}

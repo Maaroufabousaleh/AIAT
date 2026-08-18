@@ -162,6 +162,18 @@
   durable reopen, and zero fixture rows. Independent deployed-host process
   boundaries, provider recovery, sandbox execution, and full version-pin
   coverage remain open.
+- [x] Certify local process-isolated worker execution (`cec6558`, corrected by
+  `520c6bf`) with
+  [`check_worker_independent_process_execution_postgres.py`](../../../mas/scripts/check_worker_independent_process_execution_postgres.py)
+  and retained evidence at
+  [`worker_independent_process_execution_postgres_evidence.json`](../../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json).
+  Two separate Python child processes reconnect to Postgres and settle two
+  committed worker-host bindings through the production executor/controller;
+  the parent verifies distinct process IDs, two successful runs, usage,
+  artifacts, three native spans per trace, payload-free coverage, reopen, and
+  zero-row cleanup. This closes the local process-boundary prerequisite only,
+  not independent deployed machines, host-loss/split-brain, providers,
+  sandbox, or outage recovery.
 - [x] Certify bounded fenced host-loss queue recovery (`893293a`) with
   [`check_worker_host_loss_queue_recovery_postgres.py`](../../../mas/scripts/check_worker_host_loss_queue_recovery_postgres.py)
   and retained evidence at
@@ -317,9 +329,9 @@
   intentionally stable because AIAT assigns one steward per worker.
 - [ ] Prove independent deployed-host loss, split-brain avoidance, queue
   recovery, duplicate-effect protection, and complete version pinning across
-  real host/process boundaries. The local duplicate-claim/replay and complete
-  control-plane pinning certificates are prerequisites, not substitutes for
-  independent deployed-host evidence.
+  real host/process boundaries. The local duplicate-claim/replay, process-
+  isolated execution, and complete control-plane pinning certificates are
+  prerequisites, not substitutes for independent deployed-host evidence.
 
 ## Workstream 4 — guarded self-improvement
 

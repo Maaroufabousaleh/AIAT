@@ -71,6 +71,14 @@ replays both the terminal request and an alternate request ID through the
 canonical idempotency key without redispatch. This is local duplicate-effect
 evidence only; independent deployed hosts, provider recovery, and sandbox
 certification remain open.
+The local process-boundary certificate `cec6558`/`520c6bf` now launches two
+separate Python child processes on the same Compose host. Each child reopens
+Postgres and executes one committed host binding through the production
+`WorkerHostExecutor`/`WorkerRunController`; the parent verifies distinct
+process IDs, two successful runs, payload-free usage/artifact/trace coverage,
+and zero-row cleanup. This is a process-isolation prerequisite, not evidence
+of independent deployed machines, host-loss recovery, external providers, or
+gVisor/Firecracker.
 The durable host registry certificate `500fc57` also passes in local Compose
 scope for authenticated registration, heartbeat lease renewal, redacted
 placement snapshots, and connection-reopen read-back. The durable reservation
@@ -139,6 +147,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   stewards, model profiles, profile versions, and snapshots to zero. Live
   worker dispatch, independent host/process recovery, and provider/sandbox
   evidence remain separate.
+- `scripts/check_worker_independent_process_execution_postgres.py --json`
+  (`cec6558`, corrected by `520c6bf`) launches two separate Python child
+  processes against the durable worker-host boundary. Each process reconnects
+  to Postgres and settles one committed binding through the production
+  `WorkerHostExecutor`/`WorkerRunController`; the parent reopens the store and
+  verifies distinct process IDs, two `SUCCEEDED` runs, two usage rows, two
+  artifacts, three native spans per trace, payload-free coverage, and zero
+  remaining fixture rows. Evidence is retained at
+  [`worker_independent_process_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json).
+  This is local process-isolation evidence only; independent deployed hosts,
+  host-loss/split-brain, providers, and gVisor/Firecracker remain open.
 - `mas_core.worker_registry.placement` and `scripts/check_worker_placement.py`
   define the deterministic `aiat.worker-placement.v1` predicate. It filters
   unready or expired hosts, enforces the worker host plane plus
