@@ -10,8 +10,10 @@ certification remain separate. `f999695` adds an explicit opt-in
 worker-plane provider runner; the retained `90c3e5d` certificate proves one
 selected `llama-3.3-70b-versatile` completion through the configured
 LiteLLM/OmniRoute route. `17f6547` adds durable worker/provider/mail-edge
-read-back, `def4fe9` adds bounded provider transient-retry evidence, and
-`5ed0a0b` adds the fail-closed Firecracker launch contract. Durable worker
+read-back, `def4fe9` adds bounded provider transient-retry evidence,
+`00a468d` hardens fallback routing for all transport outages, `48b32ef` adds
+the bounded provider-recovery fixture, and `5ed0a0b` adds the fail-closed
+Firecracker launch contract. Durable worker
 evidence, mail-edge callback/bounce, host-certified sandbox execution, outage
 recovery, and full worker certification remain separate.
 
@@ -20,7 +22,9 @@ recovery, and full worker certification remain separate.
 
 The retained live increment (`17f6547`) now covers one selected durable
 worker/provider/mail-edge run; `def4fe9` additionally retains one bounded
-transient-retry recovery certificate; broader independent-host,
+transient-retry recovery certificate; `48b32ef` additionally proves local
+primary-outage/secondary-fallback/primary-recovery cooldown behavior without
+network or durable worker state; broader independent-host,
 provider-callback, outage-recovery, sandbox, and full certification gates
 remain incomplete.
 

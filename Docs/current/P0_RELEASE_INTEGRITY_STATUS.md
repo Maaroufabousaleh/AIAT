@@ -16,6 +16,12 @@
   payload-free generated-text redaction, and zero residual rows. This is
   retry-boundary evidence only; provider outage, external callback/delivery,
   independent-host, and sandbox evidence remain open.
+- Commit `00a468d` extends gateway fallback handling to all transport outages,
+  and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
+  Its deterministic primary-outage → secondary-fallback → primary-recovery
+  sequence verifies cooldown arming and clearance without external network,
+  worker dispatch, or durable state. This is local routing evidence only;
+  durable external-provider outage recovery remains open.
 - Commit `5ed0a0b` adds the fail-closed Firecracker high-risk worker launch
   contract and read-only readiness checker. Static validation passes for
   immutable kernel/rootfs digests, bounded resources, read-only rootfs,
@@ -420,7 +426,7 @@ single frozen commit before production claims are made.
 
 - `scripts/check_release_ledger.py --json` (base aggregator `eff4eef`, native live-ledger gate `4d7a495`) now
   aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
-  The latest static run reports 49/49 configured
+  The latest static run reports 50/50 configured
   fixture/contract/documentation/release-environment/operator-pin/governance
   checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
@@ -437,7 +443,7 @@ single frozen commit before production claims are made.
 - `scripts/check_docs_index.py --json` passes the canonical target, thirteen current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
-- The current unconfigured local 2026-08-18 67-check profile records 52
+- The current unconfigured local 2026-08-18 68-check profile records 53
   passes, zero failures, 15 externally blocked probes, and four pending
   evidence items with a bounded 60-second child-check timeout. The native
   release-host preflight is now the `release_environment:live` child and

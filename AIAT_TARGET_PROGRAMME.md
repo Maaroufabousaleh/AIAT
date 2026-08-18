@@ -395,6 +395,10 @@ zero residual fixture rows. `def4fe9` adds an explicit `--provider-recovery`
 path that injects one transient failure before one real selected-provider
 completion and retains only scalar attempt/retry metadata in
 [`gateway_worker_provider_recovery_live.json`](mas/docs/provenance/gateway_worker_provider_recovery_live.json).
+`00a468d` also makes fallback routing catch every transport outage, and the
+local `aiat.gateway-provider-recovery.v1` fixture/checker (`48b32ef`) proves
+primary outage → secondary fallback → primary recovery with cooldown
+clearance without external network, worker dispatch, or durable writes.
 External callback/delivery confirmation, provider outage recovery, independent
 hosts, and sandbox evidence remain separate gates.
 

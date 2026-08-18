@@ -259,6 +259,14 @@
   handling, and zero residual fixture rows. This is retry-boundary evidence,
   not independent-host loss, provider outage, external callback/delivery
   confirmation, or sandbox evidence.
+- [x] Harden the AIAT gateway fallback boundary for transport outages
+  (`00a468d`) and add the local `aiat.gateway-provider-recovery.v1` fixture
+  checker (`48b32ef`). The deterministic sequence forces one primary
+  connection failure, succeeds through an explicitly registered secondary
+  provider, observes model/provider cooldown state, waits for bounded expiry,
+  and confirms the recovered primary is selected again. It performs no
+  external network call, worker dispatch, or durable write; durable
+  external-provider outage recovery remains a separate gate.
 - [ ] Extend durable external provider-backed dispatch beyond the retained
   single-worker certificate to independent/multi-host Firecracker/gVisor
   operation and provider-backed recovery.

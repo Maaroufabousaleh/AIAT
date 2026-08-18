@@ -168,6 +168,10 @@ checks:
     category: contract
     script: scripts/check_provider_adapter_http_conformance.py
     args: [--json]
+  - id: gateway_provider_recovery
+    category: recovery
+    script: scripts/check_gateway_provider_recovery.py
+    args: [--json]
   - id: external_account_action_policy
     category: governance
     script: scripts/check_external_account_action_policy.py
