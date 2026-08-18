@@ -228,8 +228,12 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
         "errors",
         "warnings",
         "pending_evidence",
+        "pending_security_findings",
         "worker_count",
         "default_worker_count",
+        "matched_default_worker_count",
+        "missing_default_worker_count",
+        "binding_mismatch_count",
         "matched_count",
         "active_default_worker_count",
         "missing_worker_count",
@@ -571,6 +575,31 @@ def _validate_retained_live_evidence(spec: CheckSpec) -> tuple[str, str, dict[st
             for field in required_boundaries:
                 if boundaries.get(field) != "checked":
                     problems.append(f"certification boundary {field} is not checked")
+    elif spec.check_id == "default_worker_bindings":
+        default_count = raw.get("default_worker_count")
+        matched_count = raw.get("matched_default_worker_count")
+        if not isinstance(default_count, int) or default_count < 1:
+            problems.append("default worker count is missing or invalid")
+        if matched_count != default_count:
+            problems.append("not every checked-in default worker matched the live registry")
+        for field in (
+            "missing_default_worker_count",
+            "binding_mismatch_count",
+            "untracked_active_worker_count",
+            "duplicate_name_count",
+        ):
+            if raw.get(field) != 0:
+                problems.append(f"live binding field {field} is not zero")
+        boundaries = raw.get("certification_boundary")
+        if not isinstance(boundaries, dict):
+            problems.append("binding certification boundary is missing")
+        else:
+            for field in (
+                "manifest_presence",
+                "adapter_sandbox_model_source_pin_capability_bindings",
+            ):
+                if boundaries.get(field) != "checked":
+                    problems.append(f"binding certification boundary {field} is not checked")
 
     if problems:
         return "fail", "; ".join(dict.fromkeys(problems)), raw

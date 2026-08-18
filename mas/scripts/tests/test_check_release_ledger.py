@@ -32,12 +32,29 @@ def test_inventory_registers_retained_object_store_live_evidence() -> None:
         if check.retained_evidence_path
     }
     assert set(retained) == {
+        "default_worker_bindings",
         "gateway_provider_recovery",
         "object_store_multipart",
         "object_store_resource_profile",
         "object_store_provider_outage",
     }
     assert retained["object_store_resource_profile"][1] == "aiat.object-store-resource-profile.v1"
+
+
+def test_retained_default_worker_binding_evidence_passes_without_certifying_workers() -> None:
+    spec = _spec(
+        "docs/provenance/worker_reconciliation_live.json",
+        "aiat.worker-reconciliation-live-evidence.v1",
+        "default_worker_bindings",
+    )
+    status, reason, payload = _validate_retained_live_evidence(spec)
+    assert status == "pass"
+    assert reason == "retained live evidence validated"
+    assert payload is not None
+    summary = _run_retained_live_evidence(spec)["summary"]
+    assert summary["matched_default_worker_count"] == 39
+    assert summary["binding_mismatch_count"] == 0
+    assert summary["pending_security_findings"]["finding_count"] == 316
 
 
 def test_retained_provider_evidence_is_scalar_and_passes() -> None:
