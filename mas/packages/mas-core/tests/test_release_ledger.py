@@ -47,7 +47,11 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     )
     assert provider_recovery["category"] == "recovery"
     assert provider_recovery["status"] == "pass"
-    assert provider_recovery["summary"] == {"status": "pass", "mode": "fixture"}
+    assert provider_recovery["summary"] == {
+        "external_provider_call_performed": False,
+        "mode": "fixture",
+        "status": "pass",
+    }
     security_review = next(
         row for row in report["checks"] if row["id"] == "security_scan_review"
     )
@@ -111,7 +115,22 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     }
     lifecycle = next(row for row in report["checks"] if row["id"] == "worker_run_lifecycle")
     assert lifecycle["status"] == "pass"
-    assert lifecycle["summary"] == {"mode": "fixture", "status": "pass"}
+    assert lifecycle["summary"]["mode"] == "fixture"
+    assert lifecycle["summary"]["status"] == "pass"
+    assert lifecycle["summary"]["certification_boundary"] == {
+        "artifact_before_terminal": "checked",
+        "canary": "not_checked",
+        "checkpoint_persistence": "checked",
+        "cold_cancellation": "checked",
+        "cold_crash": "checked",
+        "controller_contract": "checked",
+        "database": "not_checked",
+        "lease_expiry_recovery": "checked",
+        "live_worker_run": "not_checked",
+        "pause_resume": "checked",
+        "rollback": "not_checked",
+        "sandbox": "not_checked",
+    }
     candidates = next(
         row for row in report["checks"] if row["id"] == "self_improvement_candidate_detection"
     )
