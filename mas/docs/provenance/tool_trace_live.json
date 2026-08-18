@@ -3,7 +3,7 @@
   "observed_at": "2026-08-18T16:05:09Z",
   "mode": "compose-live",
   "status": "pass",
-  "scope": "one bounded time_now call with an existing project context and operator trace read-back through the configured published loopback port; only telemetry rows were created",
+  "scope": "One bounded time_now call plus operator trace read-back through the configured Compose service; only telemetry rows were created.",
   "trace_id_used": "aiat-live-tool-20260818-r1",
   "tool_service_endpoint_mode": "configured",
   "tool_name": "time_now",
@@ -45,6 +45,5 @@
     "PARTIAL_TRACE_SOURCES"
   ],
   "credentials_or_project_identifiers_emitted": false,
-  "container": "mas-orchestrator-api-1",
-  "scope": "One bounded time_now call plus operator trace read-back through the configured Compose service; only telemetry rows were created."
+  "container": "mas-orchestrator-api-1"
 }
