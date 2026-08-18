@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T14:34:57.392513Z",
+  "observed_at": "2026-08-18T14:52:58.792247Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -18,10 +18,10 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "c90fc13e7a972b4b57f4b701dcc4adf597c4a156",
+    "revision": "5ac3ea99cb71c5e91a02ece637a2e74b6af951f5",
     "working_tree_clean": false
   },
-  "manifest_digest": "33c5e76afb9e9d611be5bbffed2f84eb8ac6c58faa650309b79c1e4937c37c66",
+  "manifest_digest": "6bbc393ad9224cc8a563e10d14b21dcbf379ba0383b4e9ddc4fe00b74fa2ba37",
   "live_configuration": {
     "orchestrator_url_configured": false,
     "credentials_printed": false,

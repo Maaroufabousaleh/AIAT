@@ -149,7 +149,7 @@ The current resource/release continuation supersedes the older aggregate
 snapshot above: `3791b3f`/`bb0fa8f`/`c90fc13` retain the corrected two-provider
 resource and multipart wave, and the current unconfigured aggregate records
 53/53 static checks plus 56 pass, 0 fail, 17 blocked, and 4 pending across 73
-live checks at `2026-08-18T14:34:57Z`. It remains `NO-RELEASE` because the
+live checks at `2026-08-18T14:52:58Z` (native preflight refresh `5ac3ea9`). It remains `NO-RELEASE` because the
 aggregate live child is unconfigured and the other independent gates remain
 open.
 
