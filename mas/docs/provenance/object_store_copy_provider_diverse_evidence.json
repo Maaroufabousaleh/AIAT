@@ -1,0 +1,46 @@
+{
+  "schema_version": "aiat.object-store-copy.v1",
+  "evidence_commit": "a5cb439",
+  "observed_at": "2026-08-18T12:51:56.971Z",
+  "status": "pass",
+  "mode": "live",
+  "project_id": "aiat-provider-copy-diverse-live-20260818",
+  "provider_topology": {
+    "source": "Compose MinIO endpoint",
+    "target": "disposable SeaweedFS 4.42 endpoint",
+    "provider_diversity": "different S3-compatible implementations; operator-observed topology"
+  },
+  "source_object_count": 3,
+  "parity_case_count": 3,
+  "parity_passed": true,
+  "checksum_and_size_matches": 3,
+  "source_preserved_until_scoped_cleanup": true,
+  "cleanup_deleted_counts": {
+    "source": 3,
+    "target": 3
+  },
+  "remaining_fixture_counts": {
+    "source": 0,
+    "target": 0
+  },
+  "mutation_scope": "reserved project prefix copy and explicit cleanup only; no cutover or routing change",
+  "local_database_access_performed": false,
+  "external_network_access_performed": true,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "source_inventory": "checked",
+    "checksum_and_size_parity": "checked",
+    "target_cleanup": "checked",
+    "provider_diverse_endpoints": "checked at operator-observed topology boundary",
+    "retention_parity": "not_checked",
+    "migration_cutover_or_rollback": "not_checked",
+    "actual_provider_process_or_network_outage": "not_checked",
+    "clean_host_or_disaster_recovery": "not_checked"
+  },
+  "notes": [
+    "The live copy helper preserves source objects and does not perform a cutover; source deletion was a separate scoped cleanup action after parity.",
+    "No endpoint URL, credential, object body, or raw provider response is retained.",
+    "Licence metadata is informational only and is not an activation, execution, or release gate."
+  ]
+}

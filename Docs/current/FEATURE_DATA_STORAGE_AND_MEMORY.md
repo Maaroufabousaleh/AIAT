@@ -109,6 +109,12 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   clean recovery, and zero cleanup. This confirms endpoint diversity at the
   local adapter boundary, not provider durability, KMS, outage recovery,
   clean-host recovery, or a migration decision.
+- The live `aiat.object-store-copy.v1` path now inventories three reserved
+  MinIO objects, copies them to the disposable SeaweedFS endpoint, verifies
+  matching checksums and sizes, preserves the source until explicit cleanup,
+  and leaves both prefixes empty. Retained evidence is
+  [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json);
+  this is parity evidence only and does not authorize cutover.
 
 ## Code anchors
 
@@ -224,10 +230,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 
 ## Remaining gaps
 
-- Extend the formal contract suite and verified-copy/parity workflow across
-  the retained MinIO/SeaweedFS pair before any migration; the bounded pair and
-  benchmark observations pass, while provider-certified retention, routing,
-  rollback, and outage evidence remain open.
+- Extend the formal contract suite and governed migration workflow across the
+  retained MinIO/SeaweedFS pair before any migration; bounded pair,
+  verified-copy, and benchmark observations pass, while provider-certified
+  retention, routing, rollback, and outage evidence remain open.
 - Extend the benchmark beyond the retained 1/32/4096-byte cases with
   large-object, multipart, concurrency, resource, outage, and recovery
   comparison evidence; current timings remain informational.

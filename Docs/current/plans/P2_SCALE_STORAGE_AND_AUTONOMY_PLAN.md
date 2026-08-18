@@ -99,6 +99,13 @@
   All three pair objects and six benchmark cases pass checksum read-back and
   scoped cleanup; provider durability/custody, outage, KMS, clean-host,
   large-object, and migration cutover evidence remain open.
+- [x] Run the live verified-copy/parity helper across the same MinIO/SeaweedFS
+  topology. Three reserved source objects copy with matching checksum/size
+  read-back, the source is preserved until explicit cleanup, and both source
+  and target prefixes finish at zero. Scalar evidence is retained at
+  [`object_store_copy_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
+  This does not certify retention parity, outage recovery, clean-host restore,
+  or migration cutover/rollback.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

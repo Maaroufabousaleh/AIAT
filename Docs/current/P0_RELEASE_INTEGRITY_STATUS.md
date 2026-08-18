@@ -71,6 +71,12 @@
   This remains local disposable comparison evidence; it does not authorize
   provider selection or claim provider durability, KMS, actual outage,
   clean-host, disaster recovery, or migration cutover.
+- The live verified-copy continuation inventories three reserved MinIO objects,
+  copies them to SeaweedFS with matching checksums/sizes, preserves the source
+  until explicit cleanup, and leaves zero source/target objects. Evidence is
+  [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
+  This remains parity evidence only; retention, rollback, outage, clean-host,
+  and disaster-recovery gates remain open.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery

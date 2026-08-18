@@ -35,6 +35,11 @@ authority outside the helpers.
   bounded benchmark runner completed three checksum cases on each endpoint.
   These are provider-diverse adapter/comparison observations, not a provider
   durability, outage, KMS, or migration-cutover certificate.
+- `2026-08-18` copy/parity follow-up — the live verified-copy helper inventoried
+  three reserved MinIO objects, copied them to SeaweedFS, read back matching
+  checksums/sizes, and cleaned both prefixes to zero. Source preservation and
+  no-cutover behavior remain properties of the copy helper, not migration
+  approval.
 
 The helpers never delete source objects, silently change deployment routing,
 copy credentials into reports, or treat licence/restriction metadata as a
@@ -92,10 +97,17 @@ scoped cleanup. The topology is operator-observed and local; provider-managed
 durability/custody, actual process/network outage, large-object/multipart,
 clean-host/disaster recovery, and migration cutover/rollback remain open.
 
+The verified-copy follow-up retains scalar evidence at
+[`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
+Three source-inventory cases copy from MinIO to SeaweedFS with matching
+checksums/sizes, preserve source data until explicit cleanup, and leave zero
+reserved objects on both sides. Retention parity, cutover/rollback, outage,
+and clean-host/disaster recovery remain open.
+
 ## Remaining gates
 
-- Run verified copy and the migration workflow against the provider-diverse
-  pair with retention, routing, and rollback evidence; the dual-write and
+- Run the governed migration workflow against the provider-diverse pair with
+  retention, routing, and rollback evidence; verified-copy, dual-write, and
   benchmark observations are retained above but do not authorize cutover.
 - Extend `check_object_store_benchmarks.py --live` beyond the retained three
   payload sizes with reliability/resource/concurrency, large-object/multipart,

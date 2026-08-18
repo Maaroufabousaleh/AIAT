@@ -75,6 +75,12 @@ Those reports are scalar-only disposable comparison evidence; they do not
 authorize provider selection or claim provider durability, KMS, actual outage,
 clean-host, disaster recovery, or migration cutover.
 
+The same index now includes the verified-copy parity evidence
+[`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json),
+which records three matching checksum/size copies from MinIO to SeaweedFS and
+zero reserved objects after explicit cleanup. It is not a migration approval
+or a retention/outage/disaster-recovery certificate.
+
 The worker evidence index now includes the bounded same-host recovery soak
 (`424805c`) at
 [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).
