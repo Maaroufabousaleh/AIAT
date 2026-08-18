@@ -1,25 +1,25 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T16:58:17Z",
+  "observed_at": "2026-08-18T17:24:47Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
     "total": 77,
-    "pass": 67,
+    "pass": 70,
     "fail": 0,
-    "blocked": 10
+    "blocked": 7
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "10 check(s) are externally blocked",
+    "7 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "aggregate_invocation": {
     "live_orchestrator_url_configured": true,
-    "check_timeout_seconds": 180,
+    "check_timeout_seconds": 60,
     "credentials_printed": false,
     "environment_source": "local operator environment passed to bounded child checks without output",
     "container": "mas-orchestrator-api-1",
@@ -37,7 +37,17 @@
     "execution_boundary": "orchestrator-container-on-mas_internal",
     "case_count": 8,
     "passed_case_count": 8,
-    "note": "The configured aggregate MinIO conformance child passes. Provider-diverse multipart, resource-profile, and outage evidence is retained separately with its own corrected disposable fixtures."
+    "provider_diverse_live_evidence": {
+      "status": "pass",
+      "providers": ["minio", "seaweedfs"],
+      "resource_profile_ref": "object_store_resource_profile_provider_diverse_evidence.json",
+      "multipart_ref": "object_store_multipart_provider_diverse_evidence.json",
+      "provider_outage_ref": "object_store_provider_outage_live_evidence.json",
+      "invalid_run_excluded": true,
+      "cleanup_verified": true,
+      "note": "The release ledger validates these retained scalar certificates as live evidence; no payloads, credentials, logs, or disposable state are retained."
+    },
+    "note": "The configured aggregate MinIO conformance child passes, and the registered provider-diverse multipart, resource-profile, and outage certificates now validate through the retained-live evidence path."
   },
   "local_tool_trace_evidence": {
     "status": "pass",
@@ -128,8 +138,8 @@
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The configured Compose profile completed with 66 passes, zero failures, and 11 externally blocked checks across 77 checks; native host, image identity, sandbox, Firecracker, provider configuration, credentials host DSN, outbound mail, default-worker certification, and self-improvement source remain blocked.",
-    "The separately retained MinIO/SeaweedFS resource and outage evidence remains valid and provider-diverse; aggregate child blocks caused only by host-side endpoint configuration do not change those verdicts.",
+    "The configured Compose profile completed with 70 passes, zero failures, and 7 externally blocked checks across 77 checks; native host, image identity, sandbox, Firecracker, outbound mail, default-worker certification, and self-improvement source remain blocked.",
+    "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "Licence and resource notices remain metadata-only and are not a release gate."
   ]
 }
