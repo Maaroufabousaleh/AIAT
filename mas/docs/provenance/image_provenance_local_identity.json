@@ -1,0 +1,138 @@
+{
+  "schema_version": "aiat.image-provenance-local-identity.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-18T23:42:52Z",
+  "source_command": "uv run --isolated python scripts/check_image_provenance.py --live --json",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "engine_available": true,
+    "native_linux_release_host": false,
+    "measurement_scope": "local Docker RepoDigests identity only"
+  },
+  "status": "pass",
+  "images": [
+    {
+      "id": "team-runner",
+      "ref_env": "AIAT_TEAM_RUNNER_IMAGE_REF",
+      "image_ref": "mas/team-runner:dev",
+      "expected_digest": "sha256:197c8c3daede0d110573d3b97c2cb39ed4c20935b39975acd33de6b8f160a4ff",
+      "observed_digests": [
+        "sha256:197c8c3daede0d110573d3b97c2cb39ed4c20935b39975acd33de6b8f160a4ff"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "redis-acl-init",
+      "ref_env": "AIAT_REDIS_ACL_INIT_IMAGE_REF",
+      "image_ref": "mas/redis-acl-init:dev",
+      "expected_digest": "sha256:f4ca284c69100f32840a2a2f56a03896def3cfd8d662e8cdb547e78c5dc455c5",
+      "observed_digests": [
+        "sha256:f4ca284c69100f32840a2a2f56a03896def3cfd8d662e8cdb547e78c5dc455c5"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "message-router",
+      "ref_env": "AIAT_MESSAGE_ROUTER_IMAGE_REF",
+      "image_ref": "mas/message-router:dev",
+      "expected_digest": "sha256:eae67e1e269531ab808f1ff63b2998ea5a6c3f98144b3c2d9445bd7e33eea017",
+      "observed_digests": [
+        "sha256:eae67e1e269531ab808f1ff63b2998ea5a6c3f98144b3c2d9445bd7e33eea017"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "tool-service-core",
+      "ref_env": "AIAT_TOOL_SERVICE_IMAGE_REF",
+      "image_ref": "mas/tool-service:dev",
+      "expected_digest": "sha256:e7d2b75e9987a9322eeb04ca7351f6c44813ff09395fb9d1dd990f05838eeba4",
+      "observed_digests": [
+        "sha256:e7d2b75e9987a9322eeb04ca7351f6c44813ff09395fb9d1dd990f05838eeba4"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "opencode-runtime",
+      "ref_env": "AIAT_OPENCODE_RUNTIME_IMAGE_REF",
+      "image_ref": "mas/opencode-runtime:dev",
+      "expected_digest": "sha256:030f2d9de77e70d0474d889246a1487b0a76a27100850ad2a5acd033782782ce",
+      "observed_digests": [
+        "sha256:030f2d9de77e70d0474d889246a1487b0a76a27100850ad2a5acd033782782ce"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "orchestrator-api",
+      "ref_env": "AIAT_ORCHESTRATOR_IMAGE_REF",
+      "image_ref": "mas/orchestrator-api:dev",
+      "expected_digest": "sha256:de09a9b303ebbb3464b3a3e41da2c769802889e912b1f754fb9baa3df53781f8",
+      "observed_digests": [
+        "sha256:de09a9b303ebbb3464b3a3e41da2c769802889e912b1f754fb9baa3df53781f8"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "pm-gateway",
+      "ref_env": "AIAT_PM_GATEWAY_IMAGE_REF",
+      "image_ref": "mas/pm-gateway:dev",
+      "expected_digest": "sha256:fba30cb697df410aed14ad3ac0f0af57ff79c29f48b7dbaa19993373a02f36f1",
+      "observed_digests": [
+        "sha256:fba30cb697df410aed14ad3ac0f0af57ff79c29f48b7dbaa19993373a02f36f1"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "dashboard",
+      "ref_env": "AIAT_DASHBOARD_IMAGE_REF",
+      "image_ref": "mas/dashboard:dev",
+      "expected_digest": "sha256:1a7332e82995d2bbdc25b10a9de0c9f098d32ad8f0dafa4ddccbac3977eb1315",
+      "observed_digests": [
+        "sha256:1a7332e82995d2bbdc25b10a9de0c9f098d32ad8f0dafa4ddccbac3977eb1315"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "omniroute",
+      "ref_env": "OMNIROUTE_IMAGE_REF",
+      "image_ref": "diegosouzapw/omniroute:3.8.38",
+      "expected_digest": "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
+      "observed_digests": [
+        "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "litellm",
+      "ref_env": "LITELLM_IMAGE_REF",
+      "image_ref": "ghcr.io/berriai/litellm:main-stable",
+      "expected_digest": "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
+      "observed_digests": [
+        "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95"
+      ],
+      "status": "pass"
+    }
+  ],
+  "evidence_boundary": {
+    "image_identity": "all ten supplied digest references match local RepoDigests",
+    "sbom_status": "not_checked",
+    "scan_status": "not_checked",
+    "source_revision_status": "not_checked",
+    "lock_hash_status": "not_checked",
+    "clean_native_build_status": "not_checked",
+    "provider_failure": "not_observed",
+    "resource_limit_failure": "not_tested",
+    "infrastructure_failure": "not_observed",
+    "harness_configuration_failure": "not_observed",
+    "release_gate_status": "blocked_pending_deployment_artifacts"
+  },
+  "cleanup": {
+    "containers_created": 0,
+    "networks_created": 0,
+    "volumes_created": 0,
+    "cleanup_required": false
+  },
+  "secret_policy": "credentials, environment values, image payloads, and container logs are not retained",
+  "scope": "local identity observation only; does not certify a native release host, clean build, SBOM, vulnerability scan, or deployment",
+  "licence_metadata_is_gate": false,
+  "mutation_performed": false
+}
