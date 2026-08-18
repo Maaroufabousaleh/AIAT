@@ -23,6 +23,12 @@ generated API contract assertions were reconciled to the implemented
 worker-host tables and 135-model/271-operation artifact set. This is a
 contract-test repair only; it does not promote any blocked live release gate.
 
+The same verification pass includes `3edff39`/`35e52e1`: the mail-edge
+relay-verifier and SMTP-gateway boundary fixtures now match the JMAP contract,
+case-safe traceback provenance works on the lowercase workspace path, and the
+mail-edge (11/11) and SMTP-gateway suites pass. External relay certification
+remains an operator-owned gate.
+
 Historical research, live-test ledgers, deployment runbooks, prompts, and
 provider setup guides remain useful evidence or operating references. They do
 not override the target programme. Where a historical document mentions a

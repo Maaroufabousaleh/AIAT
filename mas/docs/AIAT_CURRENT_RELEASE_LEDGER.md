@@ -32,6 +32,12 @@ the model-profile child now has complete 93/93 coverage after bounded removal
 of one unreferenced local smoke fixture. The aggregate remains descriptive and
 does not change **NO-RELEASE**.
 
+The bounded mail-boundary follow-up `3edff39`/`35e52e1` also passes its
+regression scope: the mail-edge relay verifier is covered by 11/11 tests and
+the SMTP-gateway suite passes after the JMAP fixture, traceback-path, and
+unprivileged artifact-test corrections. This does not claim external relay
+delivery, provider outage, or callback evidence.
+
 The recovery regression refresh at `2bc7ca5` reran the local Postgres
 host-execution, concurrent multi-host, host-fencing, lease, and queued-run
 loss checks serially, plus the three-iteration same-host recovery soak.

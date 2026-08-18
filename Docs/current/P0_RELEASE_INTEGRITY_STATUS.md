@@ -35,6 +35,12 @@
   object-store, host-registry, SDK, and API contract slices pass; this is a
   test-contract repair and does not alter the live-gate blockers or
   `NO-RELEASE` decision.
+- The mail-boundary regression slice is green after `3edff39` repaired the
+  JMAP relay-verifier fixture, case-safe SMTP traceback provenance, and
+  unprivileged security-artifact test modelling. The mail-edge suite passes
+  11/11 and the SMTP-gateway suite passes; `35e52e1` records the status. This
+  repairs local evidence/test boundaries only; external relay delivery and
+  provider outage certification remain open.
 - Commit `def4fe9` adds a bounded provider retry boundary to the production
   `GatewayWorkerAdapter`. Its configured live certificate
   [`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)
