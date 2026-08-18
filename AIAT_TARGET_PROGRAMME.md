@@ -993,10 +993,10 @@ with post-delete prefix verification; scalar evidence is retained at
 The retained local MinIO report proves the scoped 8/8 contract on the running
 deployment and is reproducible through
 [`mas/infra/compose/scripts/check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh).
-A deployed MinIO/SeaweedFS adapter still needs provider-specific
-multipart, resource, outage, corruption, benchmark, backup, and restore
-evidence before those capabilities are treated as certified; the bounded
-large-object/concurrency wave is checked but does not close those gates;
+A deployed MinIO/SeaweedFS adapter still needs provider-specific multipart,
+resource, outage, corruption, backup, and restore evidence before those
+capabilities are treated as certified; the bounded large-object/concurrency
+wave is checked but does not close those gates;
 production routing, retention authority, and cutover remain outside this
 rehearsal.
 
