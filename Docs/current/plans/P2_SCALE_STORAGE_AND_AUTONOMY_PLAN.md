@@ -116,6 +116,12 @@
   It proves deterministic preferred-host selection, row-locked fallback,
   idempotent replay, draining/unleased filtering, blocked full capacity,
   connection-reopen read-back, and scoped cleanup without worker dispatch.
+- [x] Bind a durable Worker Run to the AIAT-selected worker-host reservation
+  through migration `0042_worker_run_host_binding` (`08f1610e`; evidence at
+  [`worker_run_host_binding_postgres_evidence.json`](../../../mas/docs/provenance/worker_run_host_binding_postgres_evidence.json)).
+  The binding preserves the worker-plane host lease generation, replays an
+  assignment key safely, settles commit/release transitions, and survives
+  connection reopen; external worker execution remains a separate gate.
 - [x] Add durable host lease-generation fencing and expired-host recovery
   through migration `0039_worker_host_fencing` (`72e59ec`; evidence at
   [`worker_host_recovery_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).

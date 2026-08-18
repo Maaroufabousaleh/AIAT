@@ -290,6 +290,16 @@ recovery are now certified separately; live worker dispatch and Firecracker
 evidence remain separate. Licence metadata remains informational and
 non-gating.
 
+The run-host binding group `08f1610` adds migration
+`0042_worker_run_host_binding` and the maintained
+[`worker_run_host_binding_postgres_evidence.json`](../../mas/docs/provenance/worker_run_host_binding_postgres_evidence.json)
+certificate. It binds a durable Worker Run to the scheduler's worker-plane
+reservation, preserves the host lease generation, enforces run/worker identity,
+replays assignment keys, settles owner-bound commit/release transitions, and
+survives connection reopen. It is assignment authority only: live runtime,
+provider, sandbox, and worker dispatch remain separate; licence metadata is
+informational and non-gating.
+
 The host-fencing/recovery group `72e59ec` adds migration
 `0039_worker_host_fencing` and the maintained
 [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)

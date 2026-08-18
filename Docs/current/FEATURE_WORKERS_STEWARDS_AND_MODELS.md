@@ -531,6 +531,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   fallback, idempotent replay, draining/unleased filtering, blocked full
   capacity, connection-reopen read-back, and cleanup; worker dispatch and
   Firecracker remain open.
+- [x] Bind a durable Worker Run to the selected worker-plane host reservation
+  through migration `0042_worker_run_host_binding` (`08f1610e`; evidence at
+  [`worker_run_host_binding_postgres_evidence.json`](../../mas/docs/provenance/worker_run_host_binding_postgres_evidence.json)).
+  The binding preserves the host lease generation, enforces run/worker
+  identity, supports assignment-key replay and owner-bound commit/release
+  settlement, and survives connection reopen; it does not invoke a runtime or
+  provider.
 - [x] Add durable host lease-generation fencing and expired-host recovery
   (`72e59ec`, migration `0039_worker_host_fencing`; evidence at
   [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
