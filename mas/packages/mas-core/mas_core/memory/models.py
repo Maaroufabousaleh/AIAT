@@ -689,6 +689,30 @@ worker_hosts = sa.Table(
     sa.CheckConstraint("priority >= 0", name="ck_worker_hosts_priority"),
 )
 
+# ── 19b. worker_host_reservations ────────────────────────────────────────────
+# Reservations are separate from host capacity totals so commit/release can
+# remain auditable and idempotent without rewriting the host's reported facts.
+worker_host_reservations = sa.Table(
+    "worker_host_reservations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("host_id", sa.UUID(), sa.ForeignKey("worker_hosts.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("reservation_key", sa.Text(), nullable=False),
+    sa.Column("owner", sa.Text(), nullable=False),
+    sa.Column("resource_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("state", sa.Text(), nullable=False, server_default="RESERVED"),
+    sa.Column("lease_expires_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("committed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("released_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("reservation_key", name="uq_worker_host_reservation_key"),
+    sa.CheckConstraint(
+        "state IN ('RESERVED', 'COMMITTED', 'RELEASED', 'EXPIRED')",
+        name="ck_worker_host_reservation_state",
+    ),
+)
+
 # ── 20a. evaluation_reports ──────────────────────────────────────────────────
 evaluation_reports = sa.Table(
     "evaluation_reports",
