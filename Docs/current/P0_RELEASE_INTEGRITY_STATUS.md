@@ -41,6 +41,13 @@
   11/11 and the SMTP-gateway suite passes; `35e52e1` records the status. This
   repairs local evidence/test boundaries only; external relay delivery and
   provider outage certification remain open.
+- The optional Microsoft Agent Framework profile was freshly installed and
+  re-certified in `9bde609`: the isolated MAF `1.13.0`/MCP `1.29.0` probe and
+  focused adapter/compatibility/certification regressions pass, with one fake
+  client call, bounded completion, health/shutdown verification, and no
+  provider calls or mutation. The production workspace remains on MCP
+  `1.23.3`; default-profile/provider activation is still blocked and this
+  evidence does not advance live worker, sandbox, canary, or rollback gates.
 - Commit `def4fe9` adds a bounded provider retry boundary to the production
   `GatewayWorkerAdapter`. Its configured live certificate
   [`gateway_worker_provider_recovery_live.json`](../../mas/docs/provenance/gateway_worker_provider_recovery_live.json)

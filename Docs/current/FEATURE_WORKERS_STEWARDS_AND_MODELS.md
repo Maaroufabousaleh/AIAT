@@ -667,7 +667,8 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   missing-client, and missing-instructions paths. The locked compatibility
   contract records `agent-framework==1.13.0` with MCP `>=1.27,<2`; the isolated
   profile pins MAF `1.13.0` plus MCP `1.29.0` and passes the real adapter with a
-  local fake client. The secret-safe evidence is
+  local fake client; evidence was refreshed from a clean operator-owned
+  profile in `9bde609`. The secret-safe evidence is
   [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json).
   The current workspace MCP pin remains `1.23.3`, so default-profile/provider
   activation remains blocked.

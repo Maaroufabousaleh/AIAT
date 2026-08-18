@@ -30,6 +30,14 @@ host-fencing, lease, and queued-run loss certificates reproducible with
 payload-free, zero-residue evidence. Independent hosts, gVisor/Firecracker,
 provider outage, clean-host, and disaster-recovery gates remain open.
 
+The optional Microsoft Agent Framework profile was freshly installed and
+re-certified in an operator-owned `.venv-maf` (`9bde609`): MAF `1.13.0` with
+MCP `1.29.0` imports, completes the bounded fake-client adapter probe, and
+verifies health/shutdown with no provider calls or mutation. The production
+workspace remains intentionally on MCP `1.23.3`, so default-profile/provider
+activation is still blocked and this refresh advances only the isolated
+profile evidence.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated
@@ -1244,10 +1252,11 @@ Required outcomes:
 The OpenCode sandbox increment (`2c098f5`) extends that readiness contract to the AIAT-owned Compose runtime: internal-only network, no host publication, non-root/read-only execution, capability drop, no-new-privileges, bounded resources, and noexec/nosuid tmpfs are now statically checked. gVisor registration/smoke, network denial, canary, upstream finding disposition, live worker-run, and rollback evidence remain open.
 
 **Progress:** checked-in worker/runtime declarations and a deterministic 39-row certification matrix are reconciled; the worker readiness/binding group `4c5fd68` now includes deterministic generation of the 39-row matrix, 15-slot default binding reconciliation, and static plus local Compose runtime-import checks; regression coverage for generated matrix parity and exact 39-manifest coverage is committed as `a62ddb7`; the new `scripts/check_default_worker_bindings.py --json` contract also reconciles all 15 documented default worker slots with their intended runtime, adapter, transport, isolation, capability, and tool bindings; the shared universal conformance suite now exercises native, LangGraph, and CrewAI bridge adapters; the MAF compatibility, deterministic code-review catalogue, and scanner-alias policy group is committed as `fc528a8`; it provides a fail-closed `agent-framework==1.13.0`/MCP `>=1.27,<2` preflight, the local reviewer default, exact-pin external candidate metadata, and Semgrep/SkillSpector/TruffleHog aliases behind the shared sandbox boundary; the current workspace MCP `1.23.3` and missing optional MAF package are surfaced as activation blockers; `scripts/check_worker_runtime_readiness.py --live --json --compose-local` now probes the running orchestrator image and confirms required LangGraph/CrewAI imports without certifying workers; the reproducible `runtime-default` source/lock/Dockerfile contract and deterministic LangGraph/CrewAI adapter conformance fixtures are committed as `9a10a4b`; `scripts/check_runtime_install_profile.py` reconciles the default LangGraph/CrewAI extra, `uv.lock`, runtime-catalogue imports, and production Dockerfile install command; `scripts/check_worker_steward_contract.py` runs the real steward domain through candidate, compatibility-matrix, staged rollout, and rollback transitions for both externally sourced default workers; certification records compatibility evidence in the same-process steward cache and durable store, while API restart rehydrates persisted rows with profile/capability-shape normalization; the fail-closed `scripts/check_sandbox_runtime_readiness.py` contract and tests are committed as `a24c554`, reconciling all 39 declarations and requiring `runsc` for external workers; `fe6fb8d` adds the deterministic real-controller worker-run lifecycle fixture for checkpoint persistence, pause/resume, cold cancellation/crash normalization, lease expiry/requeue, and artifact/usage ordering; and the bounded `scripts/check_runtime_benchmarks.py --live --json` probe now sends valid deterministic configs, runs package imports off-loop, and passed both LangGraph and CrewAI in the retained [`runtime_benchmarks_live.json`](mas/docs/provenance/runtime_benchmarks_live.json) report. Commit `5553b19` adds the read-only `aiat.worker-run-readiness.v1` preflight for one explicitly selected model-backed worker/project; its fixture passes, while the current local live selection is blocked by inactive workers, a terminal project, missing immutable worker pointers, and a missing company assignment. The lifecycle fixture and readiness preflight remain explicit boundaries: no live worker run, identity provisioning, sandbox runtime, canary, or rollback evidence is claimed. Optional MAF installation/canary, external review-adapter pins, gVisor smoke/network, live worker-run, and rollback evidence remain open.
-For this phase, `b937a89` completes installation and deterministic adapter
-certification in the isolated optional profile. The remaining MAF item in the
-summary above is the default-profile/provider-backed canary and activation
-gate; the production workspace MCP pin is intentionally not upgraded.
+For this phase, `b937a89` completes the profile implementation and `9bde609`
+refreshes installation and deterministic adapter certification in the isolated
+optional profile. The remaining MAF item in the summary above is the
+default-profile/provider-backed canary and activation gate; the production
+workspace MCP pin is intentionally not upgraded.
 
 The worker-readiness hardening `2eea80a` makes unavailable or malformed
 selected-worker health responses explicit `read_worker_health_unavailable`
@@ -1318,9 +1327,9 @@ Required outcomes:
   unavailable evidence as blocked, and retains a live LangGraph/CrewAI pass;
   dependency dry-runs do not count as worker canaries or live project runs;
 - [x] Microsoft Agent Framework has an exact lock, fail-closed preflight, and a
-  certified isolated profile (`b937a89`); the default workspace pin remains
-  `mcp==1.23.3`, while provider configuration, model-backed canary, and live
-  activation remain open;
+  freshly re-certified isolated profile (`b937a89`, evidence refresh
+  `9bde609`); the default workspace pin remains `mcp==1.23.3`, while provider
+  configuration, model-backed canary, and live activation remain open;
 - [x] Code review has a deterministic local default and exact-pin catalogue;
   external candidate source/revision/version evidence remains open;
 - OpenCode coding/testing fully coherent; OpenHands core remains optional;
