@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-18
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), and gateway failure classification hardening (`b2ae516`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), and bounded host-executor/gateway composition (`38c99f4`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 
 Commit `6ebb12c` adds a real `GatewayWorkerAdapter`/`WorkerRunController`
 composition certificate. The bounded local fixture evaluates scalar worker
@@ -11,6 +11,15 @@ It is retained at
 [`gateway_worker_mail_edge_fixture.json`](../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json)
 and deliberately does not claim durable provider read-back, external provider
 execution, live mail delivery, sandbox, or host certification.
+Commit `38c99f4` adds a bounded host-composition certificate. It drives the
+real `WorkerHostExecutor`, `WorkerRunController`, and `GatewayWorkerAdapter`
+through committed worker-plane admission, queued-run claim, exact fixture
+model/usage attribution, terminal settlement, and binding release. The
+payload-free report includes native worker/model spans, usage, and a synthetic
+bounded artifact pointer without persisting generated content. It is retained
+at [`gateway_worker_host_fixture.json`](../../mas/docs/provenance/gateway_worker_host_fixture.json)
+and remains in-memory fixture evidence only: no durable host, external
+provider, independent host, sandbox, or live recovery claim is made.
 The fenced host-loss queue-recovery group `893293a` now extends the local
 worker-plane evidence: host-filtered fencing expires only the reserved lost
 host, the canonical Worker Run recovery loop requeues the expired claim, a
@@ -209,6 +218,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   never copy provider response text or credentials (`b2ae516`). Focused tests
   cover transient, permanent, and pre-dispatch input paths; live provider
   recovery remains a separate gate.
+- `scripts/check_gateway_worker_host_fixture.py` (`38c99f4`) drives the real
+  `WorkerHostExecutor`/`WorkerRunController`/`GatewayWorkerAdapter` chain over
+  bounded in-memory binding and storage doubles. It proves committed
+  worker-plane admission, claim, exact fixture model/usage attribution,
+  terminal settlement, binding release, and payload-free scalar trace coverage;
+  the artifact row is an explicit synthetic report pointer, not generated
+  output. Evidence is retained at
+  [`gateway_worker_host_fixture.json`](../../mas/docs/provenance/gateway_worker_host_fixture.json).
+  This is not durable host, external provider, independent-host, sandbox, or
+  live recovery certification.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).

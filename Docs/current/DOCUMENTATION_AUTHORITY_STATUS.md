@@ -100,6 +100,16 @@ exception-type metadata. Focused tests cover each classification without
 copying provider response text or credentials; live provider recovery remains
 open.
 
+Commit `38c99f4` adds the maintained bounded host-composition certificate. It
+drives the real `WorkerHostExecutor`, `WorkerRunController`, and
+`GatewayWorkerAdapter` through an in-memory committed worker-plane binding,
+claim, exact fixture model/usage attribution, terminal settlement, release,
+and payload-free scalar trace coverage. Its artifact row is a synthetic
+report pointer only; the evidence makes no durable host, external provider,
+independent-host, sandbox, or live recovery claim. The certificate is indexed
+in the roadmap and retained at
+[`gateway_worker_host_fixture.json`](../../mas/docs/provenance/gateway_worker_host_fixture.json).
+
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
 startup reconciliation and `AgentConfig`/health propagation (`569231f`),

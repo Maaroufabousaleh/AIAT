@@ -203,6 +203,14 @@
   terminal provider rejections. Error details are bounded to status/cause type
   metadata and focused tests cover all three paths. This hardens the local
   recovery boundary but does not claim live provider recovery.
+- [x] Certify the gateway worker through the bounded host-executor boundary
+  (`38c99f4`). The real `WorkerHostExecutor`, `WorkerRunController`, and
+  `GatewayWorkerAdapter` admit a committed in-memory worker-plane binding,
+  claim the queued run, record exact fixture model/usage attribution, settle
+  terminal state, release the binding, and pass payload-free scalar trace
+  coverage. The retained artifact is a synthetic report pointer, not model
+  output; durable host storage, external provider dispatch, independent hosts,
+  sandbox execution, and live recovery remain open.
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports

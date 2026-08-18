@@ -76,6 +76,15 @@ observations to the independent join evaluator. Evidence is
 [`gateway_worker_mail_edge_fixture.json`](../../mas/docs/provenance/gateway_worker_mail_edge_fixture.json).
 This is local fixture composition only; durable provider read-back, external
 provider execution, live worker dispatch, and sandbox evidence remain open.
+`38c99f4` adds a companion host-composition certificate. The real
+`WorkerHostExecutor`, `WorkerRunController`, and `GatewayWorkerAdapter` run
+through a committed in-memory worker-plane binding, claim and terminal
+settlement, exact fixture model/usage attribution, release, and scalar
+worker/model trace sources. A synthetic artifact pointer supplies the artifact
+source without generated content; the certificate is retained at
+[`gateway_worker_host_fixture.json`](../../mas/docs/provenance/gateway_worker_host_fixture.json).
+It remains bounded local fixture evidence and does not claim durable host,
+external provider, independent-host, sandbox, or live recovery behavior.
 `f8829d6` adds an operator-only `GET /observability/retention/plan` read model,
 generated contracts, and `check_trace_retention.py --live`. `b3fca97` makes
 the response a typed Pydantic/OpenAPI model with bounded counts and candidate
@@ -196,6 +205,14 @@ produces exact fixture provider/model usage, while scalar worker sources and
 verified delivery/bounce observations are evaluated together. Its report is
 payload-free and non-mutating; it does not upgrade the join to durable provider
 callback, external provider, live worker, or sandbox evidence.
+
+The host-composition certificate (`38c99f4`) extends that local evidence to the
+AIAT host boundary without changing the evaluator contract. It observes native
+worker/model spans, worker usage, and a bounded synthetic artifact pointer
+after real host admission, claim, controller settlement, and release. The
+report is payload-free and explicitly in-memory; durable host storage,
+external-provider callbacks, independent hosts, sandbox execution, and live
+recovery remain separate evidence boundaries.
 
 The durable worker-run evidence slice is now separately certified by
 [`scripts/check_worker_run_postgres_evidence.py`](../../mas/scripts/check_worker_run_postgres_evidence.py)
