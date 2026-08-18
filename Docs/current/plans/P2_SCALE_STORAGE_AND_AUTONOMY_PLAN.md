@@ -173,12 +173,14 @@
   and scoped cleanup. It uses local fixture identifiers and does not claim an
   external provider call, provider-backed recovery, independent hosts, or a
   hardened sandbox.
-- [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`)
+- [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
+  route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports
   92/94 approved covered profile versions, and `/v1/models` exposes all five
   AIAT aliases; no completion request, provider call, routing mutation, or
   activation decision is included. Evidence is
-  [`model_profile_catalogue_live.json`](../../../mas/docs/provenance/model_profile_catalogue_live.json).
+  [`model_profile_catalogue_live.json`](../../../mas/docs/provenance/model_profile_catalogue_live.json)
+  and [`model_gateway_readiness_live.json`](../../../mas/docs/provenance/model_gateway_readiness_live.json).
 - [ ] Prove external provider-backed model dispatch on the worker plane,
   multi-host Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
