@@ -22,6 +22,10 @@ SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_object_store_b
 def test_benchmark_config_rejects_unbounded_payloads() -> None:
     with pytest.raises(ValueError, match="16 MiB"):
         ObjectStoreBenchmarkConfig(payload_sizes=(16 * 1024 * 1024 + 1,))
+    with pytest.raises(ValueError, match="concurrency"):
+        ObjectStoreBenchmarkConfig(concurrency=0)
+    with pytest.raises(ValueError, match="64 MiB"):
+        ObjectStoreBenchmarkConfig(payload_sizes=(16 * 1024 * 1024,), concurrency=5)
 
 
 @pytest.mark.asyncio
@@ -39,6 +43,27 @@ async def test_fixture_benchmark_reads_back_checksums_and_cleans_objects() -> No
     assert report.error_count == 0
     assert [row["size_bytes"] for row in report.rows] == [32, 128]
     assert all(row["status"] == "pass" for row in report.rows)
+    assert report.cleanup_verified is True
+    assert await store.list_objects(config.project_id, bucket=config.bucket) == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_large_benchmark_is_bounded_and_cleans_objects() -> None:
+    store = InMemoryObjectStore()
+    config = ObjectStoreBenchmarkConfig(
+        payload_sizes=(64, 128 * 1024),
+        project_id="benchmark-concurrent-project",
+        concurrency=3,
+    )
+
+    report = await run_object_store_benchmark(store, provider="fixture", config=config)
+
+    assert report.status == "pass"
+    assert report.error_count == 0
+    assert report.cleanup_verified is True
+    assert len(report.rows) == 6
+    assert len({row["key"] for row in report.rows}) == 6
+    assert {row["concurrency_index"] for row in report.rows} == {0, 1, 2}
     assert await store.list_objects(config.project_id, bucket=config.bucket) == []
 
 
@@ -57,6 +82,12 @@ def test_cli_fixture_is_machine_readable() -> None:
     assert report["status"] == "pass"
     assert report["decision"] == "not_applicable"
     assert report["rows"][0]["size_bytes"] == 32
+    assert report["benchmark_plan"] == {
+        "payload_sizes_bytes": [32],
+        "concurrency": 1,
+        "case_count": 1,
+        "total_payload_bytes": 32,
+    }
 
 
 def test_cli_live_requires_both_provider_configurations() -> None:

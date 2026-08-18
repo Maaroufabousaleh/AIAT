@@ -56,6 +56,12 @@ def _parser() -> argparse.ArgumentParser:
         dest="payload_sizes",
         help="bounded payload size in bytes; repeat to override the defaults",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=int(os.getenv("AIAT_OBJECT_STORE_BENCHMARK_CONCURRENCY", "1")),
+        help="bounded simultaneous cases per payload size (default: 1)",
+    )
     return parser
 
 
@@ -65,7 +71,17 @@ def _config(args: argparse.Namespace) -> ObjectStoreBenchmarkConfig:
         payload_sizes=sizes,
         project_id=str(args.project_id),
         bucket=str(args.bucket),
+        concurrency=int(args.concurrency),
     )
+
+
+def _plan(config: ObjectStoreBenchmarkConfig) -> dict[str, Any]:
+    return {
+        "payload_sizes_bytes": list(config.payload_sizes),
+        "concurrency": config.concurrency,
+        "case_count": len(config.payload_sizes) * config.concurrency,
+        "total_payload_bytes": sum(config.payload_sizes) * config.concurrency,
+    }
 
 
 async def _run_live_provider(
@@ -85,7 +101,7 @@ async def _run_live_provider(
     try:
         await client.connect()
         report = await run_object_store_benchmark(client, provider=name, config=config)
-        return report.as_dict()
+        return {"benchmark_plan": _plan(config), **report.as_dict()}
     except Exception as exc:  # pragma: no cover - external provider boundary
         return {
             "schema_version": SCHEMA,
@@ -98,13 +114,18 @@ async def _run_live_provider(
         await client.close()
 
 
-def _blocked_live_report(missing: list[str]) -> dict[str, Any]:
+def _blocked_live_report(
+    missing: list[str],
+    *,
+    config: ObjectStoreBenchmarkConfig,
+) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "mode": "live",
         "status": "blocked",
         "reason": f"missing live configuration: {', '.join(missing)}",
         "providers": [],
+        "benchmark_plan": _plan(config),
         "decision": "operator_review_required",
         "scope": "disposable benchmark; no provider selection decision",
     }
@@ -118,7 +139,12 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             provider="in-memory-fixture",
             config=config,
         )
-        return {"mode": "fixture", "decision": "not_applicable", **report.as_dict()}
+        return {
+            "mode": "fixture",
+            "decision": "not_applicable",
+            "benchmark_plan": _plan(config),
+            **report.as_dict(),
+        }
 
     provider_inputs = (
         ("minio", args.minio_endpoint, args.minio_access_key, args.minio_secret_key),
@@ -140,7 +166,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if not value
     ]
     if missing:
-        return _blocked_live_report(missing)
+        return _blocked_live_report(missing, config=config)
 
     providers = [
         await _run_live_provider(
@@ -174,6 +200,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": SCHEMA,
         "mode": "live",
         "status": status,
+        "benchmark_plan": _plan(config),
         "providers": providers,
         "comparison": comparison,
         "decision": "operator_review_required",
