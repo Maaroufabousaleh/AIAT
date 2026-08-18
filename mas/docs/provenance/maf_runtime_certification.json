@@ -1,6 +1,6 @@
 {
   "schema_version": "aiat.maf-runtime-certification.v1",
-  "observed_at": "2026-08-17T21:49:01Z",
+  "observed_at": "2026-08-18T23:15:05Z",
   "mode": "isolated-runtime-python",
   "status": "pass",
   "source_command": "uv run --isolated python mas/scripts/check_maf_runtime.py --python <isolated-maf-venv>/bin/python --json",
