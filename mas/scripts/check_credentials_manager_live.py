@@ -94,6 +94,8 @@ def _base_report(*, mode: str, status: str, reason: str | None = None) -> dict[s
         "payload_free": True,
         "secret_free": True,
         "key_material_retained": False,
+        "local_database_access_performed": False,
+        "mutation_performed": False,
         "external_network_access_performed": False,
         "external_provider_mutation_performed": False,
         "licence_metadata_is_gate": False,
@@ -349,6 +351,8 @@ async def _run_live(dsn: str | None) -> dict[str, Any]:
             "remaining_fixture_counts": remaining,
             "errors": errors,
             "credential_names": len(FIXTURE_NAMES),
+            "local_database_access_performed": True,
+            "mutation_performed": bool(cleanup_counts.get("teardown")),
             "provider_managed_kms_note": "No provider-managed KMS/SSE endpoint is configured; this remains a separate operator-selected gate.",
         }
     )
