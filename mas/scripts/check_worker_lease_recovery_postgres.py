@@ -37,7 +37,7 @@ if CORE_ROOT.exists() and str(CORE_ROOT) not in sys.path:
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-lease-recovery-postgres-certification.v1"
-EXPECTED_MIGRATION = "0041_worker_host_planes"
+EXPECTED_MIGRATION = "0042_worker_run_host_binding"
 WORKER_NAME = "aiat-cert-worker-lease-recovery-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 WORKER_REGISTRY_ID = UUID("00000000-0000-4000-a000-000000000961")

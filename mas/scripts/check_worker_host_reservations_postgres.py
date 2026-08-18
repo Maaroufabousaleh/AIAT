@@ -36,7 +36,7 @@ from mas_core.worker_registry.host_reservations import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-reservations-postgres-certification.v1"
-EXPECTED_MIGRATION = "0041_worker_host_planes"
+EXPECTED_MIGRATION = "0042_worker_run_host_binding"
 HOST_ID = "aiat-cert-worker-host-reservations-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-000000000981")
