@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from mas_core.worker_contract.models import ModelProfileReference, WorkerRunRequest
 from mas_core.worker_registry.host_executor import (
     HOST_EXECUTION_SCHEMA,
     HostExecutionRequest,
@@ -84,3 +85,74 @@ def test_executor_rejects_missing_binding_and_exposes_schema() -> None:
 
     assert caught.value.reason_code == "run_host_binding_not_found"
     assert HOST_EXECUTION_SCHEMA == "aiat.worker-host-execution.v1"
+
+
+class _SnapshotStorage:
+    def __init__(self, snapshot: dict[str, object] | None) -> None:
+        self.snapshot = snapshot
+
+    async def get_model_resolution_snapshot(self, _snapshot_id: UUID) -> dict[str, object] | None:
+        return self.snapshot
+
+
+def _model_request(*, snapshot_id: UUID) -> WorkerRunRequest:
+    return WorkerRunRequest(
+        run_id=RUN_ID,
+        idempotency_key="host-model-resolution-test",
+        worker_id=str(WORKER_ID),
+        task_type="model-resolution",
+        requested_model_profile=ModelProfileReference(profile_id="profile-v1"),
+        resolved_model_profile=ModelProfileReference(
+            profile_id="profile-v1",
+            version="v1",
+            exact_model_id="model-v1",
+            resolution_snapshot_id=snapshot_id,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_snapshot_must_match_request_before_claim() -> None:
+    snapshot_id = UUID("00000000-0000-4000-a000-000000000103")
+    executor = WorkerHostExecutor(
+        _SnapshotStorage(
+            {
+                "id": snapshot_id,
+                "requested_profile_id": "profile-v1",
+                "resolved_profile_id": "profile-v1",
+                "resolved_profile_version": "v1",
+                "exact_model_id": "model-v1",
+                "policy_failure_code": None,
+            }
+        )
+    )
+
+    result = await executor._validate_model_resolution(
+        _model_request(snapshot_id=snapshot_id), snapshot_id
+    )
+
+    assert result and result["exact_model_id"] == "model-v1"
+
+
+@pytest.mark.asyncio
+async def test_model_snapshot_mismatch_is_rejected_before_claim() -> None:
+    snapshot_id = UUID("00000000-0000-4000-a000-000000000104")
+    executor = WorkerHostExecutor(
+        _SnapshotStorage(
+            {
+                "id": snapshot_id,
+                "requested_profile_id": "profile-v1",
+                "resolved_profile_id": "profile-v1",
+                "resolved_profile_version": "v2",
+                "exact_model_id": "model-v1",
+                "policy_failure_code": None,
+            }
+        )
+    )
+
+    with pytest.raises(WorkerHostExecutionRejected) as caught:
+        await executor._validate_model_resolution(
+            _model_request(snapshot_id=snapshot_id), snapshot_id
+        )
+
+    assert caught.value.reason_code == "model_resolution_snapshot_reference_mismatch"

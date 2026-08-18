@@ -122,6 +122,77 @@ class WorkerHostExecutor:
         if binding.get("current_host_lease_valid") is not True:
             raise WorkerHostExecutionRejected("run_host_lease_invalid")
 
+    async def _validate_model_resolution(
+        self,
+        worker_request: WorkerRunRequest,
+        model_resolution_snapshot_id: UUID | str | None,
+    ) -> dict[str, Any] | None:
+        """Fail closed when a run carries an inconsistent model snapshot.
+
+        A snapshot is optional for legacy/native workers.  Once a caller
+        supplies one (directly or through the resolved model reference), the
+        host edge requires the immutable control-plane row to exist, be
+        authorized, and agree with the request's selected profile/version and
+        exact model.  This check happens before the Worker Run claim, so a
+        malformed model route cannot consume a host lease or dispatch work.
+        """
+
+        reference = getattr(worker_request, "resolved_model_profile", None)
+        reference_snapshot_id = getattr(reference, "resolution_snapshot_id", None)
+        effective_snapshot_id = model_resolution_snapshot_id or reference_snapshot_id
+        if effective_snapshot_id is None:
+            return None
+        try:
+            normalized_snapshot_id = (
+                effective_snapshot_id
+                if isinstance(effective_snapshot_id, UUID)
+                else UUID(str(effective_snapshot_id))
+            )
+        except (TypeError, ValueError) as exc:
+            raise WorkerHostExecutionRejected("model_resolution_snapshot_invalid") from exc
+        if reference_snapshot_id is not None:
+            try:
+                normalized_reference_id = (
+                    reference_snapshot_id
+                    if isinstance(reference_snapshot_id, UUID)
+                    else UUID(str(reference_snapshot_id))
+                )
+            except (TypeError, ValueError) as exc:
+                raise WorkerHostExecutionRejected("model_resolution_snapshot_invalid") from exc
+            if normalized_reference_id != normalized_snapshot_id:
+                raise WorkerHostExecutionRejected("model_resolution_snapshot_mismatch")
+        getter = getattr(self._storage, "get_model_resolution_snapshot", None)
+        if not callable(getter):
+            raise WorkerHostExecutionRejected("model_resolution_snapshot_unavailable")
+        snapshot = await getter(normalized_snapshot_id)
+        if snapshot is None:
+            raise WorkerHostExecutionRejected("model_resolution_snapshot_not_found")
+        if snapshot.get("policy_failure_code"):
+            raise WorkerHostExecutionRejected("model_resolution_snapshot_not_authorized")
+        required_snapshot_fields = (
+            "requested_profile_id",
+            "resolved_profile_id",
+            "resolved_profile_version",
+            "exact_model_id",
+        )
+        if any(not str(snapshot.get(field) or "").strip() for field in required_snapshot_fields):
+            raise WorkerHostExecutionRejected("model_resolution_snapshot_incomplete")
+        if reference is not None:
+            checks = (
+                ("profile_id", snapshot.get("resolved_profile_id")),
+                ("version", snapshot.get("resolved_profile_version")),
+                ("exact_model_id", snapshot.get("exact_model_id")),
+            )
+            for field, snapshot_value in checks:
+                reference_value = getattr(reference, field, None)
+                if reference_value is not None and str(reference_value) != str(snapshot_value):
+                    raise WorkerHostExecutionRejected("model_resolution_snapshot_reference_mismatch")
+            requested = getattr(worker_request, "requested_model_profile", None)
+            requested_profile_id = getattr(requested, "profile_id", None)
+            if requested_profile_id is not None and str(requested_profile_id) != str(snapshot.get("requested_profile_id")):
+                raise WorkerHostExecutionRejected("model_resolution_snapshot_requested_profile_mismatch")
+        return dict(snapshot)
+
     async def execute(
         self,
         execution_request: HostExecutionRequest,
@@ -163,6 +234,7 @@ class WorkerHostExecutor:
             host_id=host_id,
             worker_registry_id=normalized_worker_registry_id,
         )
+        await self._validate_model_resolution(worker_request, model_resolution_snapshot_id)
         # The binding owner is the host's scoped execution identity.  Reusing
         # it for the Worker Run lease keeps claim and release auditable under
         # one actor without exposing host credentials to the worker runtime.
