@@ -133,7 +133,7 @@ permissions, sandbox, and readiness checks to pass.
 #### Candidate intake and certification
 
 ```text
-DISCOVERED → SOURCE_REVIEW → LICENSE_REVIEW → SECURITY_REVIEW
+DISCOVERED → SOURCE_REVIEW → SECURITY_REVIEW
 → INTERFACE_RESEARCH → GENERATED → CERTIFYING
 → APPROVED | REJECTED | BLOCKED
 ```
@@ -736,7 +736,8 @@ These are separate state machines. The steward itself uses:
 5. `RETIRED`
 
 Each steward may own many immutable candidate intake records. Candidate intake
-uses `DISCOVERED`, `SOURCE_REVIEW`, `LICENSE_REVIEW`, `SECURITY_REVIEW`,
+uses `DISCOVERED`, `SOURCE_REVIEW`, optional `LICENSE_METADATA` (the historical
+`LICENSE_REVIEW` label), and `SECURITY_REVIEW`,
 `INTERFACE_RESEARCH`, `GENERATED`, `CERTIFYING`, and then `APPROVED`,
 `REJECTED`, or `BLOCKED`. Generated skill bundles and adapters have their own
 `DRAFT`, `TESTING`, `CERTIFIED`, `APPROVED`, and `SUPERSEDED` status. A rollout
@@ -749,7 +750,8 @@ Activation must be blocked when:
 
 - provenance is uncertain;
 - the source is not pinned;
-- licensing changed incompatibly;
+- licence metadata is missing or unusual (record an operator notice only; this
+  is never an activation or certification blocker);
 - documentation cannot verify required interfaces;
 - required capabilities cannot be proven;
 - permissions expand unexpectedly;
