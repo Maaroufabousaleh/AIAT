@@ -147,6 +147,13 @@
   the AIAT-owned secret-management boundary only. Provider-managed SSE/KMS,
   external key custody/rotation, clean-host bootstrap, and disaster recovery
   remain independent operator gates.
+- The security/adversarial-isolation rerun at 2026-08-18T23:26:40Z passes the
+  secret-safe review-register contract (316 findings, 54 engine warnings,
+  one explicitly open operator review), scanner aliases, 39-worker sandbox
+  declaration, and the 11-runner live WSL2 network matrix; focused security,
+  sandbox, and network regressions pass 29/29. The technical security gate
+  remains blocked pending the operator's finding dispositions, and native
+  `runsc`/host smoke evidence remains separate.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is

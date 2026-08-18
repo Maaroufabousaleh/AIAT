@@ -45,6 +45,12 @@ memory files. The native contract/regression slice passes; native-Linux
 network, sandbox, image/SBOM, recovery, and provider evidence still require an
 operator-owned release host.
 
+The security/adversarial-isolation rerun (`2026-08-18T23:26:40Z`) passes the
+review-register, scanner-alias, 39-worker sandbox declaration, and 11-runner
+WSL2 network checks, with 29 focused regressions green. It does not close the
+technical gate: 316 external findings, 54 engine warnings, and one open
+operator review remain, while native `runsc`/host smoke evidence is unavailable.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated
