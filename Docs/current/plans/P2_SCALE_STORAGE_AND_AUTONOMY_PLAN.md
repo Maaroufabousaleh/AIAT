@@ -187,7 +187,8 @@
   provider/model usage for attribution. The fixture completes one controller
   run without external provider, network, or sandbox calls; `f6baebc` registers
   the transport in the worker manifest contract, builtin runtime catalogue,
-  and static reconciliation checker. Evidence is
+  and static reconciliation checker, while `cec1e4c` starts/stops the owned
+  gateway client and bounds prompt/message input. Evidence is
   [`gateway_worker_adapter_fixture.json`](../../../mas/docs/provenance/gateway_worker_adapter_fixture.json).
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)

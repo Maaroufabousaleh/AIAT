@@ -66,13 +66,14 @@ hardened sandbox, and independent-host evidence remain open. The evidence is
 indexed in the roadmap and retained at
 [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
 
-The follow-on gateway-worker groups `080ee18` and `f6baebc` add the maintained
+The follow-on gateway-worker groups `080ee18`, `f6baebc`, and `cec1e4c` add the maintained
 `GatewayWorkerAdapter`, `aiat_gateway` transport factory path, deterministic
 fixture checker, manifest/runtime-catalogue/reconciliation registration, and
-evidence for one bounded controller run with exact provider/model usage. It
-deliberately records no external provider call, network mutation, or sandbox
-execution; those live gates remain open. The fixture is indexed in the roadmap
-and retained at
+evidence for one bounded controller run with exact provider/model usage. The
+owned gateway client lifecycle and prompt/message/temperature bounds are
+enforced before dispatch. It deliberately records no external provider call,
+network mutation, or sandbox execution; those live gates remain open. The
+fixture is indexed in the roadmap and retained at
 [`gateway_worker_adapter_fixture.json`](../../mas/docs/provenance/gateway_worker_adapter_fixture.json).
 
 The latest bounded implementation groups are reflected in the maintained
