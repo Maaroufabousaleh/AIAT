@@ -25,10 +25,16 @@ from mas_core.protocols.worker_manifest import WorkerManifest
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKERS_DIR = MAS_ROOT / "workers"
+DEFAULT_COMPOSE = MAS_ROOT / "infra" / "compose" / "docker-compose.yml"
 SANDBOX_SCHEMA = "aiat.sandbox-runtime-readiness.v1"
 ALLOWED_PROFILES = frozenset({"standard", "restricted", "gvisor", "firecracker"})
 ALLOWED_NETWORK_MODES = frozenset({"unrestricted", "egress-allowlist", "egress-deny-all"})
 HARDENED_PROFILES = frozenset({"gvisor", "firecracker"})
+OPENCODE_SERVICE = "opencode-runtime"
+OPENCODE_NETWORK = "internal"
+OPENCODE_MAX_MEMORY_BYTES = 1024 * 1024 * 1024
+OPENCODE_MAX_CPUS = 1.0
+OPENCODE_MAX_PIDS = 256
 
 
 def _sandbox_value(manifest: WorkerManifest, name: str, default: Any = None) -> Any:
@@ -39,7 +45,113 @@ def _sandbox_value(manifest: WorkerManifest, name: str, default: Any = None) -> 
     return default if value is None else value
 
 
-def inspect_static(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]:
+def _service_networks(service: dict[str, Any]) -> set[str]:
+    networks = service.get("networks") or []
+    if isinstance(networks, dict):
+        return {str(name) for name in networks}
+    if isinstance(networks, list):
+        return {str(name) for name in networks}
+    return set()
+
+
+def _memory_bytes(value: Any) -> int | None:
+    if isinstance(value, int) and value > 0:
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    suffixes = (("g", 1024**3), ("m", 1024**2), ("k", 1024))
+    for suffix, multiplier in suffixes:
+        if text.endswith(suffix):
+            try:
+                return int(float(text[:-1]) * multiplier)
+            except ValueError:
+                return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
+    """Validate the AIAT-owned Compose boundary around the untrusted runtime."""
+    errors: list[str] = []
+    try:
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return {"status": "fail", "errors": [f"Compose could not be loaded: {type(exc).__name__}"]}
+    services = compose.get("services") or {}
+    service = services.get(OPENCODE_SERVICE) if isinstance(services, dict) else None
+    if not isinstance(service, dict):
+        return {"status": "fail", "errors": [f"Compose service {OPENCODE_SERVICE!r} is missing"]}
+
+    if _service_networks(service) != {OPENCODE_NETWORK}:
+        errors.append(f"{OPENCODE_SERVICE}: networks must be exactly [{OPENCODE_NETWORK!r}]")
+    if service.get("ports"):
+        errors.append(f"{OPENCODE_SERVICE}: host ports must not be published")
+    if service.get("read_only") is not True:
+        errors.append(f"{OPENCODE_SERVICE}: read_only must be true")
+    user = str(service.get("user") or "").strip().lower()
+    if not user or user in {"0", "0:0", "root", "root:root"}:
+        errors.append(f"{OPENCODE_SERVICE}: runtime user must be non-root")
+    cap_drop = {str(value).upper() for value in (service.get("cap_drop") or [])}
+    if "ALL" not in cap_drop:
+        errors.append(f"{OPENCODE_SERVICE}: cap_drop must include ALL")
+    security_opts = {str(value).lower().replace("=", ":") for value in (service.get("security_opt") or [])}
+    if "no-new-privileges:true" not in security_opts:
+        errors.append(f"{OPENCODE_SERVICE}: no-new-privileges must be enabled")
+    pids_limit = service.get("pids_limit")
+    if not isinstance(pids_limit, int) or not 1 <= pids_limit <= OPENCODE_MAX_PIDS:
+        errors.append(f"{OPENCODE_SERVICE}: pids_limit must be an integer <= {OPENCODE_MAX_PIDS}")
+    memory = _memory_bytes(service.get("mem_limit"))
+    if memory is None or memory > OPENCODE_MAX_MEMORY_BYTES:
+        errors.append(f"{OPENCODE_SERVICE}: mem_limit must be <= 1g")
+    try:
+        cpus = float(service.get("cpus"))
+    except (TypeError, ValueError):
+        cpus = 0.0
+    if cpus <= 0 or cpus > OPENCODE_MAX_CPUS:
+        errors.append(f"{OPENCODE_SERVICE}: cpus must be > 0 and <= {OPENCODE_MAX_CPUS}")
+
+    tmpfs_entries = service.get("tmpfs") or []
+    tmpfs_by_path: dict[str, str] = {}
+    for entry in tmpfs_entries:
+        if isinstance(entry, str):
+            path, _, options = entry.partition(":")
+            tmpfs_by_path[path] = options.lower()
+    for required_path in ("/tmp", "/runtime"):
+        options = tmpfs_by_path.get(required_path)
+        if options is None:
+            errors.append(f"{OPENCODE_SERVICE}: required tmpfs {required_path} is missing")
+            continue
+        if "noexec" not in options or "nosuid" not in options:
+            errors.append(f"{OPENCODE_SERVICE}: tmpfs {required_path} must use noexec and nosuid")
+    for volume in service.get("volumes") or []:
+        if isinstance(volume, str) and "/var/run/docker.sock" in volume:
+            errors.append(f"{OPENCODE_SERVICE}: Docker socket mount is forbidden")
+
+    return {
+        "status": "fail" if errors else "pass",
+        "errors": errors,
+        "service": OPENCODE_SERVICE,
+        "network": sorted(_service_networks(service)),
+        "user": user,
+        "read_only": service.get("read_only") is True,
+        "cap_drop_all": "ALL" in cap_drop,
+        "no_new_privileges": "no-new-privileges:true" in security_opts,
+        "pids_limit": pids_limit,
+        "memory_bytes": memory,
+        "cpus": cpus,
+        "tmpfs_paths": sorted(tmpfs_by_path),
+        "scope": "Compose boundary only; gVisor/Firecracker smoke, canary, and network evidence remain separate",
+    }
+
+
+def inspect_static(
+    *,
+    workers_dir: Path = DEFAULT_WORKERS_DIR,
+    compose_path: Path = DEFAULT_COMPOSE,
+) -> dict[str, Any]:
     errors: list[str] = []
     rows: list[dict[str, Any]] = []
     for path in sorted(workers_dir.glob("*.yaml")):
@@ -75,6 +187,8 @@ def inspect_static(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]
         rows.append(row)
     if not rows:
         errors.append("no worker manifests found")
+    opencode_runtime = _inspect_opencode_runtime(compose_path)
+    errors.extend(str(error) for error in opencode_runtime.get("errors", []))
     return {
         "schema_version": SANDBOX_SCHEMA,
         "mode": "static",
@@ -83,6 +197,8 @@ def inspect_static(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]
         "worker_count": len(rows),
         "hardened_worker_count": sum(row.get("sandbox_profile") in HARDENED_PROFILES for row in rows),
         "workers": rows,
+        "compose": str(compose_path),
+        "opencode_runtime": opencode_runtime,
         "live_scope": "Docker runtime registration; smoke/canary/network evidence is separate",
     }
 
@@ -186,13 +302,14 @@ def inspect_live(*, smoke: bool = False, image: str | None = None, require_firec
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers-dir", type=Path, default=DEFAULT_WORKERS_DIR)
+    parser.add_argument("--compose", type=Path, default=DEFAULT_COMPOSE)
     parser.add_argument("--live", action="store_true", help="inspect the Docker runtime registry")
     parser.add_argument("--smoke", action="store_true", help="run a bounded gVisor smoke command")
     parser.add_argument("--image", help="immutable OCI image for --smoke")
     parser.add_argument("--require-firecracker", action="store_true")
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args(argv)
-    static = inspect_static(workers_dir=args.workers_dir)
+    static = inspect_static(workers_dir=args.workers_dir, compose_path=args.compose)
     report: dict[str, Any] = static
     if args.live:
         report = {
