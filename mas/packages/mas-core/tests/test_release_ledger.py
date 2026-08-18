@@ -69,11 +69,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     }
     evidence_resolution = next(row for row in report["checks"] if row["id"] == "evidence_policy_resolution")
     assert evidence_resolution["status"] == "pass"
-    assert evidence_resolution["summary"] == {
-        "errors": [],
-        "mode": "fixture",
-        "status": "pass",
-    }
+    assert evidence_resolution["summary"]["errors"] == []
+    assert evidence_resolution["summary"]["mode"] == "fixture"
+    assert evidence_resolution["summary"]["status"] == "pass"
+    assert evidence_resolution["summary"]["case_count"] == 7
     external_policy = next(row for row in report["checks"] if row["id"] == "external_account_action_policy")
     assert external_policy["status"] == "pass"
     assert external_policy["summary"] == {
@@ -94,25 +93,36 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
         row for row in report["checks"] if row["id"] == "provider_adapter_http_conformance"
     )
     assert http_conformance["status"] == "pass"
-    assert http_conformance["summary"] == {
-        "errors": [],
-        "mode": "mocked_fixture",
-        "status": "pass",
-    }
+    assert http_conformance["summary"]["errors"] == []
+    assert http_conformance["summary"]["mode"] == "mocked_fixture"
+    assert http_conformance["summary"]["status"] == "pass"
+    assert http_conformance["summary"]["case_count"] == 8
+    assert http_conformance["summary"]["passed_case_count"] == 8
+    identity_conformance = next(
+        row for row in report["checks"] if row["id"] == "identity_provider_conformance"
+    )
+    assert identity_conformance["category"] == "contract"
+    assert identity_conformance["status"] == "pass"
+    assert identity_conformance["summary"]["case_count"] == 11
+    assert identity_conformance["summary"]["passed_case_count"] == 11
+    assert identity_conformance["summary"]["error_count"] == 0
+    assert identity_conformance["summary"]["external_network_access_performed"] is False
+    assert identity_conformance["summary"]["external_provider_mutation_performed"] is False
+    assert identity_conformance["summary"]["payload_free"] is True
     lifecycle = next(row for row in report["checks"] if row["id"] == "external_account_lifecycle")
     assert lifecycle["status"] == "pass"
-    assert lifecycle["summary"] == {
-        "errors": [],
-        "mode": "fixture",
-        "status": "pass",
-    }
+    assert lifecycle["summary"]["errors"] == []
+    assert lifecycle["summary"]["mode"] == "fixture"
+    assert lifecycle["summary"]["status"] == "pass"
+    assert lifecycle["summary"]["case_count"] == 8
+    assert lifecycle["summary"]["passed_case_count"] == 8
     outbound = next(row for row in report["checks"] if row["id"] == "outbound_mail_lifecycle")
     assert outbound["status"] == "pass"
-    assert outbound["summary"] == {
-        "errors": [],
-        "mode": "fixture",
-        "status": "pass",
-    }
+    assert outbound["summary"]["errors"] == []
+    assert outbound["summary"]["mode"] == "fixture"
+    assert outbound["summary"]["status"] == "pass"
+    assert outbound["summary"]["case_count"] == 6
+    assert outbound["summary"]["passed_case_count"] == 6
     lifecycle = next(row for row in report["checks"] if row["id"] == "worker_run_lifecycle")
     assert lifecycle["status"] == "pass"
     assert lifecycle["summary"]["mode"] == "fixture"
@@ -135,11 +145,11 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
         row for row in report["checks"] if row["id"] == "self_improvement_candidate_detection"
     )
     assert candidates["status"] == "pass"
-    assert candidates["summary"] == {
-        "errors": [],
-        "mode": "fixture",
-        "status": "pass",
-    }
+    assert candidates["summary"]["errors"] == []
+    assert candidates["summary"]["mode"] == "fixture"
+    assert candidates["summary"]["status"] == "pass"
+    assert candidates["summary"]["case_count"] == 6
+    assert candidates["summary"]["passed_case_count"] == 6
     flow_semantics = next(row for row in report["checks"] if row["id"] == "flow_execution_semantics")
     assert flow_semantics["status"] == "pass"
     flow_binding = next(row for row in report["checks"] if row["id"] == "flow_worker_binding")
