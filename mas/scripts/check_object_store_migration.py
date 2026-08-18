@@ -214,7 +214,11 @@ async def _run_live(args: argparse.Namespace) -> dict[str, Any]:
     )
     missing = [name for name, value in required if not value]
     if missing:
-        return _blocked_live(f"missing live configuration: {', '.join(missing)}", missing=missing)
+        return _blocked_live(
+            "provider-specific migration environment is not configured; "
+            f"missing live configuration: {', '.join(missing)}",
+            missing=missing,
+        )
     if not args.seed_fixture:
         return _blocked_live("--seed-fixture is required for the bounded live rehearsal")
     if not args.confirm_cutover or not args.confirm_rollback:
