@@ -27,6 +27,11 @@ personal/internal instance. Technical source integrity, version, security,
 sandbox, privacy, compatibility, budget, approval, and recovery evidence
 remain independent controls.
 
+The archival [`deep-research-report.md`](../../deep-research-report.md) was
+reconciled in the current documentation pass: its former legal-risk appendix
+now redirects exact resource terms and notices to the provenance catalogue,
+and its technical comparison remains design input only.
+
 ## Machine-checked status
 
 The current workspace reports:
