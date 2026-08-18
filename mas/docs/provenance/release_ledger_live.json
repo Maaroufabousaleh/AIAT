@@ -1,19 +1,19 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T16:39:05Z",
+  "observed_at": "2026-08-18T16:58:17Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
     "total": 77,
-    "pass": 66,
+    "pass": 67,
     "fail": 0,
-    "blocked": 11
+    "blocked": 10
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "11 check(s) are externally blocked",
+    "10 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
@@ -115,6 +115,16 @@
     "profile_coverage": "pending_persisted_profile_bindings",
     "alias_reconciliation": "passed: aiat/omniroute-coding reconciles to the canonical litellm/omniroute-coding registry entry",
     "note": "The approved-coverage requirement is met. One operator-owned stale persisted profile row (local/test-model-1) remains an explicit reconciliation finding; no dispatch or provider call was performed."
+  },
+  "local_credentials_manager_evidence": {
+    "status": "pass",
+    "ref": "credentials_manager_live_evidence.json",
+    "mode": "compose-local-live",
+    "checks_passed": 12,
+    "cleanup_verified": true,
+    "remaining_fixture_counts": 0,
+    "provider_managed_kms_status": "not_configured",
+    "note": "The AIAT-owned Postgres credentials boundary passes through the private Compose API container; provider-managed KMS remains a separate operator-selected gate."
   },
   "notices": [
     "Blocked live checks are not treated as passes.",

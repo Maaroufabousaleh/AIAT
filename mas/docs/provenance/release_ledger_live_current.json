@@ -71,11 +71,11 @@
   ],
   "historical_configured_profile": {
     "ref": "release_ledger_live.json",
-    "observed_at": "2026-08-18T16:39:05Z",
+    "observed_at": "2026-08-18T16:58:17Z",
     "total": 77,
-    "pass": 66,
+    "pass": 67,
     "fail": 0,
-    "blocked": 11,
+    "blocked": 10,
     "pending": 4,
     "note": "Latest configured Compose aggregation with operator environment supplied without output; model/profile alias reconciliation is refreshed separately and the aggregate remains descriptive rather than a release approval."
   },
@@ -88,7 +88,7 @@
     "measurement_source": "procfs",
     "cleanup_verified": true,
     "invalid_run_excluded": true,
-    "aggregate_live_child_status": "blocked_missing_configuration"
+    "aggregate_live_child_status": "pass"
   },
   "secret_management_live_evidence": {
     "status": "pass",
