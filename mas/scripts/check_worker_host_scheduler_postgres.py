@@ -41,7 +41,7 @@ from mas_core.worker_registry.host_scheduler import (  # noqa: E402
 from mas_core.worker_registry.placement import WorkerPlacementRequest  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-host-scheduler-postgres-certification.v1"
-EXPECTED_MIGRATION = "0038_worker_host_reservations"
+EXPECTED_MIGRATION = "0039_worker_host_fencing"
 HOST_PREFIX = "aiat-cert-worker-host-scheduler-v1-"
 HOST_A = f"{HOST_PREFIX}a"
 HOST_B = f"{HOST_PREFIX}b"
@@ -165,14 +165,14 @@ async def _register_hosts(registry: WorkerHostRegistry) -> None:
         },
         "metadata": {"fixture": "worker-host-scheduler"},
     }
-    await registry.register_host(
+    registered_a = await registry.register_host(
         host_id=HOST_A,
         host_uuid=HOST_UUID_A,
         registration_token=TOKEN_A,
         priority=2,
         **common,
     )
-    await registry.register_host(
+    registered_b = await registry.register_host(
         host_id=HOST_B,
         host_uuid=HOST_UUID_B,
         registration_token=TOKEN_B,
@@ -194,8 +194,18 @@ async def _register_hosts(registry: WorkerHostRegistry) -> None:
         priority=4,
         **common,
     )
-    await registry.heartbeat(host_id=HOST_A, registration_token=TOKEN_A, lease_seconds=120)
-    await registry.heartbeat(host_id=HOST_B, registration_token=TOKEN_B, lease_seconds=120)
+    await registry.heartbeat(
+        host_id=HOST_A,
+        registration_token=TOKEN_A,
+        lease_generation=registered_a["lease_generation"],
+        lease_seconds=120,
+    )
+    await registry.heartbeat(
+        host_id=HOST_B,
+        registration_token=TOKEN_B,
+        lease_generation=registered_b["lease_generation"],
+        lease_seconds=120,
+    )
 
 
 def _schedule_request(*, key: str, reservation_id: UUID | None = None) -> HostScheduleRequest:
@@ -240,7 +250,6 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         registry = WorkerHostRegistry(storage)
         ledger = HostCapacityReservationLedger(storage)
         await _register_hosts(registry)
-        await registry.heartbeat(host_id=HOST_A, registration_token=TOKEN_A, lease_seconds=120)
         blocker = await ledger.reserve(
             host_id=HOST_A,
             reservation_id=RESERVATION_BLOCKER,

@@ -111,6 +111,7 @@ def public_reservation(
         "id": row.get("id"),
         "host_uuid": row.get("host_id"),
         "host_id": host_key,
+        "host_lease_generation": int(row.get("host_lease_generation") or 1),
         "reservation_key": str(row.get("reservation_key") or ""),
         "owner": str(row.get("owner") or ""),
         "resources": dict(row.get("resource_json") or {}),
@@ -148,7 +149,11 @@ class HostCapacityReservationLedger:
         for_update: bool = True,
     ) -> Mapping[str, Any] | None:
         query = (
-            sa.select(t.worker_host_reservations, t.worker_hosts.c.host_id.label("host_key"))
+            sa.select(
+                t.worker_host_reservations,
+                t.worker_hosts.c.host_id.label("host_key"),
+                t.worker_hosts.c.lease_generation.label("current_lease_generation"),
+            )
             .select_from(
                 t.worker_host_reservations.join(
                     t.worker_hosts,
@@ -212,6 +217,23 @@ class HostCapacityReservationLedger:
                     or existing_request != request
                 ):
                     raise ReservationRejected("reservation_key_conflict")
+                existing_generation = int(existing.get("host_lease_generation") or 1)
+                current_generation = int(host.get("lease_generation") or 1)
+                if (
+                    existing["state"] in ACTIVE_STATES
+                    and existing_generation != current_generation
+                ):
+                    await connection.execute(
+                        t.worker_host_reservations.update()
+                        .where(t.worker_host_reservations.c.id == existing["id"])
+                        .values(state="EXPIRED", released_at=now, lease_expires_at=None)
+                    )
+                    existing = {
+                        **dict(existing),
+                        "state": "EXPIRED",
+                        "released_at": now,
+                        "lease_expires_at": None,
+                    }
                 return public_reservation(
                     {**dict(existing), "host_key": host_key},
                     host_key=host_key,
@@ -231,6 +253,8 @@ class HostCapacityReservationLedger:
                         sa.and_(
                             t.worker_host_reservations.c.host_id == host["id"],
                             t.worker_host_reservations.c.state.in_(ACTIVE_STATES),
+                            t.worker_host_reservations.c.host_lease_generation
+                            == (host.get("lease_generation") or 1),
                         )
                     )
                     .with_for_update()
@@ -250,6 +274,7 @@ class HostCapacityReservationLedger:
                 t.worker_host_reservations.insert().values(
                     id=row_id,
                     host_id=host["id"],
+                    host_lease_generation=int(host.get("lease_generation") or 1),
                     reservation_key=reservation_key_value,
                     owner=actor,
                     resource_json=request,
@@ -286,6 +311,15 @@ class HostCapacityReservationLedger:
             if row["owner"] != actor:
                 raise PermissionError("reservation owner mismatch")
             state = str(row["state"])
+            reservation_generation = int(row.get("host_lease_generation") or 1)
+            current_generation = int(row.get("current_lease_generation") or 1)
+            if state in ACTIVE_STATES and reservation_generation != current_generation:
+                await connection.execute(
+                    t.worker_host_reservations.update()
+                    .where(t.worker_host_reservations.c.id == reservation_id)
+                    .values(state="EXPIRED", released_at=now, lease_expires_at=None)
+                )
+                raise ReservationRejected("host_lease_generation_mismatch")
             if state == target or (state in {"RELEASED", "EXPIRED"} and target == "RELEASED"):
                 return public_reservation(row, host_key=str(row["host_key"]), now=now, idempotent_replay=True)
             if target == "COMMITTED" and state != "RESERVED":
@@ -410,6 +444,8 @@ class HostCapacityReservationLedger:
                         sa.and_(
                             t.worker_host_reservations.c.host_id == host["id"],
                             t.worker_host_reservations.c.state.in_(ACTIVE_STATES),
+                            t.worker_host_reservations.c.host_lease_generation
+                            == (host.get("lease_generation") or 1),
                         )
                     )
                 )
@@ -419,6 +455,7 @@ class HostCapacityReservationLedger:
         return {
             "host_id": str(host["host_id"]),
             "state": str(host["status"]),
+            "host_lease_generation": int(host.get("lease_generation") or 1),
             "total": {
                 "slots": capacity.slots_total,
                 "memory_bytes": capacity.memory_bytes_total,

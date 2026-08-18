@@ -44,7 +44,7 @@ from mas_core.observability.trace_evidence import TraceRetentionPolicy
 
 CHECK_SCHEMA = "aiat.trace-retention-execution-check.v1"
 EVALUATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
-EXPECTED_MIGRATION = "0038_worker_host_reservations"
+EXPECTED_MIGRATION = "0039_worker_host_fencing"
 LIVE_TRACE_ID = "aiat-retention-live-v1-trace"
 LIVE_SPANS = {
     "expired-delete": "aiat-retention-live-v1-expired-delete",

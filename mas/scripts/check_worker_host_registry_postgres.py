@@ -34,7 +34,7 @@ from mas_core.worker_registry.host_registry import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-registry-postgres-certification.v1"
-EXPECTED_MIGRATION = "0037_worker_host_registry"
+EXPECTED_MIGRATION = "0039_worker_host_fencing"
 HOST_ID = "aiat-cert-worker-host-registry-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-000000000971")
@@ -187,6 +187,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             await registry.heartbeat(
                 host_id=HOST_ID,
                 registration_token=WRONG_TOKEN,
+                lease_generation=registered["lease_generation"],
             )
         except PermissionError:
             wrong_heartbeat_rejected = True
@@ -194,6 +195,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         heartbeat = await registry.heartbeat(
             host_id=HOST_ID,
             registration_token=TOKEN,
+            lease_generation=registered["lease_generation"],
             lease_seconds=90,
         )
         snapshot = (await registry.list_placement_snapshots())[0]

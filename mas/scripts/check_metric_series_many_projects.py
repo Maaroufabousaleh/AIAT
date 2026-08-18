@@ -56,7 +56,7 @@ from mas_core.observability.metrics import (  # noqa: E402
 from mas_core.workflow.states import ProjectState  # noqa: E402
 
 CHECK_SCHEMA = "aiat.metric-series-many-project-certification.v1"
-EXPECTED_MIGRATION = "0038_worker_host_reservations"
+EXPECTED_MIGRATION = "0039_worker_host_fencing"
 PROJECT_PREFIX = "aiat-cert-metric-many-project-v1-"
 PROJECT_PREFIX_PATTERN = f"{PROJECT_PREFIX}%"
 FIXTURE_CREATED_BY = "aiat-metric-evidence-fixture"

@@ -36,7 +36,7 @@ from mas_core.worker_registry.host_reservations import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-reservations-postgres-certification.v1"
-EXPECTED_MIGRATION = "0038_worker_host_reservations"
+EXPECTED_MIGRATION = "0039_worker_host_fencing"
 HOST_ID = "aiat-cert-worker-host-reservations-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-000000000981")
@@ -173,7 +173,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             }
         cleanup_before = await _cleanup(storage)
         first_counts = await _counts(storage)
-        await registry.register_host(
+        registered = await registry.register_host(
             host_id=HOST_ID,
             host_uuid=HOST_UUID,
             registration_token=TOKEN,
@@ -192,7 +192,12 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             priority=1,
             metadata={"fixture": "host-reservations"},
         )
-        await registry.heartbeat(host_id=HOST_ID, registration_token=TOKEN, lease_seconds=120)
+        await registry.heartbeat(
+            host_id=HOST_ID,
+            registration_token=TOKEN,
+            lease_generation=registered["lease_generation"],
+            lease_seconds=120,
+        )
         mutation_performed = True
 
         reservation_a = await ledger.reserve(

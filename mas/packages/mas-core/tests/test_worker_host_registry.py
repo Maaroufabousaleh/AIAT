@@ -32,6 +32,7 @@ def _row(**overrides: object) -> dict[str, object]:
             "gpu_used": 0,
         },
         "priority": 2,
+        "lease_generation": 7,
         "lease_owner": "host-a",
         "lease_expires_at": now + timedelta(minutes=1),
         "heartbeat_at": now,
@@ -52,6 +53,7 @@ def test_public_host_projection_removes_credential_material() -> None:
     assert "auth_token_sha256" not in row
     assert "lease_owner" not in row
     assert row["capacity"]["slots_total"] == 4
+    assert row["lease_generation"] == 7
 
 
 def test_host_snapshot_projection_exposes_placement_profiles() -> None:
@@ -60,6 +62,7 @@ def test_host_snapshot_projection_exposes_placement_profiles() -> None:
     assert row["sandbox_profiles"] == ["gvisor"]
     assert row["isolation_modes"] == ["gvisor"]
     assert row["lease_valid"] is True
+    assert row["lease_generation"] == 7
 
 
 def test_expired_host_lease_is_invalid_without_status_mutation() -> None:

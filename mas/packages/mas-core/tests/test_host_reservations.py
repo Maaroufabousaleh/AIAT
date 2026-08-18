@@ -16,6 +16,7 @@ def _row(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "id": "reservation-row",
         "host_id": "host-row",
+        "host_lease_generation": 4,
         "reservation_key": "run-1",
         "owner": "scheduler",
         "resource_json": {"slots": 1, "memory_bytes": 1024, "gpu_count": 1},
@@ -45,6 +46,7 @@ def test_public_reservation_is_bounded_and_replay_is_explicit() -> None:
     assert row["lease_valid"] is True
     assert row["idempotent_replay"] is True
     assert row["resources"]["gpu_count"] == 1
+    assert row["host_lease_generation"] == 4
     assert "auth_token_sha256" not in row
 
 

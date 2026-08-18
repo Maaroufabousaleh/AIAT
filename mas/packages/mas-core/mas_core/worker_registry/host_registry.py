@@ -108,6 +108,41 @@ def _normalize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(metadata)
 
 
+def _lease_generation(value: Any, *, required: bool = True) -> int:
+    if value is None and not required:
+        return 0
+    try:
+        generation = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lease_generation must be a positive integer") from exc
+    if generation < 1:
+        raise ValueError("lease_generation must be a positive integer")
+    return generation
+
+
+async def _expire_active_reservations(
+    connection: Any,
+    *,
+    host_uuid: UUID,
+    lease_generation: int,
+    now: datetime,
+) -> int:
+    """Fence reservations belonging to one host incarnation."""
+
+    result = await connection.execute(
+        t.worker_host_reservations.update()
+        .where(
+            sa.and_(
+                t.worker_host_reservations.c.host_id == host_uuid,
+                t.worker_host_reservations.c.host_lease_generation == lease_generation,
+                t.worker_host_reservations.c.state.in_(("RESERVED", "COMMITTED")),
+            )
+        )
+        .values(state="EXPIRED", released_at=now, lease_expires_at=None)
+    )
+    return int(result.rowcount or 0)
+
+
 def _lease_valid(row: Mapping[str, Any], *, now: datetime | None = None) -> bool:
     expires_at = row.get("lease_expires_at")
     if not isinstance(expires_at, datetime):
@@ -132,6 +167,7 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
         "isolation_mode": str(row.get("isolation_mode") or ""),
         "capacity": dict(row.get("capacity") or {}),
         "priority": int(row.get("priority") or 0),
+        "lease_generation": int(row.get("lease_generation") or 1),
         "lease_valid": _lease_valid(row, now=current),
         "heartbeat_at": row.get("heartbeat_at"),
         "last_seen_at": row.get("last_seen_at"),
@@ -200,6 +236,8 @@ class WorkerHostRegistry:
             if existing is not None:
                 if not hmac.compare_digest(str(existing["auth_token_sha256"]), digest):
                     raise PermissionError("worker host registration authentication failed")
+                previous_generation = _lease_generation(existing.get("lease_generation") or 1)
+                next_generation = previous_generation + 1
                 await connection.execute(
                     t.worker_hosts.update()
                     .where(t.worker_hosts.c.id == existing["id"])
@@ -212,8 +250,18 @@ class WorkerHostRegistry:
                         priority=int(priority),
                         metadata=normalized_metadata,
                         status=normalized_status,
+                        lease_generation=next_generation,
+                        lease_owner=None,
+                        lease_expires_at=None,
+                        heartbeat_at=None,
                         updated_at=now,
                     )
+                )
+                await _expire_active_reservations(
+                    connection,
+                    host_uuid=existing["id"],
+                    lease_generation=previous_generation,
+                    now=now,
                 )
                 host_id_value = existing["id"]
             else:
@@ -230,6 +278,7 @@ class WorkerHostRegistry:
                         isolation_mode=str(isolation_mode).strip() or "native",
                         capacity=normalized_capacity,
                         priority=int(priority),
+                        lease_generation=1,
                         metadata=normalized_metadata,
                         created_at=now,
                         updated_at=now,
@@ -259,6 +308,7 @@ class WorkerHostRegistry:
         *,
         host_id: str,
         registration_token: str,
+        lease_generation: int | None = None,
         lease_seconds: int = 60,
     ) -> dict[str, Any]:
         """Authenticate a host and renew its AIAT-owned liveness lease."""
@@ -266,6 +316,7 @@ class WorkerHostRegistry:
         seconds = int(lease_seconds)
         if seconds < 1 or seconds > 86_400:
             raise ValueError("lease_seconds must be between 1 and 86400")
+        generation = _lease_generation(lease_generation)
         digest = token_sha256(registration_token)
         host_key = str(host_id or "").strip()
         now = datetime.now(tz=UTC)
@@ -281,6 +332,9 @@ class WorkerHostRegistry:
                 raise PermissionError("worker host heartbeat authentication failed")
             if row["status"] == "REVOKED":
                 raise PermissionError("revoked worker host cannot heartbeat")
+            current_generation = _lease_generation(row.get("lease_generation") or 1)
+            if generation != current_generation:
+                raise PermissionError("worker host lease generation mismatch")
             next_status = "READY" if row["status"] in {"REGISTERING", "OFFLINE"} else row["status"]
             await connection.execute(
                 t.worker_hosts.update()
@@ -306,11 +360,13 @@ class WorkerHostRegistry:
         *,
         host_id: str,
         registration_token: str,
+        lease_generation: int | None = None,
         status: str,
     ) -> dict[str, Any]:
         """Set a host status with host authentication; terminal revoke is sticky."""
 
         target = _validate_status(status)
+        generation = _lease_generation(lease_generation)
         digest = token_sha256(registration_token)
         now = datetime.now(tz=UTC)
         async with self._storage.engine.begin() as connection:
@@ -325,16 +381,28 @@ class WorkerHostRegistry:
                 raise PermissionError("worker host status authentication failed")
             if row["status"] == "REVOKED" and target != "REVOKED":
                 raise PermissionError("revoked worker host status is immutable")
+            current_generation = _lease_generation(row.get("lease_generation") or 1)
+            if generation != current_generation:
+                raise PermissionError("worker host lease generation mismatch")
+            next_generation = current_generation + 1 if target in {"OFFLINE", "REVOKED"} else current_generation
             await connection.execute(
                 t.worker_hosts.update()
                 .where(t.worker_hosts.c.id == row["id"])
                 .values(
                     status=target,
+                    lease_generation=next_generation,
                     lease_owner=None if target in {"OFFLINE", "REVOKED"} else row["lease_owner"],
                     lease_expires_at=None if target in {"OFFLINE", "REVOKED"} else row["lease_expires_at"],
                     updated_at=now,
                 )
             )
+            if next_generation != current_generation:
+                await _expire_active_reservations(
+                    connection,
+                    host_uuid=row["id"],
+                    lease_generation=current_generation,
+                    now=now,
+                )
             updated = (
                 await connection.execute(
                     t.worker_hosts.select().where(t.worker_hosts.c.id == row["id"])

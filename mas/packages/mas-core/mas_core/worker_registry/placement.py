@@ -94,6 +94,7 @@ class WorkerHostSnapshot:
     capacity: HostCapacity = HostCapacity(0)
     lease_valid: bool = True
     priority: int = 0
+    lease_generation: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +285,7 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
         ),
         lease_valid=bool(value.get("lease_valid", True)),
         priority=int(value.get("priority") or 0),
+        lease_generation=max(1, int(value.get("lease_generation") or 1)),
     )
 
 
