@@ -1,69 +1,96 @@
 {
   "schema_version": "aiat.worker-version-pinning-postgres-certification.v1",
-  "evidence_at": "2026-08-18T01:47:12Z",
-  "commit": "6a10b0e",
+  "evidence_at": "2026-08-18T10:38:52Z",
+  "commit": "7c1ef74",
   "mode": "local-postgres-worker-version-pinning",
   "status": "pass",
-  "command": "docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_worker_version_pinning_postgres.py --json'",
-  "migration_version": "0040_worker_run_skill_bundle_pin",
-  "expected_migration": "0040_worker_run_skill_bundle_pin",
+  "command": "docker exec mas-orchestrator-api-1 python /tmp/check_worker_version_pinning_next.py --json",
+  "migration_version": "0042_worker_run_host_binding",
+  "expected_migration": "0042_worker_run_host_binding",
   "initial_fixture_counts": {
     "workers": 0,
     "runs": 0,
     "shell_versions": 0,
     "adapters": 0,
-    "bundles": 0
+    "bundles": 0,
+    "stewards": 0,
+    "model_profiles": 0,
+    "model_profile_versions": 0,
+    "model_resolution_snapshots": 0
   },
   "version_catalogue": {
     "shell_versions": ["shell-v1", "shell-v2"],
     "adapter_versions": ["adapter-v1", "adapter-v2"],
-    "skill_bundle_versions": ["bundle-v1", "bundle-v2"]
+    "skill_bundle_versions": ["bundle-v1", "bundle-v2"],
+    "steward_versions": ["pin-steward-v1"],
+    "model_profile": "aiat-cert-worker-version-profile-v1",
+    "model_profile_versions": ["model-v1", "model-v2"]
   },
   "active_registry_after_rollout": {
     "shell": "shell-v2",
     "adapter": "adapter-v2",
-    "skill_bundle": "bundle-v2"
+    "skill_bundle": "bundle-v2",
+    "worker_version": "pin-fixture-v2",
+    "worker_version_pin": "pin-fixture-v2",
+    "model_profile": "aiat-cert-worker-version-profile-v1",
+    "steward": "00000000-0000-4000-a000-000000000974"
   },
   "version_labels_read_back": {
     "active_registry": {
       "shell": "shell-v2",
       "adapter": "adapter-v2",
-      "skill_bundle": "bundle-v2"
+      "skill_bundle": "bundle-v2",
+      "worker_version": "pin-fixture-v2",
+      "worker_version_pin": "pin-fixture-v2",
+      "model_profile": "aiat-cert-worker-version-profile-v1",
+      "steward": "pin-steward-v1"
     },
     "in_flight_run": {
       "shell": "shell-v1",
       "adapter": "adapter-v1",
       "skill_bundle": "bundle-v1",
-      "steward": "pin-steward-v1"
+      "steward": "pin-steward-v1",
+      "model_profile": "model-v1",
+      "model_resolution_snapshot_id": "00000000-0000-4000-a000-000000000975"
     },
     "queued_replacement_run": {
       "shell": "shell-v2",
       "adapter": "adapter-v2",
       "skill_bundle": "bundle-v2",
-      "steward": "pin-steward-v1"
+      "steward": "pin-steward-v1",
+      "model_profile": "model-v2",
+      "model_resolution_snapshot_id": "00000000-0000-4000-a000-000000000976"
     }
   },
   "in_flight_run_v1": {
     "state": "RUNNING",
     "attempt_count": 1,
+    "model_resolution_snapshot_id": "00000000-0000-4000-a000-000000000975",
     "shell_version": "shell-v1",
     "adapter_version": "adapter-v1",
     "skill_bundle_version": "bundle-v1",
-    "steward_version": "pin-steward-v1"
+    "steward_version": "pin-steward-v1",
+    "model_profile_version": "model-v1"
   },
   "new_queued_run_v2": {
     "state": "QUEUED",
     "attempt_count": 0,
+    "model_resolution_snapshot_id": "00000000-0000-4000-a000-000000000976",
     "shell_version": "shell-v2",
     "adapter_version": "adapter-v2",
     "skill_bundle_version": "bundle-v2",
-    "steward_version": "pin-steward-v1"
+    "steward_version": "pin-steward-v1",
+    "model_profile_version": "model-v2"
   },
   "version_pin_checks": {
     "in_flight_shell_adapter_steward_pinned": true,
     "in_flight_skill_bundle_pinned": true,
+    "in_flight_steward_version_pinned": true,
+    "in_flight_model_profile_pinned": true,
     "new_run_uses_replacement_shell_adapter": true,
     "new_run_uses_replacement_skill_bundle": true,
+    "new_run_uses_stable_steward_pin": true,
+    "new_run_uses_replacement_model_profile": true,
     "registry_pointer_advanced_without_rewriting_in_flight_run": true,
     "skill_bundle_id_on_worker_run": "checked"
   },
@@ -75,11 +102,17 @@
   "cleanup": {
     "worker_runs_deleted": 2,
     "workers_deleted": 1,
+    "model_profiles_deleted": 1,
+    "model_resolution_snapshots_deleted": 2,
     "remaining_workers": 0,
     "remaining_runs": 0,
     "remaining_shell_versions": 0,
     "remaining_adapters": 0,
-    "remaining_bundles": 0
+    "remaining_bundles": 0,
+    "remaining_stewards": 0,
+    "remaining_model_profiles": 0,
+    "remaining_model_profile_versions": 0,
+    "remaining_model_resolution_snapshots": 0
   },
   "payload_free": true,
   "mutation_performed": true,
@@ -88,10 +121,10 @@
   "external_provider_mutation_performed": false,
   "worker_dispatch_performed": false,
   "licence_metadata_is_gate": false,
-  "scope": "reserved local Postgres immutable shell/adapter/bundle records, mutable governed pointers, in-flight run read-back, replacement run read-back, connection reopen, and scoped cleanup",
+  "scope": "reserved local Postgres immutable shell/adapter/skill-bundle/steward/model-profile records, mutable governed pointers, in-flight run read-back, replacement run read-back, connection reopen, and scoped cleanup",
   "boundary": [
-    "This certifies shell, adapter, skill-bundle, and steward pin fields persisted on worker_runs.",
-    "Run creation snapshots the active skill bundle while holding the worker registry row lock and rejects a bundle belonging to another worker or steward.",
-    "No worker dispatch, model/provider call, sandbox execution, host-loss recovery, or multi-host scheduling is exercised."
+    "This certifies the complete local governed run pin set: shell, adapter, skill bundle, steward identity, worker version metadata, and model-resolution snapshot/profile version.",
+    "Run creation persists the selected immutable IDs and model snapshot while the worker registry advances to replacement pointers; the single steward row remains the AIAT-owned governing authority for both runs.",
+    "No worker dispatch, model/provider call, sandbox execution, host-loss recovery, multi-host scheduling, or independent deployed-host boundary is exercised."
   ]
 }

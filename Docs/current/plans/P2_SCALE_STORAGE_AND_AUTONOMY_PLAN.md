@@ -290,17 +290,22 @@
   Static contract evidence passes, while the current host remains blocked by
   the missing launcher and Firecracker binary; real microVM smoke/network,
   provider, and recovery evidence remain open.
-- [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
-  pinning with migration `0040_worker_run_skill_bundle_pin` and
+- [x] Prove complete local governed run-version pinning with migration
+  `0042_worker_run_host_binding` and
   [`check_worker_version_pinning_postgres.py`](../../../mas/scripts/check_worker_version_pinning_postgres.py)
-  (`6a10b0e`) and retained evidence at
+  (`7c1ef74`, extending `6a10b0e`) and retained evidence at
   [`worker_version_pinning_postgres_evidence.json`](../../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
-  A version-one `RUNNING` run remains pinned while the registry advances and a
-  new queued run uses the complete version-two set; run creation snapshots the
-  active bundle under the worker-row lock and validates ownership.
-- Prove independent deployed-host loss, split-brain avoidance, queue recovery,
-  duplicate-effect protection, and complete run-version pinning across all
-  governed version records.
+  The certificate retains shell, adapter, skill-bundle, steward identity,
+  worker source/version metadata, and model-profile/snapshot pins on a
+  version-one `RUNNING` run while the registry advances and a queued run uses
+  the replacement shell/adapter/bundle/model snapshot. Postgres reopen,
+  payload-free read-back, and scoped cleanup pass; the single steward row is
+  intentionally stable because AIAT assigns one steward per worker.
+- [ ] Prove independent deployed-host loss, split-brain avoidance, queue
+  recovery, duplicate-effect protection, and complete version pinning across
+  real host/process boundaries. The local duplicate-claim/replay and complete
+  control-plane pinning certificates are prerequisites, not substitutes for
+  independent deployed-host evidence.
 
 ## Workstream 4 — guarded self-improvement
 

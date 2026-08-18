@@ -409,15 +409,16 @@ separate. Durable host-capacity reservation/commit/expiry is certified by
 `232c0bb` below. Licence metadata remains
 informational and non-gating.
 
-The durable version-pinning group `6a10b0e` adds migration
-`0040_worker_run_skill_bundle_pin` and refreshes the maintained local
-certificate
-[`worker_version_pinning_postgres_evidence.json`](../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
-It proves that a version-one `RUNNING` run retains its shell, adapter, skill
-bundle, and steward references after the registry advances to version two,
-while a new queued run uses the complete replacement set. Run creation
-snapshots the active bundle under the worker-row lock and validates worker /
-steward ownership. Multi-host execution and live dispatch remain separate;
+The durable version-pinning group `7c1ef74` extends `6a10b0e` at migration
+`0042_worker_run_host_binding` and refreshes the maintained local certificate
+[`worker_version_pinning_postgres_evidence.json`](../../mas/provenance/worker_version_pinning_postgres_evidence.json).
+It proves that a version-one `RUNNING` run retains its shell, adapter,
+skill-bundle, steward identity, worker source/version metadata, and immutable
+model-resolution snapshot after the registry advances to version two, while a
+new queued run uses the replacement shell/adapter/bundle/model snapshot. The
+certificate reopens Postgres, remains payload-free, and cleans every reserved
+worker/steward/model-profile/snapshot row. Independent host/process execution,
+live dispatch, provider recovery, and sandbox evidence remain separate;
 licence metadata remains informational and non-gating.
 
 The deterministic placement group `db22e60`, extended by `3fb15db`, adds the maintained

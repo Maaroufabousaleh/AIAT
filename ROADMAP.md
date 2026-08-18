@@ -698,7 +698,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Worker/runtime declaration, persisted-binding reconciliation, run-lifecycle fixture, selected run-readiness preflight, and durable local run evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [`check_worker_reconciliation.py`](mas/scripts/check_worker_reconciliation.py) (static/`--live`), [`check_worker_run_lifecycle.py`](mas/scripts/check_worker_run_lifecycle.py), [`check_worker_run_postgres_evidence.py`](mas/scripts/check_worker_run_postgres_evidence.py), [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py) (fixture/read-only `--live`), [`generate_worker_certification_matrix.py`](mas/scripts/generate_worker_certification_matrix.py), [`test_worker_certification_matrix.py`](mas/packages/mas-core/tests/test_worker_certification_matrix.py), [matrix](mas/docs/provenance/worker_certification_matrix.yaml), [durable evidence](mas/docs/provenance/worker_run_postgres_evidence.json) |
 | Worker readiness health-read hardening | [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py), [`test_check_worker_run_readiness.py`](mas/scripts/tests/test_check_worker_run_readiness.py), and commits `2eea80a`, `dac268c` |
 | Durable worker-run lease/recovery evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_lease_recovery_postgres.py`](mas/scripts/check_worker_lease_recovery_postgres.py), [`test_check_worker_lease_recovery_postgres.py`](mas/scripts/tests/test_check_worker_lease_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_lease_recovery_postgres_evidence.json) |
-| Durable in-flight worker-version pinning (shell/adapter/skill-bundle/steward) | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), migration [`0040_worker_run_skill_bundle_pin`](mas/migrations/versions/0040_worker_run_skill_bundle_pin.py), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json) |
+| Durable in-flight worker-version pinning (complete governed local pin set) | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [Worker-Plane Host Execution](Docs/current/FEATURE_WORKER_HOST_EXECUTION.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), migration [`0042_worker_run_host_binding`](mas/migrations/versions/0042_worker_run_host_binding.py), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json), commit `7c1ef74` |
 | Deterministic worker placement policy with host-plane isolation | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`placement.py`](mas/packages/mas-core/mas_core/worker_registry/placement.py), [`check_worker_placement.py`](mas/scripts/check_worker_placement.py), migration [`0041_worker_host_planes`](mas/migrations/versions/0041_worker_host_planes.py), [local evidence](mas/docs/provenance/worker_placement_contract.json) |
 | Durable authenticated worker-host registry with host-plane persistence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_registry.py`](mas/packages/mas-core/mas_core/worker_registry/host_registry.py), migrations [`0037_worker_host_registry`](mas/migrations/versions/0037_worker_host_registry.py) and [`0041_worker_host_planes`](mas/migrations/versions/0041_worker_host_planes.py), [`check_worker_host_registry_postgres.py`](mas/scripts/check_worker_host_registry_postgres.py), [local evidence](mas/docs/provenance/worker_host_registry_postgres_evidence.json) |
 | Durable worker-host capacity reservations | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_reservations.py`](mas/packages/mas-core/mas_core/worker_registry/host_reservations.py), [`0038_worker_host_reservations.py`](mas/migrations/versions/0038_worker_host_reservations.py), [`check_worker_host_reservations_postgres.py`](mas/scripts/check_worker_host_reservations_postgres.py), [local evidence](mas/docs/provenance/worker_host_reservations_postgres_evidence.json) |
@@ -1449,14 +1449,15 @@ eight transitions survive connection reopen. This is not a canonical host
 registry, placement/capacity scheduler, real host-loss/split-brain, gVisor, or
 Firecracker certificate.
 
-`6a10b0e` adds migration `0040_worker_run_skill_bundle_pin` and refreshes the
-bounded local Postgres in-flight version-pin certificate: a `RUNNING` shell-v1 /
-adapter-v1 / bundle-v1 / steward-v1 run remains pinned after the registry
-advances to shell-v2 / adapter-v2 / bundle-v2 and a new queued run uses the
-complete replacement set. Run creation snapshots the active bundle while
-holding the worker registry row lock and rejects a bundle belonging to another
-worker or steward. Multi-host version evidence, live dispatch, and provider/
-sandbox recovery remain open.
+`7c1ef74` extends the bounded local Postgres in-flight version-pin certificate
+from `6a10b0e` at migration `0042_worker_run_host_binding`: a `RUNNING`
+shell-v1/adapter-v1/bundle-v1 run retains its governed IDs, stable AIAT
+steward identity, worker source/version metadata, and model-v1 resolution
+snapshot after the registry advances to shell-v2/adapter-v2/bundle-v2 and a
+new queued run uses the replacement shell/adapter/bundle/model-v2 snapshot.
+The connection-reopened, payload-free certificate cleans all worker, run,
+steward, model-profile, profile-version, and snapshot rows. Independent-host
+version boundaries, live dispatch, and provider/sandbox recovery remain open.
 
 `db22e60` adds the pure, deterministic `aiat.worker-placement.v1` predicate
 and fixture checker. It filters explicit host snapshots by readiness and
@@ -1505,15 +1506,18 @@ connection reopen. The retained certificate is
 Live worker dispatch, host-pool separation, provider-backed recovery, and
 Firecracker remain later work.
 
-`6a10b0e` adds migration `0040_worker_run_skill_bundle_pin` and completes the
-durable run-level version contract. Each new durable run copies the selected
-skill-bundle ID into `worker_runs` under the locked worker registry row;
-idempotent replays keep the canonical row, and explicit bundle pins are
-validated against the worker and steward. The refreshed certificate at
+`7c1ef74` extends the durable run-level version contract established by
+`6a10b0e` at migration `0042_worker_run_host_binding`. The refreshed
+certificate at
 [`worker_version_pinning_postgres_evidence.json`](mas/docs/provenance/worker_version_pinning_postgres_evidence.json)
-proves shell, adapter, skill-bundle, and steward read-back across a registry
-advance and connection reopen. Live worker dispatch and multi-host execution
-remain open.
+creates shell, adapter, skill-bundle, steward, worker source/version, and
+model-profile/snapshot records; a `RUNNING` version-one run retains its
+original governed IDs and model snapshot while the worker registry advances,
+and a queued version-two run uses the replacement shell/adapter/bundle/model
+snapshot. Connection-reopen, payload-free read-back, and scoped cleanup of all
+fixture rows pass. The single steward row remains stable because AIAT assigns
+one steward per worker. Independent host/process boundaries, live dispatch,
+provider/sandbox recovery, and multi-host deployment evidence remain open.
 
 `3fb15db` adds migration `0041_worker_host_planes` and carries the host-plane
 contract through durable registration, public placement snapshots, and the
@@ -1653,15 +1657,16 @@ This closes only the local queue lease/recovery boundary; live scheduling,
 real host-loss/split-brain, gVisor/Firecracker, and live worker/provider
 evidence remain open. Durable capacity reservation/commit/expiry is covered
 by `232c0bb`.
-`6a10b0e` (building on the earlier report-label work `8bb0a91`) adds
-[`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py):
-one `RUNNING` version-one run remains pinned to its original shell, adapter,
-skill bundle, and steward after the registry advances to version two, while a
-new queued run uses the replacement set. The connection-reopened, payload-free
-certificate is retained at
-[`worker_version_pinning_postgres_evidence.json`](mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
-Multi-host version evidence, live dispatch, and provider/sandbox recovery
-remain open.
+`7c1ef74` (building on the earlier report-label work `8bb0a91` and `6a10b0e`)
+extends [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py)
+to the complete local governed pin set: one `RUNNING` version-one run retains
+its shell, adapter, skill bundle, stable steward identity, worker
+source/version metadata, and model-v1 resolution snapshot after the registry
+advances, while a new queued run uses the replacement shell/adapter/bundle and
+model-v2 snapshot. The connection-reopened, payload-free certificate is
+retained at [`worker_version_pinning_postgres_evidence.json`](mas/docs/provenance/worker_version_pinning_postgres_evidence.json)
+and cleans every reserved row. Independent-host version evidence, live
+dispatch, and provider/sandbox recovery remain open.
 `3fb15db` carries the worker-plane boundary into the maintained placement and
 host-registry certificates through migration `0041_worker_host_planes`.
 Control, tool, and data hosts are represented explicitly but rejected by the
@@ -2100,8 +2105,8 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    optional routing changes remain separate follow-up work.
 2. Certify optional memory/workflow services only where justified.
 3. [x] Certify the bounded local Postgres worker lease/recovery boundary
-   (`a413997`), shell/adapter/skill-bundle/steward in-flight version pinning
-   (`6a10b0e`, building on `dbf6d10`/`8bb0a91`), deterministic placement policy
+   (`a413997`), complete local governed in-flight version pinning
+   (`7c1ef74`, extending `6a10b0e` and building on `dbf6d10`/`8bb0a91`), deterministic placement policy
    (`db22e60`, extended with worker-plane isolation by `3fb15db`), authenticated
    durable host registration/heartbeat lease state (`500fc57`, host-plane
    persistence by `3fb15db`), host capacity reservation/settlement (`232c0bb`), canonical
@@ -2116,8 +2121,10 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
 The `d45e4dd` extension closes the bounded local duplicate-effect boundary:
 concurrent duplicate host claims are rejected before a second adapter dispatch,
 and terminal/alias idempotency replays return the canonical run without
-redispatch. Independent deployed-host process boundaries, provider recovery,
-sandbox execution, and complete run-version pinning remain open.
+redispatch. `7c1ef74` closes the complementary complete local control-plane
+version-pin boundary, including model-resolution snapshots, while independent
+deployed-host process boundaries, provider recovery, and sandbox execution
+remain open.
 4. [x] Certify the bounded governed self-improvement lifecycle and exact
    rollback against local Compose Postgres (`10983c8`); [ ] complete the live
    issue/worker/provider/deployment lifecycle and independent recovery proof.

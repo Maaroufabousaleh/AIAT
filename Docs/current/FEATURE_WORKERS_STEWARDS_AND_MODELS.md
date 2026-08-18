@@ -126,15 +126,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   rows; it does not implement or certify a host registry, placement service,
   real host loss/split-brain behavior, gVisor, or Firecracker.
 - `scripts/check_worker_version_pinning_postgres.py --json` certifies the
-  complete durable in-flight version pin boundary at migration
-  `0040_worker_run_skill_bundle_pin`: a `RUNNING` version-one run retains its
-  shell, adapter, skill bundle, and steward references after the mutable
-  registry advances to version two, and a new queued run reads the complete
-  replacement set. Durable run creation snapshots the active bundle while
-  holding the worker row lock and rejects a bundle belonging to another
-  worker or steward. The report survives a Postgres connection reopen, is
-  payload-free, and cleans its reserved version/run graph. Live worker
-  dispatch, host-loss recovery, and multi-host execution remain separate.
+  complete local governed in-flight version pin boundary (`7c1ef74`, extending
+  `6a10b0e`) at migration `0042_worker_run_host_binding`: a `RUNNING`
+  version-one run retains its shell, adapter, skill bundle, steward identity,
+  worker source/version metadata, and model-resolution snapshot after the
+  mutable registry advances to version two, and a new queued run reads the
+  replacement shell/adapter/bundle/model snapshot. The report survives a
+  Postgres connection reopen, is payload-free, and cleans workers, runs,
+  stewards, model profiles, profile versions, and snapshots to zero. Live
+  worker dispatch, independent host/process recovery, and provider/sandbox
+  evidence remain separate.
 - `mas_core.worker_registry.placement` and `scripts/check_worker_placement.py`
   define the deterministic `aiat.worker-placement.v1` predicate. It filters
   unready or expired hosts, enforces the worker host plane plus
@@ -694,8 +695,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 8. Obtain the required independent and human approvals.
 9. Run shadow, read-only canary, and bounded live canary stages.
 10. Promote exact active pointers or roll back to exact prior pointers.
-11. Keep in-flight runs pinned to the exact shell, adapter, skill bundle, and
-    steward versions with which they started.
+11. Keep in-flight runs pinned to the exact shell, adapter, skill bundle,
+    steward identity, worker source/version metadata, and model-resolution
+    snapshot with which they started.
 
 ## Default runtime policy
 
@@ -791,11 +793,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   selection/fallback is covered by `d9917f8`; host fencing/recovery is covered
   by `72e59ec`; external provider-backed selected-model dispatch, gVisor, and Firecracker
   evidence remain separate gates.
-- [x] Certify durable in-flight shell/adapter/skill-bundle/steward version
-  pinning (`6a10b0e`, migration `0040_worker_run_skill_bundle_pin`) while the
-  worker registry advances to a replacement version. Run creation snapshots
-  the active bundle under the worker-row lock and validates ownership; live
-  dispatch and full multi-host rollout/version evidence remain separate gates.
+- [x] Certify complete local governed run-version pinning (`7c1ef74`, building
+  on `6a10b0e`, migration `0042_worker_run_host_binding`) while the worker
+  registry advances to a replacement version. The durable certificate creates
+  shell, adapter, skill-bundle, steward, worker source/version, and model
+  profile/snapshot records; a `RUNNING` version-one run retains its original
+  IDs and model snapshot while a queued version-two run uses the replacement
+  shell/adapter/bundle and model snapshot. Postgres reopen and scoped cleanup
+  return all fixture rows to zero. Independent deployed-host/process,
+  provider, sandbox, live dispatch, and full rollout evidence remain separate
+  gates.
 - [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
   checker with host-plane isolation, host health/lease, labels, capabilities,
   sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection

@@ -3,12 +3,13 @@
 **Baseline:** 2026-08-17
 
 **Status:** local Compose Postgres single-host, concurrent two-host native,
-bounded duplicate-effect/replay protection, fenced host-loss queue-recovery,
-selected model-resolution host-execution, and the fail-closed Firecracker launch
-contract are implemented; deployed runtime, host-certified sandbox, provider,
-and independent-host recovery evidence remain open
+bounded duplicate-effect/replay protection, complete local governed run-version
+pinning, fenced host-loss queue-recovery, selected model-resolution
+host-execution, and the fail-closed Firecracker launch contract are implemented;
+deployed runtime, host-certified sandbox, provider, and independent-host
+recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
+**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -162,6 +163,23 @@ The provider and model are local deterministic fixture identifiers: this closes
 AIAT control-plane resolution and local gateway-adapter propagation only, not a
 network provider call, provider outage recovery, independent hosts, gVisor, or
 Firecracker.
+
+### Complete governed run-version pinning certificate
+
+[`check_worker_version_pinning_postgres.py`](../../mas/scripts/check_worker_version_pinning_postgres.py)
+(`7c1ef74`) extends the earlier shell/adapter/skill-bundle certificate to the
+complete local governed run set. It creates two shell, adapter, skill-bundle,
+and model-profile versions plus the AIAT steward record, advances the worker's
+source/version metadata and active pointers, and persists distinct immutable
+model-resolution snapshots on a `RUNNING` version-one run and a queued
+version-two run. After a Postgres connection reopen, the version-one run still
+points to its original IDs/snapshot while the replacement run points to the
+new IDs/snapshot; the single steward identity remains stable for both governed
+runs. Evidence is retained at
+[`worker_version_pinning_postgres_evidence.json`](../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json),
+with payload-free output and zero remaining fixture rows. This is local
+control-plane storage evidence; it does not certify independent deployed hosts,
+provider execution/recovery, gVisor/Firecracker, or live dispatch.
 
 ### Gateway worker HTTP-boundary certificate
 
