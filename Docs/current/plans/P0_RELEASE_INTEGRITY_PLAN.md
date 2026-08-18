@@ -38,6 +38,11 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - [x] Reconcile `coding_worker` and `tester` approval with their security-scan
   fields; exact-source findings are now linked and remain non-passing until
   technical triage completes.
+- [x] Add a machine-checked security-finding review register with an owner,
+  next action, engine-warning follow-up, and exact rule-count parity for every
+  open scan. The checker validates review completeness only; unresolved
+  findings remain a technical activation blocker and the register is not a
+  waiver (`23e908e`).
 - [x] Reconcile every checked-in worker manifest with the canonical runtime catalogue, default company references, OpenCode Compose link, provenance source/version records, and metadata-only notices policy.
 - [x] Remove remaining licence-derived resource exclusions from default manifests; expose TruffleHog through the bounded `security.scan` alias and keep Plane/OpenProject/Ansible selectable as normal adapters. Starting profiles remain technical packaging choices.
 - [x] Add a read-only live binding reconciliation for every checked-in default worker. `check_worker_reconciliation.py --live` compares persisted `/capabilities/workers` adapter, sandbox, model, source-pin, capability, and active immutable-record bindings; the authenticated local Compose run now matches 39/39 defaults with zero missing rows or binding mismatches (evidence: [`worker_reconciliation_live.json`](../../../mas/docs/provenance/worker_reconciliation_live.json)); a missing URL/auth/API is explicitly blocked and this check does not replace live runtime/security/canary certification.

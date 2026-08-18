@@ -147,6 +147,10 @@ checks:
     category: contract
     script: scripts/check_security_adapters.py
     args: [--json]
+  - id: security_scan_review
+    category: security
+    script: scripts/check_security_scan_review.py
+    args: [--json]
   - id: worker_steward_contract
     category: governance
     script: scripts/check_worker_steward_contract.py

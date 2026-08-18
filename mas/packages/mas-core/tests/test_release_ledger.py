@@ -48,6 +48,21 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert provider_recovery["category"] == "recovery"
     assert provider_recovery["status"] == "pass"
     assert provider_recovery["summary"] == {"status": "pass", "mode": "fixture"}
+    security_review = next(
+        row for row in report["checks"] if row["id"] == "security_scan_review"
+    )
+    assert security_review["category"] == "security"
+    assert security_review["status"] == "pass"
+    assert security_review["summary"] == {
+        "errors": [],
+        "engine_warning_count": 54,
+        "finding_count": 316,
+        "mode": "static",
+        "review_required_count": 1,
+        "scan_count": 1,
+        "status": "pass",
+        "technical_gate_status": "blocked",
+    }
     evidence_resolution = next(row for row in report["checks"] if row["id"] == "evidence_policy_resolution")
     assert evidence_resolution["status"] == "pass"
     assert evidence_resolution["summary"] == {

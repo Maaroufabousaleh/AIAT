@@ -40,6 +40,7 @@ TRACKED_INPUTS = (
     "docs/provenance/production_images.yaml",
     "docs/provenance/operator_pins.yaml",
     "docs/provenance/security_scan_evidence.yaml",
+    "docs/provenance/security_scan_review.yaml",
     "docs/provenance/worker_certification_matrix.yaml",
     "workers/coding_worker.yaml",
     "workers/tester.yaml",

@@ -46,11 +46,14 @@ def test_release_environment_manifest_is_secret_safe_and_deterministic() -> None
     assert first["manifest_digest"] == second["manifest_digest"]
     assert re.fullmatch(r"[0-9a-f]{64}", str(first["manifest_digest"]))
     assert first["git"]["revision"]
-    assert len(first["tracked_inputs"]) == 13
+    assert len(first["tracked_inputs"]) == 14
     assert "docs/provenance/operator_pins.yaml" in {
         str(item["path"]) for item in first["tracked_inputs"]
     }
     assert "docs/provenance/security_scan_evidence.yaml" in {
+        str(item["path"]) for item in first["tracked_inputs"]
+    }
+    assert "docs/provenance/security_scan_review.yaml" in {
         str(item["path"]) for item in first["tracked_inputs"]
     }
     assert "secret-test-value" not in json.dumps(first)

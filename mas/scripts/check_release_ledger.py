@@ -207,6 +207,11 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
         "profile_pending_model_count",
         "profile_coverage",
         "duplicate_profile_bindings",
+        "scan_count",
+        "finding_count",
+        "engine_warning_count",
+        "review_required_count",
+        "technical_gate_status",
         "git",
     }
     summary = {key: payload[key] for key in allowed if key in payload}
