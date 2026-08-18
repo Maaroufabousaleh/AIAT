@@ -199,6 +199,34 @@ class EncryptedBackupManifest:
         ):
             raise ValueError("encrypted backup manifest digest or schema does not match")
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> EncryptedBackupManifest:
+        """Rehydrate and verify a scalar manifest from a persisted bundle."""
+
+        try:
+            raw_objects = payload["objects"]
+            if not isinstance(raw_objects, list) or not all(
+                isinstance(item, dict) for item in raw_objects
+            ):
+                raise ValueError("encrypted backup manifest objects are malformed")
+            object_count = int(payload["object_count"])
+            if object_count != len(raw_objects):
+                raise ValueError("encrypted backup manifest object count is invalid")
+            objects = tuple(EncryptedBackupObject(**dict(item)) for item in raw_objects)
+            manifest = cls(
+                schema_version=str(payload["schema_version"]),
+                project_id=str(payload["project_id"]),
+                source_adapter_type=str(payload["source_adapter_type"]),
+                encryption_algorithm=str(payload["encryption_algorithm"]),
+                key_id=str(payload["key_id"]),
+                objects=objects,
+                manifest_sha256=str(payload["manifest_sha256"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("encrypted backup manifest bundle is malformed") from exc
+        manifest.verify_digest()
+        return manifest
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,

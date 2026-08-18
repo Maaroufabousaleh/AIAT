@@ -13,6 +13,7 @@ from mas_core.memory import (
     ENCRYPTION_ALGORITHM,
     OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA,
     OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA,
+    EncryptedBackupManifest,
     InMemoryObjectStore,
     build_encrypted_backup,
     replicate_encrypted_backup,
@@ -20,6 +21,11 @@ from mas_core.memory import (
 )
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_object_store_encryption.py"
+CLEAN_RESTORE_SCRIPT = (
+    Path(__file__).resolve().parents[3]
+    / "scripts"
+    / "check_object_store_clean_environment_restore.py"
+)
 
 
 @pytest.mark.asyncio
@@ -159,6 +165,38 @@ async def test_encrypted_replication_refuses_non_empty_target_before_mutation() 
     assert await restore.exists(project_id, "encrypted/artifact.bin.enc", bucket="restore") is False
 
 
+@pytest.mark.asyncio
+async def test_encrypted_manifest_bundle_round_trip_rejects_count_or_digest_tampering() -> None:
+    source = InMemoryObjectStore(bucket="source")
+    backup = InMemoryObjectStore(bucket="backup")
+    project_id = "encrypted-manifest-bundle-project"
+    ref = await source.upload(project_id, "artifact.bin", b"payload")
+    manifest = await build_encrypted_backup(
+        source,
+        backup,
+        [ref],
+        project_id=project_id,
+        source_bucket="source",
+        target_bucket="backup",
+        key=b"m" * 32,
+        key_id="fixture-key-v1",
+    )
+
+    bundle = manifest.as_dict()
+    restored = EncryptedBackupManifest.from_dict(bundle)
+    assert restored == manifest
+
+    bad_count = dict(bundle)
+    bad_count["object_count"] = 0
+    with pytest.raises(ValueError, match="manifest bundle is malformed"):
+        EncryptedBackupManifest.from_dict(bad_count)
+
+    bad_digest = dict(bundle)
+    bad_digest["manifest_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="digest or schema"):
+        EncryptedBackupManifest.from_dict(bad_digest)
+
+
 def test_encrypted_backup_checker_fixture_is_payload_free() -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--json"],
@@ -178,3 +216,29 @@ def test_encrypted_backup_checker_fixture_is_payload_free() -> None:
     assert "aiat encrypted backup fixture plaintext must never enter evidence" not in result.stdout
     assert report["payload_free"] is True
     assert report["licence_metadata_is_gate"] is False
+
+
+def test_clean_environment_restore_checker_uses_fresh_process_and_is_payload_free() -> None:
+    result = subprocess.run(
+        [sys.executable, str(CLEAN_RESTORE_SCRIPT), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["schema_version"] == "aiat.object-store-clean-environment-restore.v1"
+    assert report["status"] == "pass"
+    assert report["child_process_distinct"] is True
+    assert report["child_return_code"] == 0
+    assert report["bundle_removed_after_restore"] is True
+    assert report["child_report"]["fresh_adapter_restore"] is True
+    assert report["child_report"]["remaining_fixture_counts"] == {
+        "fresh_backup": 0,
+        "fresh_restore": 0,
+    }
+    assert report["payload_free"] is True
+    assert report["key_material_retained"] is False
+    assert report["licence_metadata_is_gate"] is False
+    assert "aiat clean restore fixture plaintext must never enter evidence" not in result.stdout
+    assert (b"c" * 32).hex() not in result.stdout
