@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T16:05:09Z",
+  "observed_at": "2026-08-18T16:39:05Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -107,13 +107,14 @@
     "ref": "model_profile_catalogue_live.json",
     "registry_model_count": 93,
     "profile_version_count": 94,
-    "approved_profile_entry_count": 92,
-    "covered_profile_version_count": 92,
-    "profile_pending_model_count": 1,
-    "profile_not_registered_count": 2,
-    "finding_count": 2,
+    "approved_profile_entry_count": 93,
+    "covered_profile_version_count": 93,
+    "profile_pending_model_count": 0,
+    "profile_not_registered_count": 1,
+    "finding_count": 1,
     "profile_coverage": "pending_persisted_profile_bindings",
-    "note": "The approved-coverage requirement is met, while two persisted profile rows are not registered and one registered model remains pending; these are operator-visible reconciliation findings."
+    "alias_reconciliation": "passed: aiat/omniroute-coding reconciles to the canonical litellm/omniroute-coding registry entry",
+    "note": "The approved-coverage requirement is met. One operator-owned stale persisted profile row (local/test-model-1) remains an explicit reconciliation finding; no dispatch or provider call was performed."
   },
   "notices": [
     "Blocked live checks are not treated as passes.",

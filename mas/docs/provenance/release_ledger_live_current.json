@@ -71,13 +71,13 @@
   ],
   "historical_configured_profile": {
     "ref": "release_ledger_live.json",
-    "observed_at": "2026-08-18T16:05:09Z",
+    "observed_at": "2026-08-18T16:39:05Z",
     "total": 77,
     "pass": 66,
     "fail": 0,
     "blocked": 11,
     "pending": 4,
-    "note": "Latest configured Compose aggregation with operator environment supplied without output; it remains descriptive rather than a release approval."
+    "note": "Latest configured Compose aggregation with operator environment supplied without output; model/profile alias reconciliation is refreshed separately and the aggregate remains descriptive rather than a release approval."
   },
   "licence_metadata_is_gate": false,
   "bounded_resource_profile_evidence": {
