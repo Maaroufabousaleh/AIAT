@@ -48,3 +48,5 @@ def test_fixture_contract_is_model_resolution_bound() -> None:
     assert module.EXACT_MODEL_ID == "fixture-model-v1"
     assert module.PROFILE_LOGICAL_ID.startswith("aiat-cert-")
     assert module.SNAPSHOT_ID != module.RUN_ID
+    assert module.GatewayWorkerAdapter.runtime_type == "aiat_gateway"
+    assert module._FixtureGateway.__doc__

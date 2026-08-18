@@ -1,8 +1,6 @@
 {
   "artifact_count": 1,
-  "commit": "9a7db70",
   "binding_schema": "aiat.worker-run-host-binding.v1",
-  "binding_state": "RELEASED",
   "certification_boundary": {
     "approved_model_profile_and_version": "checked",
     "binding_and_reservation_release": "checked",
@@ -11,8 +9,8 @@
     "durable_model_resolution_snapshot": "checked",
     "durable_terminal_evidence": "checked",
     "external_model_provider_or_network": "not_checked",
+    "gateway_worker_adapter_fixture_dispatch": "checked",
     "independent_host_or_remote_runtime": "not_checked",
-    "native_fixture_worker_dispatch": "checked",
     "payload_free_trace_projection": "checked",
     "postgres_connection_reopen": "checked",
     "provider_backed_recovery": "not_checked",
@@ -21,6 +19,7 @@
     "usage_provider_and_exact_model_attribution": "checked",
     "worker_model_mode_and_profile_binding": "checked"
   },
+  "claim_state": "CLAIMED",
   "cleanup_deleted_counts": {
     "artifacts": 1,
     "bindings": 1,
@@ -51,6 +50,7 @@
   "expected_migration": "0042_worker_run_host_binding",
   "external_network_access_performed": false,
   "external_provider_mutation_performed": false,
+  "gateway_call_count": 1,
   "host_admission": {
     "binding_state_after": "RELEASED",
     "binding_state_before": "COMMITTED",
@@ -90,13 +90,15 @@
     "snapshot_id": "00000000-0000-4000-a000-000000000b55",
     "usage_exact_model_id": "fixture-model-v1",
     "usage_provider_id": "fixture-provider-gateway",
+    "worker_adapter_entrypoint": "GatewayWorkerAdapter",
+    "worker_adapter_type": "aiat_gateway",
     "worker_model_mode": "aiat_gateway",
     "worker_model_profile_id": "aiat-cert-host-model-profile-v1"
   },
   "mutation_performed": true,
   "native_span_count": 3,
   "network_access_performed": true,
-  "observed_at": "2026-08-18T03:27:08.973526Z",
+  "observed_at": "2026-08-18T05:52:01.349641Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,
@@ -110,7 +112,7 @@
   },
   "run_state": "SUCCEEDED",
   "schema_version": "aiat.worker-host-model-resolution-postgres-certification.v1",
-  "scope": "AIAT model profile/version resolution, durable snapshot propagation, committed worker-host admission, native fixture dispatch, evidence, release, reopen, and cleanup",
+  "scope": "AIAT model profile/version resolution, durable snapshot propagation, committed worker-host admission, production GatewayWorkerAdapter over a bounded local gateway fixture, evidence, release, reopen, and cleanup",
   "status": "pass",
   "trace_coverage": {
     "licence_metadata_is_gate": false,
@@ -132,6 +134,18 @@
     "status": "pass",
     "trace_status": "observed",
     "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
+  },
+  "trace_item_count": 5,
+  "trace_source_counts": {
+    "api_requests": 0,
+    "integration_evidence": 0,
+    "native_spans": 3,
+    "pm_inbox_events": 0,
+    "project_usage_events": 0,
+    "task_log": 0,
+    "worker_artifacts": 1,
+    "worker_run_transitions": 0,
+    "worker_usage_records": 1
   },
   "transition_count": 6,
   "usage_count": 1,

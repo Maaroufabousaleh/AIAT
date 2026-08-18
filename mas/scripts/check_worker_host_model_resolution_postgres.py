@@ -3,9 +3,10 @@
 This probe exercises the AIAT-owned model-profile catalogue and deterministic
 resolver, persists an immutable resolution snapshot, and carries that
 snapshot through the normal Worker Host Executor and Worker Run Controller.
-The adapter is a local deterministic fixture: no model provider or remote
-runtime is contacted.  The probe therefore certifies control-plane model
-selection and propagation, not provider availability, provider recovery, or a
+Dispatch uses the production ``GatewayWorkerAdapter`` against a bounded local
+gateway double: no model provider or remote runtime is contacted.  The probe
+therefore certifies control-plane model selection, gateway-adapter propagation,
+and durable settlement, not provider availability, provider recovery, or a
 gVisor/Firecracker sandbox.
 """
 
@@ -36,20 +37,16 @@ from mas_core.llm_gateway.model_profiles import (  # noqa: E402
     ModelResolutionRequest,
 )
 from mas_core.llm_gateway.model_resolver import ModelProfileResolver  # noqa: E402
+from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats  # noqa: E402
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 from mas_core.observability.trace_evidence import build_trace_evidence  # noqa: E402
 from mas_core.observability.worker_trace_coverage import (  # noqa: E402
     WORKER_TRACE_COVERAGE_SCHEMA,
     evaluate_worker_trace_coverage,
 )
-from mas_core.worker_contract.adapters import NativeWorkerAdapter  # noqa: E402
 from mas_core.worker_contract.models import (  # noqa: E402
-    ArtifactKind,
     ModelProfileReference,
-    WorkerArtifact,
-    WorkerResult,
     WorkerRunRequest,
-    WorkerUsage,
 )
 from mas_core.worker_registry.host_executor import (  # noqa: E402
     HOST_EXECUTION_SCHEMA,
@@ -63,6 +60,7 @@ from mas_core.worker_registry.run_host_binding import (  # noqa: E402
     RunHostBindingRequest,
     WorkerRunHostBindingService,
 )
+from mas_core.worker_registry.runtime_adapters import GatewayWorkerAdapter  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-host-model-resolution-postgres-certification.v1"
 EXPECTED_MIGRATION = "0042_worker_run_host_binding"
@@ -275,43 +273,22 @@ async def _cleanup(storage: AgentStorage) -> dict[str, int]:
     }
 
 
-async def _fixture_worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
-    resolved = request.resolved_model_profile
-    if (
-        resolved is None
-        or resolved.profile_id != PROFILE_LOGICAL_ID
-        or resolved.version != PROFILE_VERSION
-        or resolved.exact_model_id != EXACT_MODEL_ID
-        or resolved.resolution_snapshot_id != SNAPSHOT_ID
-    ):
-        raise RuntimeError("fixture received an incomplete model-resolution reference")
-    return WorkerResult(
-        run_id=request.run_id,
-        worker_id=request.worker_id,
-        success=True,
-        output={"result": "host-model-resolution-complete", "private_marker": PAYLOAD_MARKER},
-        artifacts=[
-            WorkerArtifact(
-                kind=ArtifactKind.REPORT,
-                name="host-model-resolution-fixture-report.json",
-                uri="fixture://aiat/host-model-resolution-v1/report.json",
-                sha256="d" * 64,
-                size_bytes=128,
-                mime_type="application/json",
-            )
-        ],
-        usage=WorkerUsage(
-            prompt_tokens=5,
-            completion_tokens=9,
-            cost_usd=0.0014,
-            duration_ms=3.0,
-            cpu_seconds=0.01,
-            memory_bytes=2048,
-            provider=PROVIDER_ID,
-            exact_model_id=EXACT_MODEL_ID,
-        ),
-        completion_criteria={"criterion": "committed-model-resolution-host-execution"},
-    )
+class _FixtureGateway:
+    """Bounded local gateway double used by the production gateway adapter."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat_completion(self, **kwargs: Any) -> ChatResponse:
+        self.calls.append(dict(kwargs))
+        return ChatResponse(
+            model=str(kwargs["model"]),
+            message=ChatMessage(
+                role="assistant",
+                content="durable host gateway fixture answer",
+            ),
+            usage=UsageStats(prompt_tokens=5, completion_tokens=9, total_tokens=14),
+        )
 
 
 def _safe_blob(*values: Any) -> str:
@@ -339,6 +316,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
     durable_usage: list[dict[str, Any]] = []
     durable_artifacts: list[dict[str, Any]] = []
     durable_spans: list[dict[str, Any]] = []
+    gateway_call_count = 0
     transition_count = 0
     event_count = 0
     reopened_healthy = False
@@ -423,8 +401,12 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         registered_worker = await storage.register_worker(
             name=WORKER_NAME,
             worker_id=WORKER_REGISTRY_ID,
-            adapter_type="native",
-            adapter_config={"fixture": "host-model-resolution"},
+            adapter_type="aiat_gateway",
+            adapter_config={
+                "fixture": "host-model-resolution",
+                "provider_id": PROVIDER_ID,
+                "gateway_backend": "local-fixture",
+            },
             sandbox_profile="standard",
             status="ACTIVE",
             version="fixture-v1",
@@ -432,7 +414,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             source_revision="host-model-resolution-v1",
             version_pin="fixture-v1",
             evaluation_status="fixture-only",
-            adapter_entrypoint="NativeWorkerAdapter",
+            adapter_entrypoint="GatewayWorkerAdapter",
             isolation_mode="native",
             model_profile_id=PROFILE_LOGICAL_ID,
             model_mode="aiat_gateway",
@@ -445,7 +427,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             host_uuid=HOST_UUID,
             registration_token=TOKEN,
             labels={"pool": "worker"},
-            capabilities=["native", "model_resolution"],
+            capabilities=["aiat_gateway", "model_resolution"],
             host_plane="worker",
             sandbox_profile="standard",
             isolation_mode="native",
@@ -477,7 +459,13 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             idempotency_key=IDEMPOTENCY_KEY,
             worker_id=str(canonical_worker_id),
             task_type="host_model_resolution_fixture",
-            task_input={"private_marker": PAYLOAD_MARKER, "operation": "worker-plane"},
+            task_input={
+                "prompt": "reply with a bounded durable host gateway fixture answer",
+                "max_tokens": 32,
+                "temperature": 0.2,
+                "private_marker": PAYLOAD_MARKER,
+                "operation": "worker-plane",
+            },
             requested_model_profile=requested_reference,
             resolved_model_profile=resolved_reference,
             trace_id=TRACE_ID,
@@ -503,7 +491,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             placement=WorkerPlacementRequest(
                 worker_id=str(canonical_worker_id),
                 required_host_plane="worker",
-                required_capabilities=frozenset({"native", "model_resolution"}),
+                required_capabilities=frozenset({"aiat_gateway", "model_resolution"}),
                 required_labels=(("pool", "worker"),),
                 required_sandbox_profile="standard",
                 required_isolation_mode="native",
@@ -515,10 +503,12 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         )
         await binding_service.assign(binding_request)
         binding_before = await binding_service.commit(RUN_ID, owner=OWNER)
-        adapter = NativeWorkerAdapter(
-            _fixture_worker,
+        gateway = _FixtureGateway()
+        adapter = GatewayWorkerAdapter(
             worker_id=str(canonical_worker_id),
-            runtime_version="fixture-runtime-v1",
+            provider_id=PROVIDER_ID,
+            gateway_client=gateway,
+            runtime_version="gateway-host-model-resolution-fixture-v1",
         )
         try:
             executor = WorkerHostExecutor(storage, binding_service=binding_service)
@@ -536,7 +526,26 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             )
         finally:
             await adapter.close()
+        gateway_call_count = len(gateway.calls)
         binding_after = execution_result.binding_after
+        stored_artifact = await storage.create_artifact(
+            agent_id=str(canonical_worker_id),
+            path="fixture://aiat/host-model-resolution-v1/report.json",
+            metadata={"fixture_projection": True, "payload_free": True},
+            sha256="d" * 64,
+            size_bytes=128,
+        )
+        await storage.create_worker_artifact(
+            run_id=RUN_ID,
+            artifact_id=stored_artifact["id"],
+            kind="report",
+            uri=stored_artifact["path"],
+            sha256=stored_artifact["sha256"],
+            size_bytes=stored_artifact["size_bytes"],
+            metadata=stored_artifact["metadata"],
+            trace_id=TRACE_ID,
+            span_id=SPAN_ID,
+        )
         await storage.create_native_trace_span(
             trace_id=TRACE_ID,
             span_id=WORKER_SPAN_ID,
@@ -633,6 +642,8 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             reopened_healthy,
             durable_run is not None,
             durable_worker is not None
+            and durable_worker.get("adapter_type") == "aiat_gateway"
+            and durable_worker.get("adapter_entrypoint") == "GatewayWorkerAdapter"
             and durable_worker.get("model_mode") == "aiat_gateway"
             and durable_worker.get("model_profile_id") == PROFILE_LOGICAL_ID,
             durable_snapshot is not None
@@ -656,6 +667,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             persisted_resolved.get("resolution_snapshot_id") == str(SNAPSHOT_ID),
             usage.get("provider_id") == PROVIDER_ID,
             usage.get("exact_model_id") == EXACT_MODEL_ID,
+            gateway_call_count == 1,
             remaining
             == {
                 "workers": 0,
@@ -684,6 +696,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         "claim_state": claim_state,
         "transition_count": transition_count,
         "event_count": event_count,
+        "gateway_call_count": gateway_call_count,
         "usage_count": len(durable_usage),
         "artifact_count": len(durable_artifacts),
         "native_span_count": len(durable_spans),
@@ -699,6 +712,8 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "selection_reason": durable_snapshot.get("selection_reason") if durable_snapshot else None,
             "worker_model_mode": durable_worker.get("model_mode") if durable_worker else None,
             "worker_model_profile_id": durable_worker.get("model_profile_id") if durable_worker else None,
+            "worker_adapter_type": durable_worker.get("adapter_type") if durable_worker else None,
+            "worker_adapter_entrypoint": durable_worker.get("adapter_entrypoint") if durable_worker else None,
             "run_snapshot_id": str(durable_run.get("model_resolution_snapshot_id")) if durable_run else None,
             "request_reference": persisted_resolved,
             "usage_provider_id": usage.get("provider_id"),
@@ -734,7 +749,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         "external_network_access_performed": False,
         "external_provider_mutation_performed": False,
         "worker_dispatch_performed": True,
-        "scope": "AIAT model profile/version resolution, durable snapshot propagation, committed worker-host admission, native fixture dispatch, evidence, release, reopen, and cleanup",
+        "scope": "AIAT model profile/version resolution, durable snapshot propagation, committed worker-host admission, production GatewayWorkerAdapter over a bounded local gateway fixture, evidence, release, reopen, and cleanup",
         "certification_boundary": {
             "approved_model_profile_and_version": "checked",
             "deterministic_model_profile_resolution": "checked",
@@ -743,7 +758,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "run_snapshot_and_request_reference_propagation": "checked",
             "usage_provider_and_exact_model_attribution": "checked",
             "committed_worker_host_binding_and_lease": "checked",
-            "native_fixture_worker_dispatch": "checked",
+            "gateway_worker_adapter_fixture_dispatch": "checked",
             "durable_terminal_evidence": "checked",
             "binding_and_reservation_release": "checked",
             "postgres_connection_reopen": "checked",
