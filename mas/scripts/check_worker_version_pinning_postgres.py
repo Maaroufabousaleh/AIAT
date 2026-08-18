@@ -459,6 +459,23 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "adapter_versions": ["adapter-v1", "adapter-v2"],
             "skill_bundle_versions": ["bundle-v1", "bundle-v2"],
         },
+        "version_labels_read_back": {
+            "active_registry": {
+                "shell": (shell_v2 or {}).get("version"),
+                "adapter": (adapter_v2 or {}).get("version"),
+                "skill_bundle": (bundle_v2 or {}).get("semantic_version"),
+            },
+            "in_flight_run": {
+                "shell": (shell_v1 or {}).get("version"),
+                "adapter": (adapter_v1 or {}).get("version"),
+                "steward": "pin-steward-v1",
+            },
+            "queued_replacement_run": {
+                "shell": (shell_v2 or {}).get("version"),
+                "adapter": (adapter_v2 or {}).get("version"),
+                "steward": "pin-steward-v1",
+            },
+        },
         "active_registry_after_rollout": active_v2,
         "in_flight_run_v1": run1_projection,
         "new_queued_run_v2": run2_projection,
