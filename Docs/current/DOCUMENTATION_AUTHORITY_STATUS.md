@@ -440,6 +440,17 @@ payload-free usage/artifact/trace coverage, and zero-row cleanup. It is a local
 same-host process prerequisite only; independent deployed hosts, host-loss,
 provider, and sandbox evidence remain open.
 
+The encrypted object-store group `91504dd` adds the maintained
+[`object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json)
+certificate and the provider-neutral
+[`object_store_encryption.py`](../../mas/packages/mas-core/mas_core/memory/object_store_encryption.py)
+envelope. AES-256-GCM ciphertext replication, opaque key-ID-only manifests,
+authenticated read-back, wrong-key/tamper rejection, clean-target preflight,
+and scoped cleanup pass without retaining fixture payloads or key material.
+Provider-managed SSE/KMS, external backend, key custody, clean-environment,
+and outage evidence remain separate; licence metadata remains informational and
+non-gating.
+
 The deterministic placement group `db22e60`, extended by `3fb15db`, adds the maintained
 [`worker_placement_contract.json`](../../mas/docs/provenance/worker_placement_contract.json)
 certificate and the `aiat.worker-placement.v1` policy module. Its pure

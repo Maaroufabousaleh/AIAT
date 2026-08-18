@@ -56,7 +56,21 @@
   deterministic fixture for checksum inventory, verified copy, optional dual
   write, and explicit human-confirmed cutover/rollback; provider-certified
   routing, retention, and live rollback evidence remain open.
-- Add encrypted backup/replication to Garage, R2, B2, or another approved backend.
+- [x] Implement the provider-neutral AIAT-owned encrypted backup envelope
+  (`91504dd`) with
+  [`object_store_encryption.py`](../../../mas/packages/mas-core/mas_core/memory/object_store_encryption.py)
+  and deterministic certificate
+  [`check_object_store_encryption.py`](../../../mas/scripts/check_object_store_encryption.py).
+  AES-256-GCM encrypts bytes before replication, manifests retain only opaque
+  key IDs/nonces/checksums/sizes, wrong keys and tampering fail closed, clean
+  targets are enforced before mutation, and encrypted read-back/cleanup pass
+  in [`object_store_encryption_evidence.json`](../../../mas/docs/provenance/object_store_encryption_evidence.json).
+  This closes the AIAT-owned envelope prerequisite only; provider-managed
+  SSE/KMS, Garage/R2/B2 or other external backend, key custody/rotation,
+  clean-environment restore, and outage evidence remain open.
+- Run the encrypted envelope against Garage, R2, B2, or another approved
+  backend and retain provider-managed encryption/key-custody and clean-
+  environment restore evidence.
 - Automate clean-environment restore verification beyond the bounded empty-target
   preflight above.
 

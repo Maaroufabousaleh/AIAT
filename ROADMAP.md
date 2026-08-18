@@ -52,6 +52,13 @@ verifies distinct process IDs, reopen, payload-free traces, and cleanup;
 independent deployed-host loss/split-brain, external provider/outage, sandbox,
 and live dispatch coverage remain separate gates.
 
+The encrypted object-store group `91504dd` adds the AIAT-owned
+`aiat.object-store-encrypted-backup.v1` AES-256-GCM envelope. The local
+certificate verifies ciphertext-only backup prefixes, opaque key-ID-only
+manifests, authenticated read-back, wrong-key/tamper rejection, clean-target
+preflight, and zero-row cleanup; provider-managed SSE/KMS, external backend,
+key custody, clean-environment restore, and outage evidence remain open.
+
 The preceding grouped verification (`2cb59ef`, based on the image-contract
 documentation and live snapshot groups, 2026-08-18) keeps the static release
 ledger at 51/51 pass and confirms the protocol, documentation-index,
@@ -700,6 +707,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Versioned SLOs, durable usage forecasts, and operational capacity evidence | [SLO, Capacity, and Operational Forecast](Docs/current/FEATURE_SLO_CAPACITY_AND_OPERATIONS.md) |
 | Postgres/pgvector/Redis/object storage, retention, and memory services | [Data, Storage, Memory, and Retention](Docs/current/FEATURE_DATA_STORAGE_AND_MEMORY.md) |
 | Object-store conformance, copy, backup/restore, migration, and benchmark workflow | [`object_store_conformance.py`](mas/packages/mas-core/mas_core/memory/object_store_conformance.py), [`object_store_migration.py`](mas/packages/mas-core/mas_core/memory/object_store_migration.py), [`object_store_backup.py`](mas/packages/mas-core/mas_core/memory/object_store_backup.py), [`object_store_rollout.py`](mas/packages/mas-core/mas_core/memory/object_store_rollout.py), [`object_store_benchmark.py`](mas/packages/mas-core/mas_core/memory/object_store_benchmark.py), [`check_object_store_conformance.py`](mas/scripts/check_object_store_conformance.py), [`check_object_store_copy.py`](mas/scripts/check_object_store_copy.py), [`check_object_store_backup_restore.py`](mas/scripts/check_object_store_backup_restore.py), [`check_object_store_migration.py`](mas/scripts/check_object_store_migration.py), [`check_object_store_benchmarks.py`](mas/scripts/check_object_store_benchmarks.py), and the local MinIO probes [`check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh)/[`check-minio-backup-restore.sh`](mas/infra/compose/scripts/check-minio-backup-restore.sh) (`--live` paths included) |
+| Encrypted object-store backup envelope | [`object_store_encryption.py`](mas/packages/mas-core/mas_core/memory/object_store_encryption.py), [`check_object_store_encryption.py`](mas/scripts/check_object_store_encryption.py), [`object_store_encryption_evidence.json`](mas/docs/provenance/object_store_encryption_evidence.json), and [Data/Storage/Memory feature](Docs/current/FEATURE_DATA_STORAGE_AND_MEMORY.md); commit `91504dd` | AIAT-owned AES-256-GCM encryption before replication, opaque key-ID-only manifests, ciphertext checksum/read-back, wrong-key/tamper rejection, clean-target preflight, and cleanup pass in local fixture scope; provider-managed SSE/KMS, external backend, key custody, clean-environment restore, and outage evidence remain open |
 | Object-store migration review status | [Object-Store Migration Review Status](Docs/current/FEATURE_OBJECT_STORE_MIGRATION_STATUS.md) |
 | Dashboard information architecture, CEO UX, accessibility, and E2E | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); finite section ACL policy `d405ccb`, fail-closed enforcement/operator proxies `e9b4da4`, project-evidence typecheck repair `fc4f0fa`, operation-selector hardening `e378f40`, bounded artifact/usage evidence reads `2ca5f3d`, stale-refresh retention `6c52552`, governance read-surface stale/retry recovery `52de581`, governance accessibility `f4ae7eb`, Governance denial-state recovery `888fde3`, System Control stale/retry recovery `f445c17`, System Control accessibility `543f392`, System Control denial-state recovery `14968d4`, Project Detail accessibility `40b87dd`, evidence-detail accessibility `32f3a76`, system-visualisation accessibility `ed5e551`, system-visualisation denial-state recovery `db898e7`, PM integrations accessibility `bbd6ba3`, PM integrations denial-state recovery `7373360`, Hiring Board denial-state recovery `553f196`, Credentials denial-state recovery `982c9c0`, CEO Live Feed denial-state recovery `a3cbd99`, Agent Streams denial-state recovery `118ff18`, Container Logs denial-state recovery `156597c`, Metrics denial-state recovery `b64b15e`, System Overview accessibility `c07b4a6`, System Overview source-status recovery `50cee61`, shared identity-resource accessibility `a260e04`, shared identity-resource route matrix `485dfd2`, shared identity-resource denial-state recovery `0974434`, shared EmptyState decorative-icon semantics `24be4ba`, shared ErrorBanner decorative-icon semantics `29b700c`, operator sign-in accessibility `d928834`, Projects list stale/retry recovery `d3482ab`, Project evidence package stale/retry recovery `bc80ad5`, Project evidence package accessibility `89091c1`, Tools catalogue stale/retry recovery `5f4b0eb`, Tools catalogue accessibility `83e39e6`, dead-letter queue stale/retry recovery `823fa6d`, dead-letter queue accessibility `99a19a2`, credentials metadata stale/retry recovery `970f09c`, credentials render-state lint repair `e6e6980`, credentials accessibility `93fdfbc`, Metrics partial/stale/retry recovery `85596b0`, Metrics accessibility `da113af`, Container Logs accessibility `993b1cb`, Agent Streams accessibility `d320383`, Hiring Board accessibility `826b4c5`, CEO Live Feed accessibility `1f947a9`, CEO Command Center chat accessibility `8ffb5df`, Flows list stale/retry recovery `a0faf5b`, flow-editor load/stale/retry recovery `b5098e7`, project-detail first-load/retry recovery `f364763`, project-workspace stale/retry recovery `cb1c665`, Container Logs stale/retry recovery `280d363`, Agent Streams stale/retry recovery `3e8a0ea`, shared identity-resource stale/retry recovery `46eccee`, identity table accessibility `651ad11`, Hiring Board stale/retry recovery `7541b84`, CEO Live Feed stale/retry recovery `1761429`, and CEO Command Center chat stale/retry recovery `beabb95` |
 | Dashboard dead-letter queue access-denied recovery | [Dashboard and Operator UX](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md); dead-letter queue read/replay boundary `e6ab3a1`, source-built `dlq-states.spec.ts` 3/3; native/live ACL and DLQ evidence remain open |
@@ -1600,6 +1608,15 @@ large-object/multipart, outage/recovery, encrypted/provider backup,
 clean-environment restore, provider-pair migration, and multi-host proof remain
 open. The retained MinIO runs are local deployment evidence, not a claim about
 another provider or disaster recovery.
+Commit `91504dd` now adds the provider-neutral encrypted backup prerequisite:
+`object_store_encryption.py` encrypts bytes with AES-256-GCM before an adapter
+receives them, retains only opaque key IDs/nonces/checksums/sizes in the
+manifest, replicates ciphertext, and verifies authenticated read-back. The
+retained [`mas/docs/provenance/object_store_encryption_evidence.json`](mas/docs/provenance/object_store_encryption_evidence.json)
+certificate passes wrong-key/tamper rejection, clean-target preflight, and
+scoped cleanup. It does not claim provider-managed SSE/KMS, external backend
+durability, key custody/rotation, clean-environment restore, or outage
+recovery.
 The bounded `aiat.trace-evidence.v1` operator query and company trace
 sampling/retention metadata are implemented over payload-free API request,
 task, usage, worker-transition, direct model-usage/worker-artifact/
@@ -1762,6 +1779,11 @@ Required outcomes:
 - [x] fail closed on a non-empty restore prefix before copy and retain the
   `clean_target_verified` restore evidence (`93bf755`); clean-environment,
   encrypted, provider-diverse, and disaster-recovery proof remain separate;
+- [x] implement the AIAT-owned AES-256-GCM encrypted backup envelope and
+  ciphertext replication/read-back (`91504dd`); opaque key-ID-only manifests,
+  wrong-key/tamper rejection, clean-target preflight, and cleanup pass in the
+  local certificate, while provider-managed SSE/KMS, external backend,
+  key-custody, clean-environment, and outage evidence remain separate;
 - [x] governed inventory → verified-copy → optional-dual-write →
   human-confirmed-cutover → human-confirmed-rollback workflow and deterministic
   fixture; provider-specific routing, retention, and rollback evidence remain;
@@ -1848,7 +1870,8 @@ Required outcomes:
   implemented);
 - SeaweedFS benchmark against current MinIO;
 - migration only if decision gate passes, using checksum parity and exact rollback;
-- encrypted Garage/R2/B2 or approved backup and clean restore proof;
+- provider-backed encrypted Garage/R2/B2 or approved backup and clean restore
+  proof (the provider-neutral encrypted envelope prerequisite is implemented);
 - optional Letta/Qdrant/Temporal adopted only after measurable-value and removal gates;
 - multi-host gVisor pools and separately certified Firecracker high-risk pools.
 

@@ -45,6 +45,15 @@
   independent deployed hosts, host-loss/split-brain, provider, and sandbox
   gates remain open. Evidence is retained at
   [`worker_independent_process_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json).
+- Commit `91504dd` adds the AIAT-owned encrypted object-store backup envelope:
+  AES-256-GCM ciphertext replication, opaque key-ID-only manifests,
+  authenticated checksum/read-back, wrong-key and tamper rejection, clean-
+  target refusal before mutation, and scoped cleanup pass in the deterministic
+  fixture. Evidence is retained at
+  [`object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json).
+  This is a provider-neutral envelope prerequisite only; provider-managed
+  SSE/KMS, external backend, key custody, clean-environment, and outage gates
+  remain open.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery
