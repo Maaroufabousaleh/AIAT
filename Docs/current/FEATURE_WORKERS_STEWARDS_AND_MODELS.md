@@ -1,6 +1,6 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
-**Baseline:** 2026-08-17
+**Baseline:** 2026-08-18
 **Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), and selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 The fenced host-loss queue-recovery group `893293a` now extends the local
 worker-plane evidence: host-filtered fencing expires only the reserved lost
@@ -180,12 +180,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   unavailable; `--require-approved` also blocks when no approved persisted
   profile coverage exists. Licence and restriction metadata is outside this
   operational catalogue and cannot fail it.
-- The refreshed local read-only catalogue evidence observes 93 registered
-  models, 94 persisted profile versions, and 92 approved covered versions.
-  One registered model remains `profile_pending` and two persisted rows are
-  not registered; these are explicit operator-visible reconciliation findings,
-  not a licence/resource restriction gate. The bounded result is retained at
-  [`mas/docs/provenance/model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json).
+- The refreshed 2026-08-18 local read-only catalogue evidence observes 93
+  registered models, 94 persisted profile versions, and 92 approved covered
+  versions. The `/v1/models` route exposes nine models including all five AIAT
+  aliases (`auto`, `omniroute-auto`, `omniroute-free`, `omniroute-coding`, and
+  `omniroute-smart`). One registered model remains `profile_pending` and two
+  persisted rows are not registered; these are explicit operator-visible
+  reconciliation findings, not a licence/resource restriction gate. The
+  bounded result is retained at
+  [`mas/docs/provenance/model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json),
+  with no dispatch or provider call performed.
 - The checked-in `opencode-phase0b-coding` profile is now an explicit,
   evidence-referenced bootstrap declaration. Startup and the legacy default
   company seed endpoint persist it idempotently with the current
@@ -673,7 +677,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Measure both tool-service profiles on native Linux and publish cold-build, compressed/uncompressed size, startup, memory, and vulnerability evidence against the checked-in budget.
 - [x] Add focused model-override expiry and terminal budget-settlement replay tests, align gateway retry/fallback status classification with the shared transient provider vocabulary, and persist model/provider cooldown evidence; broader reservation/settlement chaos and live provider failover evidence remain open.
 - [x] Export and reconcile the deterministic runtime/profile catalogue, add the bounded executive reconciliation report, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, role-scoped `aiat.executive-action.v1` CFO/CTO/CEO writes, and audit reservation/settlement invariants; local live evidence now observes approved persisted coverage (92/94) while one pending model and two non-registered rows remain findings; provider-specific live failover/recovery, broader governance forms, and broader budget-settlement chaos tests remain.
-- [x] Add a fail-closed `--live` model-profile catalogue verifier with an explicit `--require-approved` gate; the local API passes the approval requirement and retains bounded reconciliation findings, while provider health/recovery and clean environment evidence remain operator work.
+- [x] Add a fail-closed `--live` model-profile catalogue verifier with an explicit `--require-approved` gate; the local API passes the approval requirement and the read-only `/v1/models` route exposes all five AIAT aliases (`68e0b03`), while provider health/recovery and clean environment evidence remain operator work.
 - [x] Add an idempotent, conflict-preserving bootstrap for the shipped
   `opencode-phase0b-coding` profile plus every registered model identity, and
   register the current internal `omniroute-coding` alias; live database/provider
