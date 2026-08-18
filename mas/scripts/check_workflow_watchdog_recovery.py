@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mas_core.workflow import (
+    InvalidTransitionError,
     WatchdogConfig,
     WorkflowController,
     WorkflowEvent,
@@ -32,7 +33,7 @@ def _check(name: str, passed: bool, reason: str) -> dict[str, Any]:
     return {"name": name, "status": "pass" if passed else "fail", "reason": reason}
 
 
-async def _controller_checks() -> tuple[dict[str, Any], dict[str, Any]]:
+async def _controller_checks() -> dict[str, Any]:
     controller = WorkflowController()
     watchdog_result = await controller.transition(
         project_id="fixture-project",
@@ -48,18 +49,62 @@ async def _controller_checks() -> tuple[dict[str, Any], dict[str, Any]]:
         actor_id="operator",
         context={"last_safe_state": ProjectState.IN_PROGRESS.value},
     )
-    return (
-        {
+    cancellation_result = await controller.transition(
+        project_id="fixture-project",
+        current_state=ProjectState.HUMAN_APPROVAL,
+        event=WorkflowEvent.HUMAN_CANCELLED,
+        actor_id="operator",
+        context={"reason": "fixture cancellation"},
+    )
+    escalation_result = await controller.transition(
+        project_id="fixture-project",
+        current_state=ProjectState.PDR_REVIEW,
+        event=WorkflowEvent.REVIEW_CIRCUIT_OPEN,
+        actor_id="review-circuit",
+        context={"reason": "fixture review timeout escalation"},
+    )
+    timeout_result = await controller.transition(
+        project_id="fixture-project",
+        current_state=ProjectState.CDR_CREATION,
+        event=WorkflowEvent.WATCHDOG_TIMEOUT,
+        actor_id="watchdog",
+        context={"reason": "fixture node timeout"},
+    )
+    try:
+        controller.next_state(ProjectState.INIT, WorkflowEvent.KPI_SAVED)
+    except InvalidTransitionError:
+        invalid_transition_blocked = True
+    else:
+        invalid_transition_blocked = False
+
+    return {
+        "watchdog": {
             "prior_state": str(watchdog_result.prior_state),
             "next_state": str(watchdog_result.next_state),
             "event": watchdog_result.event.value,
         },
-        {
+        "retry": {
             "prior_state": str(retry_result.prior_state),
             "next_state": str(retry_result.next_state),
             "event": retry_result.event.value,
         },
-    )
+        "cancellation": {
+            "prior_state": str(cancellation_result.prior_state),
+            "next_state": str(cancellation_result.next_state),
+            "event": cancellation_result.event.value,
+        },
+        "escalation": {
+            "prior_state": str(escalation_result.prior_state),
+            "next_state": str(escalation_result.next_state),
+            "event": escalation_result.event.value,
+        },
+        "timeout": {
+            "prior_state": str(timeout_result.prior_state),
+            "next_state": str(timeout_result.next_state),
+            "event": timeout_result.event.value,
+        },
+        "invalid_transition_blocked": invalid_transition_blocked,
+    }
 
 
 def build_report() -> dict[str, Any]:
@@ -86,7 +131,9 @@ def build_report() -> dict[str, Any]:
         boot_at=boot_at,
         config=config,
     )
-    watchdog_result, retry_result = asyncio.run(_controller_checks())
+    controller_results = asyncio.run(_controller_checks())
+    watchdog_result = controller_results["watchdog"]
+    retry_result = controller_results["retry"]
 
     checks = [
         _check(
@@ -122,6 +169,41 @@ def build_report() -> dict[str, Any]:
             all(is_terminal_state(state) for state in (ProjectState.FAILED, ProjectState.COMPLETED, ProjectState.ARCHIVED)),
             "terminal project states are not automatically re-entered by the watchdog",
         ),
+        _check(
+            "explicit_human_cancellation",
+            controller_results["cancellation"]
+            == {
+                "prior_state": ProjectState.HUMAN_APPROVAL.value,
+                "next_state": ProjectState.ARCHIVED.value,
+                "event": WorkflowEvent.HUMAN_CANCELLED.value,
+            },
+            "human cancellation reaches the terminal archived state through the controller",
+        ),
+        _check(
+            "review_circuit_escalation",
+            controller_results["escalation"]
+            == {
+                "prior_state": ProjectState.PDR_REVIEW.value,
+                "next_state": ProjectState.FAILED.value,
+                "event": WorkflowEvent.REVIEW_CIRCUIT_OPEN.value,
+            },
+            "review-circuit escalation uses the universal failure transition",
+        ),
+        _check(
+            "node_timeout_failure",
+            controller_results["timeout"]
+            == {
+                "prior_state": ProjectState.CDR_CREATION.value,
+                "next_state": ProjectState.FAILED.value,
+                "event": WorkflowEvent.WATCHDOG_TIMEOUT.value,
+            },
+            "node timeout reaches failure without guessing a recovery state",
+        ),
+        _check(
+            "invalid_transition_fails_closed",
+            controller_results["invalid_transition_blocked"] is True,
+            "events not present in the transition table are rejected",
+        ),
     ]
     status = "pass" if all(item["status"] == "pass" for item in checks) else "fail"
     return {
@@ -129,6 +211,7 @@ def build_report() -> dict[str, Any]:
         "mode": "fixture",
         "status": status,
         "checks": checks,
+        "transition_cases": controller_results,
         "controller": {"storage": False, "worker_dispatch": False, "mutation": False},
         "live": {"status": "not_checked", "reason": "native watchdog and cold-recovery proof remains an operator gate"},
         "licence_metadata": {

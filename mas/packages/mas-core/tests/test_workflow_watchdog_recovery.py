@@ -26,6 +26,10 @@ def test_watchdog_recovery_fixture_passes_without_mutation() -> None:
         "mutation": False,
     }
     assert report["licence_metadata"]["affects_discovery_install_activation_or_execution"] is False
+    assert report["transition_cases"]["cancellation"]["next_state"] == "ARCHIVED"
+    assert report["transition_cases"]["escalation"]["next_state"] == "FAILED"
+    assert report["transition_cases"]["timeout"]["next_state"] == "FAILED"
+    assert report["transition_cases"]["invalid_transition_blocked"] is True
 
 
 def test_watchdog_recovery_live_boundary_is_blocked() -> None:
