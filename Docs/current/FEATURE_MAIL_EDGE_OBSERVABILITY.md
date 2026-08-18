@@ -9,7 +9,7 @@ and the real local ASGI ingress certificates, plus the durable dual-Postgres
 worker/mail-edge composition certificate and raw-provider composition follow-up,
 are implemented in `85369fe`,
 `cfafe38`, `2d21a2f`, `29d4da5`, `074ef8a`, `aab6285`, `2d04b30`, `1d8aed5`,
-`6ebb12c`, `fa42284`, `67f1599`, `0e0a76f`, and `def4fe9`. The
+`6ebb12c`, `fa42284`, `67f1599`, `0e0a76f`, `17f6547`, and `def4fe9`. The
 deterministic identity, adapter, orchestrator, checker, and core suites pass;
 the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)

@@ -114,10 +114,18 @@ durable provider-message attempt to derive worker/trace scope. Both stores are
 reopened independently and the payload-free cross-store evidence join passes
 before scoped cleanup. This is local
 normalized-store/provider-facing-ingress evidence only; raw external-provider
-callback, external provider delivery/recovery, selected live worker execution,
-and sandbox evidence remain separate gates. The retained reports are
+callback, external provider delivery/recovery, independent-host execution, and
+sandbox evidence remain separate gates. The retained reports are
 [`gateway_worker_mail_edge_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
 and [`gateway_worker_mail_edge_provider_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
+
+The retained live extension `17f6547` and bounded retry certificate `def4fe9`
+now add one operator-selected `llama-3.3-70b-versatile` completion through the
+configured LiteLLM route, durable worker/identity Postgres reopen, delivered /
+bounced provider-ingress read-back, replay/conflict/tamper outcomes,
+payload-free result persistence, and scalar retry metadata. External provider
+callback/delivery confirmation, provider outage recovery, independent hosts,
+and sandbox certification remain separate gates.
 
 ### 2.2 Evidence that must be interpreted carefully
 
@@ -1389,24 +1397,27 @@ The programme is organised around completing and hardening the existing architec
   conflict handling, and deterministic/fail-closed checker (`85369fe`), then
   add identity-service migration `0003_mail_edge_observations`, signed
   delegated webhook persistence, normalized event-ID idempotency/conflict
-  handling, and scalar mail-relay trace/SLO projection (`cfafe38`); configured
-  provider ingress certification, selected worker live evidence, and complete
-  mail spans remain separate.
+  handling, and scalar mail-relay trace/SLO projection (`cfafe38`); the
+  configured provider-ingress and selected live worker evidence are retained by
+  `17f6547`, while external callback/delivery confirmation and complete mail
+  spans remain separate.
 - [x] Add Resend/Svix exact raw-body verification and the provider-facing
   ingress route with bounded replay tolerance (`2d21a2f`); configured provider
-  ingress certification, selected worker live evidence, and complete mail spans
-  remain separate.
+  ingress and selected live worker evidence are retained by `17f6547`; external
+  callback/delivery confirmation and complete mail spans remain separate.
 - [x] Classify projected provider webhook spans in the read-only mail-edge
-  checker (`29d4da5`); configured callback, selected worker, and durable bounce
-  read-back evidence remain separate.
+  checker (`29d4da5`); the retained live certificate now combines selected
+  worker, configured ingress, and durable delivered/bounce read-back, while
+  external callback/delivery and complete mail-span evidence remain separate.
 - [x] Add optional signed identity dashboard read-back with selected-trace
   filtering and fail-closed partial configuration (`074ef8a`); live callback,
   worker, and durable bounce evidence remain separate.
 - [x] Add the deterministic `aiat.worker-mail-edge-coverage.v1` join and
   counts-only certificate (`1d8aed5`), requiring explicit worker/trace scope,
   worker source categories, and verified delivery/bounce signals without
-  network or state mutation. Live worker/provider/bounce evidence remains
-  separate.
+  network or state mutation. Selected live worker/provider/bounce evidence is
+  retained by `17f6547`; external callback/delivery confirmation and complete
+  mail spans remain separate.
 - [x] Certify one real `WorkerRunController`/`NativeWorkerAdapter` execution
   against the local Postgres store (`acd3f06`), including durable lifecycle,
   usage/artifact and native model/worker/audit span read-back through a second

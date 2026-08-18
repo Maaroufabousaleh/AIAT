@@ -2,9 +2,11 @@
 
 The raw-provider worker/mail-edge composition certificate is recorded in
 `0e0a76f`; the local provider-facing Resend/Svix boundary, durable
-provider-message worker/trace correlation, and dual-Postgres cleanup pass while
-durable external provider-backed model execution, sandbox certification, and
-full worker certification remain separate. `f999695` adds an explicit opt-in
+provider-message worker/trace correlation, and dual-Postgres cleanup pass.
+`17f6547` additionally retains one selected external provider-backed model
+completion with durable worker/identity read-back. Independent-host provider
+operation, sandbox certification, outage recovery, and full worker
+certification remain separate. `f999695` adds an explicit opt-in
 worker-plane provider runner; the retained `90c3e5d` certificate proves one
 selected `llama-3.3-70b-versatile` completion through the configured
 LiteLLM/OmniRoute route. `17f6547` adds durable worker/provider/mail-edge

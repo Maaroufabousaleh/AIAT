@@ -168,8 +168,10 @@ independently; the signed route checks replay/conflict/tamper behavior; and the
 cross-store evaluator passes before scoped cleanup.
 Evidence is [`gateway_worker_mail_edge_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
 This is local normalized-store/delegated-ingress composition only: raw external
-provider callback, external provider delivery/recovery, selected live worker
-execution, and sandbox evidence remain open.
+provider callback, external provider delivery/recovery, independent-host
+execution, and sandbox evidence remain open. `17f6547` subsequently retains one
+selected live worker/provider run with durable dual-Postgres reopen,
+payload-free result persistence, and delivered/bounced raw-ingress read-back.
 
 `b2ae516` hardens the gateway failure boundary: pre-dispatch input errors are
 terminal validation failures, known transient gateway statuses remain
@@ -371,8 +373,10 @@ through the real route, reopens `PostgresIdentityStore`, reads two normalized
 rows through SQL and the dashboard projection, verifies payload-free storage,
 and removes only its reserved fixture namespace. Evidence is
 [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
-This is local database evidence; deployed provider callback, selected worker,
-live bounce, and outage/restore gates remain open.
+This is local database evidence; deployed provider callback, live bounce, and
+outage/restore gates remain open. The later live extension `17f6547` supplies
+the selected worker and configured provider-ingress read-back; complete
+external callback/delivery and mail-span evidence remain open.
 `1d8aed5` adds the deterministic `aiat.worker-mail-edge-coverage.v1` join:
 worker usage/artifact/model/worker/integration source coverage is evaluated
 alongside explicitly worker/trace-correlated, payload-free delivery/webhook
@@ -2080,10 +2084,11 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    contract/checker (`85369fe`); [x] certify local durable worker-run and
    payload-free trace read-back (`acd3f06`); [x] certify the reserved local
    Postgres retention execution batch (`96f5fc0`, evidence at
-   [`provenance/trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json)); [ ] add a selected live
-   model-backed worker and identity provider webhook persistence; [ ] add
-   production hold authority, durable audit, erasure, provider recovery, and
-   restore rollback evidence.
+   [`provenance/trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json)); [x] add a selected live
+   model-backed worker and identity provider webhook persistence through the
+   retained `17f6547`/`def4fe9` certificates; [ ] add deployed external
+   callback/delivery, provider outage recovery, production hold authority,
+   durable audit, erasure, and restore rollback evidence.
 
 ## 7. Available choices outside the minimal roadmap
 
