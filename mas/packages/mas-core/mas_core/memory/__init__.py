@@ -16,6 +16,9 @@ Object-store conformance/copy/backup fixtures
                 deterministic contract, checksum-parity, manifest, and
                 restore reports; CLI runners can target a configured provider
                 but no live provider or migration claim is implied.
+Encrypted object-store backup envelope
+                AES-256-GCM ciphertext replication with opaque key IDs,
+                authenticated read-back, and clean-target verification.
 metadata        SQLAlchemy MetaData with all table definitions.
 """
 
@@ -40,6 +43,17 @@ from mas_core.memory.object_store_conformance import (
     ObjectStoreConformanceCase,
     ObjectStoreConformanceReport,
     run_object_store_conformance,
+)
+from mas_core.memory.object_store_encryption import (
+    ENCRYPTION_ALGORITHM,
+    OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA,
+    OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA,
+    EncryptedBackupManifest,
+    EncryptedBackupObject,
+    EncryptedRestoreVerification,
+    build_encrypted_backup,
+    replicate_encrypted_backup,
+    verify_encrypted_backup,
 )
 from mas_core.memory.object_store_migration import (
     OBJECT_STORE_COPY_SCHEMA,
@@ -73,6 +87,15 @@ __all__ = [
     "ObjectStoreCopyCase",
     "ObjectStoreCopyReport",
     "verify_and_copy_blobs",
+    "ENCRYPTION_ALGORITHM",
+    "OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA",
+    "OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA",
+    "EncryptedBackupManifest",
+    "EncryptedBackupObject",
+    "EncryptedRestoreVerification",
+    "build_encrypted_backup",
+    "replicate_encrypted_backup",
+    "verify_encrypted_backup",
     "OBJECT_STORE_BACKUP_SCHEMA",
     "OBJECT_STORE_RESTORE_SCHEMA",
     "BackupManifest",
