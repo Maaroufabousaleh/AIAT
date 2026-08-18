@@ -1,0 +1,75 @@
+{
+  "schema_version": "aiat.object-store-multipart.v1",
+  "evidence_commit": "a2f35de",
+  "observed_at": "2026-08-18T13:49:26Z",
+  "status": "pass",
+  "mode": "live-bounded-multipart",
+  "project_id": "aiat-multipart-live-20260818",
+  "provider_topology": {
+    "minio": "Compose MinIO endpoint",
+    "seaweedfs": "disposable SeaweedFS 4.42 endpoint",
+    "provider_diversity": "different S3-compatible implementations; operator-observed topology"
+  },
+  "payload_sizes_bytes": [
+    8388608,
+    16777216
+  ],
+  "part_size_bytes": 5242880,
+  "expected_part_counts": [
+    2,
+    4
+  ],
+  "total_payload_bytes_per_provider": 25165824,
+  "providers": {
+    "minio": {
+      "status": "pass",
+      "case_count": 2,
+      "part_counts": [
+        2,
+        4
+      ],
+      "error_count": 0,
+      "abort_verified": true,
+      "cleanup_verified": true,
+      "remaining_fixture_count": 0
+    },
+    "seaweedfs": {
+      "status": "pass",
+      "case_count": 2,
+      "part_counts": [
+        2,
+        4
+      ],
+      "error_count": 0,
+      "abort_verified": true,
+      "cleanup_verified": true,
+      "remaining_fixture_count": 0
+    }
+  },
+  "checksum_readback": "checked",
+  "multipart_create_part_complete": "checked",
+  "multipart_abort_without_object": "checked",
+  "mutation_scope": "reserved multipart benchmark project prefix only; no routing, cutover, or retention authority changed",
+  "external_network_access_performed": true,
+  "external_provider_mutation_performed": true,
+  "local_database_access_performed": false,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "single_request_checksum_baseline": "checked by prior benchmark evidence",
+    "multipart_upload_readback": "checked",
+    "multipart_abort_cleanup": "checked",
+    "resource_profile": "not_checked",
+    "actual_provider_process_or_network_outage": "not_checked",
+    "provider_managed_encryption_or_kms": "not_checked",
+    "migration_cutover_or_rollback": "not_checked",
+    "clean_host_or_disaster_recovery": "not_checked"
+  },
+  "notes": [
+    "Each provider completed deterministic 8 MiB and 16 MiB payloads using 5 MiB parts, checksum read-back, an explicit aborted upload, and post-delete prefix verification.",
+    "The live run is a local disposable adapter comparison and is not a provider-selection recommendation.",
+    "No endpoint URL, credential, object body, generated content, upload ID, or raw provider response is retained.",
+    "The disposable SeaweedFS container was removed after the run; Compose MinIO remains the configured local endpoint.",
+    "Licence and restriction data remains informational metadata and is not an activation, execution, or release gate."
+  ]
+}
