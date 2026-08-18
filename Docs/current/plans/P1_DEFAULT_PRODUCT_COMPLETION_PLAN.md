@@ -188,6 +188,10 @@ external client-language SDK compatibility yet.
   process, normalizing the persisted single-profile and structured-capability
   JSON forms; database reconciliation and live worker certification remain
   open.
+- [x] Re-run the local Postgres host-execution, multi-host, lease, fencing, and
+  queued-run-loss certificates serially with fixture-specific placement
+  labels; the three-iteration same-host soak is payload-free and leaves zero
+  fixture rows (`2bc7ca5`). This is local recovery evidence only.
 - Exercise shadow, read-only canary, live canary, promotion, regression block, and rollback.
 
 **Done when:** every default worker table entry can execute one representative project-scoped task with exact versions, evidence, budgets, and rollback.

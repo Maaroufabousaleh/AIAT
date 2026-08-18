@@ -32,9 +32,10 @@ it remains descriptive and does not change **NO-RELEASE**.
 
 The recovery regression refresh at `2bc7ca5` reran the local Postgres
 host-execution, concurrent multi-host, host-fencing, lease, and queued-run
-loss checks serially. Fixture-specific placement labels and elevated local
-priorities prevent unrelated disposable hosts from being selected; all five
-live checks pass with payload-free evidence and zero remaining fixture rows.
+loss checks serially, plus the three-iteration same-host recovery soak.
+Fixture-specific placement labels and elevated local priorities prevent
+unrelated disposable hosts from being selected; all five live checks pass with
+payload-free evidence and zero remaining fixture rows.
 This advances only same-host recovery evidence; independent hosts, sandbox,
 provider outage, clean-host, and disaster-recovery gates remain open.
 

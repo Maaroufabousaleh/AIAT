@@ -9,7 +9,7 @@ selected model-resolution host-execution, and the fail-closed Firecracker launch
 contract are implemented; deployed runtime, host-certified sandbox, provider,
 and independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `6cef1b8`, `9a7db70`, `5ed0a0b`
+**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `2bc7ca5`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -30,6 +30,14 @@ terminal/alias replay without redispatch, and explicit queue recovery after a
 fenced host lease is lost. It keeps gVisor, Firecracker, external providers,
 remote runtimes, and independent-host outage recovery as separate evidence
 boundaries.
+
+The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
+from one another with explicit fixture labels and deterministic priorities.
+Serial host-execution, concurrent multi-host, lease, fencing, queued-run-loss,
+and three-iteration same-host soak runs now pass with scalar, payload-free
+evidence and zero residual rows. This makes the local certificate reproducible;
+it does not advance the independent-host, sandbox, provider, canary, or
+rollback boundaries.
 
 The high-risk launch contract in
 [`firecracker.py`](../../mas/packages/mas-core/mas_core/worker_registry/firecracker.py)
