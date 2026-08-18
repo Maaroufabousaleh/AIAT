@@ -352,7 +352,7 @@ def _retained_provider_rows(payload: dict[str, Any]) -> list[dict[str, Any]] | N
         for name, value in raw.items():
             if not isinstance(value, dict):
                 return None
-            rows.append({"name": str(name), **value})
+            rows.append({**value, "name": str(name)})
         return rows
     if isinstance(raw, list):
         rows = []
