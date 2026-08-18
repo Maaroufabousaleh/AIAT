@@ -113,6 +113,14 @@ application boundary while leaving a configured external callback, selected
 live worker, provider delivery, recovery, and sandbox gates open. Evidence is
 [`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
 
+`17f6547` adds the explicit `--live-provider` durable mode to the same checker.
+The retained [`gateway_worker_provider_mail_edge_live.json`](../../mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+certificate records one selected `llama-3.3-70b-versatile` completion through
+LiteLLM, durable worker and identity Postgres reopen, raw-ingress delivered and
+bounced observations, replay/conflict/tamper outcomes, generated-text
+redaction, payload-free coverage, and zero residual fixture rows. It does not
+claim an external provider callback/delivery, recovery, or sandbox.
+
 ## Checker and live boundary
 
 From `mas/`:
@@ -244,9 +252,9 @@ predicate.
   provider callback through the raw-body ingress (the local raw-provider
   application boundary is certified; external callback evidence is still
   open);
-- configure the signed identity read-back credentials and run the checker
-  against an explicitly selected live model-backed worker and provider ingress;
-  then read back a durable bounce observation from identity-service/Postgres;
+- optionally configure the signed identity dashboard read-back and project the
+  retained live worker/provider/mail certificate into complete native mail
+  spans and SLO timing;
 - project the live observations into complete mail native spans and SLO timing;
 - retain deployment evidence without claiming provider or worker coverage
   when a source is absent; and

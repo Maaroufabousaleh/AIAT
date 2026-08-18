@@ -163,7 +163,12 @@ Commit `17f6547` extends the maintained boundary into the durable
 real gateway client through durable worker/controller/Postgres state, redacts
 generated content before `result_json` persistence, and can combine with
 `--provider-ingress` for local durable webhook/bounce read-back. The default is
-fail-closed and no configured live durable certificate is claimed yet.
+fail-closed. Retained evidence
+[`gateway_worker_provider_mail_edge_live.json`](../../mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+(`17f6547`) records one configured live run with dual-Postgres reopen,
+delivered/bounced raw provider-ingress read-back, payload-free projection, and
+zero residual fixture rows; external provider callback/delivery, recovery, and
+sandbox remain separate.
 
 Commit `38c99f4` adds the maintained bounded host-composition certificate. It
 drives the real `WorkerHostExecutor`, `WorkerRunController`, and

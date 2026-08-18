@@ -376,7 +376,12 @@ listing and operator opt-in, executes through the durable worker/controller
 and Postgres path, redacts generated content before durable `result_json`
 persistence, and can combine with `--provider-ingress` for local durable
 webhook/bounce read-back. The default remains fixture-only; no live durable
-certificate is claimed until configured worker and identity DSNs are supplied.
+certificate was previously open; retained evidence
+[`gateway_worker_provider_mail_edge_live.json`](mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+(`17f6547`) now records one configured live durable run with Postgres reopen,
+raw provider-ingress delivered/bounced read-back, payload-free projection, and
+zero residual fixture rows. External provider callback/delivery, recovery, and
+sandbox evidence remain separate gates.
 
 The read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue still passes its approved-coverage requirement. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision; the two non-registered profile rows remain operator-visible reconciliation findings.
 

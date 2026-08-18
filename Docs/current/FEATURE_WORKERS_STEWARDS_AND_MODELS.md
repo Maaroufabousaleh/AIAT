@@ -13,6 +13,10 @@ sandbox, recovery, and full worker certification remain separate.
 **Baseline:** 2026-08-18
 **Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), durable production `GatewayWorkerAdapter` host dispatch (`8ed53df`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), bounded host-executor/gateway composition (`38c99f4`), host-boundary failure classification (`2abc02a`), explicit opt-in live worker-plane provider runner (`f999695`), and protocol schema/runtime reconciliation (`8f46ed1`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 
+The retained live increment (`17f6547`) now covers one selected durable
+worker/provider/mail-edge run; broader independent-host, provider-callback,
+recovery, sandbox, and full certification gates remain incomplete.
+
 Commit `6ebb12c` adds a real `GatewayWorkerAdapter`/`WorkerRunController`
 composition certificate. The bounded local fixture evaluates scalar worker
 usage/artifact/native-span projections together with verified delivered and
@@ -241,8 +245,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   gateway client through the durable worker/controller/Postgres path, redacts
   generated content before `result_json` persistence, and can exercise the
   existing raw provider ingress with `--provider-ingress`. Its default fixture
-  mode is unchanged; no live durable certificate is claimed until an operator
-  runs the mode with configured worker and identity Postgres DSNs.
+  mode is unchanged and remains fixture-only by default. The retained
+  [`gateway_worker_provider_mail_edge_live.json`](../../mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+  certificate (`17f6547`) now records one successful configured run with dual
+  Postgres reopen, raw provider-ingress delivered/bounced read-back,
+  payload-free projection, generated-text redaction, and zero residual rows.
+  External provider callback/delivery, recovery, and sandbox evidence remain
+  separate.
 - The real gateway-client HTTP boundary is exercised by
   [`check_gateway_worker_http_fixture.py`](../../mas/scripts/check_gateway_worker_http_fixture.py)
   and [`gateway_worker_http_fixture.json`](../../mas/docs/provenance/gateway_worker_http_fixture.json)

@@ -245,9 +245,14 @@
   runs the real gateway client through durable worker/controller/Postgres
   state, redacts generated content before result persistence, and can combine
   with `--provider-ingress` for local durable webhook/bounce read-back. The
-  default remains fixture-only; no live durable certificate is claimed yet.
-- [ ] Prove durable external provider-backed model dispatch on the worker
-  plane, multi-host Firecracker/gVisor operation, and provider-backed recovery.
+  default remains fixture-only. Retained evidence
+  [`gateway_worker_provider_mail_edge_live.json`](../../../mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+  (`17f6547`) records one successful configured run with dual-Postgres reopen,
+  delivered/bounced raw provider-ingress read-back, payload-free projection,
+  generated-text redaction, and zero residual fixture rows.
+- [ ] Extend durable external provider-backed dispatch beyond the retained
+  single-worker certificate to independent/multi-host Firecracker/gVisor
+  operation and provider-backed recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
@@ -516,15 +521,15 @@
   boundary; external callback, provider delivery/recovery, selected worker,
   and sandbox evidence remain open. Evidence is
   [`gateway_worker_mail_edge_provider_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_provider_postgres_evidence.json).
-- [ ] Run the new `17f6547` checker with `--live-provider` against a selected
-  live representative model-backed worker and `--provider-ingress`, then read
-  back a durable provider webhook and bounce observation so the remaining SLO
-  targets have deployment evidence using
-  [`scripts/check_mail_edge_observations.py`](../../../mas/scripts/check_mail_edge_observations.py);
-  direct model/artifact/integration spans, the fail-closed source evaluator,
-  delivery-attempt correlation, metadata-only mail-edge contract, and local
-  durable worker evidence are durable/queryable, but live source coverage
-  remains open.
+- [x] Run the `17f6547` checker with `--live-provider` against a selected live
+  representative model-backed worker and `--provider-ingress`, then read back
+  a durable provider webhook and bounce observation. The retained
+  [`gateway_worker_provider_mail_edge_live.json`](../../../mas/docs/provenance/gateway_worker_provider_mail_edge_live.json)
+  certificate records `SUCCEEDED` settlement, exact model/provider usage,
+  dual-Postgres reopen, delivered/bounced raw-ingress status, payload-free
+  worker/mail-edge coverage, generated-text redaction, and zero residual rows.
+  External provider callback/delivery, provider-backed recovery, sandbox, and
+  broader deployment-wide source coverage remain open.
 - Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
 - Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
 
