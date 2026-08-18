@@ -22,6 +22,15 @@ profile read-back, and configured current-ledger run are retained as
 descriptive evidence; native image/SBOM, clean native-Linux release-host
 metric scale, provider-managed KMS, independent-host recovery, and frozen
 clean-ledger evidence remain open.
+The latest configured Compose release profile (2026-08-18T21:19:12Z,
+revision `14e1351`) is 75 pass, 0 fail, 6 blocked, and 4 pending across 81
+checks, with `NO-RELEASE`. The six live blockers are native release-host and
+immutable image identity, gVisor runtime, Firecracker launcher, operator-owned
+outbound-mail credentials/recipient, and an operator-selected
+self-improvement source/project; the security review register remains
+technically blocked by 316 findings, 54 engine warnings, and one open review.
+These are distinct technical/operator gates and are not replaced by local
+fixture evidence or licence metadata.
 
 ## Why this plan is first
 
