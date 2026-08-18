@@ -1,6 +1,6 @@
 {
   "schema_version": "aiat.model-gateway-readiness.v1",
-  "observed_at": "2026-08-18T03:41:30Z",
+  "observed_at": "2026-08-18T20:42:18Z",
   "mode": "local-live",
   "status": "pass",
   "source_command": "scripts/check_model_gateway_readiness.py --live --json",

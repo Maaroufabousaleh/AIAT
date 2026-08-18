@@ -426,8 +426,12 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   profile coverage exists. Licence and restriction metadata is outside this
   operational catalogue and cannot fail it.
 - The refreshed 2026-08-18 local read-only catalogue evidence observes 93
-  registered models, 94 persisted profile versions, and 93 approved covered
-  versions with no pending registered model. The explicit profile identity
+  registered models, 93 persisted profile versions, and 93 approved covered
+  versions with no pending registered model or reconciliation finding. The
+  exact unreferenced `live-governance-smoke-20260719`/`local/test-model-1`
+  smoke fixture was removed after a zero-reference preflight; the post-cleanup
+  read-back is complete and does not mutate any active worker or provider
+  route. The explicit profile identity
   alias for `aiat/omniroute-coding` now reconciles to the canonical
   `litellm/omniroute-coding` registry entry; the `/v1/models` route exposes nine models including all five AIAT
   aliases (`auto`, `omniroute-auto`, `omniroute-free`, `omniroute-coding`, and
@@ -435,9 +439,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   [`check_model_gateway_readiness.py`](../../mas/scripts/check_model_gateway_readiness.py)
   performs only this route read and retains
   [`model_gateway_readiness_live.json`](../../mas/docs/provenance/model_gateway_readiness_live.json).
-  One operator-owned stale persisted row (`local/test-model-1`) remains an
-  explicit reconciliation finding, not a licence/resource restriction gate. The
-  bounded result is retained at
+  The bounded result is retained at
   [`mas/docs/provenance/model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json),
   with no dispatch or provider call performed.
 - The checked-in `opencode-phase0b-coding` profile is now an explicit,

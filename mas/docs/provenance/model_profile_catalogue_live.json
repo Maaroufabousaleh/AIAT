@@ -1,8 +1,8 @@
 {
   "schema_version": "aiat.model-profile-catalogue-live-evidence.v1",
-  "observed_at": "2026-08-18T16:28:29Z",
+  "observed_at": "2026-08-18T20:39:49Z",
   "mode": "compose-live",
-  "status": "pass_with_profile_findings",
+  "status": "pass",
   "source_command": "scripts/check_model_profile_catalogue.py --live --json --require-approved",
   "endpoint": "/model-profiles/catalogue",
   "gateway_endpoint": "/v1/models",
@@ -16,15 +16,15 @@
   ],
   "required_gateway_aliases_present": true,
   "registry_model_count": 93,
-  "persisted_profile_count": 94,
-  "persisted_profile_version_count": 94,
+  "persisted_profile_count": 93,
+  "persisted_profile_version_count": 93,
   "approved_profile_entry_count": 93,
   "covered_profile_version_count": 93,
   "profile_pending_model_count": 0,
-  "profile_not_registered_count": 1,
-  "finding_count": 1,
+  "profile_not_registered_count": 0,
+  "finding_count": 0,
   "approval_gate": "passed: approved persisted profile coverage exists",
-  "coverage": "pending_persisted_profile_bindings",
+  "coverage": "complete",
   "alias_reconciliation": {
     "status": "passed",
     "canonical_registry_identity": {
@@ -39,22 +39,27 @@
     },
     "implementation_revision": "381dbcc"
   },
-  "findings": [
-    {
-      "code": "PROFILE_MODEL_NOT_REGISTERED",
-      "exact_model_id": "local/test-model-1",
-      "profile_id": "live-governance-smoke-20260719",
-      "provider_id": "local",
-      "version": "1",
-      "classification": "operator-owned-stale-profile"
-    }
-  ],
+  "findings": [],
+  "stale_fixture_cleanup": {
+    "status": "applied",
+    "logical_profile_id": "live-governance-smoke-20260719",
+    "deleted_profile_count": 1,
+    "deleted_version_count": 1,
+    "active_reference_counts": {
+      "company_assignments": 0,
+      "model_overrides": 0,
+      "worker_registry": 0
+    },
+    "scope": "exact unreferenced local smoke fixture; no active worker or provider dispatch"
+  },
   "findings_policy": "operator-visible model/profile reconciliation findings; no licence or resource restriction gate",
   "secret_policy": "credentials, provider keys, payloads, and raw profile records are omitted",
   "scope": "Read-only Compose API catalogue reconciliation; no profile creation, approval, routing, or deployment mutation",
   "dispatch_performed": false,
   "provider_call_performed": false,
-  "mutations_performed": false,
+  "mutations_performed": true,
+  "mutation_scope": "bounded deletion of the exact unreferenced local smoke fixture only",
+  "catalogue_readback_mutations_performed": false,
   "provider_execution": "not_checked",
   "container": "mas-orchestrator-api-1"
 }
