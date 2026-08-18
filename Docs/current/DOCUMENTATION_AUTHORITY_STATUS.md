@@ -49,6 +49,14 @@ is a launch-boundary/readiness result only; host-certified microVM smoke,
 network, provider, recovery, and gVisor evidence remain separate. The adapter
 does not fall back to a weaker runtime.
 
+The object-storage documentation now records the local encrypted-restore
+prerequisite (`b0f27f6`/`59294c0`) consistently across the target programme,
+feature specification, P2 plan, P0 status, roadmap, and provenance catalogue.
+The certificate restores a ciphertext/scalar-manifest bundle in a distinct
+fresh Python process and removes its temporary fixtures; it is explicitly
+local clean-process evidence, not provider-pair, KMS, clean-host, outage, or
+disaster-recovery evidence.
+
 ## Machine-checked status
 
 The current workspace reports:

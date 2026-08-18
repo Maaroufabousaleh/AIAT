@@ -52,8 +52,14 @@
   fixture. Evidence is retained at
   [`object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json).
   This is a provider-neutral envelope prerequisite only; provider-managed
-  SSE/KMS, external backend, key custody, clean-environment, and outage gates
-  remain open.
+-  SSE/KMS, external backend, key custody, clean-host/disaster-recovery, and
+  outage gates remain open. Commit `b0f27f6` adds the local clean-process
+  prerequisite: a ciphertext/scalar-manifest bundle is reopened by a distinct
+  Python process with fresh adapters, verified through the production
+  encrypted-restore helper, and removed. Payload-free evidence is retained at
+  [`object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
+  (`59294c0`); this does not certify clean-host, provider-pair, KMS, outage, or
+  disaster recovery.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery
@@ -552,8 +558,9 @@ single frozen commit before production claims are made.
   The pinned, credential-safe reconciliation helper is committed as `5558f3c`.
   Restore-copy safety hardening `93bf755` now rejects a non-empty target prefix
   before mutation and records `clean_target_verified` in restore evidence.
-  Provider-pair, encrypted, clean-host, and disaster-recovery evidence remain
-  open.
+  Provider-pair, provider-managed encryption, clean-host, and disaster-recovery
+  evidence remain open; the AIAT-owned encrypted envelope and local
+  fresh-process restore prerequisite are retained separately above.
 
 ### Immutable release inputs and image profiles
 

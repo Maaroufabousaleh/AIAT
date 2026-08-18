@@ -67,12 +67,19 @@
   in [`object_store_encryption_evidence.json`](../../../mas/docs/provenance/object_store_encryption_evidence.json).
   This closes the AIAT-owned envelope prerequisite only; provider-managed
   SSE/KMS, Garage/R2/B2 or other external backend, key custody/rotation,
-  clean-environment restore, and outage evidence remain open.
+  clean-host/provider disaster recovery, and outage evidence remain open.
+- [x] Automate the local clean-process encrypted-restore prerequisite
+  (`b0f27f6`): [`check_object_store_clean_environment_restore.py`](../../../mas/scripts/check_object_store_clean_environment_restore.py)
+  persists only ciphertext and scalar manifest metadata, reopens it through a
+  distinct Python process with fresh adapters and the production encrypted
+  restore helper, verifies clean-target replication, and removes the temporary
+  bundle and fixture objects. Payload-free evidence is retained at
+  [`object_store_clean_environment_restore_evidence.json`](../../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
+  (`59294c0`). This is not clean-host/filesystem, provider-pair, KMS, outage,
+  or disaster-recovery evidence.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
-  backend and retain provider-managed encryption/key-custody and clean-
-  environment restore evidence.
-- Automate clean-environment restore verification beyond the bounded empty-target
-  preflight above.
+  backend and retain provider-managed encryption/key-custody plus clean-host,
+  provider-pair, and disaster-recovery restore evidence.
 
 **Decision gate:** SeaweedFS becomes primary only if measured results, operational complexity, source/version provenance, migration safety, and restore evidence beat the current profile. Licence remains metadata and does not decide the result.
 

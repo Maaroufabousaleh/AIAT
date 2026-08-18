@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, and same-provider backup/restore rehearsal pass; provider-pair comparison, provider-managed encryption, clean-environment restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, and same-provider backup/restore rehearsal pass; provider-pair comparison, provider-managed encryption, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -79,6 +79,14 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   plaintext logical keys are absent from the backup prefix. The deterministic
   certificate is retained at
   [`mas/docs/provenance/object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json).
+- `EncryptedBackupManifest.from_dict` verifies the scalar object count and
+  manifest digest when a persisted encrypted bundle is reopened. The
+  [`check_object_store_clean_environment_restore.py`](../../mas/scripts/check_object_store_clean_environment_restore.py)
+  certificate writes only ciphertext plus scalar manifest metadata to a
+  temporary bundle, restores it through a distinct Python process with fresh
+  adapters and the production encrypted-restore helper, and removes the
+  bundle and fixture objects. Its payload-free evidence is retained at
+  [`object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json).
 - Deterministic `aiat.object-store-benchmark.v1` measurements exercise bounded
   upload/download checksum read-back and scoped cleanup. Fixture mode is
   repeatable without a provider; `scripts/check_object_store_benchmarks.py
@@ -104,6 +112,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Backup/restore fixture and live runner: [`mas/scripts/check_object_store_backup_restore.py`](../../mas/scripts/check_object_store_backup_restore.py) (`--live` requires source, backup, and restore provider configuration)
 - Encrypted backup envelope: [`mas/packages/mas-core/mas_core/memory/object_store_encryption.py`](../../mas/packages/mas-core/mas_core/memory/object_store_encryption.py)
 - Encrypted backup certificate: [`mas/scripts/check_object_store_encryption.py`](../../mas/scripts/check_object_store_encryption.py) and [`mas/docs/provenance/object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json)
+- Fresh-process encrypted restore certificate: [`mas/scripts/check_object_store_clean_environment_restore.py`](../../mas/scripts/check_object_store_clean_environment_restore.py) and [`mas/docs/provenance/object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
 - Migration workflow fixture and guarded live boundary: [`mas/scripts/check_object_store_migration.py`](../../mas/scripts/check_object_store_migration.py)
 - Benchmark contract: [`mas/packages/mas-core/mas_core/memory/object_store_benchmark.py`](../../mas/packages/mas-core/mas_core/memory/object_store_benchmark.py)
 - Benchmark fixture/live boundary: [`mas/scripts/check_object_store_benchmarks.py`](../../mas/scripts/check_object_store_benchmarks.py)
@@ -168,9 +177,12 @@ The local encrypted envelope adds `aiat.object-store-encrypted-backup.v1` and
 `aiat.object-store-encrypted-restore.v1`: AES-256-GCM is applied before
 replication, manifests expose only opaque key IDs and scalar integrity
 metadata, and authenticated read-back rejects wrong keys and tampering. The
-certificate is a provider-neutral local boundary only; provider-managed
-SSE/KMS, external Garage/R2/B2, key custody, clean-environment restore, and
-regional/provider outage evidence remain open.
+fresh-process certificate persists only ciphertext and scalar metadata,
+reopens it in a distinct process with fresh adapters, verifies/replicates it,
+and cleans the temporary bundle. This closes the local clean-process
+prerequisite only; clean-host/filesystem recovery, provider-managed SSE/KMS,
+external Garage/R2/B2, key custody, and regional/provider outage evidence
+remain open.
 
 The `aiat.object-store-migration.v1` workflow composes checksum inventory,
 verified provider copy, optional dual-write parity, and explicit
@@ -203,8 +215,9 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
   approved backend with provider-managed key custody/rotation evidence; the
   provider-neutral local certificate is already retained.
 - Run the backup/restore runner against a real provider pair and retain
-  encrypted-at-rest, retention, clean-environment, and cross-store evidence;
-  the same-provider local rehearsal is already retained separately.
+  encrypted-at-rest, retention, clean-host/clean-environment, and cross-store
+  evidence; the same-provider local rehearsal and fresh-process encrypted
+  restore certificate are already retained separately.
 - Certify Letta, Qdrant, and Temporal only if their benefit exceeds operational cost.
 - Extend the current company trace retention metadata to project-level narrowing
   and explicit erasure/hold workflows once the live retention runner exists.
