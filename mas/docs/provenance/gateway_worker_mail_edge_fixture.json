@@ -1,0 +1,41 @@
+{
+  "combined_status": "pass",
+  "controller_terminal_state": "SUCCEEDED",
+  "exact_model_id": "fixture/model-v1",
+  "external_provider_call_performed": false,
+  "gateway_call_count": 1,
+  "licence_metadata_is_gate": false,
+  "mail_edge_event_counts": {
+    "bounced": 1,
+    "complained": 0,
+    "deferred": 0,
+    "delivered": 1,
+    "failed": 0,
+    "queued": 1,
+    "sent": 0,
+    "unknown": 0
+  },
+  "mail_edge_status": "pass",
+  "mode": "fixture",
+  "mutation_performed": false,
+  "network_access_performed": false,
+  "payload_free_report": true,
+  "provider_id": "fixture-provider",
+  "required_sources": {
+    "integration_evidence": "observed",
+    "native_integration_spans": "observed",
+    "native_model_spans": "observed",
+    "native_worker_spans": "observed",
+    "worker_artifacts": "observed",
+    "worker_usage_records": "observed"
+  },
+  "sandbox_execution_performed": false,
+  "schema_version": "aiat.gateway-worker-mail-edge-fixture.v1",
+  "scope": "real GatewayWorkerAdapter/WorkerRunController plus scalar trace and mail-edge evaluators; local fixture only",
+  "status": "pass",
+  "trace_id": "gateway-worker-mail-edge-fixture-001",
+  "usage_attribution_match": true,
+  "verified_webhook_and_bounce": true,
+  "worker_id": "gateway-mail-worker-fixture",
+  "worker_trace_status": "pass"
+}
