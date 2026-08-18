@@ -81,6 +81,15 @@ which records three matching checksum/size copies from MinIO to SeaweedFS and
 zero reserved objects after explicit cleanup. It is not a migration approval
 or a retention/outage/disaster-recovery certificate.
 
+The storage index now also includes the guarded live migration rehearsal from
+`ecbef00`, retained at
+[`object_store_migration_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+It records reserved-prefix inventory, checksum/read-back copy, one dual write,
+explicit human-confirmed workflow cutover and rollback, and zero remaining
+fixture objects across disposable MinIO/SeaweedFS endpoints. It is an
+AIAT-owned workflow rehearsal only: deployment routing, retention authority,
+provider outage, KMS, clean-host, and disaster-recovery evidence remain open.
+
 The worker evidence index now includes the bounded same-host recovery soak
 (`424805c`) at
 [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).

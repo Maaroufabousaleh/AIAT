@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, and a disposable MinIO/SeaweedFS comparison pass; provider-managed encryption, provider durability/custody, migration cutover, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, and a disposable MinIO/SeaweedFS comparison pass; provider-managed encryption, provider durability/custody, production routing/retention cutover, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -115,6 +115,16 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   and leaves both prefixes empty. Retained evidence is
   [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json);
   this is parity evidence only and does not authorize cutover.
+- The guarded live `aiat.object-store-migration.v1` rehearsal (`ecbef00`)
+  requires explicit source/target endpoints, a reserved
+  `aiat-migration-live-*` project, fixture seeding, and separate human
+  confirmations. It passes three-object inventory, checksum/read-back copy,
+  one dual write, AIAT-owned cutover/rollback transitions, and scoped cleanup
+  against the disposable MinIO/SeaweedFS topology. Evidence is retained at
+  [`object_store_migration_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+  It never changes deployment routing or retention authority; provider outage,
+  KMS, clean-host, disaster-recovery, and production cutover evidence remain
+  separate.
 
 ## Code anchors
 
@@ -135,7 +145,8 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Encrypted backup envelope: [`mas/packages/mas-core/mas_core/memory/object_store_encryption.py`](../../mas/packages/mas-core/mas_core/memory/object_store_encryption.py)
 - Encrypted backup certificate: [`mas/scripts/check_object_store_encryption.py`](../../mas/scripts/check_object_store_encryption.py) and [`mas/docs/provenance/object_store_encryption_evidence.json`](../../mas/docs/provenance/object_store_encryption_evidence.json)
 - Fresh-process encrypted restore certificate: [`mas/scripts/check_object_store_clean_environment_restore.py`](../../mas/scripts/check_object_store_clean_environment_restore.py) and [`mas/docs/provenance/object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
-- Migration workflow fixture and guarded live boundary: [`mas/scripts/check_object_store_migration.py`](../../mas/scripts/check_object_store_migration.py)
+- Migration workflow fixture and guarded live rehearsal: [`mas/scripts/check_object_store_migration.py`](../../mas/scripts/check_object_store_migration.py)
+- Migration checker tests: [`mas/scripts/tests/test_check_object_store_migration.py`](../../mas/scripts/tests/test_check_object_store_migration.py)
 - Benchmark contract: [`mas/packages/mas-core/mas_core/memory/object_store_benchmark.py`](../../mas/packages/mas-core/mas_core/memory/object_store_benchmark.py)
 - Benchmark fixture/live boundary: [`mas/scripts/check_object_store_benchmarks.py`](../../mas/scripts/check_object_store_benchmarks.py)
 - Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
@@ -219,10 +230,12 @@ The `aiat.object-store-migration.v1` workflow composes checksum inventory,
 verified provider copy, optional dual-write parity, and explicit
 human-confirmed cutover/rollback. It records the active bucket, manifest
 digest, copy and restore evidence, dual-write records, and transition history
-without deleting source data or silently changing deployment routing. The
-deterministic `scripts/check_object_store_migration.py` fixture completes the
-full sequence, while its `--live` mode remains fail-closed until a
-provider-specific migration environment is configured.
+without silently changing deployment routing. The deterministic
+`scripts/check_object_store_migration.py` fixture completes the full sequence;
+its guarded `--live` rehearsal requires explicit disposable endpoints,
+reserved-prefix seeding, and both human confirmation flags, then cleans only
+that reserved fixture scope. Retention authority and production routing remain
+outside the checker.
 
 ## Retention target
 
@@ -230,10 +243,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 
 ## Remaining gaps
 
-- Extend the formal contract suite and governed migration workflow across the
-  retained MinIO/SeaweedFS pair before any migration; bounded pair,
-  verified-copy, and benchmark observations pass, while provider-certified
-  retention, routing, rollback, and outage evidence remain open.
+- Extend the bounded migration rehearsal into a separately approved production
+  change only after provider-certified retention parity, deployment-routing
+  ownership, rollback authority, and outage/recovery evidence are available;
+  the provider-diverse inventory/copy/dual-write rehearsal already passes.
 - Extend the benchmark beyond the retained 1/32/4096-byte cases with
   large-object, multipart, concurrency, resource, outage, and recovery
   comparison evidence; current timings remain informational.

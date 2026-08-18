@@ -40,12 +40,21 @@ authority outside the helpers.
   checksums/sizes, and cleaned both prefixes to zero. Source preservation and
   no-cutover behavior remain properties of the copy helper, not migration
   approval.
+- `ecbef00` — the migration checker now has a guarded live-rehearsal path.
+  It requires two explicit S3-compatible endpoints, a project ID in the
+  reserved `aiat-migration-live-` namespace, `--seed-fixture`, and separate
+  human confirmations for cutover and rollback. The run inventories three
+  objects, performs checksum/read-back copy and one dual write, records the
+  AIAT-owned `CUTOVER` → `ROLLED_BACK` transition, and removes the four
+  reserved objects from each endpoint before returning.
 
-The helpers never delete source objects, silently change deployment routing,
-copy credentials into reports, or treat licence/restriction metadata as a
-technical predicate. Provider diversity, encryption, retention enforcement,
-clean-environment disaster recovery, and outage evidence remain separate
-gates.
+The governed workflow never deletes source objects or silently changes
+deployment routing. The bounded live checker deletes only its reserved
+fixture objects after the rehearsal and never copies credentials or payloads
+into reports. Licence/restriction metadata is not a technical predicate.
+Provider durability, encryption, retention enforcement, clean-environment
+disaster recovery, actual outage, and production routing evidence remain
+separate gates.
 
 ## Verification evidence
 
@@ -63,6 +72,8 @@ uv run --isolated python scripts/check_object_store_conformance.py --json
 uv run --isolated python scripts/check_object_store_copy.py --json
 uv run --isolated python scripts/check_object_store_backup_restore.py --json
 uv run --isolated python scripts/check_object_store_migration.py --json
+PYTHONPATH=scripts uv run --isolated pytest -q \
+  scripts/tests/test_check_object_store_migration.py
 uv run --isolated python scripts/check_object_store_benchmarks.py --json
 ```
 
@@ -104,11 +115,21 @@ checksums/sizes, preserve source data until explicit cleanup, and leave zero
 reserved objects on both sides. Retention parity, cutover/rollback, outage,
 and clean-host/disaster recovery remain open.
 
+The guarded live migration rehearsal retains scalar evidence at
+[`object_store_migration_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+It ran against the same disposable MinIO/SeaweedFS topology, passed inventory,
+copy/read-back, dual write, human-confirmed workflow cutover and rollback, and
+scoped cleanup, with zero reserved objects remaining. It did not change
+deployment routing or retention authority; actual production cutover,
+retention parity, provider outage, KMS, clean-host, and disaster-recovery
+evidence remain open.
+
 ## Remaining gates
 
-- Run the governed migration workflow against the provider-diverse pair with
-  retention, routing, and rollback evidence; verified-copy, dual-write, and
-  benchmark observations are retained above but do not authorize cutover.
+- Extend the bounded migration rehearsal into a separately approved production
+  change only after retention parity, deployment-routing ownership, rollback
+  authority, and operator recovery evidence are defined. The provider-diverse
+  rehearsal is complete, but it does not authorize a production cutover.
 - Extend `check_object_store_benchmarks.py --live` beyond the retained three
   payload sizes with reliability/resource/concurrency, large-object/multipart,
   outage, and recovery comparison evidence. The current timings are local

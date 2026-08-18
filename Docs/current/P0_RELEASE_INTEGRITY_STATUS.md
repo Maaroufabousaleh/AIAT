@@ -77,6 +77,15 @@
   [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
   This remains parity evidence only; retention, rollback, outage, clean-host,
   and disaster-recovery gates remain open.
+- Commit `ecbef00` adds the guarded live `aiat.object-store-migration.v1`
+  rehearsal. With a reserved project and explicit human cutover/rollback
+  confirmations, it passes three-object inventory, provider copy/read-back,
+  one dual write, AIAT-owned `CUTOVER` → `ROLLED_BACK` evidence, and scoped
+  cleanup across disposable MinIO/SeaweedFS endpoints. Evidence is retained
+  at [`object_store_migration_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+  It does not change deployment routing or retention authority, so production
+  cutover, provider outage, KMS, clean-host, and disaster-recovery gates remain
+  open.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery

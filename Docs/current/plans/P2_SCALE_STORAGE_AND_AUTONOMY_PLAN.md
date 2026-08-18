@@ -106,6 +106,16 @@
   [`object_store_copy_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
   This does not certify retention parity, outage recovery, clean-host restore,
   or migration cutover/rollback.
+- [x] Run the guarded live migration rehearsal (`ecbef00`) across the same
+  MinIO/SeaweedFS topology. The checker requires a reserved
+  `aiat-migration-live-*` project, explicit fixture seeding, and separate human
+  confirmations; it passes inventory, checksum/read-back copy, one dual write,
+  AIAT-owned cutover/rollback records, and scoped cleanup to zero. Evidence is
+  retained at
+  [`object_store_migration_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+  Deployment routing and retention authority are not changed; production
+  cutover, provider outage, KMS, clean-host, and disaster-recovery evidence
+  remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.
