@@ -832,7 +832,9 @@ technical evidence items and `NO-RELEASE`; the read-only secret-safe
 238-path/271-operation API contract are covered by focused tests
 (`2860838`, `f8829d6`, `b3fca97`, `9a80c6c`, `8f46ed1`), and the API-facing
 `scripts/mas-ctl` status/diagnostics/bootstrap wrapper is covered by six
-deterministic CLI cases (`380daf5`); message-router sender role/team coherence
+deterministic CLI cases (`380daf5`); the host-owned per-service restart
+boundary is covered by the static operational regression (`2360e07`);
+message-router sender role/team coherence
 is enforced before dedupe/enqueue with static and mocked-router coverage
 (`fb39128`); native/live/release gates remain open
 The hierarchy graph communication-policy overlay and source-built allowed/denied
@@ -902,7 +904,8 @@ Required outcomes:
 - [x] `scripts/mas-ctl` provides authenticated `status`, `diagnostics`, and
   fail-closed `bootstrap` commands plus explicit `resume`/`shutdown` actions;
   it does not invoke container lifecycle operations or expose upstream error
-  bodies (`380daf5`; executable mode `f8df50e`).
+  bodies (`380daf5`; executable mode `f8df50e`). Per-service restart remains
+  host-owned by Compose/systemd and is verified by `2360e07`.
 - [x] message-router publication validates declared sender role/team coherence
   before dedupe/enqueue; workers cannot claim CEO/C-suite trust teams,
   sub-agents require a known parent team, and spoofed direct worker-to-CEO

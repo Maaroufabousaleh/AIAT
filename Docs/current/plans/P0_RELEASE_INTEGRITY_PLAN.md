@@ -231,8 +231,9 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 
 - `uv run --isolated pytest apps/orchestrator-api/tests/test_system.py apps/orchestrator-api/tests/test_test10_ops_scripts.py -q`
   passes the system and diagnostics API suites; the standalone bootstrap
-  wrapper is now implemented, and only the per-service restart boundary remains
-  a documented TODO.
+  wrapper is now implemented; `test_test10_ops_scripts.py` also verifies that
+  per-service restart remains in the Compose/systemd host boundary
+  (`2360e07`) instead of adding Docker authority to the API.
 - `uv run --isolated pytest packages/mas-api-sdk/tests -q` passes the generated
   SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
   238 OpenAPI paths, 135 models, and 271 operations with matching generated
@@ -242,8 +243,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   transport without changing the API counts.
 - `uv run --isolated pytest scripts/tests/test_mas_ctl.py -q` passes six
   deterministic CLI cases; the focused operational API suite now verifies the
-  executable bootstrap wrapper is present, leaving only the separate
-  per-service restart TODO skip.
+  executable bootstrap wrapper and the host-owned per-service restart boundary.
 - `npm run typecheck`, focused ESLint, and `npm run build` in
   `apps/mas-dashboard` pass for the hierarchy policy overlay. The focused
   authenticated E2E now passes 1/1 against the current `mas/dashboard:overlay`
