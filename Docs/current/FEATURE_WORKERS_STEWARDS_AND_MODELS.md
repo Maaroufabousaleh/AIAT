@@ -580,8 +580,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   external code-review candidates in an explicit catalogue; exact external
   repository/revision/version pins and representative reviews remain open.
 - [x] Reconcile sandbox declarations and add a fail-closed gVisor runtime
-  registration probe; prove gVisor smoke/network behaviour and optional
-  Firecracker with real host evidence.
+  registration probe. The current host reports no registered `runsc`, so no
+  weaker `runc` fallback is accepted.
+- [ ] Prove gVisor smoke/network behaviour and optional Firecracker with real
+  host evidence; these remain release gates.
 - [x] Add a deterministic real-controller lifecycle fixture for checkpoint persistence, pause/resume/checkpoint reference, cold cancellation, cold-crash failure normalization, lease expiry/requeue, and artifact/usage-before-terminal ordering; database, sandbox, live worker, canary, and rollback proof remain separate evidence gates.
 - [x] Add bounded local Postgres lease/recovery evidence (`a413997`) for claim
   exclusivity, owner-bound heartbeat renewal, one explicitly simulated host-loss
