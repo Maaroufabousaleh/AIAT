@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T21:19:12Z",
+  "observed_at": "2026-08-18T23:02:17.319883+00:00",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -18,7 +18,7 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "14e1351ed75a1cba913f5d7490fb3024c7bacc37",
+    "revision": "0417f73987cacc6b023a7946adb497bfede3c6ce",
     "working_tree_clean": false,
     "changed_path_count": 2
   },
@@ -195,7 +195,7 @@
   },
   "notices": [
     "Blocked live checks are not treated as passes.",
-    "The configured Compose profile completed with 75 passes, zero failures, and 6 externally blocked checks across 81 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
+    "The configured Compose profile was rerun at 2026-08-18T23:02:17Z with 75 passes, zero failures, and 6 externally blocked checks across 81 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
     "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
     "The model-profile catalogue now has complete 93/93 persisted coverage after bounded removal of one unreferenced local smoke fixture; this does not certify provider execution or alter any other gate.",
