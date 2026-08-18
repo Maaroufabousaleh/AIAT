@@ -1,6 +1,6 @@
 {
   "artifact_count": 1,
-  "commit": "893293a",
+  "commit": "2bc7ca5",
   "binding_recovery_schema": "aiat.worker-run-host-recovery.v1",
   "binding_schema": "aiat.worker-run-host-binding.v1",
   "binding_state": "RELEASED",
@@ -72,7 +72,7 @@
   "mutation_performed": true,
   "native_span_count": 3,
   "network_access_performed": true,
-  "observed_at": "2026-08-18T03:03:24.619990Z",
+  "observed_at": "2026-08-18T20:09:17.891658Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,

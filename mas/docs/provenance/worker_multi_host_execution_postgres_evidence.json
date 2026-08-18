@@ -4,7 +4,7 @@
     "state": "SUCCEEDED"
   },
   "artifact_count": 2,
-  "commit": "d45e4dd",
+  "commit": "2bc7ca5",
   "assigned_hosts": [
     "aiat-cert-multi-host-execution-worker-v1-a",
     "aiat-cert-multi-host-execution-worker-v1-b"
@@ -85,7 +85,7 @@
     "aiat-cert-multi-host-execution-v1-trace-b": 3
   },
   "network_access_performed": true,
-  "observed_at": "2026-08-18T10:21:09.981433Z",
+  "observed_at": "2026-08-18T20:09:14.659166Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,

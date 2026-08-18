@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `27247f4` (latest reviewed implementation/evidence revision)
+**Base revision:** `2bc7ca5` (latest reviewed implementation/evidence revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -25,10 +25,18 @@ dual-Postgres evidence; the configured live profile
 is retained separately below. The current unconfigured live attempt is retained at
 [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json)
 and is not silently substituted for the configured Compose evidence. The latest
-configured 81-check aggregation (2026-08-18T19:36:57Z) is retained at
+configured 81-check aggregation (2026-08-18T20:18:06Z) is retained at
 [`provenance/release_ledger_live.json`](provenance/release_ledger_live.json) with
 75 passes, zero failures, 6 blocked checks, and four pending evidence items;
 it remains descriptive and does not change **NO-RELEASE**.
+
+The recovery regression refresh at `2bc7ca5` reran the local Postgres
+host-execution, concurrent multi-host, host-fencing, lease, and queued-run
+loss checks serially. Fixture-specific placement labels and elevated local
+priorities prevent unrelated disposable hosts from being selected; all five
+live checks pass with payload-free evidence and zero remaining fixture rows.
+This advances only same-host recovery evidence; independent hosts, sandbox,
+provider outage, clean-host, and disaster-recovery gates remain open.
 
 The local durable provider-shaped recovery group (`1679341`, `9c7e76d`) also
 passes: the default fixture injects one transient `429`, retries once through

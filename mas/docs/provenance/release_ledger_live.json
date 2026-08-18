@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T19:36:57Z",
+  "observed_at": "2026-08-18T20:18:06Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -18,13 +18,13 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "27247f4395c009d655cd9b6f8d87571335e3fa49",
+    "revision": "2bc7ca53cccd5df57a91820f7faa452397cbf140",
     "working_tree_clean": false,
-    "changed_path_count": 7
+    "changed_path_count": 5
   },
   "aggregate_invocation": {
     "live_orchestrator_url_configured": true,
-    "check_timeout_seconds": 60,
+    "check_timeout_seconds": 120,
     "credentials_printed": false,
     "environment_source": "local operator environment passed to bounded child checks without output",
     "container": "mas-orchestrator-api-1",
