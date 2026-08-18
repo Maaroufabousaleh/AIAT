@@ -179,7 +179,7 @@ checks:
     category: security
     script: scripts/check_credentials_manager_live.py
     args: [--json]
-    live_args: [--live, --json]
+    live_args: [--live, --json, --compose-local]
   - id: provider_conformance
     category: contract
     script: scripts/check_provider_conformance.py
