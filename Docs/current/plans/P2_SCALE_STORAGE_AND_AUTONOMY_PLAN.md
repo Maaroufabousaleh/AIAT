@@ -204,6 +204,15 @@
   queued binding to an alternate host, completes a native retry at attempt two,
   reopens Postgres, and cleans only its fixture namespace. Independent hosts,
   sandbox, provider, and provider-backed recovery remain open.
+- [x] Run a bounded same-host worker-loss/recovery soak (`424805c`) with
+  [`check_worker_host_loss_queue_recovery_soak_postgres.py`](../../../mas/scripts/check_worker_host_loss_queue_recovery_soak_postgres.py)
+  and retained evidence at
+  [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).
+  Three separate child processes repeat the production recovery checker,
+  verify durable reopen and zero residual fixture rows, and retain only scalar
+  parent output. This is local same-host consistency evidence; independent
+  deployed-host loss/split-brain, provider outage, sandbox, load/chaos, and
+  disaster-recovery gates remain open.
 - [x] Certify selected Model Profile/version resolution and snapshot
   propagation through a committed worker-host run (`6cef1b8`, hardened by
   `9a7db70`, durable gateway-adapter completion `8ed53df`) with
@@ -617,7 +626,9 @@
   worker/mail-edge coverage, generated-text redaction, and zero residual rows.
   External provider callback/delivery, provider-backed recovery, sandbox, and
   broader deployment-wide source coverage remain open.
-- Run load, soak, chaos, backup, regional/provider outage, and disaster-recovery exercises.
+- The bounded local worker-loss soak is retained above; run deployment-wide
+  load, broader soak/chaos, backup, regional/provider outage, and
+  disaster-recovery exercises before treating the scale exit gate as complete.
 - Keep LiteLLM/OmniRoute as the model/routing analytics surfaces and AIAT as the canonical operational evidence layer.
 
 ## Exit gate

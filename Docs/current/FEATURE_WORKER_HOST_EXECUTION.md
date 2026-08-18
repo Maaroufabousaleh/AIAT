@@ -4,12 +4,12 @@
 
 **Status:** local Compose Postgres single-host, concurrent two-host native,
 bounded duplicate-effect/replay protection, complete local governed run-version
-pinning, fenced host-loss queue-recovery, selected model-resolution
-host-execution, and the fail-closed Firecracker launch contract are implemented;
-deployed runtime, host-certified sandbox, provider, and independent-host
-recovery evidence remain open
+pinning, fenced host-loss queue-recovery, a repeated same-host recovery soak,
+selected model-resolution host-execution, and the fail-closed Firecracker launch
+contract are implemented; deployed runtime, host-certified sandbox, provider,
+and independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
+**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -159,6 +159,21 @@ cleans the fixture namespace. The recovery report is host-filtered so unrelated
 expired hosts are not mutated. This is AIAT-owned local recovery evidence, not
 independent-machine, sandbox, provider, or provider-backed recovery evidence.
 
+### Same-host recovery soak certificate
+
+Commit `424805c` adds
+[`check_worker_host_loss_queue_recovery_soak_postgres.py`](../../mas/scripts/check_worker_host_loss_queue_recovery_soak_postgres.py),
+which invokes the production host-loss checker three times in separate child
+processes against the local Compose Postgres boundary. The retained
+[`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json)
+records three successful `SUCCEEDED` retries at attempt two, stale-executor
+rejection before dispatch, durable reopen, zero residual fixture rows, and a
+scalar-only parent projection with no fixture payload. This is a bounded
+same-host consistency soak: it does not certify independent deployed hosts,
+split-brain across machines, gVisor/Firecracker, provider or provider-outage
+recovery, clean-host recovery, deployment-wide load/chaos, or disaster
+recovery.
+
 ### Selected model-resolution host certificate
 
 [`check_worker_host_model_resolution_postgres.py`](../../mas/scripts/check_worker_host_model_resolution_postgres.py)
@@ -241,6 +256,8 @@ uv run --isolated ruff check \
   scripts/tests/test_check_worker_multi_host_execution_postgres.py \
   scripts/check_worker_host_loss_queue_recovery_postgres.py \
   scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py \
+  scripts/check_worker_host_loss_queue_recovery_soak_postgres.py \
+  scripts/tests/test_check_worker_host_loss_queue_recovery_soak_postgres.py \
   scripts/check_worker_host_model_resolution_postgres.py \
   scripts/tests/test_check_worker_host_model_resolution_postgres.py
 uv run --isolated pytest -q \
@@ -253,6 +270,7 @@ uv run --isolated pytest -q \
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_execution_postgres.py --json
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_multi_host_execution_postgres.py --json
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_loss_queue_recovery_postgres.py --json
+docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_loss_queue_recovery_soak_postgres.py --json --iterations 3
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_model_resolution_postgres.py --json
 ```
 

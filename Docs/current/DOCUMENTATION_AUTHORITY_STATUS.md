@@ -57,6 +57,15 @@ fresh Python process and removes its temporary fixtures; it is explicitly
 local clean-process evidence, not provider-pair, KMS, clean-host, outage, or
 disaster-recovery evidence.
 
+The worker evidence index now includes the bounded same-host recovery soak
+(`424805c`) at
+[`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).
+It repeats the production loss/requeue/reassignment checker in three separate
+child processes, retains scalar-only output, and confirms durable reopen and
+zero cleanup per iteration. It is explicitly not independent-host,
+provider-outage, sandbox, deployment-load/chaos, clean-host, or disaster-
+recovery evidence.
+
 ## Machine-checked status
 
 The current workspace reports:
@@ -549,6 +558,11 @@ to an alternate host, completes a native retry at attempt two, reopens
 Postgres, and cleans the fixture namespace. It is local AIAT-owned recovery
 evidence only; independent hosts, sandbox/provider recovery, and licence
 metadata remain separate/non-gating.
+
+The follow-on soak group `424805c` indexes the same-host repeat certificate
+without changing the authority boundary: it is a local consistency measure,
+not an activation/release gate and not a substitute for independent deployed
+host or provider recovery evidence.
 
 The host-fencing/recovery group `72e59ec` adds migration
 `0039_worker_host_fencing` and the maintained

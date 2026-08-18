@@ -119,6 +119,13 @@ provider-message join survives independent reopen and scoped cleanup. This
 closes the local provider-facing application boundary without claiming a real
 provider callback or delivery.
 
+The bounded same-host worker-loss recovery soak (`424805c`) now repeats the
+production Postgres host-loss/requeue/reassignment certificate in three
+separate child processes. It retains scalar-only pass evidence and zero-row
+cleanup at every iteration; it is a consistency soak for the local Compose
+boundary, not independent-host, provider-outage, sandbox, deployment-load,
+chaos, or disaster-recovery evidence.
+
 ## Purpose
 
 AIAT keeps stable organisational workers while allowing their execution engines to evolve. A specialist is an AIAT shell backed by a certified adapter and pinned OSS runtime. One dedicated steward governs each external worker's documentation, compatibility, candidates, certification, rollout, and rollback.
@@ -900,6 +907,15 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   two with durable usage/artifact/trace evidence and cleanup. This does not
   certify independent machines, gVisor/Firecracker, providers, or provider
   recovery.
+- [x] Repeat the fenced host-loss queue-recovery certificate as a bounded
+  same-host soak (`424805c`) with
+  [`check_worker_host_loss_queue_recovery_soak_postgres.py`](../../mas/scripts/check_worker_host_loss_queue_recovery_soak_postgres.py)
+  and retained evidence at
+  [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).
+  Three separate child processes each complete the production recovery path,
+  reopen Postgres, and leave zero fixture rows; the scalar parent report keeps
+  the result payload-free. Independent deployed hosts, split-brain, provider
+  outage, gVisor/Firecracker, load/chaos, and disaster recovery remain open.
 - [x] Add durable host lease-generation fencing and expired-host recovery
   (`72e59ec`, migration `0039_worker_host_fencing`; evidence at
   [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
