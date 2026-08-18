@@ -53,13 +53,14 @@ This is a reversible workflow rehearsal only: deployment routing, retention
 authority, provider outage, KMS, clean-host, and disaster-recovery evidence
 remain later gates.
 
-The latest grouped verification through `e9823a9` (including the bounded
+The latest grouped verification through `83e1149` (including the bounded
 same-host recovery soak from `424805c` and synchronized documentation group
 `06393d1`, the object-store provider-pair implementation/evidence/docs groups
 `351444a`/`f385bd7`/`3833631`, the provider-diverse storage evidence/docs group
 `f52fde6`, the verified-copy evidence/docs group `6f5b5b8`, the guarded live
-migration implementation/evidence/docs groups `ecbef00`/`c086a91`, and the
-refreshed release ledger `e9823a9`; based
+migration implementation/evidence/docs groups `ecbef00`/`c086a91`, the
+boundary-compatibility fix `d9cc04e`, and the refreshed release ledger
+`83e1149`; based
 on the workflow-control fixture extension, the durable local
 Postgres flow-instance recovery
 certificate, the bounded multi-host duplicate-effect/replay certificate, the
@@ -67,7 +68,7 @@ complete local governed run-version pin certificate, the local durable
 provider-shaped gateway retry certificate, the maintained feature/plan/status
 docs, the encrypted backup envelope and fresh-process restore evidence, the
 guarded live migration rehearsal, and the existing network/sandbox evidence;
-current ledger snapshot `e9823a9`,
+current ledger snapshot `83e1149`,
 2026-08-18) keeps
 the static release ledger at 51/51 pass and the
 unconfigured local aggregate at 54 pass, 0 fail, 15 blocked, and 4 pending with
