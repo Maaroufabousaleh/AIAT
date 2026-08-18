@@ -1,9 +1,9 @@
 # P0 Release Integrity Status
 
 **Updated:** 2026-08-18
-- Current continuation refresh (`2bc7ca5`) runs the static ledger at 57/57
+- Current continuation refresh (`04521e7`) runs the static ledger at 57/57
   pass and the configured Compose aggregation at 75 pass/0 fail/6 blocked
-  across 81 checks (`20:18:06Z`), with four pending evidence items and
+  across 81 checks (`20:47:26Z`), with four pending evidence items and
   `NO-RELEASE`. The local Postgres host-execution, multi-host, lease,
   host-fencing, and queued-run loss checks pass serially after their harnesses
   were isolated with fixture labels and deterministic priorities; their scalar
@@ -533,13 +533,14 @@ single frozen commit before production claims are made.
   preserving profile bootstrap, and the internal `omniroute-coding` LiteLLM
   alias. Current 2026-08-18 local evidence retains 93 registered models, 94
   persisted versions, 93 approved covered entries, and no pending registered
-  model. The explicit `aiat/omniroute-coding` profile identity now reconciles
-  to the canonical `litellm/omniroute-coding` registry entry; one operator-owned
-  stale profile row remains an explicit finding. The same read-only run sees nine `/v1/models`
+  model or reconciliation finding after the exact unreferenced local smoke
+  fixture was removed following a zero-reference preflight. The explicit
+  `aiat/omniroute-coding` profile identity now reconciles to the canonical
+  `litellm/omniroute-coding` registry entry. The same read-only run sees nine `/v1/models`
   entries and all five AIAT aliases; the repeatable route-only checker is
   `f6ed16f` with evidence at
   [`model_gateway_readiness_live.json`](../../mas/docs/provenance/model_gateway_readiness_live.json),
-  while the profile report is refreshed in `db51dac` at
+  while the profile report is refreshed in `04521e7` at
   [`model_profile_catalogue_live.json`](../../mas/docs/provenance/model_profile_catalogue_live.json).
   These are operator-visible reconciliation findings, not licence/resource
   restrictions; no dispatch or provider call was performed and provider

@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T20:18:06Z",
+  "observed_at": "2026-08-18T20:47:26Z",
   "profile": "live-configured-compose",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -18,9 +18,9 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "2bc7ca53cccd5df57a91820f7faa452397cbf140",
+    "revision": "04521e7fe2e2318490dc9e102f1f4c30e460737c",
     "working_tree_clean": false,
-    "changed_path_count": 5
+    "changed_path_count": 2
   },
   "aggregate_invocation": {
     "live_orchestrator_url_configured": true,
@@ -119,18 +119,28 @@
     "note": "Both dependency-backed dry-runs completed in the Compose orchestrator image; sandbox, canary, live worker-run, and rollback remain separate."
   },
   "local_model_profile_evidence": {
-    "status": "pass_with_profile_findings",
+    "status": "pass",
     "ref": "model_profile_catalogue_live.json",
     "registry_model_count": 93,
-    "profile_version_count": 94,
+    "profile_version_count": 93,
     "approved_profile_entry_count": 93,
     "covered_profile_version_count": 93,
     "profile_pending_model_count": 0,
-    "profile_not_registered_count": 1,
-    "finding_count": 1,
-    "profile_coverage": "pending_persisted_profile_bindings",
+    "profile_not_registered_count": 0,
+    "finding_count": 0,
+    "profile_coverage": "complete",
     "alias_reconciliation": "passed: aiat/omniroute-coding reconciles to the canonical litellm/omniroute-coding registry entry",
-    "note": "The approved-coverage requirement is met. One operator-owned stale persisted profile row (local/test-model-1) remains an explicit reconciliation finding; no dispatch or provider call was performed."
+    "stale_fixture_cleanup": {
+      "status": "applied",
+      "deleted_profile_count": 1,
+      "deleted_version_count": 1,
+      "active_reference_counts": {
+        "company_assignments": 0,
+        "model_overrides": 0,
+        "worker_registry": 0
+      }
+    },
+    "note": "The approved-coverage requirement is complete at 93/93. The exact unreferenced local smoke fixture was removed after a zero-reference preflight; no active worker or provider route was mutated, and the post-cleanup catalogue read-back recorded no findings."
   },
   "local_credentials_manager_evidence": {
     "status": "pass",
@@ -188,6 +198,7 @@
     "The configured Compose profile completed with 75 passes, zero failures, and 6 externally blocked checks across 81 checks; native host, image identity, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
     "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
     "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
+    "The model-profile catalogue now has complete 93/93 persisted coverage after bounded removal of one unreferenced local smoke fixture; this does not certify provider execution or alter any other gate.",
     "Licence and resource notices remain metadata-only and are not a release gate."
   ]
 }
