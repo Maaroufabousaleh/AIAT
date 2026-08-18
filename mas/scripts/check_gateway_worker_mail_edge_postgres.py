@@ -4,9 +4,12 @@ This probe runs the production ``GatewayWorkerAdapter`` and
 ``WorkerRunController`` against AIAT Postgres, persists a payload-free worker
 artifact/usage/trace projection, records normalized delivery/webhook/bounce
 observations in the identity-service Postgres store, and joins both stores by
-worker and trace identity after independent connection reopen.  The gateway
-and mail observations are bounded local fixtures: no external provider,
-network endpoint, SMTP relay, sandbox, or live worker is contacted.
+worker and trace identity after independent connection reopen. With
+``--identity-ingress``, delivered/bounced observations are written through the
+real signed identity-service HTTP route, including duplicate/conflict/tamper
+checks. The gateway and mail observations are bounded local fixtures: no
+external provider, network endpoint, SMTP relay, sandbox, or live worker is
+contacted.
 
 The checker requires separate worker and identity-service Postgres DSNs.  It
 exits with status 2 when either database is not configured, unavailable, or
@@ -26,7 +29,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import httpx
 import sqlalchemy as sa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
 CORE_ROOT = MAS_ROOT / "packages" / "mas-core"
@@ -35,6 +40,9 @@ for _path in (CORE_ROOT, IDENTITY_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from identity_service.clients.auth import SignedClient  # noqa: E402
+from identity_service.config import IdentitySettings  # noqa: E402
+from identity_service.main import create_app  # noqa: E402
 from identity_service.store import PostgresIdentityStore  # noqa: E402
 
 from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats  # noqa: E402
@@ -71,6 +79,7 @@ MODEL_ID = "fixture/model-v1"
 EVENT_PREFIX = "aiat-cert-gateway-mail-edge-postgres-v1-"
 PAYLOAD_MARKER = "gateway worker mail-edge postgres payload must never persist"
 TIMESTAMP = "2026-08-18T12:00:00Z"
+IDENTITY_CLIENT_ID = "aiat-cert-gateway-mail-edge-postgres-client-v1"
 
 
 class _FixtureGateway:
@@ -92,6 +101,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="emit JSON evidence")
     parser.add_argument(
+        "--identity-ingress",
+        action="store_true",
+        help="exercise the signed identity-service HTTP ingress for provider events",
+    )
+    parser.add_argument(
         "--worker-dsn",
         default=os.getenv(
             "AIAT_GATEWAY_WORKER_MAIL_EDGE_WORKER_DSN",
@@ -108,6 +122,83 @@ def _parser() -> argparse.ArgumentParser:
         help="identity-service Postgres DSN",
     )
     return parser
+
+
+def _identity_ingress_settings(identity_url: str) -> tuple[IdentitySettings, SignedClient]:
+    """Build an isolated development identity client for the local ASGI fixture."""
+
+    client = SignedClient(
+        client_id=IDENTITY_CLIENT_ID,
+        private_key=Ed25519PrivateKey.generate(),
+    )
+    settings = IdentitySettings(
+        MAS_ENVIRONMENT="development",
+        IDENTITY_PROFILE="development",
+        identity_database_dsn=identity_url,
+        agent_mail_domain="agents.aiat.local",
+        outbound_relay_provider="disabled",
+        identity_client_public_keys_json=json.dumps(
+            {IDENTITY_CLIENT_ID: client.public_key_base64()}
+        ),
+        identity_client_scopes_json=json.dumps(
+            {IDENTITY_CLIENT_ID: ["identity:delegate"]}
+        ),
+        resend_webhook_signing_secret="",
+    )
+    return settings, client
+
+
+def _ingress_payload(observation: MailEdgeObservation) -> dict[str, Any]:
+    """Build a provider-shaped body whose content must not survive normalization."""
+
+    status = "delivered" if observation.event_type == "delivered" else "permanent"
+    return {
+        "id": observation.event_id,
+        "type": f"email.{observation.event_type}",
+        "created_at": TIMESTAMP,
+        "data": {
+            "email_id": observation.provider_message_ref,
+            "status": status,
+            "reason_code": "fixture" if observation.event_type == "bounced" else None,
+            "recipient": "private@example.invalid",
+            "body": PAYLOAD_MARKER,
+        },
+    }
+
+
+async def _post_signed_provider_event(
+    client: httpx.AsyncClient,
+    signer: SignedClient,
+    *,
+    observation: MailEdgeObservation,
+    event_id: str | None = None,
+    payload_override: dict[str, Any] | None = None,
+    raw_override: bytes | None = None,
+) -> httpx.Response:
+    body = {
+        "provider": "resend",
+        "payload": payload_override or _ingress_payload(observation),
+        "actor": {
+            "actor_id": IDENTITY_CLIENT_ID,
+            "purpose": "durable gateway worker mail-edge fixture",
+        },
+        "event_id": event_id or observation.event_id,
+        "signature_verified": True,
+        "worker_id": WORKER_ID_TEXT,
+        "trace_id": TRACE_ID,
+        "span_id": observation.span_id,
+    }
+    signed_raw = json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
+    raw = raw_override or signed_raw
+    headers = {
+        "Content-Type": "application/json",
+        **signer.sign_headers("POST", "/v1/mail-edge/provider-webhook", signed_raw),
+    }
+    return await client.post(
+        "/v1/mail-edge/provider-webhook",
+        content=raw,
+        headers=headers,
+    )
 
 
 def _normalize_dsn(raw: str | None) -> str | None:
@@ -238,6 +329,37 @@ async def _cleanup_identity(store: PostgresIdentityStore) -> int:
         return int(result.rowcount or 0)
 
 
+async def _cleanup_identity_client(store: PostgresIdentityStore) -> int:
+    """Remove only the ephemeral signed client and its replay nonces."""
+
+    async with store.engine.begin() as connection:
+        deleted_nonces = await connection.execute(
+            sa.text(
+                "DELETE FROM identity_client_nonces WHERE client_id = :client_id"
+            ),
+            {"client_id": IDENTITY_CLIENT_ID},
+        )
+        deleted_clients = await connection.execute(
+            sa.text(
+                "DELETE FROM identity_client_registrations WHERE client_id = :client_id"
+            ),
+            {"client_id": IDENTITY_CLIENT_ID},
+        )
+    return int(deleted_nonces.rowcount or 0) + int(deleted_clients.rowcount or 0)
+
+
+async def _identity_client_rows(store: PostgresIdentityStore) -> int:
+    async with store.engine.connect() as connection:
+        value = await connection.scalar(
+            sa.text(
+                "SELECT count(*) FROM identity_client_registrations "
+                "WHERE client_id = :client_id"
+            ),
+            {"client_id": IDENTITY_CLIENT_ID},
+        )
+    return int(value or 0)
+
+
 def _fixture_observations() -> list[MailEdgeObservation]:
     delivery = build_mail_edge_observation(
         provider="resend",
@@ -316,7 +438,12 @@ def _safe_mail_rows(rows: list[dict[str, Any]]) -> list[MailEdgeObservation]:
     ]
 
 
-async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, Any]:
+async def _run(
+    worker_dsn: str | None,
+    identity_dsn: str | None,
+    *,
+    identity_ingress: bool = False,
+) -> dict[str, Any]:
     worker_url = _normalize_dsn(worker_dsn)
     identity_url = _normalize_dsn(identity_dsn)
     if worker_url is None or identity_url is None:
@@ -332,8 +459,10 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
     identity_migration: str | None = None
     worker_cleanup: dict[str, int] = {}
     identity_cleanup = 0
+    identity_client_cleanup = 0
     worker_remaining: dict[str, int] = {}
     identity_remaining = 0
+    identity_client_remaining = 0
     worker_reopened = False
     identity_reopened = False
     run_row: dict[str, Any] | None = None
@@ -344,6 +473,10 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
     durable_mail_rows: list[dict[str, Any]] = []
     gateway_calls = 0
     outcome: Any = None
+    ingress_statuses: dict[str, int] = {}
+    ingress_idempotent_duplicate = False
+    ingress_conflict_rejected = False
+    ingress_tampered_rejected = False
     try:
         await worker.connect()
         if not await identity.healthcheck():
@@ -462,8 +595,76 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
             ended_at=datetime.now(UTC),
             attributes={"event_count": 3, "fixture": True},
         )
-        for observation in _fixture_observations():
-            await identity.record_mail_edge_observation(observation)
+        fixture_observations = _fixture_observations()
+        if identity_ingress:
+            settings, signer = _identity_ingress_settings(identity_url)
+            app = create_app(settings=settings, store=identity)
+            async with app.router.lifespan_context(app), httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://identity-gateway-mail-edge-fixture",
+            ) as client:
+                await identity.record_mail_edge_observation(fixture_observations[0])
+                delivered_response = await _post_signed_provider_event(
+                    client,
+                    signer,
+                    observation=fixture_observations[1],
+                )
+                bounced_response = await _post_signed_provider_event(
+                    client,
+                    signer,
+                    observation=fixture_observations[2],
+                )
+                duplicate_response = await _post_signed_provider_event(
+                    client,
+                    signer,
+                    observation=fixture_observations[2],
+                )
+                conflict_payload = _ingress_payload(fixture_observations[2])
+                conflict_payload["type"] = "email.delivered"
+                conflict_response = await _post_signed_provider_event(
+                    client,
+                    signer,
+                    observation=fixture_observations[2],
+                    payload_override=conflict_payload,
+                )
+                signed_body = json.dumps(
+                    {
+                        "provider": "resend",
+                        "payload": _ingress_payload(fixture_observations[2]),
+                        "actor": {
+                            "actor_id": IDENTITY_CLIENT_ID,
+                            "purpose": "durable gateway worker mail-edge fixture",
+                        },
+                        "event_id": fixture_observations[2].event_id,
+                        "signature_verified": True,
+                        "worker_id": WORKER_ID_TEXT,
+                        "trace_id": TRACE_ID,
+                        "span_id": fixture_observations[2].span_id,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode()
+                tampered_response = await _post_signed_provider_event(
+                    client,
+                    signer,
+                    observation=fixture_observations[2],
+                    raw_override=signed_body + b" ",
+                )
+            ingress_statuses = {
+                "delivered": delivered_response.status_code,
+                "bounced": bounced_response.status_code,
+                "duplicate": duplicate_response.status_code,
+                "conflict": conflict_response.status_code,
+                "tampered": tampered_response.status_code,
+            }
+            ingress_idempotent_duplicate = (
+                duplicate_response.json().get("id") == bounced_response.json().get("id")
+            )
+            ingress_conflict_rejected = conflict_response.status_code == 409
+            ingress_tampered_rejected = tampered_response.status_code == 401
+        else:
+            for observation in fixture_observations:
+                await identity.record_mail_edge_observation(observation)
         run_row = await worker.get_worker_run(RUN_ID)
         durable_usage = await worker.list_worker_usage(RUN_ID)
         durable_artifacts = await worker.list_worker_artifacts(RUN_ID)
@@ -485,8 +686,11 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
             durable_mail_rows = await _identity_rows(reopened_identity)
             worker_cleanup = await _cleanup_worker(reopened_worker)
             identity_cleanup = await _cleanup_identity(reopened_identity)
+            if identity_ingress:
+                identity_client_cleanup = await _cleanup_identity_client(reopened_identity)
             worker_remaining = await _worker_counts(reopened_worker)
             identity_remaining = len(await _identity_rows(reopened_identity))
+            identity_client_remaining = await _identity_client_rows(reopened_identity)
         finally:
             with suppress(Exception):
                 await reopened_worker.close()
@@ -511,6 +715,9 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
                 await worker.close()
         with suppress(Exception):
             await _cleanup_identity(identity)
+        if identity_ingress:
+            with suppress(Exception):
+                await _cleanup_identity_client(identity)
         with suppress(Exception):
             await identity.close()
 
@@ -574,12 +781,28 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
             identity_remaining == 0,
             sum(worker_cleanup.values()) >= 5,
             identity_cleanup >= 3,
+            not identity_ingress
+            or (
+                ingress_statuses == {
+                    "delivered": 200,
+                    "bounced": 200,
+                    "duplicate": 200,
+                    "conflict": 409,
+                    "tampered": 401,
+                }
+                and ingress_idempotent_duplicate
+                and ingress_conflict_rejected
+                and ingress_tampered_rejected
+                and identity_client_cleanup >= 1
+                and identity_client_remaining == 0
+            ),
         )
     )
     return {
         "schema_version": CHECK_SCHEMA,
         "coverage_schema": WORKER_MAIL_EDGE_COVERAGE_SCHEMA,
         "mode": "local-dual-postgres-worker-mail-edge",
+        "identity_ingress": identity_ingress,
         "status": "pass" if passed else "fail",
         "observed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "worker_migration_version": worker_migration,
@@ -610,8 +833,14 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
         },
         "worker_cleanup_deleted_counts": worker_cleanup,
         "identity_cleanup_deleted_count": identity_cleanup,
+        "identity_client_cleanup_deleted_count": identity_client_cleanup,
+        "identity_ingress_statuses": ingress_statuses,
+        "identity_ingress_idempotent_duplicate": ingress_idempotent_duplicate,
+        "identity_ingress_conflict_rejected": ingress_conflict_rejected,
+        "identity_ingress_tampered_rejected": ingress_tampered_rejected,
         "remaining_worker_fixture_counts": worker_remaining,
         "remaining_identity_fixture_rows": identity_remaining,
+        "remaining_identity_client_rows": identity_client_remaining,
         "mutation_performed": True,
         "local_database_access_performed": True,
         "network_access_performed": True,
@@ -622,6 +851,7 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
             "gateway_worker_adapter_fixture_dispatch": "checked",
             "durable_worker_usage_artifact_trace": "checked",
             "normalized_delivery_webhook_bounce_observations": "checked",
+            "identity_signed_http_ingress": "checked" if identity_ingress else "not_checked",
             "worker_trace_mail_edge_correlation": "checked",
             "worker_postgres_connection_reopen": "checked",
             "identity_postgres_connection_reopen": "checked",
@@ -638,7 +868,13 @@ async def _run(worker_dsn: str | None, identity_dsn: str | None) -> dict[str, An
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    report = asyncio.run(_run(args.worker_dsn, args.identity_dsn))
+    report = asyncio.run(
+        _run(
+            args.worker_dsn,
+            args.identity_dsn,
+            identity_ingress=args.identity_ingress,
+        )
+    )
     if args.json:
         print(json.dumps(report, default=str, sort_keys=True, indent=2))
     else:

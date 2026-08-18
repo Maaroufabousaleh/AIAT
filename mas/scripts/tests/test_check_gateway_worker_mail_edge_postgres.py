@@ -39,3 +39,18 @@ def test_fixture_observations_are_correlated_and_payload_free() -> None:
     assert {item.worker_id for item in observations} == {module.WORKER_ID_TEXT}
     assert {item.event_type for item in observations} == {"queued", "delivered", "bounced"}
     assert all(module.PAYLOAD_MARKER not in item.model_dump_json() for item in observations)
+
+
+def test_storage_projection_ignores_storage_only_columns() -> None:
+    module = _module()
+    observation = module._fixture_observations()[1]
+    row = {
+        **observation.model_dump(mode="python"),
+        "metadata_json": observation.metadata,
+        "received_at": observation.occurred_at,
+    }
+
+    projected = module._safe_mail_rows([row])
+
+    assert projected == [observation]
+    assert module.PAYLOAD_MARKER not in projected[0].model_dump_json()
