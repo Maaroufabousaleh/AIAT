@@ -1,13 +1,14 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `cbfa2ccf7c1e2de35ef8eb5d4e4b2a42721787cf` (latest grouped verification revision)
+**Base revision:** `02c59fe786c54ee5a753a33e5948585bb44b6662` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 The latest grouped verification at this revision (2026-08-18) confirms the
-policy-backed network boundary matrix and the static aggregation at 51/51
-checks passing, two pending technical evidence items, and a dirty working tree;
+policy-backed network boundary matrix, the deterministic workflow-control
+extension (`9972b3b`), and the static aggregation at 51/51 checks passing, two
+pending technical evidence items, and a dirty working tree;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
 raw-provider composition certificate passed their focused Ruff/tests and live
@@ -62,10 +63,10 @@ extends it through signed delegated identity ingress; `0e0a76f` adds the
 raw-provider composition mode with durable provider-message worker/trace
 correlation.
 The retained release-environment manifest from the latest unconfigured live
-run reports revision `24c11caaa07899dd2ca00b7fa8493526c5d882c7`, two changed
+run reports revision `02c59fe786c54ee5a753a33e5948585bb44b6662`, two changed
 pre-existing memory files, fifteen tracked inputs (including the boundary
 policy), and digest
-`292d91c71819074a29b551bd8c860d23549e4a2843bdf7dac6587c5c7236d2f4`.
+`7cffab884eac938f95bc4633e5030ebb00f4c05b49d496e2736d2e3680240a2d`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -88,7 +89,7 @@ and `cb1c665`, `fcb0f4b`, `7828b48`, `6b0413b`, `140af1c`, `89091c1`, `83e39e6`,
 `b07299b`, `038d5f2`, `85369fe`, `f8829d6`, `b3fca97`, `9a80c6c`, and
 `1d8aed5`, `10983c8`, `a413997`, `dbf6d10`, `8bb0a91`, `db22e60`,
 `500fc57`, `7dfba8c`, `232c0bb`, `d9917f8`, `72e59ec`, `08f1610e`, and
-`3116efe` are
+`3116efe`, `9972b3b`, and `02c59fe` are
 also recorded
 in the rows below with separate documentation commits. The focused
 worker-registry policy group `d8cafbb` is recorded below as well; aggregate
@@ -218,7 +219,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Built-in PM/SCM mocked HTTP conformance | static/unit/fixture; provider live boundary | PASS | Commit `7f6bfc5`; `uv run --isolated pytest packages/mas-core/tests/test_provider_adapter_http_conformance.py -q`; `uv run --isolated python scripts/check_provider_adapter_http_conformance.py --json` drives eight real-adapter YouTrack/GitHub cases through local mocked responses for health/configuration, projection/read-back, cursors, deactivation, comments/links, GitHub source-control paths, webhook handling, and retryable/permanent failures; no external HTTP or provider mutation occurs |
 | PM inbound canary replay and ACTIVE activation scope | static/unit/API/storage (live provider boundary) | PASS (bounded governance; live open) | Commit `72e1aef`; `uv run --isolated pytest apps/orchestrator-api/tests/test_pm_control_plane.py packages/mas-core/tests/test_pm_integrations.py packages/mas-core/tests/test_phase7_storage.py -q` plus `check_api_contract.py --json` pass. ACTIVE inbound mutations persist sanitized actor/command/projection evidence atomically; verified terminal-conflict replay is digest/expiry/arming/connection/one-command gated; ACTIVE lifecycle plans snapshot trusted actor scope/blast radius/default-deny policy and transactional approval evidence; evidence-only reconciliation observations remain non-blocking while actionable conflicts stay blocking. Operator-owned verified replay fixtures and provider/native live canary, rollback, and restore evidence remain open; licence metadata is informational only |
 | External-account lifecycle fixture | static/unit/fixture; provider live boundary | PASS | `uv run --isolated pytest packages/mas-core/tests/test_external_account_lifecycle.py -q`; `uv run --isolated python scripts/check_external_account_lifecycle.py --json` drives the actual `IdentityService` through eight in-memory cases for category approval/idempotency, one-use browser leases, credential rotation/session revocation, closure approval, immediate suspension, fail-closed unknown categories, and secret-safe output without external account/provider calls |
-| Machine-readable release ledger | static aggregation; live boundary | PASS (51/51 static + current live aggregation); BLOCKED/NO-RELEASE (live profiles) | `4d7a495` adds the native release-host preflight, `5ed0a0b` adds the Firecracker readiness child, `48b32ef` adds the bounded gateway-provider-recovery child, and `23e908e` adds the security-finding-review child; `7f2ac9c`, `a864970`, and `a1b8b12` pin all three children in `test_release_ledger.py`. The current unconfigured local 69-check `--live --json` run (2026-08-18T09:44:21Z, revision `24c11ca`) records 54 passes, zero failures, 15 externally blocked probes, and four pending evidence items; the safe summary is retained at [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json). The configured loopback 64-check evidence remains retained at [`provenance/release_ledger_live.json`](provenance/release_ledger_live.json) with 59 passes and five blocked probes. Native release-host, operator-selected worker certification, immutable image identity, gVisor, Firecracker host certification, provider/mail, unresolved security findings, and self-improvement source remain separate open gates; licence metadata remains non-gating. |
+| Machine-readable release ledger | static aggregation; live boundary | PASS (51/51 static + current live aggregation); BLOCKED/NO-RELEASE (live profiles) | `4d7a495` adds the native release-host preflight, `5ed0a0b` adds the Firecracker readiness child, `48b32ef` adds the bounded gateway-provider-recovery child, and `23e908e` adds the security-finding-review child; `7f2ac9c`, `a864970`, and `a1b8b12` pin all three children in `test_release_ledger.py`. The current unconfigured local 69-check `--live --json` run (2026-08-18T09:56:21Z, revision `02c59fe`) records 54 passes, zero failures, 15 externally blocked probes, and four pending evidence items; the safe summary is retained at [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json). The configured loopback 64-check evidence remains retained at [`provenance/release_ledger_live.json`](provenance/release_ledger_live.json) with 59 passes and five blocked probes. Native release-host, operator-selected worker certification, immutable image identity, gVisor, Firecracker host certification, provider/mail, unresolved security findings, and self-improvement source remain separate open gates; licence metadata remains non-gating. |
 | Project evidence package | static/unit/API/dashboard (preparatory P1) | PASS (committed core/API/dashboard surfaces; project-page/live preparatory) | Commits `a44a1aa`, `d0472af`, `cbf00d9`, `33e0384`, `82bbaeb`, `1112d5e`, and dashboard error-state repair `fc4f0fa`; the deterministic `EvidencePackage` builder, scope-policy resolver, isolated package/policy API router boundary, operator-only idempotent snapshot upsert, project workspace coverage, and API/UI evidence-package categories pass focused tests. `aiat.project-evidence-package.v1` groups repository, documents, tests, security, deployment, cost, approvals, flow, worker, artifact, and audit sources, while licence/restriction values remain metadata-only notices; live durable snapshot/provider/worker generation and native recovery remain open |
 | Project evidence package stale/retry recovery | static/build/source-built Playwright (preparatory P1) | PASS | Commit `bc80ad5`; `npm run typecheck`, targeted ESLint, full dashboard `npm run lint` (two unrelated hook warnings), `npm run build`, and the source-built `project-evidence-states.spec.ts` pass 1/1. The page uses `cache: "no-store"`, retains the last successful package when a refresh fails, labels it as last known, and exposes a keyboard-visible Retry action that clears after successful recovery; initial failures remain explicit. Full project-page composition and live provider/worker evidence remain open |
 | Project evidence package accessibility baseline | static/build/source-built Playwright (preparatory P1) | PASS | Commit `89091c1`; targeted ESLint, `npm run typecheck`, `npm run build`, and the source-built `project-evidence-states.spec.ts` pass 1/1. The page exposes named main/package sections, labeled 44px back/refresh actions, and a captioned evidence table with scoped column headers; the Impeccable detector returned no warnings for the changed page/test. This is a focused page-level baseline; full WCAG/native-Linux visual certification and live provider/worker evidence remain open |
