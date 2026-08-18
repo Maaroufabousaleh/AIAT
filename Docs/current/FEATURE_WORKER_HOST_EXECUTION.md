@@ -3,12 +3,12 @@
 **Baseline:** 2026-08-17
 
 **Status:** local Compose Postgres single-host, concurrent two-host native,
-fenced host-loss queue-recovery, selected model-resolution host-execution, and
-the fail-closed Firecracker launch contract are implemented; deployed runtime,
-host-certified sandbox, provider, and independent-host recovery evidence remain
-open
+bounded duplicate-effect/replay protection, fenced host-loss queue-recovery,
+selected model-resolution host-execution, and the fail-closed Firecracker launch
+contract are implemented; deployed runtime, host-certified sandbox, provider,
+and independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
+**Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `893293a`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -24,7 +24,8 @@ plane authority from this wrapper.
 The feature is deliberately narrower than a provider or sandbox integration. It
 certifies local host admission, deterministic model-profile resolution and
 snapshot propagation, native adapter lifecycle, concurrent execution against
-two distinct durable worker-host records, and explicit queue recovery after a
+two distinct durable worker-host records, duplicate claim rejection and
+terminal/alias replay without redispatch, and explicit queue recovery after a
 fenced host lease is lost. It keeps gVisor, Firecracker, external providers,
 remote runtimes, and independent-host outage recovery as separate evidence
 boundaries.
@@ -117,10 +118,14 @@ live certificate is retained at
 It records both host-specific lease generations as current, two `CLAIMED` and
 `SUCCEEDED` runs, released bindings and reservations, two usage rows, two
 artifacts, three native spans per trace, payload-free coverage, Postgres
-reopen/read-back, and zero remaining fixture rows. This is a deterministic
-native fixture running through two AIAT host identities; it is not evidence that
-two independently deployed machines, gVisor, Firecracker, an external provider,
-or host-loss recovery is active.
+reopen/read-back, and zero remaining fixture rows. The upgraded certificate
+(`d45e4dd`) concurrently races a second host-executor claim for one run and
+records one `worker_run_claim_failed` rejection, exactly two adapter dispatches,
+and terminal plus alternate-run-ID idempotency replays that return the canonical
+`SUCCEEDED` run without redispatch. This is a deterministic native fixture
+running through two AIAT host identities; it is not evidence that two
+independently deployed machines, gVisor, Firecracker, an external provider, or
+host-loss recovery is active.
 
 ### Fenced host-loss queue recovery certificate
 
@@ -219,7 +224,8 @@ artifact policy, and recovery policy before it can claim a real run.
   certified.
 - Replace the deterministic two-host fixture with two independently deployed
   worker hosts and prove concurrent admission, host loss, split-brain fencing,
-  requeue, and duplicate-effect protection under real host/process boundaries.
+  requeue, and duplicate-effect protection under real host/process boundaries;
+  the local duplicate-claim and replay boundary is already certified.
 - Certify gVisor on supported hosts and independently certify Firecracker for
   high-risk profiles.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and

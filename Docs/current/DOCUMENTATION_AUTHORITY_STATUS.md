@@ -486,15 +486,19 @@ evidence, and cleans the reserved namespace. Selected model-backed execution,
 deployed sandbox, provider, and multi-host recovery remain open; licence
 metadata is informational and non-gating.
 
-The concurrent multi-host native execution group `f9c717b` adds the maintained
+The concurrent multi-host native execution group `f9c717b`, extended by
+duplicate-effect/replay certification `d45e4dd`, adds the maintained
 Postgres certificate
 [`worker_multi_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json)
 and checker. It proves two separately reserved worker-plane host identities can
 claim and complete two native fixture runs concurrently, preserve host lease
 generation/current-lease equality, release both bindings/reservations, reopen
 Postgres, retain payload-free usage/artifact/trace coverage, and clean the
-fixture namespace. It is local two-identity fixture evidence, not independent
-machine, sandbox, provider, selected-model, or host-loss recovery evidence;
+fixture namespace. The upgraded run races a second host claim, records one
+`worker_run_claim_failed` rejection and exactly two adapter dispatches, then
+replays terminal and alternate-run-ID requests without redispatch. It is local
+two-identity fixture evidence, not independent machine, sandbox, provider,
+selected-model, or host-loss recovery evidence;
 licence metadata remains informational and non-gating.
 
 The fenced host-loss queue-recovery group `893293a` adds the maintained

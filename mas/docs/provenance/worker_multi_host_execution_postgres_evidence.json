@@ -1,6 +1,10 @@
 {
+  "alias_replay": {
+    "run_id": "00000000-0000-4000-a000-000000000c34",
+    "state": "SUCCEEDED"
+  },
   "artifact_count": 2,
-  "commit": "f9c717b",
+  "commit": "d45e4dd",
   "assigned_hosts": [
     "aiat-cert-multi-host-execution-worker-v1-a",
     "aiat-cert-multi-host-execution-worker-v1-b"
@@ -11,9 +15,11 @@
     "RELEASED"
   ],
   "certification_boundary": {
+    "alias_replay_without_redispatch": "checked",
     "binding_and_reservation_release": "checked",
     "concurrent_worker_run_claims": "checked",
     "distinct_worker_plane_hosts": "checked",
+    "duplicate_effect_protection": "checked",
     "durable_usage_artifact_trace_evidence": "checked",
     "external_provider_or_remote_runtime": "not_checked",
     "host_lease_generation_and_current_lease": "checked",
@@ -21,7 +27,8 @@
     "native_fixture_dispatch_on_each_host": "checked",
     "postgres_connection_reopen": "checked",
     "provider_backed_recovery": "not_checked",
-    "sandbox_runtime_gvisor_or_firecracker": "not_checked"
+    "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+    "terminal_replay_without_redispatch": "checked"
   },
   "claim_states": [
     "CLAIMED",
@@ -38,6 +45,9 @@
     "workers": 1
   },
   "coverage_schema": "aiat.worker-trace-coverage.v1",
+  "dispatch_count": 2,
+  "duplicate_attempt_count": 1,
+  "duplicate_rejection_reason": "worker_run_claim_failed",
   "durable_reopen": {
     "artifact_count": 2,
     "healthy": true,
@@ -75,7 +85,7 @@
     "aiat-cert-multi-host-execution-v1-trace-b": 3
   },
   "network_access_performed": true,
-  "observed_at": "2026-08-18T02:48:01.434021Z",
+  "observed_at": "2026-08-18T10:21:09.981433Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,
@@ -94,7 +104,7 @@
     "SUCCEEDED"
   ],
   "schema_version": "aiat.worker-multi-host-execution-postgres-certification.v1",
-  "scope": "two committed worker-plane bindings, concurrent native fixture execution on distinct hosts, durable evidence, reopen, release, and scoped cleanup",
+  "scope": "two committed worker-plane bindings, concurrent native fixture execution on distinct hosts, duplicate-claim rejection, terminal and alias replay, durable evidence, reopen, release, and scoped cleanup",
   "status": "pass",
   "trace_coverage": {
     "aiat-cert-multi-host-execution-v1-trace-a": {
@@ -139,6 +149,10 @@
       "trace_status": "observed",
       "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
     }
+  },
+  "terminal_replay": {
+    "run_id": "00000000-0000-4000-a000-000000000c34",
+    "state": "SUCCEEDED"
   },
   "transition_counts": {
     "00000000-0000-4000-a000-000000000c34": 6,

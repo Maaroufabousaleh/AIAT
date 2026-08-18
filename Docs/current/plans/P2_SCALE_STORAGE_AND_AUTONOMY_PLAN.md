@@ -152,6 +152,16 @@
   fencing, durable usage/artifact/trace coverage after Postgres reopen, releases
   both bindings, and cleans its fixture namespace. It is not independent-host,
   sandbox, provider, or outage-recovery evidence.
+- [x] Certify bounded duplicate-effect protection and idempotent replay
+  (`d45e4dd`) by racing a second `WorkerHostExecutor` claim for one committed
+  run, requiring `worker_run_claim_failed` before adapter dispatch, and replaying
+  both the terminal request and an alternate request ID through the canonical
+  idempotency key without redispatch. The retained evidence at
+  [`worker_multi_host_execution_postgres_evidence.json`](../../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json)
+  records exactly two adapter dispatches for two runs, one duplicate rejection,
+  durable reopen, and zero fixture rows. Independent deployed-host process
+  boundaries, provider recovery, sandbox execution, and full version-pin
+  coverage remain open.
 - [x] Certify bounded fenced host-loss queue recovery (`893293a`) with
   [`check_worker_host_loss_queue_recovery_postgres.py`](../../../mas/scripts/check_worker_host_loss_queue_recovery_postgres.py)
   and retained evidence at

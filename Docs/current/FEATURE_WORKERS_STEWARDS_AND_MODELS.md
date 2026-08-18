@@ -18,7 +18,7 @@ evidence, mail-edge callback/bounce, host-certified sandbox execution, outage
 recovery, and full worker certification remain separate.
 
 **Baseline:** 2026-08-18
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), durable production `GatewayWorkerAdapter` host dispatch (`8ed53df`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), bounded host-executor/gateway composition (`38c99f4`), host-boundary failure classification (`2abc02a`), explicit opt-in live worker-plane provider runner (`f999695`), protocol schema/runtime reconciliation (`8f46ed1`), and the security finding-review register/checker (`23e908e`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), bounded duplicate-effect/replay protection (`d45e4dd`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b`, `9a7db70`), durable production `GatewayWorkerAdapter` host dispatch (`8ed53df`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), bounded host-executor/gateway composition (`38c99f4`), host-boundary failure classification (`2abc02a`), explicit opt-in live worker-plane provider runner (`f999695`), protocol schema/runtime reconciliation (`8f46ed1`), and the security finding-review register/checker (`23e908e`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 
 The retained live increment (`17f6547`) now covers one selected durable
 worker/provider/mail-edge run; `def4fe9` additionally retains one bounded
@@ -62,6 +62,12 @@ remain incomplete. The concurrent two-host native certificate `f9c717b` now
 proves two separately reserved worker-host identities can claim and complete
 runs concurrently with durable evidence and release settlement; it is not
 independent-machine, sandbox, provider, or host-loss evidence.
+The `d45e4dd` extension races a duplicate host-executor claim for one of those
+runs, proves the claim is rejected before a second adapter dispatch, and
+replays both the terminal request and an alternate request ID through the
+canonical idempotency key without redispatch. This is local duplicate-effect
+evidence only; independent deployed hosts, provider recovery, and sandbox
+certification remain open.
 The durable host registry certificate `500fc57` also passes in local Compose
 scope for authenticated registration, heartbeat lease renewal, redacted
 placement snapshots, and connection-reopen read-back. The durable reservation
@@ -189,11 +195,14 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   both runs claim and finish, each retains host-generation/current-lease
   equality, both bindings/reservations release, two traces have complete
   payload-free source coverage, and a second Postgres connection reads the
-  durable result before scoped cleanup. Evidence is retained at
+  durable result before scoped cleanup. Commit `d45e4dd` additionally races a
+  duplicate host-executor claim, requires exactly one `worker_run_claim_failed`
+  rejection, and replays the terminal and alternate-run-ID requests without a
+  second adapter dispatch. Evidence is retained at
   [`worker_multi_host_execution_postgres_evidence.json`](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json).
-  This closes only the local concurrent native boundary; independent deployed
-  hosts, external provider-backed selected-model dispatch, gVisor/Firecracker, provider execution,
-  and host-loss recovery remain separate.
+  This closes only the local concurrent native and duplicate-effect boundary;
+  independent deployed hosts, external provider-backed selected-model dispatch,
+  gVisor/Firecracker, provider execution, and host-loss recovery remain separate.
 - `WorkerRunHostBindingService.reassign_after_host_loss()` and the optional
   host filter on `HostLeaseRecovery.reconcile_expired_hosts()` implement the
   bounded `aiat.worker-run-host-recovery.v1` edge. The local certificate at
@@ -837,9 +846,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   The checker commits two reservations, executes two runs concurrently through
   `WorkerHostExecutor`, verifies host-specific lease fencing, durable usage,
   artifact, and trace coverage after Postgres reopen, releases both bindings,
-  and cleans its fixture namespace. It does not claim independent machines,
-  gVisor/Firecracker, external provider-backed selected-model dispatch, provider recovery, or
-  host-loss/split-brain recovery.
+  and cleans its fixture namespace. Commit `d45e4dd` races a second claim for
+  one run and proves exactly one adapter dispatch for that run, terminal and
+  alias replay without redispatch, and zero duplicate rows. It does not claim
+  independent machines, gVisor/Firecracker, external provider-backed
+  selected-model dispatch, provider recovery, or host-loss/split-brain recovery.
 - [x] Add bounded fenced host-loss queue recovery (`893293a`; evidence at
   [`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json)).
   Host recovery can be scoped to explicit host IDs; a committed binding whose
