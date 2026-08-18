@@ -190,6 +190,13 @@
   and static reconciliation checker, while `cec1e4c` starts/stops the owned
   gateway client and bounds prompt/message input. Evidence is
   [`gateway_worker_adapter_fixture.json`](../../../mas/docs/provenance/gateway_worker_adapter_fixture.json).
+- [x] Exercise the real AIAT gateway-client HTTP boundary in a deterministic
+  loopback transport (`cbbfe56`). The certificate retries one fixture `429`,
+  checks the `/v1/chat/completions` path and bearer-secret boundary, verifies
+  bounded model/prompt/generation input, and reads back controller terminal
+  state plus exact provider/model usage. Evidence is
+  [`gateway_worker_http_fixture.json`](../../../mas/docs/provenance/gateway_worker_http_fixture.json);
+  external provider, outage-recovery, and sandbox evidence remain open.
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports

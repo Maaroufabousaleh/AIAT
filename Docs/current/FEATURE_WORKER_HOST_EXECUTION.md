@@ -144,6 +144,19 @@ The provider and model are local deterministic fixture identifiers: this closes
 AIAT control-plane resolution and propagation only, not a network provider call,
 provider outage recovery, independent hosts, gVisor, or Firecracker.
 
+### Gateway worker HTTP-boundary certificate
+
+[`check_gateway_worker_http_fixture.py`](../../mas/scripts/check_gateway_worker_http_fixture.py)
+(`cbbfe56`) drives the real `LLMGatewayClient`, `GatewayWorkerAdapter`, and
+`WorkerRunController` through an in-process OpenAI-compatible HTTP transport.
+The certificate receives one deterministic `429`, retries once, checks the
+AIAT-owned `/v1/chat/completions` path and bearer-secret header, verifies the
+bounded model/prompt/generation payload, and reads back a successful terminal
+result with exact provider/model usage. Evidence is retained at
+[`gateway_worker_http_fixture.json`](../../mas/docs/provenance/gateway_worker_http_fixture.json).
+This closes the local HTTP client boundary only; it is not external-provider,
+provider-outage, independent-host, gVisor, or Firecracker evidence.
+
 ## Tests and operation
 
 Focused unit and checker tests are in
