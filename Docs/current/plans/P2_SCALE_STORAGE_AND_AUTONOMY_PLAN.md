@@ -185,7 +185,9 @@
   The adapter requires an exact resolved model, normalizes bounded prompt/
   generation inputs, routes through the AIAT-owned gateway client, and emits
   provider/model usage for attribution. The fixture completes one controller
-  run without external provider, network, or sandbox calls; evidence is
+  run without external provider, network, or sandbox calls; `f6baebc` registers
+  the transport in the worker manifest contract, builtin runtime catalogue,
+  and static reconciliation checker. Evidence is
   [`gateway_worker_adapter_fixture.json`](../../../mas/docs/provenance/gateway_worker_adapter_fixture.json).
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
