@@ -490,6 +490,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Durable in-flight worker-version pinning | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json) |
 | Deterministic worker placement policy | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`placement.py`](mas/packages/mas-core/mas_core/worker_registry/placement.py), [`check_worker_placement.py`](mas/scripts/check_worker_placement.py), [local evidence](mas/docs/provenance/worker_placement_contract.json) |
 | Durable authenticated worker-host registry | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_registry.py`](mas/packages/mas-core/mas_core/worker_registry/host_registry.py), [`0037_worker_host_registry.py`](mas/migrations/versions/0037_worker_host_registry.py), [`check_worker_host_registry_postgres.py`](mas/scripts/check_worker_host_registry_postgres.py), [local evidence](mas/docs/provenance/worker_host_registry_postgres_evidence.json) |
+| Durable worker-host capacity reservations | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_reservations.py`](mas/packages/mas-core/mas_core/worker_registry/host_reservations.py), [`0038_worker_host_reservations.py`](mas/migrations/versions/0038_worker_host_reservations.py), [`check_worker_host_reservations_postgres.py`](mas/scripts/check_worker_host_reservations_postgres.py), [local evidence](mas/docs/provenance/worker_host_reservations_postgres_evidence.json) |
 | Model-profile catalogue dashboard proxy | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py) |
 | Default worker implementation binding matrix | [`check_default_worker_bindings.py`](mas/scripts/check_default_worker_bindings.py), [`test_default_worker_bindings.py`](mas/packages/mas-core/tests/test_default_worker_bindings.py), [worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Default runtime packaging contract | [`check_runtime_install_profile.py`](mas/scripts/check_runtime_install_profile.py), [`pyproject.toml`](mas/apps/orchestrator-api/pyproject.toml), [`uv.lock`](mas/uv.lock), and [orchestrator Dockerfile](mas/infra/docker/Dockerfile.orchestrator-api) |
@@ -1218,17 +1219,24 @@ and fixture checker. It filters explicit host snapshots by readiness and
 lease validity, labels, capabilities, sandbox/isolation support, and
 slot/memory/GPU capacity, then chooses deterministically by priority and free
 capacity while failing closed on duplicate host IDs. This is a non-mutating
-policy certificate; durable host registration, reservation/commit, live
-multi-host scheduling, host-loss/split-brain, and Firecracker evidence remain
-open.
+policy certificate; durable host registration and capacity reservation are
+covered by the following groups, while live multi-host scheduling,
+host-loss/split-brain, and Firecracker evidence remain open.
 
 `500fc57` adds migration `0037_worker_host_registry` and the durable
 `aiat.worker-host-registry.v1` boundary. Host registration authenticates a
 token and stores only its digest; heartbeats renew an AIAT-owned lease;
 public rows redact credential material; and placement snapshots survive a
-connection reopen while an expired lease becomes ineligible. Capacity
-reservation/commit, durable host recovery, live multi-host scheduling,
-host-loss/split-brain, and Firecracker evidence remain open.
+connection reopen while an expired lease becomes ineligible. Durable host
+recovery, live multi-host scheduling, host-loss/split-brain, and Firecracker
+evidence remain open; capacity reservation/commit is covered by `232c0bb`.
+
+`232c0bb` adds migration `0038_worker_host_reservations` and the durable
+`aiat.worker-host-reservation.v1` ledger. It locks the host row while checking
+reported and active-reservation capacity, rejects over-capacity requests,
+replays an idempotent key, and records commit/release/expiry transitions with
+scalar capacity read-back. Live multi-host selection/scheduling, durable host
+loss recovery, split-brain avoidance, and Firecracker evidence remain open.
 
 **Progress:** the provider-neutral `aiat.object-store-conformance.v1` fixture
 and offline report command pass against the deterministic in-memory adapter.
@@ -1348,9 +1356,10 @@ expired lease is requeued and reclaimed at attempt two; terminal re-claim is
 denied; eight transitions and worker health survive connection reopen; and
 cleanup leaves zero reserved rows. Its retained evidence is
 [`worker_lease_recovery_postgres_evidence.json`](mas/docs/provenance/worker_lease_recovery_postgres_evidence.json).
-This closes only the local queue lease/recovery boundary; reservation/commit,
-live scheduling, real host-loss/split-brain, gVisor/Firecracker, and live
-worker/provider evidence remain open.
+This closes only the local queue lease/recovery boundary; live scheduling,
+real host-loss/split-brain, gVisor/Firecracker, and live worker/provider
+evidence remain open. Durable capacity reservation/commit/expiry is covered
+by `232c0bb`.
 `dbf6d10` (with report-label follow-up `8bb0a91`) adds
 [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py):
 one `RUNNING` version-one run remains pinned to its original shell, adapter,
@@ -1782,11 +1791,11 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
 2. Certify optional memory/workflow services only where justified.
 3. [x] Certify the bounded local Postgres worker lease/recovery boundary
    (`a413997`), shell/adapter/steward in-flight version pinning
-   (`dbf6d10`, `8bb0a91`), deterministic placement policy (`db22e60`), and
-   authenticated durable host registration/heartbeat lease state (`500fc57`);
-   [ ] add canonical multi-host reservation/commit, complete bundle pinning,
-   live scheduling, durable host-loss/split-brain recovery, and Firecracker
-   worker pools.
+   (`dbf6d10`, `8bb0a91`), deterministic placement policy (`db22e60`),
+   authenticated durable host registration/heartbeat lease state (`500fc57`),
+   and host capacity reservation/settlement (`232c0bb`); [ ] add canonical
+   multi-host selection/scheduling, complete bundle pinning, durable host-loss/
+   split-brain recovery, and Firecracker worker pools.
 4. [x] Certify the bounded governed self-improvement lifecycle and exact
    rollback against local Compose Postgres (`10983c8`); [ ] complete the live
    issue/worker/provider/deployment lifecycle and independent recovery proof.
