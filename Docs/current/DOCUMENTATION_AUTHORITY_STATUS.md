@@ -322,6 +322,16 @@ fixture namespace. It is local two-identity fixture evidence, not independent
 machine, sandbox, provider, selected-model, or host-loss recovery evidence;
 licence metadata remains informational and non-gating.
 
+The fenced host-loss queue-recovery group `893293a` adds the maintained
+[`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json)
+certificate, the `aiat.worker-run-host-recovery.v1` binding edge, and a
+host-filtered recovery API. It fences one expired host/reservation, requeues an
+expired Worker Run claim, rejects stale execution, reassigns the queued binding
+to an alternate host, completes a native retry at attempt two, reopens
+Postgres, and cleans the fixture namespace. It is local AIAT-owned recovery
+evidence only; independent hosts, sandbox/provider recovery, and licence
+metadata remain separate/non-gating.
+
 The host-fencing/recovery group `72e59ec` adds migration
 `0039_worker_host_fencing` and the maintained
 [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)

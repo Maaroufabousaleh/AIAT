@@ -2,11 +2,11 @@
 
 **Baseline:** 2026-08-17
 
-**Status:** local Compose Postgres single-host and concurrent two-host native
-certification complete; deployed runtime, sandbox, provider, and host-recovery
-evidence remain open
+**Status:** local Compose Postgres single-host, concurrent two-host native, and
+fenced host-loss queue-recovery certification complete; deployed runtime,
+sandbox, provider, and independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`
+**Implementation:** `73c0bda`, `f9c717b`, `893293a`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -20,10 +20,11 @@ host process is still an untrusted execution boundary; it receives no control-
 plane authority from this wrapper.
 
 The feature is deliberately narrower than a provider or sandbox integration. It
-certifies local host admission, native adapter lifecycle, and concurrent
-execution against two distinct durable worker-host records, while keeping
-gVisor, Firecracker, external providers, remote runtimes, and outage recovery as
-separate evidence boundaries.
+certifies local host admission, native adapter lifecycle, concurrent execution
+against two distinct durable worker-host records, and explicit queue recovery
+after a fenced host lease is lost. It keeps gVisor, Firecracker, external
+providers, remote runtimes, and independent-host outage recovery as separate
+evidence boundaries.
 
 ## Contract
 
@@ -107,6 +108,23 @@ native fixture running through two AIAT host identities; it is not evidence that
 two independently deployed machines, gVisor, Firecracker, an external provider,
 or host-loss recovery is active.
 
+### Fenced host-loss queue recovery certificate
+
+The recovery extension is implemented by
+`WorkerRunHostBindingService.reassign_after_host_loss()` and the scoped
+`host_ids` filter on `HostLeaseRecovery.reconcile_expired_hosts()`. The live
+checker is
+[`check_worker_host_loss_queue_recovery_postgres.py`](../../mas/scripts/check_worker_host_loss_queue_recovery_postgres.py),
+with evidence at
+[`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json).
+It expires one reserved host lease and one claimed Worker Run lease, fences the
+host and reservation, requeues the run through canonical storage recovery,
+rejects the stale host executor before dispatch, reassigns the queued binding
+to host B, completes the native retry at attempt two, reopens Postgres, and
+cleans the fixture namespace. The recovery report is host-filtered so unrelated
+expired hosts are not mutated. This is AIAT-owned local recovery evidence, not
+independent-machine, sandbox, provider, or provider-backed recovery evidence.
+
 ## Tests and operation
 
 Focused unit and checker tests are in
@@ -123,14 +141,18 @@ uv run --isolated ruff check \
   scripts/check_worker_host_execution_postgres.py \
   scripts/tests/test_check_worker_host_execution_postgres.py \
   scripts/check_worker_multi_host_execution_postgres.py \
-  scripts/tests/test_check_worker_multi_host_execution_postgres.py
+  scripts/tests/test_check_worker_multi_host_execution_postgres.py \
+  scripts/check_worker_host_loss_queue_recovery_postgres.py \
+  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py
 uv run --isolated pytest -q \
   packages/mas-core/tests/test_host_executor.py \
   packages/mas-core/tests/test_run_host_binding.py \
   scripts/tests/test_check_worker_host_execution_postgres.py \
-  scripts/tests/test_check_worker_multi_host_execution_postgres.py
+  scripts/tests/test_check_worker_multi_host_execution_postgres.py \
+  scripts/tests/test_check_worker_host_loss_queue_recovery_postgres.py
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_execution_postgres.py --json
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_multi_host_execution_postgres.py --json
+docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_loss_queue_recovery_postgres.py --json
 ```
 
 The deployed command requires migration `0042_worker_run_host_binding` and a
@@ -146,7 +168,7 @@ artifact policy, and recovery policy before it can claim a real run.
   human-approval controls.
 - Replace the deterministic two-host fixture with two independently deployed
   worker hosts and prove concurrent admission, host loss, split-brain fencing,
-  requeue, and duplicate-effect protection.
+  requeue, and duplicate-effect protection under real host/process boundaries.
 - Certify gVisor on supported hosts and independently certify Firecracker for
   high-risk profiles.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and

@@ -152,6 +152,15 @@
   fencing, durable usage/artifact/trace coverage after Postgres reopen, releases
   both bindings, and cleans its fixture namespace. It is not independent-host,
   sandbox, provider, or outage-recovery evidence.
+- [x] Certify bounded fenced host-loss queue recovery (`893293a`) with
+  [`check_worker_host_loss_queue_recovery_postgres.py`](../../../mas/scripts/check_worker_host_loss_queue_recovery_postgres.py)
+  and retained evidence at
+  [`worker_host_loss_queue_recovery_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json).
+  The host-filtered recovery path expires one lost host and reservation,
+  requeues an expired Worker Run claim, rejects stale execution, reassigns the
+  queued binding to an alternate host, completes a native retry at attempt two,
+  reopens Postgres, and cleans only its fixture namespace. Independent hosts,
+  sandbox, provider, and provider-backed recovery remain open.
 - [ ] Prove selected model-backed dispatch on the worker plane, multi-host
   Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
@@ -164,7 +173,9 @@
   A version-one `RUNNING` run remains pinned while the registry advances and a
   new queued run uses the complete version-two set; run creation snapshots the
   active bundle under the worker-row lock and validates ownership.
-- Prove host loss, split-brain avoidance, queue recovery, and complete run-version pinning across all governed version records.
+- Prove independent deployed-host loss, split-brain avoidance, queue recovery,
+  duplicate-effect protection, and complete run-version pinning across all
+  governed version records.
 
 ## Workstream 4 — guarded self-improvement
 

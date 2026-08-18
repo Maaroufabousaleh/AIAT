@@ -32,6 +32,14 @@ payload-free usage/artifact/trace evidence through a Postgres reopen and release
 their bindings before scoped cleanup. This is not independent-machine,
 selected-model, sandbox, provider, or host-loss recovery evidence.
 
+Commit `893293a` adds the bounded local recovery edge: a host-filtered lease
+reconciliation fences one lost host and reservation, the canonical Worker Run
+recovery loop requeues the expired claim, a stale executor is rejected before
+dispatch, and the binding is reassigned to an alternate host for a native retry
+at attempt two. Durable reopen, payload-free evidence, and scoped cleanup pass;
+independent deployed-host, sandbox, provider, and provider-backed recovery
+remain open.
+
 The latest bounded R6 retention increments are the guarded
 `aiat.trace-retention-execution.v1` contract and deterministic in-memory
 rehearsal (`01996c9`), typed parity evidence (`57e13cb`), the authoritative
@@ -512,6 +520,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Durable worker-run host binding | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), migration [`0042_worker_run_host_binding`](mas/migrations/versions/0042_worker_run_host_binding.py), [`run_host_binding.py`](mas/packages/mas-core/mas_core/worker_registry/run_host_binding.py), [`check_worker_run_host_binding_postgres.py`](mas/scripts/check_worker_run_host_binding_postgres.py), [local evidence](mas/docs/provenance/worker_run_host_binding_postgres_evidence.json) |
 | Committed worker-plane host execution | [Worker-Plane Host Execution](Docs/current/FEATURE_WORKER_HOST_EXECUTION.md), [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_executor.py`](mas/packages/mas-core/mas_core/worker_registry/host_executor.py), [`check_worker_host_execution_postgres.py`](mas/scripts/check_worker_host_execution_postgres.py), [local evidence](mas/docs/provenance/worker_host_execution_postgres_evidence.json) |
 | Concurrent multi-host native worker execution | [Worker-Plane Host Execution](Docs/current/FEATURE_WORKER_HOST_EXECUTION.md), [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_multi_host_execution_postgres.py`](mas/scripts/check_worker_multi_host_execution_postgres.py), [local evidence](mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json) |
+| Fenced worker-host loss and queued-run recovery | [Worker-Plane Host Execution](Docs/current/FEATURE_WORKER_HOST_EXECUTION.md), [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_recovery.py`](mas/packages/mas-core/mas_core/worker_registry/host_recovery.py), [`run_host_binding.py`](mas/packages/mas-core/mas_core/worker_registry/run_host_binding.py), [`check_worker_host_loss_queue_recovery_postgres.py`](mas/scripts/check_worker_host_loss_queue_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json) |
 | Durable worker-host fencing and expired-host recovery | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_recovery.py`](mas/packages/mas-core/mas_core/worker_registry/host_recovery.py), [`0039_worker_host_fencing.py`](mas/migrations/versions/0039_worker_host_fencing.py), [`check_worker_host_recovery_postgres.py`](mas/scripts/check_worker_host_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_host_recovery_postgres_evidence.json) |
 | Model-profile catalogue dashboard proxy | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py) |
 | Default worker implementation binding matrix | [`check_default_worker_bindings.py`](mas/scripts/check_default_worker_bindings.py), [`test_default_worker_bindings.py`](mas/packages/mas-core/tests/test_default_worker_bindings.py), [worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |

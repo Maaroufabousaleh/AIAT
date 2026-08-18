@@ -2,6 +2,14 @@
 
 **Baseline:** 2026-08-17
 **Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80a`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), and concurrent two-host native execution (`f9c717b`) pass in fixture/local-deployment scope; selected model-backed live selections are blocked and full worker certification remains incomplete
+The fenced host-loss queue-recovery group `893293a` now extends the local
+worker-plane evidence: host-filtered fencing expires only the reserved lost
+host, the canonical Worker Run recovery loop requeues the expired claim, a
+stale executor is rejected before dispatch, and the binding is reassigned to
+an alternate host for a native retry at attempt two. Independent deployed
+hosts, selected model-backed dispatch, sandbox, provider, and provider-backed
+recovery remain incomplete.
+
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 The bounded durable lease/recovery certificate `a413997` passes in local
@@ -118,6 +126,15 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   This closes only the local concurrent native boundary; independent deployed
   hosts, selected model-backed dispatch, gVisor/Firecracker, provider execution,
   and host-loss recovery remain separate.
+- `WorkerRunHostBindingService.reassign_after_host_loss()` and the optional
+  host filter on `HostLeaseRecovery.reconcile_expired_hosts()` implement the
+  bounded `aiat.worker-run-host-recovery.v1` edge. The local certificate at
+  [`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json)
+  fences one expired host, requeues one expired Worker Run claim, rejects a
+  stale executor, reassigns the queued binding to an alternate worker host,
+  completes the native retry at attempt two, and verifies durable evidence
+  after reopen and scoped cleanup. Independent deployed hosts, sandbox,
+  provider, and provider-backed recovery remain separate.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -586,6 +603,15 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   and cleans its fixture namespace. It does not claim independent machines,
   gVisor/Firecracker, selected model-backed dispatch, provider recovery, or
   host-loss/split-brain recovery.
+- [x] Add bounded fenced host-loss queue recovery (`893293a`; evidence at
+  [`worker_host_loss_queue_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_postgres_evidence.json)).
+  Host recovery can be scoped to explicit host IDs; a committed binding whose
+  reservation is expired is reassigned only after the canonical Worker Run
+  claim is requeued, and the stale host executor is rejected before dispatch.
+  The alternate binding then commits and completes a native retry at attempt
+  two with durable usage/artifact/trace evidence and cleanup. This does not
+  certify independent machines, gVisor/Firecracker, providers, or provider
+  recovery.
 - [x] Add durable host lease-generation fencing and expired-host recovery
   (`72e59ec`, migration `0039_worker_host_fencing`; evidence at
   [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
