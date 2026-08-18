@@ -12,6 +12,10 @@ Technical runtime/CLI reproducibility is tracked separately in
 and checked by [`mas/scripts/check_operator_pins.py`](mas/scripts/check_operator_pins.py).
 An exact technical pin or an explicitly unavailable host/deployment identity
 is not a licence decision and does not create a licence allowlist.
+The maintained documentation scope is checked by
+[`mas/scripts/check_docs_index.py`](mas/scripts/check_docs_index.py), which
+keeps concrete licence identifiers in these metadata surfaces rather than in
+feature, plan, or status prose.
 
 ## Metadata-only policy
 

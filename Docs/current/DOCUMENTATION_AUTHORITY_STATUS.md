@@ -55,6 +55,14 @@ now asserts the current thirteen-feature/three-plan authority set, so the
 machine check and its test cannot silently drift back to the previous
 eleven-feature count (`0dbfdb7`).
 
+The same check now reports the licence detail surface as metadata-only and
+fails if a concrete SPDX-style identifier is added to maintained feature,
+plan, or status prose (`dee1a7e`). Exact identifiers remain in
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) and
+[`third_party_components.yaml`](../../mas/docs/provenance/third_party_components.yaml);
+technical security, compatibility, sandbox, privacy, budget, and approval
+controls are unaffected.
+
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
