@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.native-release-preflight-evidence.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T14:40:55Z",
+  "observed_at": "2026-08-18T18:43:06Z",
   "mode": "local-preflight",
   "status": "blocked",
   "source_command": "scripts/check_release_environment.py --require-native-linux --json",
@@ -11,7 +11,7 @@
     "native_linux": false
   },
   "git": {
-    "revision": "13d7e499004260962ed4fda8dcd99a0cfdd9f0a3",
+    "revision": "3053e61215241a8262dd68bbfe52bc9aa4bbb5ec",
     "working_tree_clean": false
   },
   "docker": {
@@ -29,7 +29,7 @@
     "host is not a native Linux release host",
     "gVisor runsc runtime is not registered",
     "working tree is dirty",
-    "deployment-supplied immutable image refs are absent"
+    "missing immutable image refs: AIAT_TEAM_RUNNER_IMAGE_REF, AIAT_REDIS_ACL_INIT_IMAGE_REF, AIAT_MESSAGE_ROUTER_IMAGE_REF, AIAT_TOOL_SERVICE_IMAGE_REF, AIAT_OPENCODE_RUNTIME_IMAGE_REF, AIAT_ORCHESTRATOR_IMAGE_REF, AIAT_PM_GATEWAY_IMAGE_REF, AIAT_DASHBOARD_IMAGE_REF, OMNIROUTE_IMAGE_REF, LITELLM_IMAGE_REF"
   ],
   "scope": "native release-host prerequisite preflight; no deployment mutation or release decision",
   "licence_metadata_is_gate": false,
