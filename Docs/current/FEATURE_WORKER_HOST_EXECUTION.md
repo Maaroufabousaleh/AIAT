@@ -7,7 +7,7 @@ fenced host-loss queue-recovery, and selected model-resolution host-execution
 certification complete; deployed runtime, sandbox, provider, and
 independent-host recovery evidence remain open
 
-**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`
+**Implementation:** `73c0bda`, `f9c717b`, `893293a`, `6cef1b8`, `9a7db70`
 
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Related plan:** [P2 Scale, Storage, and Guarded Autonomy Plan](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md)
@@ -136,7 +136,8 @@ immutable resolution snapshot, and carries requested/resolved references and
 the snapshot ID through a committed worker-host execution. The live fixture
 reads the worker `aiat_gateway` mode, exact provider/model usage attribution,
 terminal evidence, released binding, and snapshot back after a Postgres
-connection reopen; payload-free trace coverage and scoped cleanup pass. Evidence
+connection reopen; the executor rejects missing or request-mismatched snapshots
+before claiming work; payload-free trace coverage and scoped cleanup pass. Evidence
 is retained at
 [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
 The provider and model are local deterministic fixture identifiers: this closes

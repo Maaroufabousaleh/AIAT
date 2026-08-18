@@ -47,8 +47,8 @@ uv run --isolated python scripts/check_docs_index.py --json
 The checker validates maintained links, roadmap references, and the
 metadata-only markers without evaluating or blocking any resource by licence.
 
-The latest maintained worker-host group is `6cef1b8`: the selected
-model-resolution certificate now records approved profile/version selection,
+The latest maintained worker-host group is `6cef1b8` plus the pre-claim
+consistency hardening in `9a7db70`: the selected model-resolution certificate now records approved profile/version selection,
 durable snapshot propagation, exact fixture provider/model attribution, host
 execution evidence, Postgres reopen, and scoped cleanup. This is local
 control-plane evidence only; external provider, hardened sandbox, and

@@ -162,7 +162,8 @@
   reopens Postgres, and cleans only its fixture namespace. Independent hosts,
   sandbox, provider, and provider-backed recovery remain open.
 - [x] Certify selected Model Profile/version resolution and snapshot
-  propagation through a committed worker-host run (`6cef1b8`) with
+  propagation through a committed worker-host run (`6cef1b8`, hardened by
+  `9a7db70`) with
   [`check_worker_host_model_resolution_postgres.py`](../../../mas/scripts/check_worker_host_model_resolution_postgres.py)
   and retained evidence at
   [`worker_host_model_resolution_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).

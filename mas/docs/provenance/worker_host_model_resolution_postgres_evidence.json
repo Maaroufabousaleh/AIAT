@@ -1,6 +1,6 @@
 {
   "artifact_count": 1,
-  "commit": "6cef1b8",
+  "commit": "9a7db70",
   "binding_schema": "aiat.worker-run-host-binding.v1",
   "binding_state": "RELEASED",
   "certification_boundary": {
@@ -96,7 +96,7 @@
   "mutation_performed": true,
   "native_span_count": 3,
   "network_access_performed": true,
-  "observed_at": "2026-08-18T03:16:01.525750Z",
+  "observed_at": "2026-08-18T03:27:08.973526Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,
