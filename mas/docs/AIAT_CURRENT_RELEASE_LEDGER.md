@@ -1,15 +1,16 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `31a884e93744c72823b5350ce55920e5d71b0271` (latest grouped verification revision)
+**Base revision:** `d86e4dd3034827af9acc3b869a2fc184a7917a98` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 The latest grouped verification at this revision (2026-08-18) confirms the
 static aggregation at 48/48 checks passing, two pending technical evidence
 items, and a dirty working tree; the conservative decision remains
-**NO-RELEASE**. The `fa42284` implementation certificate also passed its
-focused Ruff/tests and live dual-Postgres evidence; the configured live profile
+**NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
+raw-provider composition certificate passed their focused Ruff/tests and live
+dual-Postgres evidence; the configured live profile
 is retained separately below. The current unconfigured live attempt is retained at
 [`provenance/release_ledger_live_current.json`](provenance/release_ledger_live_current.json)
 and is not silently substituted for the configured loopback evidence.
@@ -26,9 +27,9 @@ raw-provider composition mode with durable provider-message worker/trace
 correlation.
 The current
 retained release-environment manifest reports revision
-`31a884e93744c72823b5350ce55920e5d71b0271`, two changed pre-existing memory
+`d86e4dd3034827af9acc3b869a2fc184a7917a98`, two changed pre-existing memory
 files, and digest
-`f386bde778b476794299c03b282153047738e9cc65f3d96a3e0d59a0644c2475`.
+`29841ed47b25bb52d1e07c8c8beba08abd55af171909497831957acb72d04033`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
