@@ -802,7 +802,7 @@ This roadmap therefore starts with integrity and certification gaps rather than 
 the working-tree and clean Git-archive documentation checks pass
 
 - One normative target programme.
-- Twelve current feature specifications.
+- Thirteen current feature specifications.
 - Three ordered delivery plans.
 - Root roadmap linking the maintained set.
 - Repository-checked documentation index and metadata-policy markers.

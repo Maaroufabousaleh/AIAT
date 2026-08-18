@@ -167,7 +167,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   tool-version identities, environment-presence flags, and a deterministic
   manifest digest; it does not mutate deployment state or replace native
   release evidence.
-- [x] Add `scripts/check_docs_index.py` to keep the canonical target, twelve
+- [x] Add `scripts/check_docs_index.py` to keep the canonical target, thirteen
   feature specifications, three ordered plans, local links, roadmap
   references, and metadata-only policy markers synchronized in CI/release
   evidence.
