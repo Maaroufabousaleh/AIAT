@@ -90,6 +90,14 @@ operator-observed endpoints, verifies checksum read-back and explicit abort
 cleanup, and leaves zero fixture objects. Resource, provider outage, KMS,
 clean-host, disaster-recovery, and provider-selection decisions remain open.
 
+The storage index now also records the bounded scalar resource profile from
+`3791b3f` at
+[`object_store_resource_profile_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_resource_profile_provider_diverse_evidence.json).
+It covers eight 1 MiB/8 MiB checksum cases at concurrency four on both
+operator-observed endpoints, with procfs RSS and wall/CPU scalars plus zero
+cleanup residue. Production resource budgets/portability, outage, KMS,
+clean-host, disaster-recovery, and provider-selection decisions remain open.
+
 The same index now includes the verified-copy parity evidence
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json),
 which records three matching checksum/size copies from MinIO to SeaweedFS and

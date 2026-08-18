@@ -57,6 +57,11 @@ authority outside the helpers.
   16 MiB payloads with 5 MiB parts, verifies checksum read-back and an aborted
   upload leaves no object, and keeps the provider-neutral helper separate from
   routing authority.
+- `3791b3f` — the bounded `aiat.object-store-resource-profile.v1` probe reuses
+  the checksum benchmark at 1 MiB and 8 MiB with concurrency four, measuring
+  scalar wall/CPU time and process RSS with bounded error/cleanup fields. The
+  live MinIO/SeaweedFS wave passes eight cases per provider and retains no
+  payloads, credentials, or provider-selection result.
 
 The governed workflow never deletes source objects or silently changes
 deployment routing. The bounded live checker deletes only its reserved
@@ -87,6 +92,8 @@ PYTHONPATH=scripts uv run --isolated pytest -q \
 uv run --isolated python scripts/check_object_store_benchmarks.py --json
 uv run --isolated pytest packages/mas-core/tests/test_object_store_multipart.py -q
 uv run --isolated python scripts/check_object_store_multipart.py --json
+uv run --isolated pytest packages/mas-core/tests/test_object_store_resource_profile.py -q
+uv run --isolated python scripts/check_object_store_resource_profile.py --json
 ```
 
 The backup/restore fixture now includes a regression proving that a stale
@@ -121,16 +128,26 @@ scoped cleanup. The follow-on bounded wave retains
 and passes sixteen 1 MiB/8 MiB concurrent cases across the same two endpoints,
 with four concurrent cases per size and zero remaining fixture objects. The
 topology is operator-observed and local; provider-managed durability/custody,
-resource profiling, actual process/network outage, clean-host/disaster
-recovery, and migration cutover/rollback remain open.
+production resource budgets/portability, actual process/network outage,
+clean-host/disaster recovery, and migration cutover/rollback remain open.
 
 The multipart follow-up retains scalar evidence at
 [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
 Compose MinIO and disposable SeaweedFS each pass 8 MiB and 16 MiB uploads with
 5 MiB parts, checksum read-back, explicit abort-without-object, and zero
 remaining fixture objects. This closes the bounded multipart adapter contract
-only; resource profiling, provider outage, provider-managed encryption/KMS,
-clean-host/disaster recovery, and production migration remain open.
+only; the bounded scalar resource profile is recorded separately, while
+production resource budgets/portability, provider outage, provider-managed
+encryption/KMS, clean-host/disaster recovery, and production migration remain
+open.
+
+The resource-profile follow-up retains scalar evidence at
+[`object_store_resource_profile_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_resource_profile_provider_diverse_evidence.json).
+Compose MinIO and disposable SeaweedFS each pass eight 1 MiB/8 MiB,
+concurrency-four checksum cases with `procfs` RSS plus wall/CPU measurements
+and zero cleanup residue. This is local disposable observation only; it does
+not certify production budgets, independent-host portability, provider outage,
+KMS, clean-host recovery, or disaster recovery.
 
 The verified-copy follow-up retains scalar evidence at
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
@@ -154,16 +171,18 @@ evidence remain open.
   change only after retention parity, deployment-routing ownership, rollback
   authority, and operator recovery evidence are defined. The provider-diverse
   rehearsal is complete, but it does not authorize a production cutover.
-- Extend the retained serial, bounded concurrency, and multipart waves with
-  reliability, resource, outage, and recovery comparison evidence. The current
-  timings and multipart observations are local disposable evidence and do not
-  justify a provider decision.
+- Extend the retained serial, bounded concurrency, multipart, and scalar
+  resource-profile waves with production resource budgets, portability,
+  reliability, outage, and recovery comparison evidence. The current timings
+  and RSS observations are local disposable evidence and do not justify a
+  provider decision.
 - Add encrypted secondary backup and clean-environment disaster-recovery
   verification. The current empty-target preflight is a bounded safety check,
   not proof of a clean host, provider durability, or regional recovery.
-- Measure resource/outage behavior and compare any optional backend before
-  changing the MinIO default; large-object, bounded concurrency, and multipart
-  behavior are now checked but do not close those remaining gates.
+- Measure production resource/outage behavior and compare any optional backend
+  before changing the MinIO default; bounded large-object, concurrency,
+  multipart, and scalar resource behavior are now checked but do not close
+  those remaining gates.
 - Prove Postgres/object-store consistency, lifecycle cleanup, orphan handling,
   and legal-hold behavior in a live recovery exercise.
 
