@@ -51,6 +51,13 @@ WSL2 network checks, with 29 focused regressions green. It does not close the
 technical gate: 316 external findings, 54 engine warnings, and one open
 operator review remain, while native `runsc`/host smoke evidence is unavailable.
 
+The remaining live-gate probes also fail closed at the correct operator
+boundary: outbound mail requires operator-owned relay credentials plus a safe
+recipient, and self-improvement candidate detection requires an explicitly
+selected signal source/project scope. Their fixtures and corrected 56-test
+mail/self-improvement regression slice pass; the initial identity-test import
+miss is excluded as harness/configuration invalid.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated

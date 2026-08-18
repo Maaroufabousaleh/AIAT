@@ -154,6 +154,13 @@
   sandbox, and network regressions pass 29/29. The technical security gate
   remains blocked pending the operator's finding dispositions, and native
   `runsc`/host smoke evidence remains separate.
+- The remaining live-gate probes were rerun after correcting the test harness:
+  outbound mail is blocked only for operator-owned relay credentials and a
+  safe recipient, while self-improvement candidate detection is blocked only
+  for an operator-selected signal source/project scope. Their deterministic
+  fixture checks and the corrected 56-test mail/self-improvement regression
+  slice pass; the malformed identity-test collection command is excluded as a
+  harness/configuration failure and no live provider evidence is claimed.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is
