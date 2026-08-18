@@ -18,6 +18,8 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,16 @@ def _parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="run the production CredentialsManager against configured Postgres",
+    )
+    parser.add_argument(
+        "--compose-local",
+        action="store_true",
+        help="run the live checker inside the private Compose API container",
+    )
+    parser.add_argument(
+        "--container",
+        default=os.getenv("AIAT_CREDENTIALS_EVIDENCE_CONTAINER", "mas-orchestrator-api-1"),
+        help="Compose API container used by --compose-local",
     )
     parser.add_argument(
         "--dsn",
@@ -120,6 +132,64 @@ def _base_report(*, mode: str, status: str, reason: str | None = None) -> dict[s
 def _blocked(reason: str, *, classification: str) -> dict[str, Any]:
     report = _base_report(mode="live", status="blocked", reason=reason)
     report["failure_classification"][classification] = reason
+    return report
+
+
+def _run_compose_local(args: argparse.Namespace) -> dict[str, Any]:
+    """Run this checker where the private Postgres hostname is resolvable."""
+
+    base = {
+        "schema_version": CHECK_SCHEMA,
+        "mode": "compose-local-live",
+        "transport": "docker-exec-private-network",
+        "container": str(args.container),
+    }
+    if shutil.which("docker") is None:
+        return {
+            **base,
+            "status": "blocked",
+            "reason": "Docker CLI is unavailable for the private credentials probe",
+        }
+    container = str(args.container or "").strip()
+    if not container:
+        return {**base, "status": "blocked", "reason": "credentials probe container is not configured"}
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                container,
+                "sh",
+                "-lc",
+                'PYTHONPATH=/app python - --live --json --dsn "$PGBOUNCER_DSN"',
+            ],
+            input=Path(__file__).read_text(encoding="utf-8"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            **base,
+            "status": "blocked",
+            "reason": f"private credentials probe unavailable: {type(exc).__name__}",
+        }
+    try:
+        payload = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        return {
+            **base,
+            "status": "blocked",
+            "reason": "private credentials probe returned invalid JSON",
+        }
+    if not isinstance(payload, dict):
+        return {**base, "status": "blocked", "reason": "private credentials probe returned an invalid report"}
+    report = {**payload, **base}
+    if result.returncode != 0 and report.get("status") == "pass":
+        report["status"] = "blocked"
+        report["reason"] = "private credentials probe did not complete successfully"
     return report
 
 
@@ -385,7 +455,15 @@ def _run_fixture() -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    report = asyncio.run(_run_live(args.dsn)) if args.live else _run_fixture()
+    if args.compose_local and not args.live:
+        report = _blocked(
+            "--compose-local requires --live",
+            classification="harness_configuration_failure",
+        )
+    elif args.compose_local:
+        report = _run_compose_local(args)
+    else:
+        report = asyncio.run(_run_live(args.dsn)) if args.live else _run_fixture()
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
     else:
