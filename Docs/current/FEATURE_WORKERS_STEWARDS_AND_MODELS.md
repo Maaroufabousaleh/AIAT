@@ -4,9 +4,11 @@ The raw-provider worker/mail-edge composition certificate is recorded in
 `0e0a76f`; the local provider-facing Resend/Svix boundary, durable
 provider-message worker/trace correlation, and dual-Postgres cleanup pass.
 `17f6547` additionally retains one selected external provider-backed model
-completion with durable worker/identity read-back. Independent-host provider
-operation, sandbox certification, outage recovery, and full worker
-certification remain separate. `f999695` adds an explicit opt-in
+completion with durable worker/identity read-back. `1679341` and `9c7e76d`
+add a local durable provider-shaped transient-recovery certificate without
+external network access. Independent-host provider operation, sandbox
+certification, outage recovery, and full worker certification remain separate.
+`f999695` adds an explicit opt-in
 worker-plane provider runner; the retained `90c3e5d` certificate proves one
 selected `llama-3.3-70b-versatile` completion through the configured
 LiteLLM/OmniRoute route. `17f6547` adds durable worker/provider/mail-edge
@@ -22,11 +24,12 @@ recovery, and full worker certification remain separate.
 
 The retained live increment (`17f6547`) now covers one selected durable
 worker/provider/mail-edge run; `def4fe9` additionally retains one bounded
-transient-retry recovery certificate; `48b32ef` additionally proves local
-primary-outage/secondary-fallback/primary-recovery cooldown behavior without
-network or durable worker state; broader independent-host,
-provider-callback, outage-recovery, sandbox, and full certification gates
-remain incomplete.
+transient-retry recovery certificate; `1679341` and `9c7e76d` add the local
+dual-Postgres provider-shaped retry certificate; `48b32ef` additionally proves
+local primary-outage/secondary-fallback/primary-recovery cooldown behavior
+without network or durable worker state. Broader independent-host,
+provider-callback, provider-outage/restore, sandbox, and full certification
+gates remain incomplete.
 
 Commit `6ebb12c` adds a real `GatewayWorkerAdapter`/`WorkerRunController`
 composition certificate. The bounded local fixture evaluates scalar worker
@@ -316,6 +319,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   execution. Commit `17f6547` adds a separate explicit-opt-in live-provider
   mode to this checker; it is fail-closed by default and currently has no
   retained durable live certificate.
+- Commits `1679341` and `9c7e76d` extend the same checker’s
+  `--provider-recovery` mode to the default local fixture profile. The real
+  `GatewayWorkerAdapter` receives one injected transient `429`, retries once,
+  and settles the run durably across independent worker/identity Postgres
+  reopen. Combined raw-provider ingress still passes replay/conflict/tamper
+  checks, the projection remains payload-free, and scoped cleanup returns zero
+  rows. Evidence is
+  [`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+  This closes local provider-shaped retry evidence only; external provider
+  retry/outage recovery, callback/delivery confirmation, independent
+  host/process loss, and gVisor/Firecracker remain separate gates.
 - The same checker’s `--provider-ingress` mode (`0e0a76f`) creates a scoped
   durable outbound request and delivery attempt, sends delivered/bounced bodies
   through `POST /v1/mail-edge/provider-webhook/resend`, and derives worker/trace

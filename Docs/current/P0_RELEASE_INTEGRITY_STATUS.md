@@ -28,6 +28,15 @@
   payload-free generated-text redaction, and zero residual rows. This is
   retry-boundary evidence only; provider outage, external callback/delivery,
   independent-host, and sandbox evidence remain open.
+- Commits `1679341` and `9c7e76d` extend the durable gateway/mail-edge checker
+  with local provider-shaped recovery. The default fixture profile injects one
+  transient `429`, retries once through the production adapter/controller, and
+  passes dual-Postgres reopen, raw-ingress replay/conflict/tamper, payload-free
+  projection, and scoped cleanup. Evidence is retained at
+  [`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+  This is local retry evidence; external provider outage/restore, callback or
+  delivery confirmation, independent host/process recovery, and sandbox
+  evidence remain open.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery

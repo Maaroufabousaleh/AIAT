@@ -399,8 +399,15 @@ completion and retains only scalar attempt/retry metadata in
 local `aiat.gateway-provider-recovery.v1` fixture/checker (`48b32ef`) proves
 primary outage → secondary fallback → primary recovery with cooldown
 clearance without external network, worker dispatch, or durable writes.
-External callback/delivery confirmation, provider outage recovery, independent
-hosts, and sandbox evidence remain separate gates.
+Commits `1679341` and `9c7e76d` add a local durable provider-shaped recovery
+certificate to the same checker: one injected transient `429` is retried once
+through the production adapter/controller, the worker and identity Postgres
+stores are reopened independently, raw-provider ingress replay/conflict/tamper
+checks pass, and cleanup returns zero rows. The evidence is
+[`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+This closes local retry-boundary evidence only; external callback/delivery
+confirmation, provider outage/restore, independent hosts/processes, and
+sandbox evidence remain separate gates.
 
 The read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue still passes its approved-coverage requirement. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision; the two non-registered profile rows remain operator-visible reconciliation findings.
 
@@ -694,7 +701,10 @@ legacy run-correlated fallback, PM inbound metadata, and the durable
   Gateway dispatch failures are normalized separately by `b2ae516`: input
   validation is terminal/non-retryable, known transient statuses are
   retryable, permanent statuses are terminal, and only bounded status/cause
-  metadata is retained. Live provider recovery is still unproven.
+  metadata is retained. The local durable provider-shaped retry certificate
+  (`1679341`, `9c7e76d`) now proves one injected transient retry through the
+  production adapter/controller with dual-Postgres reopen and cleanup; live
+  external provider recovery is still unproven.
   The bounded host-composition certificate (`38c99f4`) carries the governed
   gateway worker through real host admission, claim, controller settlement,
   and binding release over an in-memory worker-plane fixture. It records exact

@@ -164,6 +164,20 @@ AIAT control-plane resolution and local gateway-adapter propagation only, not a
 network provider call, provider outage recovery, independent hosts, gVisor, or
 Firecracker.
 
+### Durable local gateway provider-shaped recovery
+
+The durable gateway/mail-edge checker can now run `--provider-recovery` against
+the default local fixture profile. Commits `1679341` and `9c7e76d` inject one
+synthetic transient `429` into the fixture gateway, exercise the production
+`GatewayWorkerAdapter` retry budget, and verify two attempts with one retry
+before `SUCCEEDED` settlement. The certificate also uses the raw-provider
+ingress route, reopens worker and identity Postgres independently, keeps the
+worker/mail-edge projection payload-free, and removes all reserved rows:
+[`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+This is local provider-shaped retry evidence; it does not claim an external
+provider outage/restore, callback or delivery confirmation, independent
+host/process loss, or gVisor/Firecracker execution.
+
 ### Complete governed run-version pinning certificate
 
 [`check_worker_version_pinning_postgres.py`](../../mas/scripts/check_worker_version_pinning_postgres.py)

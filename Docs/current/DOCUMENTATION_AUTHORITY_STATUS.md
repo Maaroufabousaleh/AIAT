@@ -350,6 +350,16 @@ raw-provider extension `0e0a76f` additionally proves the provider-facing
 Resend/Svix route derives worker/trace scope from a durable provider-message
 attempt; external callback and delivery remain separate.
 
+The local durable provider-shaped recovery group `1679341`/`9c7e76d` is now
+indexed alongside the gateway/mail-edge certificates. Its Compose certificate
+injects one transient `429` into the local fixture, retries through the real
+`GatewayWorkerAdapter` and controller, reopens both Postgres stores, passes raw
+provider-ingress replay/conflict/tamper checks, and cleans the reserved rows.
+It proves the local retry boundary only; external provider outage/restore,
+callback/delivery confirmation, independent host/process recovery, and sandbox
+evidence remain separate. Evidence is retained at
+[`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+
 The durable worker-run evidence group `acd3f06` adds the local Postgres
 certificate and maintained evidence
 [`worker_run_postgres_evidence.json`](../../mas/docs/provenance/worker_run_postgres_evidence.json).

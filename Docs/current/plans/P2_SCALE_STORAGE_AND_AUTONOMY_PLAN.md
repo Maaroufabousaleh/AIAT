@@ -269,6 +269,18 @@
   handling, and zero residual fixture rows. This is retry-boundary evidence,
   not independent-host loss, provider outage, external callback/delivery
   confirmation, or sandbox evidence.
+- [x] Certify the local durable provider-shaped retry edge (`1679341`,
+  `9c7e76d`) with
+  [`check_gateway_worker_mail_edge_postgres.py`](../../../mas/scripts/check_gateway_worker_mail_edge_postgres.py)
+  and retained evidence at
+  [`gateway_worker_mail_edge_provider_recovery_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json).
+  The default fixture profile injects one transient `429`, proves two real
+  adapter attempts and one retry through the durable controller, reopens both
+  Postgres stores, passes raw-provider ingress replay/conflict/tamper checks,
+  preserves payload-free evidence, and cleans to zero rows. This closes the
+  local provider-shaped retry boundary only; external provider retry/outage,
+  callback/delivery confirmation, independent host/process loss, sandbox, and
+  full recovery evidence remain open.
 - [x] Harden the AIAT gateway fallback boundary for transport outages
   (`00a468d`) and add the local `aiat.gateway-provider-recovery.v1` fixture
   checker (`48b32ef`). The deterministic sequence forces one primary
@@ -279,7 +291,9 @@
   external-provider outage recovery remains a separate gate.
 - [ ] Extend durable external provider-backed dispatch beyond the retained
   single-worker certificate to independent/multi-host Firecracker/gVisor
-  operation and provider-backed recovery.
+  operation and external provider-backed recovery. The local provider-shaped
+  retry certificate above is a prerequisite, not a substitute for that
+  boundary.
 - Certify gVisor across supported hosts.
 - [x] Define the AIAT-owned Firecracker high-risk launch contract and
   fail-closed pool-readiness checker (`5ed0a0b`). The contract requires
