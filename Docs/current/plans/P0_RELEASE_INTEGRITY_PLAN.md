@@ -110,6 +110,11 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   CycloneDX artifact shape (format/version, metadata component, named
   components, and unique `bom-ref` values); missing deployment refs or release
   artifacts remain blocked, and licence fields remain metadata only.
+- [x] Tighten static image-inventory reconciliation (`2804a9f`) so image IDs
+  and ref variables are unique, local build recipes resolve inside the
+  repository, and non-pending digest/lock/SBOM/scan metadata has a bounded
+  shape/path. Deployment-supplied digests and native build/SBOM/scan evidence
+  remain separate release gates.
 - [x] Lock production operator-pinned runtime/CLI versions and mark host-,
   optional-, and deployment-supplied capabilities unavailable until an exact
   identity is supplied; `scripts/check_operator_pins.py` checks the source

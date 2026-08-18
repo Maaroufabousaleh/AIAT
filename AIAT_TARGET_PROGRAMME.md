@@ -1150,7 +1150,7 @@ The copilot cannot bypass tool grants, project scope, approvals, budget, model p
 
 ### 15.2 Production image policy
 
-Every production image must be pinned by immutable digest, built from a locked dependency graph, scanned, labelled with source revision, and recorded in provenance. The Compose source now uses digest-pinned infrastructure references and required deployment-supplied `*_IMAGE_REF` values for application/gateway images; `scripts/check_image_provenance.py` validates that structural contract, and `--live --json` provides a fail-closed local Docker `RepoDigests` identity check. The live helper does not claim SBOM, scan, build, or clean-room evidence; actual reconciliation remains release evidence work. Development may use convenient tags only when it cannot be confused with production evidence.
+Every production image must be pinned by immutable digest, built from a locked dependency graph, scanned, labelled with source revision, and recorded in provenance. The Compose source now uses digest-pinned infrastructure references and required deployment-supplied `*_IMAGE_REF` values for application/gateway images; `scripts/check_image_provenance.py` validates that structural contract, including unique inventory IDs, checked-in build-recipe paths, safe digest/lock metadata shapes, and repository-contained artifact paths (`2804a9f`), and `--live --json` provides a fail-closed local Docker `RepoDigests` identity check. The live helper does not claim SBOM, scan, build, or clean-room evidence; actual reconciliation remains release evidence work. Development may use convenient tags only when it cannot be confused with production evidence.
 
 The development-only `mas/infra/compose/mas.sh` wrapper supplies local `:dev`
 names when deployment refs are absent; it does not weaken direct production
@@ -1335,7 +1335,7 @@ The programme is organised around completing and hardening the existing architec
   namespace, and restores the baseline at
   [`mas/docs/provenance/metric_series_many_projects.json`](mas/docs/provenance/metric_series_many_projects.json).
   Clean native-Linux release-host scale evidence remains open.
-- Pin every production image by digest and reconcile it with the provenance catalogue/SBOM; use `scripts/check_image_provenance.py --live --json` as the fail-closed local identity boundary before native build/scan evidence.
+- [x] Enforce the static production-image inventory contract: immutable Compose/Dockerfile references, unique image/ref identities, checked-in build recipes, bounded digest/lock metadata, and repository-contained SBOM/scan paths (`2804a9f`); use `scripts/check_image_provenance.py --live --json` as the fail-closed local identity boundary. Deployment-supplied digests, generated SBOM/scan artifacts, and native build reconciliation remain open release evidence.
 - [x] Add `scripts/check_executive_reconciliation.py --live --json` as the secret-safe, read-only executive coverage/finding boundary; live API/DB population remains environment work.
 - [x] Add the read-only `GET /system/diagnostics` dependency summary with
   bounded status/latency/connection facts, degraded aggregation, payload

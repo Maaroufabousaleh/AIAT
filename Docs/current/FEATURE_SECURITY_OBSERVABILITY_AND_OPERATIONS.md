@@ -97,7 +97,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   internal network. A
   startup health check fails closed if the durable control-plane storage path
   is down.
-- Production Compose image inputs are structurally digest-pinned: fixed infrastructure refs carry OCI digests, application refs are required `*_IMAGE_REF` values, Dockerfile bases are pinned, and `check_image_provenance.py` validates the contract. Commit `1d373ee` adds a non-secret lock template and verifies that it covers every Compose image variable; populated release locks remain operator-supplied.
+- Production Compose image inputs are structurally digest-pinned: fixed infrastructure refs carry OCI digests, application refs are required `*_IMAGE_REF` values, Dockerfile bases are pinned, and `check_image_provenance.py` validates the contract. Commit `1d373ee` adds a non-secret lock template and verifies that it covers every Compose image variable; `2804a9f` additionally rejects duplicate inventory identities, missing checked-in build recipes, malformed non-pending digest/lock metadata, and artifact paths outside the repository. Populated release locks remain operator-supplied.
 - `check_image_provenance.py --live --json` now provides a fail-closed native/Docker
   evidence boundary: it compares deployment-supplied digests with local
   `RepoDigests` without printing image references or credentials. The live result
