@@ -360,11 +360,14 @@ The explicit worker-plane provider boundary `f999695` is implemented in
 It requires an operator-selected exact model present in the configured
 gateway's `/v1/models` response and an explicit opt-in before making one
 bounded completion through the real host executor/controller/adapter chain.
-Its default invocation is blocked and no live provider result is claimed in
-this baseline; the runner retains only scalar usage/status/error metadata and
-never prints generated text or credentials. Durable Postgres, independent
-hosts, gVisor/Firecracker, provider recovery, and provider mail-edge callback
-evidence remain separate acceptance gates.
+Its default invocation is blocked, while the retained live certificate
+[`gateway_worker_provider_live.json`](mas/docs/provenance/gateway_worker_provider_live.json)
+(`90c3e5d`) proves one selected `llama-3.3-70b-versatile` completion,
+`SUCCEEDED` controller settlement, and binding/reservation release. The runner
+retains only scalar usage/status/error metadata and never prints generated text
+or credentials. Durable Postgres, independent hosts, gVisor/Firecracker,
+provider recovery, and provider mail-edge callback evidence remain separate
+acceptance gates.
 
 The read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue still passes its approved-coverage requirement. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision; the two non-registered profile rows remain operator-visible reconciliation findings.
 

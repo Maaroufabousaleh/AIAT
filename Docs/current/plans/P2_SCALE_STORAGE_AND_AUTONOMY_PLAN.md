@@ -233,11 +233,14 @@
   `--allow-external-provider` (or `AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH=1`)
   before one bounded completion request. It drives the real host
   executor/controller/adapter chain and emits only scalar secret-safe usage and
-  failure metadata. Its default invocation is blocked and this group adds no
-  live-provider evidence; durable Postgres, independent-host, sandbox,
+  failure metadata. Its default invocation is blocked. The retained live
+  certificate [`gateway_worker_provider_live.json`](../../../mas/docs/provenance/gateway_worker_provider_live.json)
+  (`90c3e5d`) records one listed-model check and one successful
+  `llama-3.3-70b-versatile` completion with `SUCCEEDED` settlement and
+  binding/reservation release; durable Postgres, independent-host, sandbox,
   provider-recovery, and mail-edge callback/bounce gates remain separate.
-- [ ] Prove external provider-backed model dispatch on the worker plane,
-  multi-host Firecracker/gVisor operation, and provider-backed recovery.
+- [ ] Prove durable external provider-backed model dispatch on the worker
+  plane, multi-host Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version
