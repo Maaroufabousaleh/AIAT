@@ -1,24 +1,24 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T14:52:58.792247Z",
+  "observed_at": "2026-08-18T15:21:28.770466Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 73,
-    "pass": 56,
+    "total": 75,
+    "pass": 57,
     "fail": 0,
-    "blocked": 17
+    "blocked": 18
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "17 check(s) are externally blocked",
+    "18 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "5ac3ea99cb71c5e91a02ece637a2e74b6af951f5",
+    "revision": "407a4f94da5f8735f2f7d002142513297cabf6b4",
     "working_tree_clean": false
   },
   "manifest_digest": "6bbc393ad9224cc8a563e10d14b21dcbf379ba0383b4e9ddc4fe00b74fa2ba37",
@@ -61,7 +61,8 @@
     "outbound_mail_lifecycle:live",
     "self_improvement_candidate_detection:live",
     "object_store_multipart:live",
-    "object_store_resource_profile:live"
+    "object_store_resource_profile:live",
+    "object_store_provider_outage:live"
   ],
   "pending_evidence": [
     "coding_worker security scan findings require review in static and live reconciliation rows",
