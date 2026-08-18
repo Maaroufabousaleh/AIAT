@@ -42,6 +42,12 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert firecracker["category"] == "integration"
     assert firecracker["status"] == "pass"
     assert firecracker["summary"] == {"status": "pass", "mode": "static"}
+    provider_recovery = next(
+        row for row in report["checks"] if row["id"] == "gateway_provider_recovery"
+    )
+    assert provider_recovery["category"] == "recovery"
+    assert provider_recovery["status"] == "pass"
+    assert provider_recovery["summary"] == {"status": "pass", "mode": "fixture"}
     evidence_resolution = next(row for row in report["checks"] if row["id"] == "evidence_policy_resolution")
     assert evidence_resolution["status"] == "pass"
     assert evidence_resolution["summary"] == {
