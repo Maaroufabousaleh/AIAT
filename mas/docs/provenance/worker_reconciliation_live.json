@@ -1,7 +1,8 @@
 {
   "schema_version": "aiat.worker-reconciliation-live-evidence.v1",
+  "evidence_commit": "71586b0",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T16:05:09Z",
+  "observed_at": "2026-08-18T18:23:31Z",
   "mode": "compose-live",
   "status": "pass",
   "source_command": "scripts/check_worker_reconciliation.py --live --json",
@@ -26,6 +27,9 @@
     "compose_locked_adapter_probe_ref": "runtime_adapter_conformance_live.json"
   },
   "scope": "Read-only persisted default-worker binding reconciliation against mas-orchestrator-api-1; no database mutation",
+  "payload_free": true,
+  "secret_free": true,
+  "licence_metadata_is_gate": false,
   "certification_boundary": {
     "manifest_presence": "checked",
     "adapter_sandbox_model_source_pin_capability_bindings": "checked",

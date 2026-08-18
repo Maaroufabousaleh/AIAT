@@ -79,6 +79,9 @@ checks:
     script: scripts/check_default_worker_bindings.py
     args: [--json]
     live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/worker_reconciliation_live.json
+      schema_version: aiat.worker-reconciliation-live-evidence.v1
   - id: worker_run_lifecycle
     category: recovery
     script: scripts/check_worker_run_lifecycle.py
