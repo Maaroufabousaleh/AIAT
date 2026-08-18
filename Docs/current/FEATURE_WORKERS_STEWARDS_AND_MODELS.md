@@ -493,11 +493,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   selection/fallback is covered by `d9917f8`; host fencing/recovery is covered
   by `72e59ec`; worker dispatch, gVisor, and Firecracker evidence remain
   separate gates.
-- [x] Certify durable in-flight shell/adapter/steward version pinning
-  (`dbf6d10`, label-readback follow-up `8bb0a91`) while the worker registry
-  advances to a replacement version. The current worker-run schema does not
-  persist a skill-bundle ID, so bundle-level pinning and full multi-host
-  rollout/version evidence remain separate gates.
+- [x] Certify durable in-flight shell/adapter/skill-bundle/steward version
+  pinning (`6a10b0e`, migration `0040_worker_run_skill_bundle_pin`) while the
+  worker registry advances to a replacement version. Run creation snapshots
+  the active bundle under the worker-row lock and validates ownership; live
+  dispatch and full multi-host rollout/version evidence remain separate gates.
 - [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
   checker (`db22e60`) for host health/lease, labels, capabilities,
   sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection.
