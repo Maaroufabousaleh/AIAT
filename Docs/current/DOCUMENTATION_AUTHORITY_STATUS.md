@@ -93,6 +93,13 @@ The payload-free report is indexed at
 durable provider callback/read-back, external provider execution, live worker,
 and sandbox evidence remain explicitly open.
 
+Commit `b2ae516` hardens the gateway-worker failure boundary. The maintained
+adapter now separates bounded input validation, retryable transient gateway
+statuses, and terminal provider rejections while retaining only status and
+exception-type metadata. Focused tests cover each classification without
+copying provider response text or credentials; live provider recovery remains
+open.
+
 The latest bounded implementation groups are reflected in the maintained
 authority set: team-runner declaration reconciliation (`d9b1262`), production
 startup reconciliation and `AgentConfig`/health propagation (`569231f`),

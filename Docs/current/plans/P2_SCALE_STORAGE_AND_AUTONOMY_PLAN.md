@@ -197,6 +197,12 @@
   state plus exact provider/model usage. Evidence is
   [`gateway_worker_http_fixture.json`](../../../mas/docs/provenance/gateway_worker_http_fixture.json);
   external provider, outage-recovery, and sandbox evidence remain open.
+- [x] Normalize gateway-worker failure semantics (`b2ae516`). Pre-dispatch
+  input validation is terminal and non-retryable; transient gateway status
+  classes remain retryable provider failures; permanent gateway responses are
+  terminal provider rejections. Error details are bounded to status/cause type
+  metadata and focused tests cover all three paths. This hardens the local
+  recovery boundary but does not claim live provider recovery.
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports
