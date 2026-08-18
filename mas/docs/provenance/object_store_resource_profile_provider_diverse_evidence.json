@@ -1,0 +1,58 @@
+{
+  "schema_version": "aiat.object-store-resource-profile.v1",
+  "evidence_commit": "3791b3f",
+  "observed_at": "2026-08-18T14:23:06Z",
+  "mode": "live-bounded-resource-profile",
+  "topology": {
+    "primary": "Compose MinIO endpoint",
+    "comparison": "disposable SeaweedFS 4.42 endpoint"
+  },
+  "benchmark_plan": {
+    "payload_sizes_bytes": [1048576, 8388608],
+    "concurrency": 4,
+    "case_count_per_provider": 8,
+    "total_payload_bytes_per_provider": 37748736
+  },
+  "providers": [
+    {
+      "name": "minio",
+      "status": "pass",
+      "measurement_source": "procfs",
+      "wall_time_ms": 1305.45,
+      "cpu_time_ms": 275.534,
+      "rss_before_bytes": 114647040,
+      "rss_peak_bytes": 192143360,
+      "rss_after_bytes": 132358144,
+      "error_count": 0,
+      "checksum_readback": "checked",
+      "cleanup_verified": true
+    },
+    {
+      "name": "seaweedfs",
+      "status": "pass",
+      "measurement_source": "procfs",
+      "wall_time_ms": 1396.182,
+      "cpu_time_ms": 184.165,
+      "rss_before_bytes": 137928704,
+      "rss_peak_bytes": 195764224,
+      "rss_after_bytes": 137314304,
+      "error_count": 0,
+      "checksum_readback": "checked",
+      "cleanup_verified": true
+    }
+  ],
+  "status": "pass",
+  "decision": "operator_review_required",
+  "resource_selection_authority": false,
+  "licence_metadata_is_gate": false,
+  "not_checked": [
+    "host-independent resource portability",
+    "production resource budgets",
+    "provider outage",
+    "provider-managed encryption/KMS",
+    "clean-host disaster recovery",
+    "migration cutover"
+  ],
+  "payload_free": true,
+  "secret_free": true
+}
