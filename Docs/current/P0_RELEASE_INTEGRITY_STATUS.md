@@ -71,6 +71,13 @@
   This remains local disposable comparison evidence; it does not authorize
   provider selection or claim provider durability, KMS, actual outage,
   clean-host, disaster recovery, or migration cutover.
+- Commit `6794b9f` extends the same comparison with a bounded 1 MiB/8 MiB
+  concurrent wave: four cases per size pass checksum read-back and scoped
+  cleanup on both endpoints. Scalar evidence is retained at
+  [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
+  It remains timing/comparison evidence only; multipart, resource, outage,
+  provider-managed encryption/KMS, clean-host, and disaster-recovery gates
+  remain open.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is

@@ -116,6 +116,13 @@
   Deployment routing and retention authority are not changed; production
   cutover, provider outage, KMS, clean-host, and disaster-recovery evidence
   remain open.
+- [x] Expand the benchmark contract (`6794b9f`) to a bounded large-object and
+  concurrency wave: both MinIO and SeaweedFS pass four concurrent 1 MiB cases
+  and four concurrent 8 MiB cases, with checksum read-back, post-delete prefix
+  verification, and scalar-only evidence at
+  [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
+  Multipart, resource profiling, provider outage, provider-managed encryption,
+  and clean-host/disaster-recovery gates remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

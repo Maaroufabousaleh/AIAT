@@ -75,6 +75,14 @@ Those reports are scalar-only disposable comparison evidence; they do not
 authorize provider selection or claim provider durability, KMS, actual outage,
 clean-host, disaster recovery, or migration cutover.
 
+The storage index now also records the bounded advanced benchmark wave from
+`6794b9f` at
+[`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
+It covers 1 MiB and 8 MiB payloads with four concurrent cases per size on both
+operator-observed endpoints, checksum read-back, and zero remaining fixture
+objects. Multipart, resource, outage, provider-managed encryption/KMS,
+clean-host, disaster-recovery, and provider-selection decisions remain open.
+
 The same index now includes the verified-copy parity evidence
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json),
 which records three matching checksum/size copies from MinIO to SeaweedFS and

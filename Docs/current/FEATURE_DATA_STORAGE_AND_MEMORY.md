@@ -102,7 +102,12 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   returns `blocked` when either side is unavailable, and never chooses a
   primary provider or reads licence metadata as a gate. The retained live
   comparison covers payload sizes 1/32/4096 bytes on disposable Compose MinIO
-  and SeaweedFS endpoints; it is timing/comparison evidence only.
+  and SeaweedFS endpoints; it is timing/comparison evidence only. Commit
+  `6794b9f` adds a bounded advanced wave: 1 MiB and 8 MiB payloads at four
+  concurrent cases per size on both endpoints, checksum read-back, and
+  post-delete prefix verification. Scalar evidence is retained at
+  [`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json);
+  it remains local comparison evidence and does not select a provider.
 - The provider-pair checker was also exercised across the operator-observed
   MinIO/SeaweedFS topology. Its retained scalar evidence confirms three-object
   checksum dual-write, adapter-boundary primary-loss rejection, secondary-only
@@ -247,9 +252,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
   change only after provider-certified retention parity, deployment-routing
   ownership, rollback authority, and outage/recovery evidence are available;
   the provider-diverse inventory/copy/dual-write rehearsal already passes.
-- Extend the benchmark beyond the retained 1/32/4096-byte cases with
-  large-object, multipart, concurrency, resource, outage, and recovery
-  comparison evidence; current timings remain informational.
+- Extend the benchmark beyond the retained serial and bounded 1 MiB/8 MiB
+  concurrency waves with multipart, resource, outage, and recovery comparison
+  evidence; current timings remain informational and do not close provider
+  selection or disaster-recovery gates.
 - Run the encrypted envelope against a configured Garage, R2, B2, or other
   approved backend with provider-managed key custody/rotation evidence; the
   provider-neutral local certificate is already retained.

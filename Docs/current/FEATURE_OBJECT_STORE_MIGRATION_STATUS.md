@@ -47,6 +47,11 @@ authority outside the helpers.
   objects, performs checksum/read-back copy and one dual write, records the
   AIAT-owned `CUTOVER` → `ROLLED_BACK` transition, and removes the four
   reserved objects from each endpoint before returning.
+- `6794b9f` — the benchmark contract now bounds concurrent waves and larger
+  payloads. Each named provider runs four concurrent checksum upload/read-back
+  cases at 1 MiB and 8 MiB, verifies post-delete prefix emptiness, and retains
+  only scalar results; configuration rejects unsafe concurrency or payload
+  budgets before provider mutation.
 
 The governed workflow never deletes source objects or silently changes
 deployment routing. The bounded live checker deletes only its reserved
@@ -104,9 +109,13 @@ disposable SeaweedFS. It retains scalar-only evidence at
 and a three-size benchmark comparison at
 [`object_store_provider_benchmark_evidence.json`](../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
 All six benchmark cases and all three pair objects pass checksum read-back and
-scoped cleanup. The topology is operator-observed and local; provider-managed
-durability/custody, actual process/network outage, large-object/multipart,
-clean-host/disaster recovery, and migration cutover/rollback remain open.
+scoped cleanup. The follow-on bounded wave retains
+[`object_store_benchmark_advanced_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json)
+and passes sixteen 1 MiB/8 MiB concurrent cases across the same two endpoints,
+with four concurrent cases per size and zero remaining fixture objects. The
+topology is operator-observed and local; provider-managed durability/custody,
+multipart, resource profiling, actual process/network outage, clean-host/
+disaster recovery, and migration cutover/rollback remain open.
 
 The verified-copy follow-up retains scalar evidence at
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
@@ -130,15 +139,16 @@ evidence remain open.
   change only after retention parity, deployment-routing ownership, rollback
   authority, and operator recovery evidence are defined. The provider-diverse
   rehearsal is complete, but it does not authorize a production cutover.
-- Extend `check_object_store_benchmarks.py --live` beyond the retained three
-  payload sizes with reliability/resource/concurrency, large-object/multipart,
-  outage, and recovery comparison evidence. The current timings are local
-  disposable observations and do not justify a provider decision.
+- Extend `check_object_store_benchmarks.py --live` beyond the retained serial
+  and bounded 1 MiB/8 MiB concurrency waves with multipart, reliability,
+  resource, outage, and recovery comparison evidence. The current timings are
+  local disposable observations and do not justify a provider decision.
 - Add encrypted secondary backup and clean-environment disaster-recovery
   verification. The current empty-target preflight is a bounded safety check,
   not proof of a clean host, provider durability, or regional recovery.
-- Measure large-object/multipart/concurrency/outage behavior and compare any
-  optional backend before changing the MinIO default.
+- Measure multipart/resource/outage behavior and compare any optional backend
+  before changing the MinIO default; large-object and bounded concurrency
+  behavior are now checked but do not close those remaining gates.
 - Prove Postgres/object-store consistency, lifecycle cleanup, orphan handling,
   and legal-hold behavior in a live recovery exercise.
 

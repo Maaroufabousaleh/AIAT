@@ -986,12 +986,17 @@ passes inventory, checksum/read-back copy, one dual write, the AIAT-owned
 `CUTOVER` → `ROLLED_BACK` workflow record, payload-free reporting, and scoped
 cleanup; scalar evidence is retained at
 [`mas/docs/provenance/object_store_migration_provider_diverse_evidence.json`](mas/docs/provenance/object_store_migration_provider_diverse_evidence.json).
+The bounded benchmark expansion in `6794b9f` also passes four concurrent
+checksum upload/read-back cases at each of 1 MiB and 8 MiB on both endpoints,
+with post-delete prefix verification; scalar evidence is retained at
+[`mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json`](mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json).
 The retained local MinIO report proves the scoped 8/8 contract on the running
 deployment and is reproducible through
 [`mas/infra/compose/scripts/check-minio-conformance.sh`](mas/infra/compose/scripts/check-minio-conformance.sh).
 A deployed MinIO/SeaweedFS adapter still needs provider-specific
-large-object, multipart, concurrency, outage, corruption, benchmark, backup,
-and restore evidence before those capabilities are treated as certified;
+multipart, resource, outage, corruption, benchmark, backup, and restore
+evidence before those capabilities are treated as certified; the bounded
+large-object/concurrency wave is checked but does not close those gates;
 production routing, retention authority, and cutover remain outside this
 rehearsal.
 
@@ -1512,6 +1517,12 @@ The programme is organised around completing and hardening the existing architec
   verified-copy → optional-dual-write → human-confirmed-cutover →
   human-confirmed-rollback workflow; provider-specific routing, retention, and
   live rollback evidence remain.
+- [x] Extend the object-store benchmark to a bounded 1 MiB/8 MiB wave with
+  four concurrent cases per size on MinIO and SeaweedFS, checksum read-back,
+  and post-delete cleanup verification (`6794b9f`; scalar evidence at
+  [`object_store_benchmark_advanced_provider_diverse_evidence.json`](mas/docs/provenance/object_store_benchmark_advanced_provider_diverse_evidence.json)).
+  Multipart, resource, outage, provider-managed encryption, and clean-host/
+  disaster-recovery evidence remain separate gates.
 - Complete executive/KPI views using LiteLLM and OmniRoute without duplicating analytics authority.
 - [x] Add the descriptive SLO/capacity policy/report contracts over durable
   usage history; keep native service instrumentation, load/soak/chaos, and
