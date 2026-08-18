@@ -28,10 +28,19 @@ if TYPE_CHECKING:
 
 RUN_HOST_BINDING_SCHEMA = "aiat.worker-run-host-binding.v1"
 RUN_HOST_BINDING_STATES = frozenset({"ASSIGNED", "COMMITTED", "RELEASED"})
+RUN_HOST_RECOVERY_SCHEMA = "aiat.worker-run-host-recovery.v1"
 
 
 class RunHostBindingRejected(RuntimeError):
     """Raised when a run cannot be assigned or settled safely."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+class RunHostBindingRecoveryRejected(RuntimeError):
+    """Raised when a committed binding cannot be safely reassigned."""
 
     def __init__(self, reason_code: str) -> None:
         super().__init__(reason_code)
@@ -356,3 +365,122 @@ class WorkerRunHostBindingService:
 
     async def release(self, run_id: UUID | str, *, owner: str) -> dict[str, Any]:
         return await self._settle(run_id, owner=owner, target="RELEASED")
+
+    async def reassign_after_host_loss(
+        self,
+        request: RunHostBindingRequest,
+        *,
+        recovery_reason: str = "host_lease_expired",
+    ) -> dict[str, Any]:
+        """Move a queued run from an expired binding to a fresh reservation.
+
+        Host lease recovery expires the old reservation and leaves the binding
+        as a durable audit pointer.  This method is the explicit queue-recovery
+        edge: it only accepts that fenced state, requires the canonical run to
+        be queued again, reserves a new eligible host, replaces the current
+        binding in one row-locked update, and commits the new reservation.  It
+        never dispatches a worker or contacts a provider.
+        """
+
+        run_id, worker_id, assignment_key, owner = request.validate()
+        reason = str(recovery_reason or "").strip()
+        if not reason or len(reason) > 200:
+            raise ValueError("recovery_reason must be between 1 and 200 characters")
+        existing = await self.get(run_id)
+        if existing is None:
+            raise RunHostBindingRecoveryRejected("run_host_binding_not_found")
+        if str(existing.get("worker_id")) != str(worker_id):
+            raise RunHostBindingRecoveryRejected("run_host_binding_worker_mismatch")
+        if str(existing.get("owner") or "") != owner:
+            raise PermissionError("run-host binding owner mismatch")
+        if str(existing.get("state") or "") != "COMMITTED":
+            raise RunHostBindingRecoveryRejected("run_host_binding_not_committed")
+        if str(existing.get("assignment_key") or "") == assignment_key:
+            raise RunHostBindingRecoveryRejected("run_host_recovery_assignment_key_reused")
+        if str(existing.get("reservation_state") or "") != "EXPIRED":
+            raise RunHostBindingRecoveryRejected("run_host_recovery_reservation_not_expired")
+        if existing.get("current_host_lease_valid") is not False:
+            raise RunHostBindingRecoveryRejected("run_host_recovery_host_lease_not_fenced")
+        run = await self._storage.get_worker_run(run_id)
+        if run is None:
+            raise RunHostBindingRecoveryRejected("run_not_found")
+        if str(run.get("state") or "") != "QUEUED":
+            raise RunHostBindingRecoveryRejected("run_not_queued_for_host_recovery")
+
+        old_host_id = str(existing.get("host_id") or "")
+        old_reservation_id = str(existing.get("reservation_id") or "")
+        old_generation = int(existing.get("host_lease_generation") or 1)
+        schedule = await self._scheduler.schedule(
+            HostScheduleRequest(
+                schedule_key=assignment_key,
+                owner=owner,
+                placement=request.placement,
+                lease_seconds=request.lease_seconds,
+                metadata={
+                    **dict(request.metadata or {}),
+                    "run_id": str(run_id),
+                    "binding_schema": RUN_HOST_BINDING_SCHEMA,
+                    "recovery_schema": RUN_HOST_RECOVERY_SCHEMA,
+                    "recovery_reason": reason,
+                    "recovered_from_host_id": old_host_id,
+                    "recovered_from_reservation_id": old_reservation_id,
+                    "recovered_from_lease_generation": old_generation,
+                },
+                reservation_id=request.reservation_id,
+            )
+        )
+        reservation = schedule.get("reservation")
+        if schedule.get("status") not in {"RESERVED", "REPLAYED"} or not isinstance(
+            reservation, Mapping
+        ):
+            raise RunHostBindingRecoveryRejected("host_recovery_reservation_unavailable")
+        try:
+            host_uuid = reservation.get("host_uuid")
+            reservation_id = reservation.get("id")
+            host_lease_generation = int(reservation.get("host_lease_generation") or 1)
+            if host_uuid is None or reservation_id is None:
+                raise ValueError
+            host_uuid = host_uuid if isinstance(host_uuid, UUID) else UUID(str(host_uuid))
+            reservation_id = reservation_id if isinstance(reservation_id, UUID) else UUID(str(reservation_id))
+        except (TypeError, ValueError) as exc:
+            raise RunHostBindingRecoveryRejected("reservation_projection_invalid") from exc
+        if str(reservation_id) == old_reservation_id or str(reservation.get("host_id") or "") == old_host_id:
+            raise RunHostBindingRecoveryRejected("host_recovery_same_host_selected")
+
+        from ..memory import models as t
+
+        metadata = {
+            **dict(existing.get("metadata") or {}),
+            **dict(request.metadata or {}),
+            "recovery_schema": RUN_HOST_RECOVERY_SCHEMA,
+            "recovery_reason": reason,
+            "recovered_from_host_id": old_host_id,
+            "recovered_from_reservation_id": old_reservation_id,
+            "recovered_from_lease_generation": old_generation,
+        }
+        async with self._storage.engine.begin() as connection:
+            row = (
+                await connection.execute(
+                    t.worker_run_host_bindings.select()
+                    .where(t.worker_run_host_bindings.c.run_id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if row is None or str(row.get("state") or "") != "COMMITTED":
+                raise RunHostBindingRecoveryRejected("run_host_binding_changed_during_recovery")
+            await connection.execute(
+                t.worker_run_host_bindings.update()
+                .where(t.worker_run_host_bindings.c.run_id == run_id)
+                .values(
+                    host_id=host_uuid,
+                    reservation_id=reservation_id,
+                    host_lease_generation=host_lease_generation,
+                    assignment_key=assignment_key,
+                    owner=owner,
+                    state="ASSIGNED",
+                    metadata=metadata,
+                    committed_at=None,
+                    released_at=None,
+                )
+            )
+        return await self.commit(run_id, owner=owner)

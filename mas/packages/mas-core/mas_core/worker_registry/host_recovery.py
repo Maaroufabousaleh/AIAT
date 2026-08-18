@@ -18,6 +18,8 @@ import sqlalchemy as sa
 from ..memory import models as t
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..memory.storage import AgentStorage
 
 HOST_RECOVERY_SCHEMA = "aiat.worker-host-recovery.v1"
@@ -31,24 +33,34 @@ class HostLeaseRecovery:
     def __init__(self, storage: AgentStorage) -> None:
         self._storage = storage
 
-    async def reconcile_expired_hosts(self, *, limit: int = 100) -> dict[str, Any]:
-        """Fence and offline expired hosts, bounded by a row-lock batch size."""
+    async def reconcile_expired_hosts(
+        self,
+        *,
+        limit: int = 100,
+        host_ids: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fence expired hosts, optionally limited to an explicit host set."""
 
         bounded_limit = max(1, min(int(limit), 1_000))
+        normalized_host_ids = tuple(
+            dict.fromkeys(str(host_id or "").strip() for host_id in host_ids or ())
+        )
+        normalized_host_ids = tuple(host_id for host_id in normalized_host_ids if host_id)
         now = datetime.now(tz=UTC)
         recovered_hosts: list[dict[str, Any]] = []
         expired_reservations = 0
         async with self._storage.engine.begin() as connection:
+            clauses = [
+                t.worker_hosts.c.status.in_(RECOVERABLE_HOST_STATUSES),
+                t.worker_hosts.c.lease_expires_at.is_not(None),
+                t.worker_hosts.c.lease_expires_at <= now,
+            ]
+            if host_ids is not None:
+                clauses.append(t.worker_hosts.c.host_id.in_(normalized_host_ids))
             rows = (
                 await connection.execute(
                     t.worker_hosts.select()
-                    .where(
-                        sa.and_(
-                            t.worker_hosts.c.status.in_(RECOVERABLE_HOST_STATUSES),
-                            t.worker_hosts.c.lease_expires_at.is_not(None),
-                            t.worker_hosts.c.lease_expires_at <= now,
-                        )
-                    )
+                    .where(sa.and_(*clauses))
                     .order_by(t.worker_hosts.c.host_id.asc())
                     .limit(bounded_limit)
                     .with_for_update(skip_locked=True)
@@ -99,6 +111,7 @@ class HostLeaseRecovery:
             "expired_reservation_count": expired_reservations,
             "hosts": recovered_hosts,
             "limit": bounded_limit,
+            "host_filter": list(normalized_host_ids) if host_ids is not None else None,
             "mutation_performed": bool(recovered_hosts),
             "worker_dispatch_performed": False,
             "external_provider_mutation_performed": False,
