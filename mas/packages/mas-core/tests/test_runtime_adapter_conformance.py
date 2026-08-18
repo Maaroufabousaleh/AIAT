@@ -6,9 +6,22 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 MAS_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = MAS_ROOT / "scripts" / "check_runtime_adapter_conformance.py"
+
+
+def _manifest(runtime_tier: str):
+    from mas_core.protocols.worker_manifest import WorkerManifest
+
+    return WorkerManifest.model_validate(
+        {
+            "metadata": {"id": f"{runtime_tier}-translation", "name": runtime_tier},
+            "runtime_tier": runtime_tier,
+            "integration": {"isolation_mode": runtime_tier},
+        }
+    )
 
 
 def test_runtime_adapter_fixture_conformance_exercises_both_default_adapters() -> None:
@@ -49,3 +62,36 @@ def test_runtime_adapter_live_mode_is_blocked_when_packages_are_absent() -> None
     else:
         assert result.returncode == 0
         assert report["status"] == "pass"
+
+
+def test_framework_adapters_preserve_project_and_message_context() -> None:
+    from mas_core.worker_registry.crewai_adapter import CrewAIAdapter
+    from mas_core.worker_registry.langgraph_adapter import LangGraphAdapter
+
+    envelope = SimpleNamespace(
+        project_id="project-translation",
+        payload={"task": "task", "context": "context", "messages": [{"role": "user"}]},
+    )
+    for adapter in (
+        LangGraphAdapter(_manifest("langgraph")),
+        CrewAIAdapter(_manifest("crewai")),
+    ):
+        translated = adapter._translate_input(envelope)
+        assert translated == {
+            "task": "task",
+            "context": "context",
+            "project_id": "project-translation",
+            "messages": [{"role": "user"}],
+        }
+
+
+def test_framework_adapters_normalize_missing_project_id() -> None:
+    from mas_core.worker_registry.crewai_adapter import CrewAIAdapter
+    from mas_core.worker_registry.langgraph_adapter import LangGraphAdapter
+
+    envelope = SimpleNamespace(project_id=None, payload={})
+    for adapter in (
+        LangGraphAdapter(_manifest("langgraph")),
+        CrewAIAdapter(_manifest("crewai")),
+    ):
+        assert adapter._translate_input(envelope)["project_id"] is None

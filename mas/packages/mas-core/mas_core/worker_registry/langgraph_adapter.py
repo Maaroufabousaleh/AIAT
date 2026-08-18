@@ -180,9 +180,10 @@ class LangGraphAdapter:
     def _translate_input(self, envelope: Any) -> dict[str, Any]:
         """Convert AIAT MessageEnvelope to LangGraph-compatible input."""
         payload = getattr(envelope, "payload", {}) or {}
+        project_id = getattr(envelope, "project_id", None)
         return {
             "task": payload.get("task", ""),
             "context": payload.get("context", ""),
-            "project_id": str(getattr(envelope, "project_id", "")) or None,
+            "project_id": str(project_id) if project_id else None,
             "messages": payload.get("messages", []),
         }

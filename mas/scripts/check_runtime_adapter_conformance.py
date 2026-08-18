@@ -163,7 +163,11 @@ def _envelope() -> MessageEnvelope:
         sender_team="system",
         recipient_id="runtime-fixture",
         project_id="runtime-conformance-project",
-        payload={"task": "bounded adapter acknowledgement", "context": "fixture"},
+        payload={
+            "task": "bounded adapter acknowledgement",
+            "context": "fixture",
+            "messages": [{"role": "user", "content": "fixture context"}],
+        },
     )
 
 
@@ -208,9 +212,20 @@ async def _run_fixture(runtime_id: str) -> dict[str, Any]:
     expected_output = "fixture:bounded adapter acknowledgement"
     output = result.get("output")
     output_value = output.get("output") if isinstance(output, dict) else output
+    translated_input = result.get("input")
+    project_context_preserved = (
+        isinstance(translated_input, dict)
+        and translated_input.get("project_id") == "runtime-conformance-project"
+    )
+    message_history_preserved = (
+        isinstance(translated_input, dict)
+        and translated_input.get("messages") == [{"role": "user", "content": "fixture context"}]
+    )
     passed = (
         result.get("status") == "completed"
         and output_value == expected_output
+        and project_context_preserved
+        and message_history_preserved
         and healthy_before_shutdown is True
         and healthy_after_shutdown is False
     )
@@ -220,6 +235,8 @@ async def _run_fixture(runtime_id: str) -> dict[str, Any]:
         "adapter_class": type(adapter).__name__,
         "result_status": result.get("status"),
         "output_matches": output_value == expected_output,
+        "project_context_preserved": project_context_preserved,
+        "message_history_preserved": message_history_preserved,
         "health_before_shutdown": healthy_before_shutdown,
         "health_after_shutdown": healthy_after_shutdown,
         "external_model_call": False,
