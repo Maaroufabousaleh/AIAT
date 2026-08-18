@@ -1,6 +1,6 @@
 {
   "schema_version": "aiat.model-profile-catalogue-live-evidence.v1",
-  "observed_at": "2026-08-18T16:05:09Z",
+  "observed_at": "2026-08-18T16:28:29Z",
   "mode": "compose-live",
   "status": "pass_with_profile_findings",
   "source_command": "scripts/check_model_profile_catalogue.py --live --json --require-approved",
@@ -18,13 +18,37 @@
   "registry_model_count": 93,
   "persisted_profile_count": 94,
   "persisted_profile_version_count": 94,
-  "approved_profile_entry_count": 92,
-  "covered_profile_version_count": 92,
-  "profile_pending_model_count": 1,
-  "profile_not_registered_count": 2,
-  "finding_count": 2,
+  "approved_profile_entry_count": 93,
+  "covered_profile_version_count": 93,
+  "profile_pending_model_count": 0,
+  "profile_not_registered_count": 1,
+  "finding_count": 1,
   "approval_gate": "passed: approved persisted profile coverage exists",
   "coverage": "pending_persisted_profile_bindings",
+  "alias_reconciliation": {
+    "status": "passed",
+    "canonical_registry_identity": {
+      "provider": "litellm",
+      "model_id": "omniroute-coding"
+    },
+    "reconciled_profile_identity": {
+      "provider": "aiat",
+      "model_id": "aiat/omniroute-coding",
+      "profile_id": "opencode-phase0b-coding",
+      "version": "1"
+    },
+    "implementation_revision": "381dbcc"
+  },
+  "findings": [
+    {
+      "code": "PROFILE_MODEL_NOT_REGISTERED",
+      "exact_model_id": "local/test-model-1",
+      "profile_id": "live-governance-smoke-20260719",
+      "provider_id": "local",
+      "version": "1",
+      "classification": "operator-owned-stale-profile"
+    }
+  ],
   "findings_policy": "operator-visible model/profile reconciliation findings; no licence or resource restriction gate",
   "secret_policy": "credentials, provider keys, payloads, and raw profile records are omitted",
   "scope": "Read-only Compose API catalogue reconciliation; no profile creation, approval, routing, or deployment mutation",
