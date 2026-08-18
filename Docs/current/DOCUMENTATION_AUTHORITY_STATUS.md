@@ -261,9 +261,9 @@ The durable host-registry group `500fc57` adds migration
 certificate. It proves token-digest registration, wrong-token rejection,
 heartbeat lease renewal, credential-redacted public projections, placement
 snapshot read-back after connection reopen, and expired-lease visibility with
-scoped cleanup. Durable host recovery, host-loss/split-brain, and worker
-dispatch evidence remain separate; scheduler integration is certified by
-`d9917f8` below. Licence metadata remains informational and non-gating.
+scoped cleanup. The current host projection includes a durable lease
+generation; fencing and recovery are certified by `72e59ec` below. Licence
+metadata remains informational and non-gating.
 
 The durable host-reservation group `232c0bb` adds migration
 `0038_worker_host_reservations` and the maintained
@@ -272,8 +272,9 @@ certificate. It proves READY/lease enforcement, row-locked capacity
 rejection, idempotent reservation-key replay, commit/release/expiry
 transitions, bounded scalar capacity projection, connection-reopen
 read-back, and scoped cleanup. The scheduler integration below uses this
-ledger; host-loss/split-brain, Firecracker, and provider/worker dispatch
-remain separate. Licence metadata remains informational and non-gating.
+ledger; host fencing/recovery is certified by `72e59ec`; Firecracker and
+provider/worker dispatch remain separate. Licence metadata remains
+informational and non-gating.
 
 The multi-host scheduler group `d9917f8` adds the maintained
 [`worker_host_scheduler_postgres_evidence.json`](../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json)
@@ -281,8 +282,19 @@ certificate and `aiat.worker-host-scheduler.v1` module. It proves deterministic
 preferred-host selection, row-locked fallback after a concurrent capacity
 rejection, globally idempotent schedule replay, draining/unleased filtering,
 blocked full-capacity output, connection-reopen read-back, and scoped cleanup
-without worker/provider dispatch. Durable host-loss/split-brain, live worker
-dispatch, and Firecracker evidence remain separate; licence metadata remains
+without worker/provider dispatch. Durable host-loss/split-brain fencing and
+recovery are now certified separately; live worker dispatch and Firecracker
+evidence remain separate. Licence metadata remains informational and
+non-gating.
+
+The host-fencing/recovery group `72e59ec` adds migration
+`0039_worker_host_fencing` and the maintained
+[`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)
+certificate. It proves re-registration generation fencing, stale-heartbeat
+rejection, atomic expiry of reservations from a lost host incarnation,
+expired-host transition to `OFFLINE`, placement exclusion, connection-reopen
+read-back, and scoped cleanup. It does not claim live worker dispatch,
+provider-backed recovery, or Firecracker operation; licence metadata remains
 informational and non-gating.
 
 The optional Microsoft Agent Framework phase is now reflected in the authority

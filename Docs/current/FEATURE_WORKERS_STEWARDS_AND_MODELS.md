@@ -13,8 +13,11 @@ placement snapshots, and connection-reopen read-back. The durable reservation
 certificate `232c0bb` passes idempotent capacity reservation, commit/release,
 expiry recovery, and reopen read-back. The scheduler certificate `d9917f8`
 also passes deterministic multi-host fallback, replay, blocked capacity, and
-reopen read-back; live worker dispatch and host-loss/split-brain recovery
-remain incomplete.
+reopen read-back. The host-fencing/recovery certificate `72e59ec` now passes
+split-brain stale-heartbeat rejection, reservation invalidation on host
+replacement, expired-host reconciliation to `OFFLINE`, placement exclusion,
+and durable reopen read-back; live worker dispatch, host-pool separation, and
+Firecracker remain incomplete.
 
 ## Purpose
 
@@ -57,8 +60,18 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   Capacity reservation/commit/expiry is provided by
   `mas_core.worker_registry.host_reservations.HostCapacityReservationLedger`
   and its Postgres checker; `mas_core.worker_registry.host_scheduler.HostScheduler`
-  provides idempotent schedule replay and fallback; host-loss recovery,
-  split-brain avoidance, and worker dispatch remain separate.
+  provides idempotent schedule replay and fallback. The
+  `mas_core.worker_registry.host_recovery.HostLeaseRecovery` boundary advances
+  a durable host lease generation on re-registration or expired-lease
+  reconciliation, expires reservations from the fenced incarnation, and keeps
+  stale heartbeats from reviving a replaced host.
+- `scripts/check_worker_host_recovery_postgres.py` certifies the
+  `aiat.worker-host-recovery.v1` boundary at migration
+  `0039_worker_host_fencing`: re-registration advances generation and fences
+  the old reservation, expired READY leases become OFFLINE with the next
+  generation, stale heartbeats are rejected, placement excludes the recovered
+  host, and connection-reopen read-back remains durable. Evidence is retained
+  at [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json).
 - `mas_core.worker_registry.host_scheduler.HostScheduler` and
   `scripts/check_worker_host_scheduler_postgres.py` provide the bounded
   `aiat.worker-host-scheduler.v1` integration. The scheduler ranks public host
@@ -473,8 +486,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   read-back, and scoped cleanup. Durable host registration and authenticated
   host heartbeat/lease state are now covered by `500fc57`; durable capacity
   reservation/commit/expiry is covered by `232c0bb`; deterministic multi-host
-  selection/fallback is covered by `d9917f8`; real host-loss/split-brain,
-  worker dispatch, gVisor, and Firecracker evidence remain separate gates.
+  selection/fallback is covered by `d9917f8`; host fencing/recovery is covered
+  by `72e59ec`; worker dispatch, gVisor, and Firecracker evidence remain
+  separate gates.
 - [x] Certify durable in-flight shell/adapter/steward version pinning
   (`dbf6d10`, label-readback follow-up `8bb0a91`) while the worker registry
   advances to a replacement version. The current worker-run schema does not
@@ -484,27 +498,33 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   checker (`db22e60`) for host health/lease, labels, capabilities,
   sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection.
   It is a pure read-only contract; scheduler settlement is covered by
-  `d9917f8`, while host-loss evidence remains open.
+  `d9917f8`, and host fencing/recovery is covered by `72e59ec`.
 - [x] Add durable authenticated host registration, heartbeat lease renewal,
   redacted public host projections, and placement snapshot read-back through
   migration `0037_worker_host_registry` (`500fc57`; evidence at
   [`worker_host_registry_postgres_evidence.json`](../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)).
-  Durable host recovery, host-loss/split-brain, and worker dispatch evidence
-  remain open; scheduler integration is covered by `d9917f8`.
+  Host fencing and recovery are covered by `72e59ec`; scheduler integration is
+  covered by `d9917f8`.
 - [x] Add the AIAT-owned durable host capacity reservation ledger through
   migration `0038_worker_host_reservations` (`232c0bb`; evidence at
   [`worker_host_reservations_postgres_evidence.json`](../../mas/docs/provenance/worker_host_reservations_postgres_evidence.json)).
   It enforces host lease/readiness, row-locked capacity limits, idempotent
   keys, commit/release/expiry transitions, scalar capacity read-back, and
   scoped cleanup; scheduler selection/fallback and replay are covered by
-  `d9917f8`, while host-loss recovery remains open.
+  `d9917f8`, while worker dispatch remains open.
 - [x] Connect the durable registry and reservation ledger through the
   authenticated `aiat.worker-host-scheduler.v1` layer (`d9917f8`; evidence at
   [`worker_host_scheduler_postgres_evidence.json`](../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json)).
   The checker proves deterministic preferred-host selection, row-locked
   fallback, idempotent replay, draining/unleased filtering, blocked full
-  capacity, connection-reopen read-back, and cleanup; worker dispatch,
-  host-loss/split-brain, and Firecracker remain open.
+  capacity, connection-reopen read-back, and cleanup; worker dispatch and
+  Firecracker remain open.
+- [x] Add durable host lease-generation fencing and expired-host recovery
+  (`72e59ec`, migration `0039_worker_host_fencing`; evidence at
+  [`worker_host_recovery_postgres_evidence.json`](../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
+  Re-registration and expired-lease reconciliation fence stale heartbeats and
+  expire reservations from the lost incarnation before placement can select a
+  host; live worker dispatch and high-risk sandbox evidence remain separate.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
   operator-selected worker/project, fails closed on missing activation

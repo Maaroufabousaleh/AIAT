@@ -89,7 +89,7 @@
   (`db22e60`; evidence at
   [`worker_placement_contract.json`](../../../mas/docs/provenance/worker_placement_contract.json)).
   This is a pure read-only contract; scheduler settlement is covered by
-  `d9917f8`, while host-loss evidence remains open.
+  `d9917f8`, and host fencing/recovery is covered by `72e59ec`.
 - [x] Add the durable authenticated worker-host registry and heartbeat lease
   boundary through migration `0037_worker_host_registry` (`500fc57`). The
   Postgres certificate at
@@ -97,9 +97,9 @@
   proves token-digest registration, wrong-token rejection, AIAT-owned lease
   renewal, redacted public projections, placement snapshot read-back after
   connection reopen, expired-lease visibility, and scoped cleanup. Durable
-  capacity reservation/commit is covered separately below; durable host
-  recovery, host-loss/split-brain, and worker dispatch evidence remain open;
-  scheduler integration is covered by `d9917f8`.
+  capacity reservation/commit is covered separately below; host fencing and
+  recovery are covered by `72e59ec`; scheduler integration is covered by
+  `d9917f8`.
 - [x] Add the AIAT-owned durable host capacity reservation ledger through
   migration `0038_worker_host_reservations` (`232c0bb`). The retained
   certificate at
@@ -113,9 +113,15 @@
   It proves deterministic preferred-host selection, row-locked fallback,
   idempotent replay, draining/unleased filtering, blocked full capacity,
   connection-reopen read-back, and scoped cleanup without worker dispatch.
-- [ ] Separate control/tool/data hosts from worker pools and prove durable
-  host-loss recovery, split-brain avoidance, live worker dispatch, and
-  multi-host Firecracker/gVisor operation.
+- [x] Add durable host lease-generation fencing and expired-host recovery
+  through migration `0039_worker_host_fencing` (`72e59ec`; evidence at
+  [`worker_host_recovery_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_recovery_postgres_evidence.json)).
+  Re-registration fences stale heartbeats and old reservations; expired-host
+  reconciliation marks the host OFFLINE, advances its generation, expires
+  current reservations, and excludes it from placement after reopen.
+- [ ] Separate control/tool/data hosts from worker pools and prove live worker
+  dispatch, multi-host Firecracker/gVisor operation, and provider-backed
+  recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/steward version pinning with
