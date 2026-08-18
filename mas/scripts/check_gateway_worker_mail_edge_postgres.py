@@ -1410,7 +1410,7 @@ async def _run(
         "provider_recovery_injected": bool(recovery_gateway and recovery_gateway.injected),
         "external_provider_completion_attempt_count": (
             recovery_gateway.forwarded_calls
-            if recovery_gateway is not None
+            if recovery_gateway is not None and live_provider
             else gateway_calls
             if live_provider and gateway_client is None
             else 0
