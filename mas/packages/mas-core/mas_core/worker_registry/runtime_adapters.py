@@ -603,6 +603,21 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
         try:
             messages = self._messages_from_request(request)
             max_tokens, temperature = self._bounded_generation_options(request)
+        except ValueError as exc:
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="MODEL_GATEWAY_INPUT_REJECTED",
+                    message="AIAT model gateway input was rejected before dispatch",
+                    retryable=False,
+                    terminal=True,
+                    category="validation",
+                    details={"cause_type": type(exc).__name__},
+                ),
+            )
+        try:
             response = await self.gateway_client.chat_completion(
                 messages=messages,
                 model=model_id,
@@ -610,6 +625,36 @@ class GatewayWorkerAdapter(NativeWorkerAdapter):
                 temperature=temperature,
             )
         except Exception as exc:
+            from mas_core.llm_gateway.client import (
+                RETRYABLE_LLM_STATUS_CODES,
+                LLMGatewayError,
+            )
+
+            if isinstance(exc, LLMGatewayError):
+                status_code = int(exc.status_code)
+                retryable = status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code=(
+                            "MODEL_GATEWAY_TRANSIENT_FAILURE"
+                            if retryable
+                            else "MODEL_GATEWAY_REQUEST_REJECTED"
+                        ),
+                        message=(
+                            "AIAT model gateway transient failure"
+                            if retryable
+                            else "AIAT model gateway request was rejected"
+                        ),
+                        retryable=retryable,
+                        terminal=not retryable,
+                        category="provider",
+                        details={"status_code": status_code},
+                        cause_type=type(exc).__name__,
+                    ),
+                )
             return WorkerResult(
                 run_id=request.run_id,
                 worker_id=self.worker_id,

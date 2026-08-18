@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from mas_core.llm_gateway.client import LLMGatewayError
 from mas_core.llm_gateway.models import ChatMessage, ChatResponse, UsageStats
 from mas_core.protocols.worker_manifest import WorkerRuntime
 from mas_core.worker_contract.controller import WorkerRunController
@@ -38,6 +39,14 @@ class _OwnedGateway(_FakeGateway):
 
     async def stop(self) -> None:
         self.stopped += 1
+
+
+class _ErrorGateway:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def chat_completion(self, **_kwargs: Any) -> ChatResponse:
+        raise self.error
 
 
 def _request(**task_input: Any) -> WorkerRunRequest:
@@ -92,6 +101,58 @@ async def test_gateway_worker_adapter_requires_exact_resolved_model() -> None:
 
     assert readiness.ready is False
     assert "resolved Model Profile" in readiness.blockers[0]
+    assert gateway.calls == []
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "code", "retryable", "terminal"),
+    [
+        (LLMGatewayError(429, "provider secret must not appear"), "MODEL_GATEWAY_TRANSIENT_FAILURE", True, False),
+        (LLMGatewayError(401, "provider secret must not appear"), "MODEL_GATEWAY_REQUEST_REJECTED", False, True),
+    ],
+)
+async def test_gateway_worker_adapter_classifies_dispatch_failures(
+    error: Exception,
+    code: str,
+    retryable: bool,
+    terminal: bool,
+) -> None:
+    adapter = GatewayWorkerAdapter(
+        worker_id="gateway-worker",
+        provider_id="fixture-provider",
+        gateway_client=_ErrorGateway(error),
+    )
+
+    result = await adapter._run_gateway(_request())
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == code
+    assert result.error.retryable is retryable
+    assert result.error.terminal is terminal
+    assert "provider secret" not in result.error.message
+    assert "provider secret" not in str(result.error.details)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_gateway_worker_adapter_rejects_invalid_input_without_dispatch() -> None:
+    gateway = _FakeGateway()
+    adapter = GatewayWorkerAdapter(
+        worker_id="gateway-worker",
+        provider_id="fixture-provider",
+        gateway_client=gateway,
+    )
+
+    result = await adapter._run_gateway(_request(prompt=""))
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "MODEL_GATEWAY_INPUT_REJECTED"
+    assert result.error.retryable is False
+    assert result.error.terminal is True
     assert gateway.calls == []
     await adapter.close()
 
