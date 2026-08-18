@@ -71,6 +71,14 @@ from mas_core.memory.object_store_multipart import (
     MultipartUploadReport,
     run_object_store_multipart_probe,
 )
+from mas_core.memory.object_store_resource_profile import (
+    DEFAULT_RESOURCE_PROFILE_CONCURRENCY,
+    DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES,
+    OBJECT_STORE_RESOURCE_PROFILE_SCHEMA,
+    ObjectStoreResourceProfileConfig,
+    ObjectStoreResourceProfileReport,
+    run_object_store_resource_profile,
+)
 from mas_core.memory.object_store_rollout import (
     OBJECT_STORE_MIGRATION_SCHEMA,
     DualWriteRecord,
@@ -105,6 +113,12 @@ __all__ = [
     "MultipartUploadConfig",
     "MultipartUploadReport",
     "run_object_store_multipart_probe",
+    "DEFAULT_RESOURCE_PROFILE_CONCURRENCY",
+    "DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES",
+    "OBJECT_STORE_RESOURCE_PROFILE_SCHEMA",
+    "ObjectStoreResourceProfileConfig",
+    "ObjectStoreResourceProfileReport",
+    "run_object_store_resource_profile",
     "ENCRYPTION_ALGORITHM",
     "OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA",
     "OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA",
