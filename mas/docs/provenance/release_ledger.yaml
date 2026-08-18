@@ -107,6 +107,11 @@ checks:
     script: scripts/check_sandbox_runtime_readiness.py
     args: [--json]
     live_args: [--live, --json]
+  - id: firecracker_worker_pool_readiness
+    category: integration
+    script: scripts/check_firecracker_worker_pool.py
+    args: [--json]
+    live_args: [--live, --json]
   - id: worker_runtime_readiness
     category: static
     script: scripts/check_worker_runtime_readiness.py
