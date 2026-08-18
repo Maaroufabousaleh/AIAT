@@ -1,7 +1,7 @@
 # Workers, Stewards, Tools, and Models Feature Specification
 
 **Baseline:** 2026-08-18
-**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), bounded host-executor/gateway composition (`38c99f4`), host-boundary failure classification (`2abc02a`), and protocol schema/runtime reconciliation (`8f46ed1`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
+**Status:** universal foundation and metadata-only licence boundary implemented (`cbdcfa6`, with certification/rollout enforcement hardening in `9b84af3`); governed model-profile/cooldown/catalogue/bootstrap group `288996e`, persisted default model-profile bootstrap (`09bdd19`), model-override expiry and terminal-settlement replay hardening (`63b2db5`), worker trace/compatibility evidence persistence (`ceb7011`), catalogue dashboard proxy `ab0a0fe`, executive API/dashboard integration `d1b8839`, bounded runtime benchmark readiness hardening (`4d61279`, extending `ad31793`), LangGraph/CrewAI dependency benchmarks, tracked exact workspace lock (`2b13d89`), exact lock parity, Compose adapter-lifecycle probes, read-only persisted default-worker reconciliation (39/39), explicit team-runner manifest bindings (`d9b1262`) with production startup enforcement/runtime metadata (`569231f`), selected worker-run readiness (`5553b19`), unavailable/malformed health-read hardening (`2eea80`, `dac268c`), selected steward certification readiness (`adc7b26`), Hiring Board stale/retry recovery (`7541b84`, source-built `workers-states.spec.ts` 1/1), worker-registry grant/update-policy hardening (`d8cafbb`, focused API coverage 66/66), deterministic worker↔mail-edge evidence join (`1d8aed5`), durable local Postgres worker-run/trace evidence (`acd3f06`), committed worker-plane host execution (`73c0bda`), concurrent two-host native execution (`f9c717b`), fenced host-loss queue recovery (`893293a`), selected model-resolution host execution plus pre-claim snapshot consistency (`6cef1b8`, `9a7db70`), durable production `GatewayWorkerAdapter` host dispatch (`8ed53df`), pre-terminal model usage attribution enforcement (`199eb5b`), and the governed AIAT model-gateway worker adapter fixture (`080ee18`) plus transport registration (`f6baebc`), lifecycle/input hardening (`cec1e4c`), real client HTTP-boundary/retry fixture (`cbbfe56`), local worker/mail-edge composition certificate (`6ebb12c`), gateway failure classification hardening (`b2ae516`), bounded host-executor/gateway composition (`38c99f4`), host-boundary failure classification (`2abc02a`), and protocol schema/runtime reconciliation (`8f46ed1`) pass in fixture/local-deployment scope; external provider-backed model execution, sandbox certification, and full worker certification remain incomplete
 
 Commit `6ebb12c` adds a real `GatewayWorkerAdapter`/`WorkerRunController`
 composition certificate. The bounded local fixture evaluates scalar worker
@@ -56,8 +56,10 @@ now add the selected model-resolution host certificate: an approved
 profile/version is
 resolved deterministically, persisted as a snapshot, carried through the
 worker request and durable run, and attributed in exact provider/model usage
-evidence. The provider/model identifiers are local fixtures; external provider
-execution, sandbox, and independent-host recovery remain separate boundaries.
+evidence. `8ed53df` now runs that durable certificate through the production
+`GatewayWorkerAdapter` over one bounded local gateway double. The
+provider/model identifiers are local fixtures; external provider execution,
+sandbox, and independent-host recovery remain separate boundaries.
 
 ## Purpose
 
@@ -164,9 +166,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   selected-model control-plane edge at migration `0042_worker_run_host_binding`.
   It persists an approved Model Profile/version and deterministic
   `ModelResolutionSnapshot`, carries requested/resolved references through a
-  committed worker-host run, and verifies `aiat_gateway` mode plus exact
-  provider/model usage attribution after Postgres reopen. Payload-free trace
-  coverage, binding release, and scoped cleanup pass; external provider calls,
+  committed worker-host run, dispatches through the production
+  `GatewayWorkerAdapter` over one bounded local gateway double, and verifies
+  the exact gateway call, `aiat_gateway` mode, provider/model usage attribution,
+  and durable evidence after Postgres reopen. Payload-free trace coverage,
+  binding release, and scoped cleanup pass; external provider calls,
   provider-backed recovery, gVisor, Firecracker, and independent hosts remain
   open. Evidence is retained at
   [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).

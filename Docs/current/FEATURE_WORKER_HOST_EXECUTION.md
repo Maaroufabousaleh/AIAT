@@ -134,15 +134,17 @@ adds the local model-backed contract edge. It creates an approved AIAT Model
 Profile and version, resolves it through `ModelProfileResolver`, persists the
 immutable resolution snapshot, and carries requested/resolved references and
 the snapshot ID through a committed worker-host execution. The live fixture
-reads the worker `aiat_gateway` mode, exact provider/model usage attribution,
-terminal evidence, released binding, and snapshot back after a Postgres
-connection reopen; the executor rejects missing or request-mismatched snapshots
-before claiming work; payload-free trace coverage and scoped cleanup pass. Evidence
-is retained at
+registers the worker as `aiat_gateway`, dispatches through the production
+`GatewayWorkerAdapter` over one bounded local gateway double, and reads the
+exact gateway call, provider/model usage attribution, terminal evidence,
+released binding, and snapshot back after a Postgres connection reopen; the
+executor rejects missing or request-mismatched snapshots before claiming work;
+payload-free trace coverage and scoped cleanup pass. Evidence is retained at
 [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
 The provider and model are local deterministic fixture identifiers: this closes
-AIAT control-plane resolution and propagation only, not a network provider call,
-provider outage recovery, independent hosts, gVisor, or Firecracker.
+AIAT control-plane resolution and local gateway-adapter propagation only, not a
+network provider call, provider outage recovery, independent hosts, gVisor, or
+Firecracker.
 
 ### Gateway worker HTTP-boundary certificate
 

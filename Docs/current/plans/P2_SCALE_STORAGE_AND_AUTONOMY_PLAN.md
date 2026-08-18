@@ -163,12 +163,13 @@
   sandbox, provider, and provider-backed recovery remain open.
 - [x] Certify selected Model Profile/version resolution and snapshot
   propagation through a committed worker-host run (`6cef1b8`, hardened by
-  `9a7db70`) with
+  `9a7db70`, durable gateway-adapter completion `8ed53df`) with
   [`check_worker_host_model_resolution_postgres.py`](../../../mas/scripts/check_worker_host_model_resolution_postgres.py)
   and retained evidence at
   [`worker_host_model_resolution_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
   The local certificate proves deterministic approved-profile selection,
-  durable snapshot/reference propagation, `aiat_gateway` worker attribution,
+  durable snapshot/reference propagation, one production `GatewayWorkerAdapter`
+  call over a bounded local gateway double, `aiat_gateway` worker attribution,
   exact provider/model usage, Postgres reopen, payload-free coverage, release,
   and scoped cleanup. It uses local fixture identifiers and does not claim an
   external provider call, provider-backed recovery, independent hosts, or a

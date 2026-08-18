@@ -82,15 +82,17 @@ records no provider call, completion, routing mutation, or activation
 decision; external provider execution and recovery remain open.
 
 The latest maintained worker-host group is `6cef1b8` plus the pre-claim
-consistency hardening in `9a7db70`: the selected model-resolution certificate now records approved profile/version selection,
-durable snapshot propagation, exact fixture provider/model attribution, host
-execution evidence, Postgres reopen, and scoped cleanup. The terminal guard
-`199eb5b` additionally rejects missing, incomplete, or mismatched result
-provider/model usage against that immutable snapshot before durable usage or
-terminal evidence persistence; no-snapshot legacy/native runs remain
-compatible. This is local control-plane evidence only; external provider,
-hardened sandbox, and independent-host evidence remain open. The evidence is
-indexed in the roadmap and retained at
+consistency hardening in `9a7db70` and durable adapter completion `8ed53df`:
+the selected model-resolution certificate now records approved profile/version
+selection, durable snapshot propagation, one production `GatewayWorkerAdapter`
+call through a bounded local gateway double, exact fixture provider/model
+attribution, host execution evidence, Postgres reopen, and scoped cleanup. The
+terminal guard `199eb5b` additionally rejects missing, incomplete, or mismatched
+result provider/model usage against that immutable snapshot before durable usage
+or terminal evidence persistence; no-snapshot legacy/native runs remain
+compatible. This is local control-plane/gateway-fixture evidence only; external
+provider, hardened sandbox, and independent-host evidence remain open. The
+evidence is indexed in the roadmap and retained at
 [`worker_host_model_resolution_postgres_evidence.json`](../../mas/docs/provenance/worker_host_model_resolution_postgres_evidence.json).
 
 The follow-on gateway-worker groups `080ee18`, `f6baebc`, `cec1e4c`, and `cbbfe56` add the maintained
