@@ -21,15 +21,20 @@ from typing import Any
 
 import yaml
 
-COMPOSE_PATH = Path(__file__).resolve().parents[1] / "infra" / "compose" / "docker-compose.yml"
-DOCKER_DIR = Path(__file__).resolve().parents[1] / "infra" / "docker"
-REDIS_INIT_DOCKERFILE = Path(__file__).resolve().parents[1] / "infra" / "compose" / "Dockerfile.redis-acl-init"
-IMAGE_INVENTORY_PATH = Path(__file__).resolve().parents[1] / "docs" / "provenance" / "production_images.yaml"
+MAS_ROOT = Path(__file__).resolve().parents[1]
+COMPOSE_PATH = MAS_ROOT / "infra" / "compose" / "docker-compose.yml"
+DOCKER_DIR = MAS_ROOT / "infra" / "docker"
+REDIS_INIT_DOCKERFILE = MAS_ROOT / "infra" / "compose" / "Dockerfile.redis-acl-init"
+IMAGE_INVENTORY_PATH = MAS_ROOT / "docs" / "provenance" / "production_images.yaml"
 DIGEST_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}(?:$|[\s\"'])")
 VARIABLE_RE = re.compile(r"\$\{([A-Z0-9_]+)(?::[-?][^}]*)?\}")
 DIGEST_VALUE_RE = re.compile(r"@(?P<digest>sha256:[0-9a-fA-F]{64})$")
+METADATA_DIGEST_RE = re.compile(r"^(?:@)?sha256:[0-9a-fA-F]{64}$")
+HEX_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-fA-F]{64}$")
+SAFE_REVISION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@:+-]*$")
 CYCLONEDX_SPEC_RE = re.compile(r"^1\.[0-9]+$")
 SCHEMA_VERSION = "aiat.image-provenance.v1"
+PENDING_RELEASE_METADATA = "pending-release-ledger"
 
 
 def _env_file(path: Path | None) -> dict[str, str]:
@@ -102,16 +107,22 @@ def _check_dockerfile(path: Path) -> list[str]:
     return errors
 
 
-def _check_inventory(compose_variables: set[str]) -> list[str]:
+def _check_inventory(
+    compose_variables: set[str],
+    inventory_path: Path = IMAGE_INVENTORY_PATH,
+) -> list[str]:
     errors: list[str] = []
     try:
-        inventory = yaml.safe_load(IMAGE_INVENTORY_PATH.read_text(encoding="utf-8")) or {}
+        inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         return [f"image inventory could not be read: {exc}"]
     if inventory.get("image_identity") != "immutable-oci-digest":
         errors.append("production image inventory must declare immutable-oci-digest identity")
     rows = inventory.get("images") or []
+    if not isinstance(rows, list) or not rows:
+        return [*errors, "production image inventory must contain at least one image row"]
     inventory_variables: set[str] = set()
+    image_ids: set[str] = set()
     required_fields = {
         "id", "ref_env", "build_recipe", "source_revision", "lock_hash",
         "oci_digest", "sbom", "scan",
@@ -120,7 +131,41 @@ def _check_inventory(compose_variables: set[str]) -> list[str]:
         if not isinstance(row, dict) or not required_fields.issubset(row):
             errors.append("every production image row requires id, ref_env, recipe, provenance, SBOM, and scan fields")
             continue
-        inventory_variables.add(str(row["ref_env"]))
+        image_id = str(row["id"]).strip()
+        ref_env = str(row["ref_env"]).strip()
+        if not image_id or image_id in image_ids:
+            errors.append("production image row IDs must be unique and non-blank")
+        image_ids.add(image_id)
+        if not ref_env or ref_env in inventory_variables or not ref_env.endswith("_IMAGE_REF"):
+            errors.append(f"{image_id or '<unnamed>'}: ref_env must be a unique *_IMAGE_REF name")
+        inventory_variables.add(ref_env)
+
+        recipe = str(row["build_recipe"]).strip()
+        if not recipe:
+            errors.append(f"{image_id or '<unnamed>'}: build_recipe must be non-blank")
+        elif not recipe.startswith("operator-selected "):
+            recipe_path = recipe.split("#", 1)[0]
+            resolved_recipe = (MAS_ROOT / recipe_path).resolve()
+            if MAS_ROOT not in resolved_recipe.parents or not resolved_recipe.is_file():
+                errors.append(f"{image_id or '<unnamed>'}: build_recipe does not identify a checked-in file")
+
+        for field in ("source_revision", "lock_hash", "oci_digest", "sbom", "scan"):
+            value = str(row[field]).strip()
+            if not value or value == PENDING_RELEASE_METADATA:
+                continue
+            if field == "oci_digest" and not METADATA_DIGEST_RE.fullmatch(value):
+                errors.append(f"{image_id or '<unnamed>'}: oci_digest must be a sha256 digest or pending-release-ledger")
+            elif field == "lock_hash" and not HEX_HASH_RE.fullmatch(value):
+                errors.append(f"{image_id or '<unnamed>'}: lock_hash must be a 64-hex hash or pending-release-ledger")
+            elif field == "source_revision" and not SAFE_REVISION_RE.fullmatch(value):
+                errors.append(f"{image_id or '<unnamed>'}: source_revision contains unsafe metadata")
+            elif field in {"sbom", "scan"}:
+                artifact_path = Path(value)
+                if not artifact_path.is_absolute():
+                    artifact_path = inventory_path.parent.parent / artifact_path
+                resolved_artifact = artifact_path.resolve()
+                if MAS_ROOT not in resolved_artifact.parents or not resolved_artifact.is_file():
+                    errors.append(f"{image_id or '<unnamed>'}: {field} artifact path is not present inside the repository")
     if inventory_variables != compose_variables:
         errors.append(
             "production image inventory ref_env values must match Compose image variables: "

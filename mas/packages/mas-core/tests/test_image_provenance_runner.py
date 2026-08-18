@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_image_provenance.py"
 LOCK_EXAMPLE = Path(__file__).resolve().parents[3] / "infra" / "compose" / "production-image-lock.example.env"
 
@@ -180,3 +182,31 @@ def test_require_sbom_is_fail_closed_for_invalid_declared_artifact(
     )
     assert report["status"] == "blocked"
     assert any("bomFormat" in error for error in report["errors"])
+
+
+def test_static_inventory_rejects_duplicate_identity_and_malformed_metadata(tmp_path: Path) -> None:
+    runner = _load_runner()
+    inventory = yaml.safe_load(runner.IMAGE_INVENTORY_PATH.read_text(encoding="utf-8"))
+    inventory["images"][1]["id"] = inventory["images"][0]["id"]
+    inventory["images"][0]["oci_digest"] = "sha256:not-a-digest"
+    inventory["images"][0]["lock_hash"] = "not-a-lock-hash"
+    path = tmp_path / "production_images.yaml"
+    path.write_text(yaml.safe_dump(inventory, sort_keys=False), encoding="utf-8")
+
+    errors = runner._check_inventory(runner._compose_variables(), path)
+
+    assert any("row IDs must be unique" in error for error in errors)
+    assert any("oci_digest must be a sha256 digest" in error for error in errors)
+    assert any("lock_hash must be a 64-hex hash" in error for error in errors)
+
+
+def test_static_inventory_rejects_missing_local_build_recipe(tmp_path: Path) -> None:
+    runner = _load_runner()
+    inventory = yaml.safe_load(runner.IMAGE_INVENTORY_PATH.read_text(encoding="utf-8"))
+    inventory["images"][0]["build_recipe"] = "infra/docker/Dockerfile.missing"
+    path = tmp_path / "production_images.yaml"
+    path.write_text(yaml.safe_dump(inventory, sort_keys=False), encoding="utf-8")
+
+    errors = runner._check_inventory(runner._compose_variables(), path)
+
+    assert any("build_recipe does not identify a checked-in file" in error for error in errors)
