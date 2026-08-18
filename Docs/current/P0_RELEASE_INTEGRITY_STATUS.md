@@ -60,6 +60,17 @@
   [`object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
   (`59294c0`); this does not certify clean-host, provider-pair, KMS, outage, or
   disaster recovery.
+- The 2026-08-18 storage continuation also retains a bounded provider-diverse
+  adapter rehearsal and benchmark: Compose MinIO plus disposable SeaweedFS
+  4.42 each pass checksum read-back/cleanup, while the pair checker proves
+  secondary-only clean recovery after an adapter-boundary primary-loss probe.
+  Scalar-only evidence is retained at
+  [`object_store_provider_pair_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_provider_diverse_evidence.json)
+  and
+  [`object_store_provider_benchmark_evidence.json`](../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
+  This remains local disposable comparison evidence; it does not authorize
+  provider selection or claim provider durability, KMS, actual outage,
+  clean-host, disaster recovery, or migration cutover.
 - Commit `00a468d` extends gateway fallback handling to all transport outages,
   and `48b32ef` adds the local `aiat.gateway-provider-recovery.v1` fixture.
   Its deterministic primary-outage → secondary-fallback → primary-recovery

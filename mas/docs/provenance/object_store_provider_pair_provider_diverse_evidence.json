@@ -1,0 +1,56 @@
+{
+  "schema_version": "aiat.object-store-provider-pair.v1",
+  "evidence_commit": "351444a",
+  "observed_at": "2026-08-18T12:42:07.135Z",
+  "status": "pass",
+  "mode": "live",
+  "project_id": "aiat-provider-diverse-live-20260818",
+  "provider_topology": {
+    "primary": "Compose MinIO endpoint",
+    "secondary": "disposable SeaweedFS 4.42 endpoint",
+    "provider_diversity": "different S3-compatible implementations; operator-observed topology"
+  },
+  "object_count": 3,
+  "manifest_sha256": "83a0036e9f8e8e443ade1f1de954601cb38e7ef72d77c7bc93cd1d6adf1e948c",
+  "dual_write_case_count": 3,
+  "dual_write_passed": true,
+  "primary_loss_simulated": true,
+  "primary_outage_probe_rejected": true,
+  "primary_calls_during_recovery": 0,
+  "recovery_case_count": 3,
+  "recovery_passed": true,
+  "clean_target_verified": true,
+  "cleanup_deleted_counts": {
+    "primary": 3,
+    "secondary": 3,
+    "recovery": 3
+  },
+  "remaining_fixture_counts": {
+    "primary": 0,
+    "secondary": 0,
+    "recovery": 0
+  },
+  "mutation_performed": true,
+  "local_database_access_performed": false,
+  "external_network_access_performed": true,
+  "external_provider_mutation_performed": false,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "dual_write": "checked",
+    "primary_loss_recovery": "checked_at_adapter_boundary",
+    "secondary_only_recovery": "checked",
+    "clean_target_restore": "checked",
+    "provider_diverse_endpoints": "checked_at_operator-observed topology boundary",
+    "provider_diverse_durability": "not_checked",
+    "provider_managed_encryption_or_kms": "not_checked",
+    "actual_provider_process_or_network_outage": "not_checked",
+    "clean_host_or_disaster_recovery": "not_checked"
+  },
+  "notes": [
+    "Primary failure is simulated at the AIAT adapter boundary after dual-write; no provider process is stopped.",
+    "MinIO and SeaweedFS are different S3-compatible implementations in this disposable local topology; this does not prove provider durability or independent custody.",
+    "Fixture payloads, endpoint credentials, raw object bodies, and generated content are excluded from evidence.",
+    "Licence metadata is informational only and is not an activation, execution, or release gate."
+  ]
+}

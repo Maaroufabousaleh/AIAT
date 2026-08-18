@@ -1,0 +1,48 @@
+{
+  "schema_version": "aiat.object-store-benchmark.v1",
+  "evidence_commit": "73fcdd9",
+  "observed_at": "2026-08-18T12:42:07.135Z",
+  "status": "pass",
+  "mode": "live",
+  "provider_topology": {
+    "minio": "Compose MinIO endpoint",
+    "seaweedfs": "disposable SeaweedFS 4.42 endpoint",
+    "provider_diversity": "different S3-compatible implementations; operator-observed topology"
+  },
+  "payload_sizes_bytes": [1, 32, 4096],
+  "providers": {
+    "minio": {
+      "status": "pass",
+      "case_count": 3,
+      "error_count": 0,
+      "total_roundtrip_ms": 90.075
+    },
+    "seaweedfs": {
+      "status": "pass",
+      "case_count": 3,
+      "error_count": 0,
+      "total_roundtrip_ms": 239.891
+    }
+  },
+  "comparison": "disposable checksum upload/download/read-back/delete measurements only; no primary selection or routing decision",
+  "mutation_scope": "reserved benchmark prefixes only; all cases cleaned to zero",
+  "external_network_access_performed": true,
+  "external_provider_mutation_performed": true,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "checksum_read_back": "checked",
+    "scoped_cleanup": "checked",
+    "provider_diverse_endpoint_comparison": "checked",
+    "large_object_or_multipart": "not_checked",
+    "concurrency_or_resource_profile": "not_checked",
+    "actual_provider_process_or_network_outage": "not_checked",
+    "provider_managed_encryption_or_kms": "not_checked",
+    "migration_cutover_or_rollback": "not_checked"
+  },
+  "notes": [
+    "Timings are local disposable observations and are not a provider-selection recommendation.",
+    "No endpoint URL, credential, object body, or raw provider response is retained.",
+    "Licence metadata is informational only and is not an activation, execution, or release gate."
+  ]
+}

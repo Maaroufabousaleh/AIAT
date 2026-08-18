@@ -89,6 +89,16 @@
   local evidence; provider-diverse durability, actual provider outage,
   provider-managed encryption/KMS, clean-host, and disaster recovery remain
   open.
+- [x] Exercise the same provider-pair boundary across the operator-observed
+  Compose MinIO and disposable SeaweedFS 4.42 endpoints, and run the bounded
+  three-size benchmark on both adapters. Scalar-only pair evidence is retained
+  at
+  [`object_store_provider_pair_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_provider_pair_provider_diverse_evidence.json)
+  and benchmark evidence at
+  [`object_store_provider_benchmark_evidence.json`](../../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
+  All three pair objects and six benchmark cases pass checksum read-back and
+  scoped cleanup; provider durability/custody, outage, KMS, clean-host,
+  large-object, and migration cutover evidence remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

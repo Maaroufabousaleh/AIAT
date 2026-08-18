@@ -30,6 +30,11 @@ authority outside the helpers.
   rejects a simulated unavailable primary at the adapter boundary, restores
   from the secondary into a clean recovery bucket, and cleans all reserved
   prefixes.
+- `2026-08-18` live follow-up — the same checker was exercised between the
+  Compose MinIO endpoint and a disposable SeaweedFS 4.42 endpoint, and the
+  bounded benchmark runner completed three checksum cases on each endpoint.
+  These are provider-diverse adapter/comparison observations, not a provider
+  durability, outage, KMS, or migration-cutover certificate.
 
 The helpers never delete source objects, silently change deployment routing,
 copy credentials into reports, or treat licence/restriction metadata as a
@@ -68,7 +73,7 @@ and
 Those reports document local deployment evidence only; they do not certify a
 provider pair or disaster recovery.
 
-The live provider-pair certificate at
+The live same-provider certificate at
 [`object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
 (`f385bd7`) records three objects dual-written between the existing Compose
 MinIO endpoint and a disposable local MinIO endpoint, secondary-only clean
@@ -77,16 +82,25 @@ remaining objects. Both endpoints are MinIO; provider-diverse durability,
 actual provider process/network outage, provider-managed encryption/KMS,
 clean-host recovery, and disaster recovery remain separate gates.
 
+The provider-diverse follow-up uses the same checker between Compose MinIO and
+disposable SeaweedFS. It retains scalar-only evidence at
+[`object_store_provider_pair_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_provider_diverse_evidence.json)
+and a three-size benchmark comparison at
+[`object_store_provider_benchmark_evidence.json`](../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
+All six benchmark cases and all three pair objects pass checksum read-back and
+scoped cleanup. The topology is operator-observed and local; provider-managed
+durability/custody, actual process/network outage, large-object/multipart,
+clean-host/disaster recovery, and migration cutover/rollback remain open.
+
 ## Remaining gates
 
-- Run verified copy and the migration workflow against a provider-diverse,
-  provider-certified pair with retention, routing, and rollback evidence; the
-  same-provider dual-endpoint prerequisite is now retained above.
-- Run `check_object_store_benchmarks.py --live` with the current MinIO and
-  SeaweedFS endpoints and retain reliability/resource/concurrency,
-  large-object/multipart, outage, and recovery comparison evidence. The
-  deterministic fixture and fail-closed runner are implemented, but fixture
-  timings do not justify a provider decision.
+- Run verified copy and the migration workflow against the provider-diverse
+  pair with retention, routing, and rollback evidence; the dual-write and
+  benchmark observations are retained above but do not authorize cutover.
+- Extend `check_object_store_benchmarks.py --live` beyond the retained three
+  payload sizes with reliability/resource/concurrency, large-object/multipart,
+  outage, and recovery comparison evidence. The current timings are local
+  disposable observations and do not justify a provider decision.
 - Add encrypted secondary backup and clean-environment disaster-recovery
   verification. The current empty-target preflight is a bounded safety check,
   not proof of a clean host, provider durability, or regional recovery.

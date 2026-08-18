@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, same-provider backup/restore rehearsal, and bounded dual-endpoint provider-pair recovery certificate pass; provider-diverse comparison, provider-managed encryption, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture, bounded object-store benchmark contract, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, and a disposable MinIO/SeaweedFS comparison pass; provider-managed encryption, provider durability/custody, migration cutover, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -100,7 +100,15 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   repeatable without a provider; `scripts/check_object_store_benchmarks.py
   --live` requires both named MinIO and SeaweedFS endpoint/credential sets,
   returns `blocked` when either side is unavailable, and never chooses a
-  primary provider or reads licence metadata as a gate.
+  primary provider or reads licence metadata as a gate. The retained live
+  comparison covers payload sizes 1/32/4096 bytes on disposable Compose MinIO
+  and SeaweedFS endpoints; it is timing/comparison evidence only.
+- The provider-pair checker was also exercised across the operator-observed
+  MinIO/SeaweedFS topology. Its retained scalar evidence confirms three-object
+  checksum dual-write, adapter-boundary primary-loss rejection, secondary-only
+  clean recovery, and zero cleanup. This confirms endpoint diversity at the
+  local adapter boundary, not provider durability, KMS, outage recovery,
+  clean-host recovery, or a migration decision.
 
 ## Code anchors
 
@@ -159,7 +167,12 @@ provider-pair certificate is a bounded two-endpoint MinIO exercise with
 secondary-only recovery after adapter-boundary primary failure; it is not an
 actual provider process/network outage certificate. The same command
 can be run without Docker using the deterministic fixture or with `--live`
-against a disposable provider adapter.
+against a disposable provider adapter. The 2026-08-18 live MinIO/SeaweedFS
+comparison and provider-pair rehearsal are retained at
+[`object_store_provider_benchmark_evidence.json`](../../mas/docs/provenance/object_store_provider_benchmark_evidence.json)
+and
+[`object_store_provider_pair_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_provider_diverse_evidence.json);
+they do not authorize routing or cutover.
 The live path reports unavailable configuration/service state as `blocked` and
 does not replace large-object, multipart, outage, benchmark comparison, backup,
 or restore evidence.
@@ -211,18 +224,13 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 
 ## Remaining gaps
 
-- Run the formal contract suite against any additional deployed provider and
-  retain provider-specific evidence; the current local MinIO 8/8 report is
-  already retained, while provider-pair and broader large-object/outage
-  evidence remain open.
-- Run verified-copy/parity against a disposable provider pair before any
-  migration; the deterministic helper and live provider-pair runner are
-  implemented, but provider evidence remains open.
-- Run the bounded benchmark against current MinIO and SeaweedFS and run the
-  governed migration workflow against a provider-certified pair; the
-  deterministic benchmark and inventory/copy/dual-write/cutover/rollback
-  records are implemented, while live provider comparison, routing, and
-  rollback evidence remain open.
+- Extend the formal contract suite and verified-copy/parity workflow across
+  the retained MinIO/SeaweedFS pair before any migration; the bounded pair and
+  benchmark observations pass, while provider-certified retention, routing,
+  rollback, and outage evidence remain open.
+- Extend the benchmark beyond the retained 1/32/4096-byte cases with
+  large-object, multipart, concurrency, resource, outage, and recovery
+  comparison evidence; current timings remain informational.
 - Run the encrypted envelope against a configured Garage, R2, B2, or other
   approved backend with provider-managed key custody/rotation evidence; the
   provider-neutral local certificate is already retained.

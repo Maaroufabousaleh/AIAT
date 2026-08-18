@@ -66,6 +66,15 @@ Because both endpoints are MinIO and no provider process is stopped, this does
 not establish provider-diverse durability, actual outage recovery, KMS,
 clean-host, or disaster-recovery evidence.
 
+The follow-up storage evidence index also retains the operator-observed
+provider-diverse MinIO/SeaweedFS adapter rehearsal and bounded benchmark in
+[`object_store_provider_pair_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_provider_diverse_evidence.json)
+and
+[`object_store_provider_benchmark_evidence.json`](../../mas/docs/provenance/object_store_provider_benchmark_evidence.json).
+Those reports are scalar-only disposable comparison evidence; they do not
+authorize provider selection or claim provider durability, KMS, actual outage,
+clean-host, disaster recovery, or migration cutover.
+
 The worker evidence index now includes the bounded same-host recovery soak
 (`424805c`) at
 [`worker_host_loss_queue_recovery_soak_postgres_evidence.json`](../../mas/docs/provenance/worker_host_loss_queue_recovery_soak_postgres_evidence.json).
