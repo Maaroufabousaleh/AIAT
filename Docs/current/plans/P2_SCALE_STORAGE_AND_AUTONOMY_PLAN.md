@@ -136,9 +136,15 @@
   checksum cases at concurrency four with procfs RSS plus wall/CPU readings
   and zero cleanup residue; evidence is retained at
   [`object_store_resource_profile_provider_diverse_evidence.json`](../../../mas/docs/provenance/object_store_resource_profile_provider_diverse_evidence.json).
-  Production resource budgets/portability, provider outage, provider-managed
-  encryption/KMS, clean-host, disaster recovery, and production cutover remain
-  open.
+- [x] Certify the bounded provider-process outage/recovery gate (`d92b3dc`)
+  with the same 64 KiB/1 MiB checksum workload against fresh disposable MinIO
+  and SeaweedFS containers. Each process becomes unreachable after a controlled
+  stop, restarts with an anonymous disposable volume, passes checksum
+  read-back, and cleans to zero objects; scalar evidence is retained at
+  [`object_store_provider_outage_live_evidence.json`](../../../mas/docs/provenance/object_store_provider_outage_live_evidence.json).
+  The local process-outage gate passes; production resource budgets/portability,
+  provider-managed encryption/KMS, independent-host, clean-host, disaster
+  recovery, and production cutover remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

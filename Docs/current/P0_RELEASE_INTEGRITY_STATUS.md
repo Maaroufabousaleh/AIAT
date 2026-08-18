@@ -94,8 +94,18 @@
   The earlier nonexistent-network-alias attempt is classified as invalid test
   harness/configuration execution and is excluded from provider evidence and
   verdicts. This is scalar comparison evidence only; production resource
-  budgets/portability, outage, KMS, clean-host, and disaster-recovery gates
-  remain open.
+  budgets/portability, KMS, clean-host, and disaster-recovery gates remain
+  open; actual provider-process outage/recovery is certified separately below.
+- Commit `d92b3dc` adds the guarded provider-process outage/recovery checker and
+  fresh live evidence at
+  [`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json).
+  Fresh disposable MinIO and SeaweedFS containers on canonical `mas_internal`
+  receive the same 64 KiB/1 MiB checksum workload, become unreachable during
+  a controlled stop, restart with anonymous disposable volumes, pass checksum
+  read-back, and clean to zero objects. Container/helper/volume removal is
+  verified; earlier development attempts are excluded. This closes the local
+  process-outage gate only, not KMS, independent-host, clean-host, or disaster
+  recovery.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is
@@ -535,7 +545,7 @@ single frozen commit before production claims are made.
 
 - `scripts/check_release_ledger.py --json` (base aggregator `eff4eef`, native live-ledger gate `4d7a495`) now
   aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
-  The latest static run reports 53/53 configured
+  The latest static run reports 54/54 configured
   fixture/contract/documentation/release-environment/operator-pin/governance
   checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
@@ -552,12 +562,13 @@ single frozen commit before production claims are made.
 - `scripts/check_docs_index.py --json` passes the canonical target, thirteen current
   feature specifications, three ordered plans, maintained local links, roadmap
   references, and the personal/internal metadata-only policy markers.
-- The current unconfigured local 2026-08-18 73-check profile records 56
-  passes, zero failures, 17 externally blocked probes, and four pending
+- The current unconfigured local 2026-08-18 75-check profile records 57
+  passes, zero failures, 18 externally blocked probes, and four pending
   evidence items with a bounded 60-second child-check timeout. The native
   release-host preflight is now the `release_environment:live` child and
   reports WSL2, missing `runsc`, dirty worktree, and absent immutable image
-  refs as safe blockers. The current summary is retained at
+  refs as safe blockers; the new `object_store_provider_outage:live` child is
+  also blocked until disposable provider configuration is supplied. The current summary is retained at
   [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json).
   The configured loopback 64-check profile remains retained at
   [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json)

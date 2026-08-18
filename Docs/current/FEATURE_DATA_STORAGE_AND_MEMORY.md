@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, and a disposable MinIO/SeaweedFS comparison pass; provider-managed encryption, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, outage, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, and corrected provider-process outage/recovery certificate; provider-managed encryption, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -125,6 +125,15 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   [`object_store_resource_profile_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_resource_profile_provider_diverse_evidence.json).
   This is a bounded local resource observation, not production budget,
   portability, outage, KMS, clean-host, or disaster-recovery certification.
+- The corrected provider-process outage/recovery certificate uses the same
+  bounded workload for fresh disposable MinIO and SeaweedFS containers. The
+  containers become unreachable during a controlled stop, restart with their
+  anonymous disposable volumes, pass checksum read-back, and clean to zero
+  objects; scalar evidence is retained at
+  [`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json).
+  This closes the local process-outage gate only; provider-managed KMS,
+  production thresholds, independent-host, clean-host, and disaster-recovery
+  evidence remain separate.
 - The provider-pair checker was also exercised across the operator-observed
   MinIO/SeaweedFS topology. Its retained scalar evidence confirms three-object
   checksum dual-write, adapter-boundary primary-loss rejection, secondary-only
@@ -177,6 +186,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Resource profile fixture/live boundary: [`mas/scripts/check_object_store_resource_profile.py`](../../mas/scripts/check_object_store_resource_profile.py)
 - Resource profile tests: [`mas/packages/mas-core/tests/test_object_store_resource_profile.py`](../../mas/packages/mas-core/tests/test_object_store_resource_profile.py)
 - Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
+- Provider-process outage/recovery checker: [`mas/scripts/check_object_store_provider_outage.py`](../../mas/scripts/check_object_store_provider_outage.py), focused tests [`mas/scripts/tests/test_check_object_store_provider_outage.py`](../../mas/scripts/tests/test_check_object_store_provider_outage.py), and scalar evidence [`mas/docs/provenance/object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Database migrations: [`mas/migrations/versions/`](../../mas/migrations/versions/)
 - Blob tools: [`mas/apps/tool-service/tool_service/tools/infra.py`](../../mas/apps/tool-service/tool_service/tools/infra.py)
@@ -275,11 +285,13 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
 
 - Extend the bounded migration rehearsal into a separately approved production
   change only after provider-certified retention parity, deployment-routing
-  ownership, rollback authority, and outage/recovery evidence are available;
+  ownership, rollback authority, production outage/recovery, and independent
+  host evidence are available;
   the provider-diverse inventory/copy/dual-write rehearsal already passes.
 - Extend the retained serial, bounded 1 MiB/8 MiB concurrency, multipart, and
   scalar resource-profile waves with production resource budgets, portability,
-  reliability, outage, and recovery comparison evidence; current observations
+  reliability, and recovery comparison evidence beyond the local process-outage
+  certificate; current observations
   remain informational and do not close provider selection or disaster-recovery
   gates.
 - Run the encrypted envelope against a configured Garage, R2, B2, or other

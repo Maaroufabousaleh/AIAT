@@ -94,6 +94,9 @@ uv run --isolated pytest packages/mas-core/tests/test_object_store_multipart.py 
 uv run --isolated python scripts/check_object_store_multipart.py --json
 uv run --isolated pytest packages/mas-core/tests/test_object_store_resource_profile.py -q
 uv run --isolated python scripts/check_object_store_resource_profile.py --json
+PYTHONPATH=scripts uv run --isolated pytest -q \
+  scripts/tests/test_check_object_store_provider_outage.py
+uv run --isolated python scripts/check_object_store_provider_outage.py --json
 ```
 
 The backup/restore fixture now includes a regression proving that a stale
@@ -128,8 +131,9 @@ scoped cleanup. The follow-on bounded wave retains
 and passes sixteen 1 MiB/8 MiB concurrent cases across the same two endpoints,
 with four concurrent cases per size and zero remaining fixture objects. The
 topology is operator-observed and local; provider-managed durability/custody,
-production resource budgets/portability, actual process/network outage,
-clean-host/disaster recovery, and migration cutover/rollback remain open.
+production resource budgets/portability, clean-host/disaster recovery, and
+migration cutover/rollback remain open. Actual provider process outage/recovery
+is certified separately below.
 
 The multipart follow-up retains scalar evidence at
 [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json).
@@ -146,8 +150,18 @@ The resource-profile follow-up retains scalar evidence at
 Compose MinIO and disposable SeaweedFS each pass eight 1 MiB/8 MiB,
 concurrency-four checksum cases with `procfs` RSS plus wall/CPU measurements
 and zero cleanup residue. This is local disposable observation only; it does
-not certify production budgets, independent-host portability, provider outage,
-KMS, clean-host recovery, or disaster recovery.
+not certify production budgets, independent-host portability, provider-managed
+KMS, clean-host recovery, or disaster recovery. The actual process outage gate
+is covered by the separate live certificate below.
+
+The corrected provider-process outage/recovery certificate at
+[`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json)
+(`d92b3dc`) passes the identical 64 KiB/1 MiB checksum workload for fresh
+disposable MinIO and SeaweedFS containers. Each provider becomes unreachable
+after a controlled stop, restarts with its anonymous disposable volume,
+passes checksum read-back, and cleans to zero objects; container, helper, and
+volume removal are verified. This is local process-outage evidence, not
+independent-host, regional durability, KMS, or clean-host disaster recovery.
 
 The verified-copy follow-up retains scalar evidence at
 [`object_store_copy_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
@@ -173,13 +187,13 @@ evidence remain open.
   rehearsal is complete, but it does not authorize a production cutover.
 - Extend the retained serial, bounded concurrency, multipart, and scalar
   resource-profile waves with production resource budgets, portability,
-  reliability, outage, and recovery comparison evidence. The current timings
+  reliability, and recovery comparison evidence. The current timings
   and RSS observations are local disposable evidence and do not justify a
   provider decision.
 - Add encrypted secondary backup and clean-environment disaster-recovery
   verification. The current empty-target preflight is a bounded safety check,
   not proof of a clean host, provider durability, or regional recovery.
-- Measure production resource/outage behavior and compare any optional backend
+- Measure production resource behavior and compare any optional backend
   before changing the MinIO default; bounded large-object, concurrency,
   multipart, and scalar resource behavior are now checked but do not close
   those remaining gates.
