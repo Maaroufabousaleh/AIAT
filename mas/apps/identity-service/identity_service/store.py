@@ -395,18 +395,29 @@ class InMemoryIdentityStore:
         row = self.outbound.get(request_id)
         if row is None:
             return None
-        return {
+        metadata = {
             key: row.get(key)
             for key in (
                 "id", "identity_id", "worker_id", "provider_message_id",
                 "provider_correlation_id", "state",
             )
         }
+        attempts = [
+            item for item in self.delivery_attempts
+            if item.get("outbound_request_id") == request_id
+        ]
+        if attempts:
+            latest = max(attempts, key=lambda item: int(item.get("attempt_number") or 0))
+            metadata.update({"trace_id": latest.get("trace_id"), "span_id": latest.get("span_id")})
+        return metadata
 
     async def find_outbound_request_by_provider_message_id(self, provider_message_id: str) -> dict[str, Any] | None:
         for row in self.outbound.values():
             if str(row.get("provider_message_id") or "") == provider_message_id:
                 return await self.get_outbound_request_metadata(row["id"])
+        for attempt in reversed(self.delivery_attempts):
+            if str(attempt.get("provider_message_id") or "") == provider_message_id:
+                return await self.get_outbound_request_metadata(attempt["outbound_request_id"])
         return None
 
     async def claim_outbound_submission(self, request_id: UUID) -> tuple[dict[str, Any] | None, bool]:
@@ -1061,18 +1072,43 @@ class PostgresIdentityStore(InMemoryIdentityStore):
 
     async def get_outbound_request_metadata(self, request_id: UUID) -> dict[str, Any] | None:
         return await self._fetchone(
-            """SELECT id, identity_id, worker_id, provider_message_id,
-                      provider_correlation_id, state
-                 FROM outbound_mail_requests WHERE id = :id""",
+            """SELECT r.id, r.identity_id, r.worker_id, r.provider_message_id,
+                      r.provider_correlation_id, r.state,
+                      attempt.trace_id, attempt.span_id
+                 FROM outbound_mail_requests r
+                 LEFT JOIN LATERAL (
+                    SELECT trace_id, span_id
+                      FROM outbound_delivery_attempts
+                     WHERE outbound_request_id = r.id
+                     ORDER BY attempt_number DESC
+                     LIMIT 1
+                 ) attempt ON true
+                WHERE r.id = :id""",
             {"id": request_id},
         )
 
     async def find_outbound_request_by_provider_message_id(self, provider_message_id: str) -> dict[str, Any] | None:
         return await self._fetchone(
-            """SELECT id, identity_id, worker_id, provider_message_id,
-                      provider_correlation_id, state
-                 FROM outbound_mail_requests
-                 WHERE provider_message_id = :provider_message_id""",
+            """SELECT r.id, r.identity_id, r.worker_id, r.provider_message_id,
+                      r.provider_correlation_id, r.state,
+                      attempt.trace_id, attempt.span_id
+                 FROM outbound_mail_requests r
+                 LEFT JOIN LATERAL (
+                    SELECT trace_id, span_id, provider_message_id AS attempt_message_id,
+                           attempt_number
+                      FROM outbound_delivery_attempts
+                     WHERE outbound_request_id = r.id
+                     ORDER BY CASE WHEN provider_message_id = :provider_message_id
+                                   THEN 0 ELSE 1 END,
+                              attempt_number DESC
+                     LIMIT 1
+                 ) attempt ON true
+                WHERE r.provider_message_id = :provider_message_id
+                   OR attempt.attempt_message_id = :provider_message_id
+                ORDER BY CASE WHEN r.provider_message_id = :provider_message_id
+                              THEN 0 ELSE 1 END,
+                         attempt.attempt_number DESC NULLS LAST
+                LIMIT 1""",
             {"provider_message_id": provider_message_id},
         )
 

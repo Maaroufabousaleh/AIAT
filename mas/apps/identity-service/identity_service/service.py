@@ -474,6 +474,9 @@ class IdentityService:
             target_worker = str(target.get("worker_id") or "")
             if worker_id is not None and target_worker != str(worker_id):
                 raise PermissionError("provider event worker correlation is inconsistent")
+            target_trace = str(target.get("trace_id") or "") or None
+            if target_trace and observation.trace_id and target_trace != observation.trace_id:
+                raise ValueError("provider event trace correlation is inconsistent")
             stored_message_ref = str(target.get("provider_message_id") or "")
             if (
                 stored_message_ref
@@ -486,6 +489,8 @@ class IdentityService:
                     "worker_id": target_worker or observation.worker_id,
                     "outbound_request_id": str(target["id"]),
                     "provider_message_ref": observation.provider_message_ref or stored_message_ref or None,
+                    "trace_id": observation.trace_id or target_trace,
+                    "span_id": observation.span_id or target.get("span_id"),
                 }
             )
         row = await self.store.record_mail_edge_observation(observation)

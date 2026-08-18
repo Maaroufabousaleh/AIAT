@@ -389,6 +389,76 @@ async def test_resend_provider_ingress_verifies_raw_body_and_persists_normalized
 
 
 @pytest.mark.anyio
+async def test_resend_provider_ingress_correlates_durable_attempt_trace(identity_client):
+    client, _signers = identity_client
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    worker_id = uuid4()
+    identity, _ = await store.provision_identity(
+        company_id=uuid4(),
+        worker_id=worker_id,
+        address=f"worker-{worker_id}@agents.identity.invalid",
+        alias=None,
+        domain="agents.identity.invalid",
+        idempotency_key=f"mailbox:{worker_id}:raw-correlation",
+        quota_mb=100,
+    )
+    outbound, _ = await store.create_outbound_request(
+        worker_id=worker_id,
+        identity_id=identity["id"],
+        sender=identity["address"],
+        recipients=["provider-target@example.invalid"],
+        subject="fixture",
+        body="payload never enters the observation",
+        recipient_class="fixture",
+        idempotency_key=f"outbound:{worker_id}:raw-correlation",
+    )
+    await store.update_outbound_request(
+        outbound["id"],
+        state="SUBMITTED",
+        provider_message_id="resend-message-correlated",
+    )
+    await store.record_delivery_attempt(
+        outbound_request_id=outbound["id"],
+        provider_correlation_id="resend-correlation",
+        provider_message_id="resend-message-correlated",
+        outcome="QUEUED",
+        trace_id="trace-raw-correlation",
+        span_id="span-raw-correlation",
+    )
+
+    body = json.dumps(
+        {
+            "id": "resend-correlated-event",
+            "type": "email.delivered",
+            "data": {"email_id": "resend-message-correlated", "status": "delivered"},
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    timestamp = int(time.time())
+    signed = f"resend-correlated.{timestamp}.".encode() + body
+    signature = base64.b64encode(
+        hmac.new(b"resend-webhook-secret", signed, hashlib.sha256).digest()
+    ).decode()
+    response = await client.post(
+        "/v1/mail-edge/provider-webhook/resend",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "svix-id": "resend-correlated",
+            "svix-timestamp": str(timestamp),
+            "svix-signature": f"v1,{signature}",
+        },
+    )
+    assert response.status_code == 200, response.text
+    projected = response.json()
+    assert projected["worker_id"] == str(worker_id)
+    assert projected["outbound_request_id"] == str(outbound["id"])
+    assert projected["trace_id"] == "trace-raw-correlation"
+    assert projected["span_id"] == "span-raw-correlation"
+
+
+@pytest.mark.anyio
 async def test_mailbox_grant_and_external_credential_lease_are_durable_and_secret_free(identity_client):
     client, signers = identity_client
     company_id, worker = uuid4(), uuid4()
