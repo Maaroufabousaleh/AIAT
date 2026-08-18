@@ -228,9 +228,9 @@ Postgres certificate
 It proves competing-claim denial, claimant-bound heartbeat, one explicitly
 simulated expiry/requeue, second-owner reclaim, terminal claim denial, durable
 transition/health read-back after connection reopen, and scoped cleanup. This
-is a queue-lease API certificate only; canonical host registration,
-placement/capacity, real host-loss/split-brain, gVisor/Firecracker, and live
-worker/provider evidence remain separate. Licence metadata remains
+is a queue-lease API certificate only; reservation/commit, live scheduling,
+real host-loss/split-brain, gVisor/Firecracker, and live worker/provider
+evidence remain separate. Licence metadata remains
 informational and non-gating.
 
 The durable version-pinning group `dbf6d10` (label-readback follow-up
@@ -249,9 +249,19 @@ certificate and the `aiat.worker-placement.v1` policy module. Its pure
 predicate filters explicit host snapshots by readiness/lease, labels,
 capabilities, sandbox/isolation, and slot/memory/GPU capacity, applies stable
 priority/free-capacity ordering, and rejects duplicate host IDs without
-mutation or dispatch. Durable host registration, reservation/commit, live
-multi-host scheduling, host-loss/split-brain, and Firecracker evidence remain
+mutation or dispatch. Reservation/commit, live multi-host scheduling,
+host-loss/split-brain, and Firecracker evidence remain
 separate; licence metadata remains informational and non-gating.
+
+The durable host-registry group `500fc57` adds migration
+`0037_worker_host_registry` and the maintained
+[`worker_host_registry_postgres_evidence.json`](../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)
+certificate. It proves token-digest registration, wrong-token rejection,
+heartbeat lease renewal, credential-redacted public projections, placement
+snapshot read-back after connection reopen, and expired-lease visibility with
+scoped cleanup. Capacity reservation/commit, durable host recovery, live
+multi-host scheduling, and host-loss/split-brain evidence remain separate;
+licence metadata remains informational and non-gating.
 
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the

@@ -88,10 +88,22 @@
   slot/memory/GPU capacity, priority ordering, and duplicate-ID rejection
   (`db22e60`; evidence at
   [`worker_placement_contract.json`](../../../mas/docs/provenance/worker_placement_contract.json)).
-  This is a pure read-only contract; durable host registration, reservation/
-  commit, live multi-host scheduling, and host-loss evidence remain open.
+  This is a pure read-only contract; reservation/commit, live multi-host
+  scheduling, and host-loss evidence remain open.
+- [x] Add the durable authenticated worker-host registry and heartbeat lease
+  boundary through migration `0037_worker_host_registry` (`500fc57`). The
+  Postgres certificate at
+  [`worker_host_registry_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)
+  proves token-digest registration, wrong-token rejection, AIAT-owned lease
+  renewal, redacted public projections, placement snapshot read-back after
+  connection reopen, expired-lease visibility, and scoped cleanup. Capacity
+  reservation/commit, durable host recovery, live scheduling, and host-loss/
+  split-brain evidence remain open.
 - Separate control/tool/data hosts from worker pools.
-- Add authenticated worker registration, leases, placement constraints, capacity, and health.
+- [ ] Separate control/tool/data hosts from worker pools and connect the
+  durable host registry to an authenticated multi-host scheduler with
+  reservation/commit semantics. The registry/heartbeat slice is implemented;
+  scheduler integration and host-loss recovery remain open.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/steward version pinning with

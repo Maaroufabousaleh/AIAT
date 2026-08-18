@@ -1,0 +1,67 @@
+{
+  "schema_version": "aiat.worker-host-registry-postgres-certification.v1",
+  "evidence_at": "2026-08-18T00:34:54Z",
+  "commit": "500fc57",
+  "mode": "local-postgres-worker-host-registry",
+  "status": "pass",
+  "command": "PYTHONPATH=/app python /tmp/check_worker_host_registry_postgres.py --json",
+  "migration_version": "0037_worker_host_registry",
+  "expected_migration": "0037_worker_host_registry",
+  "host_registry_schema": "aiat.worker-host-registry.v1",
+  "cleanup_before": 0,
+  "first_counts": {
+    "hosts": 0
+  },
+  "registration": {
+    "status": "REGISTERING",
+    "credential_digest_persisted": true,
+    "credential_material_exposed": false,
+    "wrong_token_rejected": true
+  },
+  "authentication": {
+    "correct_token_accepted": true,
+    "wrong_token_rejected": true,
+    "wrong_heartbeat_rejected": true
+  },
+  "heartbeat": {
+    "status": "READY",
+    "lease_valid": true,
+    "capacity": {
+      "gpu_total": 1,
+      "gpu_used": 0,
+      "memory_bytes_total": 8589934592,
+      "memory_bytes_used": 1073741824,
+      "slots_total": 4,
+      "slots_used": 1
+    }
+  },
+  "reopen_readback": {
+    "host_present": true,
+    "status": "READY",
+    "lease_valid": true
+  },
+  "expired_lease_projection": {
+    "status": "READY",
+    "lease_valid": false
+  },
+  "cleanup_after": 1,
+  "remaining": {
+    "hosts": 0
+  },
+  "mutation_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "worker_dispatch_performed": false,
+  "licence_metadata_is_gate": false,
+  "scope": "durable host registration, credential authentication, heartbeat lease renewal, placement snapshot projection, connection-reopen read-back, and expired-lease visibility",
+  "boundary": {
+    "authenticated_registration": "checked",
+    "heartbeat_lease": "checked",
+    "placement_snapshot_projection": "checked",
+    "credential_redaction": "checked",
+    "durable_host_recovery": "not_checked",
+    "capacity_reservation_commit": "not_checked",
+    "live_multi_host_scheduler": "not_checked",
+    "host_loss_or_split_brain": "not_checked"
+  }
+}
