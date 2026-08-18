@@ -88,8 +88,8 @@
   slot/memory/GPU capacity, priority ordering, and duplicate-ID rejection
   (`db22e60`; evidence at
   [`worker_placement_contract.json`](../../../mas/docs/provenance/worker_placement_contract.json)).
-  This is a pure read-only contract; live multi-host scheduling and host-loss
-  evidence remain open.
+  This is a pure read-only contract; scheduler settlement is covered by
+  `d9917f8`, while host-loss evidence remains open.
 - [x] Add the durable authenticated worker-host registry and heartbeat lease
   boundary through migration `0037_worker_host_registry` (`500fc57`). The
   Postgres certificate at
@@ -98,7 +98,8 @@
   renewal, redacted public projections, placement snapshot read-back after
   connection reopen, expired-lease visibility, and scoped cleanup. Durable
   capacity reservation/commit is covered separately below; durable host
-  recovery, live scheduling, and host-loss/split-brain evidence remain open.
+  recovery, host-loss/split-brain, and worker dispatch evidence remain open;
+  scheduler integration is covered by `d9917f8`.
 - [x] Add the AIAT-owned durable host capacity reservation ledger through
   migration `0038_worker_host_reservations` (`232c0bb`). The retained
   certificate at
@@ -106,10 +107,15 @@
   proves host lease/readiness enforcement, row-locked over-capacity rejection,
   idempotent replay, commit/release/expiry transitions, scalar capacity
   projection, connection-reopen read-back, and scoped cleanup.
-- [ ] Separate control/tool/data hosts from worker pools and connect the
-  durable host registry and reservation ledger to an authenticated multi-host
-  scheduler with live selection and host-loss recovery. Scheduler integration
-  and split-brain evidence remain open.
+- [x] Connect the durable host registry and reservation ledger to the
+  authenticated `aiat.worker-host-scheduler.v1` layer (`d9917f8`; evidence at
+  [`worker_host_scheduler_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json)).
+  It proves deterministic preferred-host selection, row-locked fallback,
+  idempotent replay, draining/unleased filtering, blocked full capacity,
+  connection-reopen read-back, and scoped cleanup without worker dispatch.
+- [ ] Separate control/tool/data hosts from worker pools and prove durable
+  host-loss recovery, split-brain avoidance, live worker dispatch, and
+  multi-host Firecracker/gVisor operation.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/steward version pinning with

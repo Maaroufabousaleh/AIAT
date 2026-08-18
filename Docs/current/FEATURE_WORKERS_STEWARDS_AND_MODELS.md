@@ -10,9 +10,11 @@ remain incomplete.
 The durable host registry certificate `500fc57` also passes in local Compose
 scope for authenticated registration, heartbeat lease renewal, redacted
 placement snapshots, and connection-reopen read-back. The durable reservation
-certificate `232c0bb` also passes idempotent capacity reservation, commit/
-release, expiry recovery, and reopen read-back; live multi-host scheduling
-remains incomplete.
+certificate `232c0bb` passes idempotent capacity reservation, commit/release,
+expiry recovery, and reopen read-back. The scheduler certificate `d9917f8`
+also passes deterministic multi-host fallback, replay, blocked capacity, and
+reopen read-back; live worker dispatch and host-loss/split-brain recovery
+remain incomplete.
 
 ## Purpose
 
@@ -44,8 +46,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   slot/memory/GPU capacity, chooses deterministically by priority and remaining
   capacity, and fails closed on duplicate host IDs. The contract is pure and
   non-mutating; durable capacity reservation/settlement is provided by the
-  host-reservation ledger below, while a live multi-host scheduler remains
-  separate integration work.
+  host-reservation ledger below, and `HostScheduler` connects the registry,
+  placement predicate, and row-locked ledger for deterministic multi-host
+  selection/fallback without dispatch.
 - `mas_core.worker_registry.host_registry.WorkerHostRegistry` and
   `scripts/check_worker_host_registry_postgres.py` now provide the durable
   `aiat.worker-host-registry.v1` boundary. Registration authenticates a host
@@ -53,8 +56,17 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   credential material, and placement snapshots survive connection reopen.
   Capacity reservation/commit/expiry is provided by
   `mas_core.worker_registry.host_reservations.HostCapacityReservationLedger`
-  and its Postgres checker; host-loss recovery, split-brain avoidance, and live
-  scheduling remain separate.
+  and its Postgres checker; `mas_core.worker_registry.host_scheduler.HostScheduler`
+  provides idempotent schedule replay and fallback; host-loss recovery,
+  split-brain avoidance, and worker dispatch remain separate.
+- `mas_core.worker_registry.host_scheduler.HostScheduler` and
+  `scripts/check_worker_host_scheduler_postgres.py` provide the bounded
+  `aiat.worker-host-scheduler.v1` integration. The scheduler ranks public host
+  snapshots deterministically, retries row-locked reservation failures on the
+  next eligible host, replays a globally unique schedule key, filters draining
+  or unleased hosts, and reports blocked capacity without dispatch or provider
+  calls. The local certificate is retained at
+  [`worker_host_scheduler_postgres_evidence.json`](../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json).
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -460,9 +472,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   expiry/requeue, second-owner reclaim, terminal claim denial, durable transition
   read-back, and scoped cleanup. Durable host registration and authenticated
   host heartbeat/lease state are now covered by `500fc57`; durable capacity
-  reservation/commit/expiry is covered by `232c0bb`; multi-host scheduling,
-  real host-loss/split-brain, gVisor, and Firecracker evidence remain separate
-  gates.
+  reservation/commit/expiry is covered by `232c0bb`; deterministic multi-host
+  selection/fallback is covered by `d9917f8`; real host-loss/split-brain,
+  worker dispatch, gVisor, and Firecracker evidence remain separate gates.
 - [x] Certify durable in-flight shell/adapter/steward version pinning
   (`dbf6d10`, label-readback follow-up `8bb0a91`) while the worker registry
   advances to a replacement version. The current worker-run schema does not
@@ -471,21 +483,28 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
   checker (`db22e60`) for host health/lease, labels, capabilities,
   sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection.
-  It is a pure read-only contract; live multi-host scheduling and host-loss
-  evidence remain open.
+  It is a pure read-only contract; scheduler settlement is covered by
+  `d9917f8`, while host-loss evidence remains open.
 - [x] Add durable authenticated host registration, heartbeat lease renewal,
   redacted public host projections, and placement snapshot read-back through
   migration `0037_worker_host_registry` (`500fc57`; evidence at
   [`worker_host_registry_postgres_evidence.json`](../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)).
-  Durable host recovery, live scheduling, and host-loss/split-brain evidence
-  remain open.
+  Durable host recovery, host-loss/split-brain, and worker dispatch evidence
+  remain open; scheduler integration is covered by `d9917f8`.
 - [x] Add the AIAT-owned durable host capacity reservation ledger through
   migration `0038_worker_host_reservations` (`232c0bb`; evidence at
   [`worker_host_reservations_postgres_evidence.json`](../../mas/docs/provenance/worker_host_reservations_postgres_evidence.json)).
   It enforces host lease/readiness, row-locked capacity limits, idempotent
   keys, commit/release/expiry transitions, scalar capacity read-back, and
-  scoped cleanup; live multi-host scheduling and host-loss recovery remain
-  open.
+  scoped cleanup; scheduler selection/fallback and replay are covered by
+  `d9917f8`, while host-loss recovery remains open.
+- [x] Connect the durable registry and reservation ledger through the
+  authenticated `aiat.worker-host-scheduler.v1` layer (`d9917f8`; evidence at
+  [`worker_host_scheduler_postgres_evidence.json`](../../mas/docs/provenance/worker_host_scheduler_postgres_evidence.json)).
+  The checker proves deterministic preferred-host selection, row-locked
+  fallback, idempotent replay, draining/unleased filtering, blocked full
+  capacity, connection-reopen read-back, and cleanup; worker dispatch,
+  host-loss/split-brain, and Firecracker remain open.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
   operator-selected worker/project, fails closed on missing activation
