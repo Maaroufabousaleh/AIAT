@@ -1,9 +1,11 @@
 {
   "schema_version": "aiat.network-boundary-live.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-11T20:47:07Z",
-  "contract_commit": "43bee16",
+  "observed_at": "2026-08-18T09:26:00Z",
+  "contract_commit": "96fb71f",
   "checker": "scripts/check_network_boundary.py --live --json",
+  "policy": "mas/docs/provenance/network_boundary_policy.yaml",
+  "policy_schema": "aiat.network-boundary-policy.v1",
   "environment": {
     "host_class": "WSL2 with Docker Desktop Linux engine",
     "platform": "linux/amd64",
@@ -19,6 +21,7 @@
       "fail": 0
     },
     "logical_networks": ["workers"],
+    "internal_networks": ["internal", "workers"],
     "allowed_gateways": [
       "message-router:8001",
       "tool-service:8002",

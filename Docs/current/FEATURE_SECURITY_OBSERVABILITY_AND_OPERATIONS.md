@@ -1,7 +1,7 @@
 # Security, Observability, and Operations Feature Specification
 
 **Baseline:** 2026-08-17
-**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
+**Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), the policy-driven deny/allow matrix (`96fb71f`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -12,7 +12,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 
 - Signed/secret service authentication, role/team tool policy, durable grants, credential approvals, privileged operations, and audit.
 - Redis ACL users with separate router and tool-cache key/command permissions.
-- Worker-only Docker network separated from the Redis/Postgres internal network in current Compose.
+- Worker-only Docker network separated from the Redis/Postgres internal network in current Compose. The machine-readable [`network_boundary_policy.yaml`](../../mas/docs/provenance/network_boundary_policy.yaml) is the single deny/allow matrix source for runner identity variables, forbidden mounts/env names, protected services, allowed gateways, internal-network flags, and the bounded external-denial probe; `check_network_boundary.py` consumes it for both static Compose validation and live probes (`96fb71f`).
 - Non-root containers, resource limits, internal networks, read-only manifest mounts, and no published production Redis/Postgres ports.
 - Semgrep CLI and SkillSpector security evaluator policy; gVisor default and optional Firecracker profiles.
 - `check_sandbox_runtime_readiness.py` validates the 39 worker sandbox
@@ -131,7 +131,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 
 ## Code anchors
 
-- Compose/network boundary: [`mas/infra/compose/docker-compose.yml`](../../mas/infra/compose/docker-compose.yml)
+- Compose/network boundary: [`mas/infra/compose/docker-compose.yml`](../../mas/infra/compose/docker-compose.yml), policy [`network_boundary_policy.yaml`](../../mas/docs/provenance/network_boundary_policy.yaml)
 - Boundary verifier: [`mas/scripts/check_network_boundary.py`](../../mas/scripts/check_network_boundary.py)
 - Sandbox runtime verifier: [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py)
 - Image contract/live identity verifier: [`mas/scripts/check_image_provenance.py`](../../mas/scripts/check_image_provenance.py)
@@ -217,7 +217,9 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   DNS/TCP/HTTP denial, positive gateway checks, storage health, forbidden-env
   absence, and Docker-socket absence; the secret-safe result is
   [`network_boundary_live.json`](../../mas/docs/provenance/network_boundary_live.json).
-  Native-Linux denial/allow evidence and post-fix closure of
+  The report is generated against the checked-in `aiat.network-boundary-policy.v1`
+  matrix (`96fb71f`); static tests also reject runner host-port publication and
+  a non-internal `workers` network. Native-Linux denial/allow evidence and post-fix closure of
   `DEF-2026-07-14-036` remain release evidence.
 - [x] Raw `project_id` labels were removed from AIAT Prometheus families; aggregate review/infra metrics and bounded project-state labels use audit/log drill-down instead. Project-state transition counts are reconciled on restart and before each authenticated scrape when durable storage is available. `metric_label_policy_inventory()` classifies every AIAT label by its bounded source, and `scripts/check_metric_series_budget.py --json` exercises a synthetic 10,000-project population, the complete label inventory, and the 2,000-total/per-family series budget. The live parser now folds Prometheus' synthetic histogram `_created` sample into its declared family, and the refreshed local scrape passes at 31 series with no `project_id` label; the secret-safe result is [`metric_series_live.json`](../../mas/docs/provenance/metric_series_live.json). The native durable many-project checker inserts/read-backs 10,000 local Postgres project rows, confirms 31 bounded series and all 18 state values, removes its reserved namespace, and restores the baseline; evidence is [`metric_series_many_projects.json`](../../mas/docs/provenance/metric_series_many_projects.json). Clean native-Linux release-host scale evidence remains open.
 - The production image contract is now immutable at source level and has a

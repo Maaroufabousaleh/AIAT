@@ -67,6 +67,12 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - [x] Codify the Compose credential/network/gateway contract and native probe
   harness in `scripts/check_network_boundary.py`; live Docker execution remains
   required evidence.
+- [x] Move the deny/allow matrix into the checked-in
+  `provenance/network_boundary_policy.yaml` (`aiat.network-boundary-policy.v1`)
+  and make static and live checks consume the same protected-service, gateway,
+  internal-network, identity, forbidden-mount/env, and external-denial rows.
+  Static tests reject runner host-port publication and public `workers`
+  networks; native release-host execution remains a separate gate.
 - [x] Remove team-runner PgBouncer/MinIO/shared-service credentials and private
   network membership; route checkpoint, usage, document, and review persistence
   through an allow-listed control-plane API with a fail-closed startup probe.
@@ -90,7 +96,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 
 ### Evidence
 
-- Refreshed local WSL2 post-fix matrix: [`network_boundary_live.json`](../../../mas/docs/provenance/network_boundary_live.json); native-Linux post-fix closure for historical `DEF-2026-07-14-036` remains required.
+- Refreshed local WSL2 post-fix matrix: [`network_boundary_live.json`](../../../mas/docs/provenance/network_boundary_live.json), generated against [`network_boundary_policy.yaml`](../../../mas/docs/provenance/network_boundary_policy.yaml); native-Linux post-fix closure for historical `DEF-2026-07-14-036` remains required.
 - Signed/authenticated access matrix and container-network inspection.
 - CEO-denied/human-allowed test for at least one restricted section.
 
