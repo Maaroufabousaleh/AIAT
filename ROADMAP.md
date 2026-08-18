@@ -36,18 +36,25 @@ endpoint/comparison evidence only; provider durability/custody, KMS, actual
 outage, clean-host/disaster recovery, large-object/multipart, and migration
 cutover remain later gates.
 
-The latest grouped verification through `318e077` (including the bounded
+The heterogeneous verified-copy follow-up (`6f5b5b8`) inventories three
+reserved MinIO objects, copies them to SeaweedFS with matching checksums/sizes,
+preserves the source until explicit cleanup, and leaves both prefixes empty.
+This is parity evidence only; retention parity, outage, clean-host/disaster
+recovery, and migration cutover/rollback remain later gates.
+
+The latest grouped verification through `01ca860` (including the bounded
 same-host recovery soak from `424805c` and synchronized documentation group
 `06393d1`, the object-store provider-pair implementation/evidence/docs groups
 `351444a`/`f385bd7`/`3833631`, the provider-diverse storage evidence/docs group
-`f52fde6`, and the refreshed release ledger `318e077`; based
+`f52fde6`, the verified-copy evidence/docs group `6f5b5b8`, and the refreshed
+release ledger `01ca860`; based
 on the workflow-control fixture extension, the durable local
 Postgres flow-instance recovery
 certificate, the bounded multi-host duplicate-effect/replay certificate, the
 complete local governed run-version pin certificate, the local durable
 provider-shaped gateway retry certificate, the maintained feature/plan/status
 docs, the encrypted backup envelope and fresh-process restore evidence, and
-the existing network/sandbox evidence; current ledger snapshot `318e077`,
+the existing network/sandbox evidence; current ledger snapshot `01ca860`,
 2026-08-18) keeps
 the static release ledger at 51/51 pass and the
 unconfigured local aggregate at 54 pass, 0 fail, 15 blocked, and 4 pending with
@@ -1667,6 +1674,10 @@ and
 It passes three checksum cases per provider plus secondary-only clean recovery
 and zero cleanup; it does not authorize a provider, cutover, or disaster
 recovery claim.
+The verified-copy follow-up (`6f5b5b8`) separately inventories three MinIO
+objects, copies them to SeaweedFS with checksum/size parity, preserves source
+until cleanup, and leaves zero reserved objects on both sides; its scalar
+evidence is [`mas/docs/provenance/object_store_copy_provider_diverse_evidence.json`](mas/docs/provenance/object_store_copy_provider_diverse_evidence.json).
 Commit `91504dd` now adds the provider-neutral encrypted backup prerequisite:
 `object_store_encryption.py` encrypts bytes with AES-256-GCM before an adapter
 receives them, retains only opaque key IDs/nonces/checksums/sizes in the
