@@ -27,5 +27,10 @@ def test_docs_index_has_one_target_thirteen_features_and_three_plans() -> None:
     assert report["canonical_plan_count"] == 3
     assert report["policy"] == {
         "licence_metadata_is_gate": False,
+        "licence_detail_surface": "metadata-only",
+        "licence_metadata_surfaces": [
+            "THIRD_PARTY_NOTICES.md",
+            "mas/docs/provenance/third_party_components.yaml",
+        ],
         "programme_scope": "personal-internal-only",
     }
