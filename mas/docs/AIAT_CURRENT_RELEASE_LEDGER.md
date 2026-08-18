@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `d86e4dd3034827af9acc3b869a2fc184a7917a98` (latest grouped verification revision)
+**Base revision:** `a7717a9d666db7928801996f3abb601300b5623a` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -32,9 +32,9 @@ raw-provider composition mode with durable provider-message worker/trace
 correlation.
 The current
 retained release-environment manifest reports revision
-`d86e4dd3034827af9acc3b869a2fc184a7917a98`, two changed pre-existing memory
+`a7717a9d666db7928801996f3abb601300b5623a`, two changed pre-existing memory
 files, and digest
-`29841ed47b25bb52d1e07c8c8beba08abd55af171909497831957acb72d04033`.
+`3926711a8494c05f8071597a6ae2fa98091118286e196da49b7e0fa0b64877d9`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
