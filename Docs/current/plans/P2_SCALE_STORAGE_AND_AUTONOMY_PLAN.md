@@ -226,6 +226,16 @@
   activation decision is included. Evidence is
   [`model_profile_catalogue_live.json`](../../../mas/docs/provenance/model_profile_catalogue_live.json)
   and [`model_gateway_readiness_live.json`](../../../mas/docs/provenance/model_gateway_readiness_live.json).
+- [x] Add the explicit opt-in worker-plane provider boundary (`f999695`) in
+  [`check_gateway_worker_provider_live.py`](../../../mas/scripts/check_gateway_worker_provider_live.py).
+  The runner requires an operator-selected exact model, a configured gateway
+  and credential, a read-only `/v1/models` match, and
+  `--allow-external-provider` (or `AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH=1`)
+  before one bounded completion request. It drives the real host
+  executor/controller/adapter chain and emits only scalar secret-safe usage and
+  failure metadata. Its default invocation is blocked and this group adds no
+  live-provider evidence; durable Postgres, independent-host, sandbox,
+  provider-recovery, and mail-edge callback/bounce gates remain separate.
 - [ ] Prove external provider-backed model dispatch on the worker plane,
   multi-host Firecracker/gVisor operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.

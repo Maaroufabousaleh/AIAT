@@ -145,6 +145,15 @@ exception-type metadata. Focused tests cover each classification without
 copying provider response text or credentials; live provider recovery remains
 open.
 
+Commit `f999695` adds the maintained explicit-opt-in live worker-plane provider
+runner. It reads a configured gateway's model listing, requires an exact
+operator-selected model and explicit external-dispatch opt-in, and can drive
+one bounded completion through the real host executor/controller/adapter chain.
+Its default invocation is blocked; no live provider evidence is claimed in
+this documentation update, and the report retains only scalar usage/status/
+error metadata. Durable Postgres, independent-host, sandbox, recovery, and
+mail-edge callback/bounce evidence remain separate gates.
+
 Commit `38c99f4` adds the maintained bounded host-composition certificate. It
 drives the real `WorkerHostExecutor`, `WorkerRunController`, and
 `GatewayWorkerAdapter` through an in-memory committed worker-plane binding,
