@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, and corrected provider-process outage/recovery certificate; provider-managed encryption, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, and live AIAT credentials-manager secret-boundary certificate; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and optional memory services remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -134,6 +134,16 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   This closes the local process-outage gate only; provider-managed KMS,
   production thresholds, independent-host, clean-host, and disaster-recovery
   evidence remain separate.
+- The live AIAT credentials-manager certificate verifies the secret boundary
+  against Compose Postgres: ciphertext-at-rest, metadata-only projection,
+  policy denial, approved server-side resolution, one-use approval,
+  rate-limit denial, durable audit persistence, and zero fixture residue all
+  pass. Scalar evidence is retained at
+  [`credentials_manager_live_evidence.json`](../../mas/docs/provenance/credentials_manager_live_evidence.json)
+  and the checker is [`check_credentials_manager_live.py`](../../mas/scripts/check_credentials_manager_live.py).
+  This advances AIAT-owned secret management only; no provider-managed KMS/SSE
+  endpoint is configured or inferred, and external key custody/rotation,
+  clean-host bootstrap, and disaster recovery remain separate gates.
 - The provider-pair checker was also exercised across the operator-observed
   MinIO/SeaweedFS topology. Its retained scalar evidence confirms three-object
   checksum dual-write, adapter-boundary primary-loss rejection, secondary-only

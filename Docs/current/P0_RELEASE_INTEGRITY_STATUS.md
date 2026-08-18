@@ -2,7 +2,7 @@
 
 **Updated:** 2026-08-18
 - The 2026-08-18 continuation verification re-runs the static release ledger
-  at 52/52 pass and confirms the API/protocol contract, documentation index,
+  at 55/55 pass and confirms the API/protocol contract, documentation index,
   provenance inventory, docs-index scope guard, and host-owned restart-boundary
   regression. The policy-driven network boundary contract (`96fb71f`) now
   feeds the same deny/allow rows to static Compose validation and the live
@@ -106,6 +106,16 @@
   verified; earlier development attempts are excluded. This closes the local
   process-outage gate only, not KMS, independent-host, clean-host, or disaster
   recovery.
+- The AIAT credentials-manager live certificate (`12ba7c7`, evidence
+  [`credentials_manager_live_evidence.json`](../../mas/docs/provenance/credentials_manager_live_evidence.json),
+  release child `credentials_manager_live` registered in `d101901`) passes
+  against Compose Postgres. Ciphertext-at-rest, metadata-only projection,
+  policy denial, approved server-side resolution, one-use approval,
+  rate-limit denial, audit persistence, and zero fixture residue are verified;
+  no key material, values, payloads, or credentials are retained. This advances
+  the AIAT-owned secret-management boundary only. Provider-managed SSE/KMS,
+  external key custody/rotation, clean-host bootstrap, and disaster recovery
+  remain independent operator gates.
 - The live verified-copy continuation inventories three reserved MinIO objects,
   copies them to SeaweedFS with matching checksums/sizes, preserves the source
   until explicit cleanup, and leaves zero source/target objects. Evidence is
