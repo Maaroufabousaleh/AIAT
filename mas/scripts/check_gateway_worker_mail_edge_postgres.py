@@ -12,7 +12,10 @@ provider-message correlation and the events are written through the real
 Resend/Svix raw-body route, including the same replay/conflict/tamper checks.
 The default gateway and mail observations are bounded local fixtures: no
 external provider, network endpoint, SMTP relay, sandbox, or live worker is
-contacted. With ``--live-provider`` and explicit opt-in, the checker first
+contacted. ``--provider-recovery`` can be used in this local mode as well; it
+injects one transient 429 into the fixture gateway and proves that the real
+adapter/controller retry path settles durably without external access. With
+``--live-provider`` and explicit opt-in, the checker first
 reads the configured gateway's model listing, runs one exact selected model
 through the durable worker/controller path, redacts generated content before
 durable result persistence, and can exercise the local raw-provider ingress
@@ -156,10 +159,15 @@ class _TransientOnceGateway:
 
     def __init__(self, delegate: Any) -> None:
         self.delegate = delegate
+        # Keep the fixture call ledger visible through the retry wrapper.  The
+        # live path wraps this object in ``_RedactingGateway`` instead.
+        self.calls = getattr(delegate, "calls", [])
+        self.attempts = 0
         self.injected = False
         self.forwarded_calls = 0
 
     async def chat_completion(self, **kwargs: Any) -> ChatResponse:
+        self.attempts += 1
         if not self.injected:
             self.injected = True
             raise LLMGatewayError(429, "synthetic transient recovery probe")
@@ -215,7 +223,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provider-recovery",
         action="store_true",
-        help="inject one transient gateway failure, then retry one live provider call",
+        help="inject one transient gateway failure, then retry one bounded call",
     )
     parser.add_argument(
         "--worker-dsn",
@@ -798,8 +806,6 @@ async def _run(
                 "timeout_must_be_between_one_and_120_seconds",
                 live_provider=True,
             )
-    if provider_recovery and not live_provider:
-        return _blocked("provider_recovery_requires_live_provider")
     worker_url = _normalize_dsn(worker_dsn)
     identity_url = _normalize_dsn(identity_dsn)
     if worker_url is None or identity_url is None:
@@ -1014,7 +1020,12 @@ async def _run(
                 gateway_delegate = recovery_gateway
             gateway = _RedactingGateway(gateway_delegate)
         else:
-            gateway = _FixtureGateway()
+            fixture_gateway = _FixtureGateway()
+            if provider_recovery:
+                recovery_gateway = _TransientOnceGateway(fixture_gateway)
+                gateway = recovery_gateway
+            else:
+                gateway = fixture_gateway
         adapter = GatewayWorkerAdapter(
             worker_id=str(canonical_worker_id),
             provider_id=selected_provider,
@@ -1034,7 +1045,11 @@ async def _run(
             )
         finally:
             await adapter.close()
-        gateway_calls = len(gateway.calls)
+        gateway_calls = (
+            recovery_gateway.attempts
+            if recovery_gateway is not None and not live_provider
+            else len(getattr(gateway, "calls", []))
+        )
         replay_metadata = getattr(outcome.result, "replay_metadata", {}) or {}
         provider_attempts = int(replay_metadata.get("provider_attempts") or 0)
         provider_retry_count = int(replay_metadata.get("provider_retry_count") or 0)
@@ -1373,6 +1388,8 @@ async def _run(
         "mode": (
             "live-dual-postgres-worker-mail-edge-provider-recovery"
             if live_provider and provider_recovery
+            else "local-dual-postgres-worker-mail-edge-provider-recovery"
+            if provider_recovery
             else "live-dual-postgres-worker-mail-edge"
             if live_provider
             else "local-dual-postgres-worker-mail-edge"
@@ -1463,6 +1480,9 @@ async def _run(
             "scoped_cleanup": "checked",
             "external_provider_callback": "not_checked",
             "provider_backed_recovery": "checked" if provider_recovery else "not_checked",
+            "external_provider_transient_recovery": (
+                "checked" if live_provider and provider_recovery else "not_checked"
+            ),
             "sandbox_runtime_gvisor_or_firecracker": "not_checked",
         },
         "licence_metadata_is_gate": False,

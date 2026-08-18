@@ -49,7 +49,7 @@ def test_live_provider_mode_blocks_before_database_or_network_without_opt_in() -
     assert report["licence_metadata_is_gate"] is False
 
 
-def test_provider_recovery_requires_live_provider_mode() -> None:
+def test_provider_recovery_can_use_the_local_fixture_without_external_access() -> None:
     module = _module()
     report = asyncio.run(
         module._run(
@@ -62,9 +62,28 @@ def test_provider_recovery_requires_live_provider_mode() -> None:
     )
 
     assert report["status"] == "blocked"
-    assert report["reason"] == "provider_recovery_requires_live_provider"
+    assert report["reason"] == "gateway_worker_mail_edge_postgres_database_not_configured"
     assert report["mutation_performed"] is False
     assert report["external_network_access_performed"] is False
+
+
+def test_local_recovery_wrapper_keeps_fixture_call_ledger() -> None:
+    module = _module()
+
+    fixture = module._FixtureGateway()
+    gateway = module._TransientOnceGateway(fixture)
+    try:
+        asyncio.run(gateway.chat_completion(model="fixture/model-v1"))
+    except module.LLMGatewayError as exc:
+        assert exc.status_code == 429
+    else:
+        raise AssertionError("the first recovery attempt must be transient")
+    response = asyncio.run(gateway.chat_completion(model="fixture/model-v1"))
+
+    assert response.text == "durable mail-edge fixture answer"
+    assert len(gateway.calls) == 1
+    assert gateway.attempts == 2
+    assert gateway.forwarded_calls == 1
 
 
 def test_transient_once_gateway_injects_only_one_failure() -> None:
