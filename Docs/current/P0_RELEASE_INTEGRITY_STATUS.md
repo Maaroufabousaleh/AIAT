@@ -86,9 +86,10 @@
   Python process with fresh adapters, verified through the production
   encrypted-restore helper, and removed. Payload-free evidence is retained at
   [`object_store_clean_environment_restore_evidence.json`](../../mas/docs/provenance/object_store_clean_environment_restore_evidence.json)
-  (`59294c0`); the scalar read-back was refreshed at `f567979` with a distinct
-  child process, ciphertext-only bundle, and zero fixture residue. This does
-  not certify clean-host, provider-pair, KMS, outage, or disaster recovery.
+  (`59294c0`); the scalar read-back was refreshed at `f567979` and again at
+  `554901c` (2026-08-18T23:24:22Z) with a distinct child process,
+  ciphertext-only bundle, and zero fixture residue. This does not certify
+  clean-host, provider-pair, KMS, outage, or disaster recovery.
 - The 2026-08-18 storage continuation also retains a bounded provider-diverse
   adapter rehearsal and benchmark: Compose MinIO plus disposable SeaweedFS
   4.42 each pass checksum read-back/cleanup, while the pair checker proves
