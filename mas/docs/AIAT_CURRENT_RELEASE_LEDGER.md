@@ -32,7 +32,8 @@ and `cb1c665`, `fcb0f4b`, `7828b48`, `6b0413b`, `140af1c`, `89091c1`, `83e39e6`,
 `392d264`, `17d25b0`, `0671eaa`, `00f81b5`, `23e2db9`, `b0ab779`, and
 `b07299b`, `038d5f2`, `85369fe`, `f8829d6`, `b3fca97`, `9a80c6c`, and
 `1d8aed5`, `10983c8`, `a413997`, `dbf6d10`, `8bb0a91`, `db22e60`,
-`500fc57`, `7dfba8c`, `232c0bb`, `d9917f8`, `72e59ec`, and `08f1610e` are
+`500fc57`, `7dfba8c`, `232c0bb`, `d9917f8`, `72e59ec`, `08f1610e`, and
+`3116efe` are
 also recorded
 in the rows below with separate documentation commits. The focused
 worker-registry policy group `d8cafbb` is recorded below as well; aggregate
