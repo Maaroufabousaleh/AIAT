@@ -10,6 +10,12 @@
   evidence has zero residual rows. Native host/image/gVisor/Firecracker,
   outbound-mail, self-improvement, security-review, external KMS, clean-host,
   and disaster-recovery gates remain separate.
+- The local image-provenance follow-up (`75f9be0`) reconciles all ten supplied
+  immutable references with matching Docker `RepoDigests` on the current WSL2
+  engine. The scalar certificate is [`image_provenance_local_identity.json`](../../mas/docs/provenance/image_provenance_local_identity.json);
+  SBOM, vulnerability scan, source/lock, clean native build, and deployment
+  identity evidence remain unobserved, so the production image gate stays
+  blocked and the global `NO-RELEASE` decision is unchanged.
 - The 2026-08-18 continuation verification re-runs the static release ledger
   at 57/57 pass and confirms the API/protocol contract, documentation index,
   provenance inventory, docs-index scope guard, and host-owned restart-boundary
