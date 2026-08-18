@@ -1,27 +1,27 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T15:21:28.770466Z",
+  "observed_at": "2026-08-18T15:53:05.092363Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 75,
-    "pass": 57,
+    "total": 77,
+    "pass": 58,
     "fail": 0,
-    "blocked": 18
+    "blocked": 19
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "18 check(s) are externally blocked",
+    "19 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "407a4f94da5f8735f2f7d002142513297cabf6b4",
+    "revision": "417b6674413d2f63c7ecd0d8631d71572e3167a6",
     "working_tree_clean": false
   },
-  "manifest_digest": "6bbc393ad9224cc8a563e10d14b21dcbf379ba0383b4e9ddc4fe00b74fa2ba37",
+  "manifest_digest": "199b293732099da8df37b9607efebb0869cb84c5cd3c7e5c54e2af1e3852ff9",
   "live_configuration": {
     "orchestrator_url_configured": false,
     "credentials_printed": false,
@@ -62,7 +62,8 @@
     "self_improvement_candidate_detection:live",
     "object_store_multipart:live",
     "object_store_resource_profile:live",
-    "object_store_provider_outage:live"
+    "object_store_provider_outage:live",
+    "credentials_manager_live:live"
   ],
   "pending_evidence": [
     "coding_worker security scan findings require review in static and live reconciliation rows",
@@ -85,6 +86,15 @@
     "measurement_source": "procfs",
     "cleanup_verified": true,
     "invalid_run_excluded": true,
+    "aggregate_live_child_status": "blocked_missing_configuration"
+  },
+  "secret_management_live_evidence": {
+    "status": "pass",
+    "evidence_ref": "credentials_manager_live_evidence.json",
+    "boundary": "aiat_owned_postgres_credentials_manager",
+    "checks_passed": 12,
+    "cleanup_verified": true,
+    "provider_managed_kms_status": "not_configured",
     "aggregate_live_child_status": "blocked_missing_configuration"
   },
   "secret_policy": "credentials, image values, URLs, and dependency payloads are never retained"
