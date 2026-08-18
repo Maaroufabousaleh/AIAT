@@ -1,28 +1,33 @@
 {
   "schema_version": "aiat.object-store-resource-profile.v1",
   "evidence_commit": "3791b3f",
-  "observed_at": "2026-08-18T14:23:06Z",
+  "observed_at": "2026-08-18T14:32:14Z",
   "mode": "live-bounded-resource-profile",
   "topology": {
     "primary": "Compose MinIO endpoint",
-    "comparison": "disposable SeaweedFS 4.42 endpoint"
+    "comparison": "disposable SeaweedFS 4.42 endpoint",
+    "network": "mas_internal",
+    "seaweedfs_network_alias": "seaweedfs-resource"
   },
+  "reserved_project": "aiat-resource-live-20260818-r4",
   "benchmark_plan": {
     "payload_sizes_bytes": [1048576, 8388608],
     "concurrency": 4,
     "case_count_per_provider": 8,
-    "total_payload_bytes_per_provider": 37748736
+    "total_payload_bytes_per_provider": 37748736,
+    "timeout_policy": "checker defaults; identical provider inputs; no provider-specific override",
+    "resource_sampling": "procfs VmRSS/VmHWM"
   },
   "providers": [
     {
       "name": "minio",
       "status": "pass",
       "measurement_source": "procfs",
-      "wall_time_ms": 1305.45,
-      "cpu_time_ms": 275.534,
-      "rss_before_bytes": 114647040,
-      "rss_peak_bytes": 192143360,
-      "rss_after_bytes": 132358144,
+      "wall_time_ms": 734.522,
+      "cpu_time_ms": 193.258,
+      "rss_before_bytes": 114196480,
+      "rss_peak_bytes": 192020480,
+      "rss_after_bytes": 123170816,
       "error_count": 0,
       "checksum_readback": "checked",
       "cleanup_verified": true
@@ -31,11 +36,11 @@
       "name": "seaweedfs",
       "status": "pass",
       "measurement_source": "procfs",
-      "wall_time_ms": 1396.182,
-      "cpu_time_ms": 184.165,
-      "rss_before_bytes": 137928704,
-      "rss_peak_bytes": 195764224,
-      "rss_after_bytes": 137314304,
+      "wall_time_ms": 1298.131,
+      "cpu_time_ms": 178.46,
+      "rss_before_bytes": 130871296,
+      "rss_peak_bytes": 195424256,
+      "rss_after_bytes": 136896512,
       "error_count": 0,
       "checksum_readback": "checked",
       "cleanup_verified": true
@@ -45,6 +50,39 @@
   "decision": "operator_review_required",
   "resource_selection_authority": false,
   "licence_metadata_is_gate": false,
+  "multipart_verification": {
+    "payload_sizes_bytes": [8388608, 16777216],
+    "part_size_bytes": 5242880,
+    "expected_part_counts": [2, 4],
+    "same_reserved_project": true,
+    "providers": [
+      {
+        "name": "minio",
+        "status": "pass",
+        "multipart_upload_verified": true,
+        "checksum_readback_verified": true,
+        "abort_verified": true,
+        "cleanup_verified": true,
+        "error_count": 0
+      },
+      {
+        "name": "seaweedfs",
+        "status": "pass",
+        "multipart_upload_verified": true,
+        "checksum_readback_verified": true,
+        "abort_verified": true,
+        "cleanup_verified": true,
+        "error_count": 0
+      }
+    ]
+  },
+  "failure_classification": {
+    "harness_or_configuration_failure": "The earlier nonexistent-network-alias attempt was invalid test harness execution and is excluded from this evidence and provider verdict.",
+    "provider_functional_failure": "not observed in the corrected wave; both providers passed all bounded cases",
+    "provider_resource_limit_failure": "not asserted; this wave records scalar RSS/wall/CPU observations and has no production resource threshold",
+    "infrastructure_or_environment_failure": "not observed after the canonical mas_internal/seaweedfs-resource alias was corrected"
+  },
+  "invalid_run_excluded": true,
   "not_checked": [
     "host-independent resource portability",
     "production resource budgets",
