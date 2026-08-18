@@ -206,13 +206,16 @@ verified delivery/bounce observations are evaluated together. Its report is
 payload-free and non-mutating; it does not upgrade the join to durable provider
 callback, external provider, live worker, or sandbox evidence.
 
-The durable follow-up (`fa42284`) runs the production adapter/controller against
-the worker Postgres store and records normalized delivery/webhook/bounce
-observations in the identity Postgres store. Independent connection reopen and
-read-back checks rebuild the payload-free worker/mail-edge join and scoped
-cleanup leaves zero fixture rows. This closes local durable composition only;
-HTTP provider ingress, external delivery/recovery, selected live worker, and
-sandbox evidence remain separate.
+The durable follow-up (`fa42284`, extended by `67f1599`) runs the production
+adapter/controller against the worker Postgres store and records normalized
+delivery/webhook/bounce observations in the identity Postgres store. Its
+ingress mode drives the signed `/v1/mail-edge/provider-webhook` route and
+checks idempotent replay, conflict, and tamper rejection. Independent
+connection reopen/read-back checks rebuild the payload-free worker/mail-edge
+join and scoped cleanup leaves zero fixture rows. This closes local durable
+composition and delegated ingress only; raw external-provider callback,
+external delivery/recovery, selected live worker, and sandbox evidence remain
+separate.
 
 The host-composition certificate (`38c99f4`) extends that local evidence to the
 AIAT host boundary without changing the evaluator contract. It observes native

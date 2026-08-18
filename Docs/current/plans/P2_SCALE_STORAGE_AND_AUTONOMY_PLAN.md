@@ -474,13 +474,16 @@
   external provider dispatch, durable provider callback/read-back, live worker
   execution, sandbox, and host-runtime evidence remain open.
 - [x] Certify durable gateway-worker/mail-edge composition across the worker
-  and identity Postgres stores (`fa42284`). The certificate
+  and identity Postgres stores (`fa42284`, extended by `67f1599`). The
+  certificate
   [`gateway_worker_mail_edge_postgres_evidence.json`](../../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json)
   runs the production gateway adapter/controller, persists a payload-free
   worker report/usage/trace projection, records normalized delivery,
   verified-webhook, and bounce observations, reopens both stores independently,
   passes the cross-store evaluator, and cleans only its fixture namespaces.
-  This closes local durable composition; HTTP provider ingress, external
+  now optionally drives the signed `/v1/mail-edge/provider-webhook` route with
+  idempotent replay, conflict, and tamper checks. This closes local durable
+  composition and delegated ingress; raw external provider callback, external
   provider delivery/recovery, selected live worker execution, and sandbox
   evidence remain open.
 - [ ] Run the new checker against a selected live representative model-backed

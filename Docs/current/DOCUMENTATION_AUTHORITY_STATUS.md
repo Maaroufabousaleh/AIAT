@@ -117,12 +117,14 @@ The payload-free report is indexed at
 durable provider callback/read-back, external provider execution, live worker,
 and sandbox evidence remain explicitly open.
 
-Commit `fa42284` adds the durable dual-Postgres composition certificate. The
-production gateway adapter/controller persists payload-free worker evidence in
-the worker store, normalized delivery/webhook/bounce observations in the
-identity store, and rebuilds the cross-store evaluator after independent
-connection reopen. Its scoped cleanup leaves zero fixture rows. This is
-normalized identity-store composition evidence only; HTTP provider ingress,
+Commit `fa42284` adds the durable dual-Postgres composition certificate, and
+`67f1599` extends it through the signed delegated identity-service HTTP route.
+The production gateway adapter/controller persists payload-free worker
+evidence in the worker store, normalized delivery/webhook/bounce observations
+in the identity store, and rebuilds the cross-store evaluator after independent
+connection reopen. The ingress mode checks replay, conflict, and tamper
+rejection; scoped cleanup leaves zero fixture rows. This is normalized
+identity-store/delegated-ingress evidence only; raw external-provider callback,
 external provider delivery, selected live worker, recovery, and sandbox gates
 remain open. The evidence is indexed in the roadmap and retained at
 [`gateway_worker_mail_edge_postgres_evidence.json`](../../mas/docs/provenance/gateway_worker_mail_edge_postgres_evidence.json).
@@ -287,11 +289,12 @@ real adapter/controller fixture plus scalar evaluator composition, not a claim
 of live provider delivery, durable webhook/bounce read-back, or sandbox
 execution.
 
-The durable composition group `fa42284` is indexed alongside it. Its
-dual-Postgres certificate reopens the worker and identity stores independently,
-rebuilds the payload-free cross-store evaluator, and cleans its reserved rows;
-it does not claim HTTP provider ingress, external delivery/recovery, selected
-live worker execution, or sandbox evidence.
+The durable composition group `fa42284` and signed-ingress extension `67f1599`
+are indexed alongside it. Their dual-Postgres certificate reopens the worker
+and identity stores independently, rebuilds the payload-free cross-store
+evaluator, exercises replay/conflict/tamper behavior when requested, and cleans
+reserved rows; it does not claim raw external-provider callback, external
+delivery/recovery, selected live worker execution, or sandbox evidence.
 
 The durable worker-run evidence group `acd3f06` adds the local Postgres
 certificate and maintained evidence

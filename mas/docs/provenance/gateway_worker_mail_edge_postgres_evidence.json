@@ -4,6 +4,7 @@
     "external_provider_callback": "not_checked",
     "gateway_worker_adapter_fixture_dispatch": "checked",
     "identity_postgres_connection_reopen": "checked",
+    "identity_signed_http_ingress": "checked",
     "normalized_delivery_webhook_bounce_observations": "checked",
     "payload_free_projection": "checked",
     "provider_backed_recovery": "not_checked",
@@ -13,7 +14,7 @@
     "worker_postgres_connection_reopen": "checked",
     "worker_trace_mail_edge_correlation": "checked"
   },
-  "commit": "fa42284",
+  "commit": "67f1599",
   "controller_terminal_state": "SUCCEEDED",
   "coverage_schema": "aiat.worker-mail-edge-coverage.v1",
   "durable_reopen": {
@@ -30,6 +31,18 @@
   "external_provider_mutation_performed": false,
   "gateway_call_count": 1,
   "identity_cleanup_deleted_count": 3,
+  "identity_client_cleanup_deleted_count": 5,
+  "identity_ingress": true,
+  "identity_ingress_conflict_rejected": true,
+  "identity_ingress_idempotent_duplicate": true,
+  "identity_ingress_statuses": {
+    "bounced": 200,
+    "conflict": 409,
+    "delivered": 200,
+    "duplicate": 200,
+    "tampered": 401
+  },
+  "identity_ingress_tampered_rejected": true,
   "identity_migration_version": "0003_mail_edge_observations",
   "licence_metadata_is_gate": false,
   "local_database_access_performed": true,
@@ -38,9 +51,10 @@
   "mutation_performed": true,
   "native_span_count": 4,
   "network_access_performed": true,
-  "observed_at": "2026-08-18T06:13:17.738066Z",
+  "observed_at": "2026-08-18T06:32:17.318488Z",
   "payload_free": true,
   "provider_id": "fixture-provider",
+  "remaining_identity_client_rows": 0,
   "remaining_identity_fixture_rows": 0,
   "remaining_worker_fixture_counts": {
     "artifacts": 0,

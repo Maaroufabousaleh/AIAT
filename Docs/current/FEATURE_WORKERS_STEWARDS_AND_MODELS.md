@@ -62,14 +62,15 @@ provider/model identifiers are local fixtures; external provider execution,
 sandbox, and independent-host recovery remain separate boundaries.
 
 `fa42284` adds a durable dual-Postgres worker/mail-edge composition
-certificate. The production `GatewayWorkerAdapter` and `WorkerRunController`
+certificate, and `67f1599` extends it through the real signed identity-service
+HTTP route. The production `GatewayWorkerAdapter` and `WorkerRunController`
 record exact fixture usage and payload-free worker evidence; normalized
 delivery, verified webhook, and bounce observations are persisted by the
 identity store; both stores are reopened independently; and the cross-store
 evaluator passes before scoped cleanup. This composes the normalized
-identity-store path only: HTTP provider ingress, external provider delivery,
-selected live worker execution, sandbox certification, and full worker
-certification remain separate.
+identity-store path and delegated signed ingress only: external provider
+delivery, raw-provider callback, selected live worker execution, sandbox
+certification, and full worker certification remain separate.
 
 ## Purpose
 
@@ -226,14 +227,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   host runtime.
 - The durable composition checker
   [`check_gateway_worker_mail_edge_postgres.py`](../../mas/scripts/check_gateway_worker_mail_edge_postgres.py)
-  (`fa42284`) runs the production gateway adapter/controller against the worker
+  (`67f1599`, extending `fa42284`) runs the production gateway adapter/controller against the worker
   Postgres store and records normalized delivery/webhook/bounce observations in
   the identity Postgres store. Independent connection reopen/read-back checks
   verify exact provider/model usage, payload-free worker/mail-edge correlation,
   and zero remaining fixture rows after scoped cleanup. This is local
-  dual-Postgres composition evidence; it does not claim HTTP ingress, external
-  provider delivery, selected live worker execution, provider recovery, or
-  gVisor/Firecracker execution.
+  dual-Postgres composition evidence and can exercise the signed
+  `/v1/mail-edge/provider-webhook` route with replay/conflict/tamper checks; it
+  does not claim raw external-provider callback, external provider delivery,
+  selected live worker execution, provider recovery, or gVisor/Firecracker
+  execution.
 - `GatewayWorkerAdapter` now classifies dispatch failures before they reach the
   controller: bounded input errors are terminal validation failures, known
   transient gateway statuses (`408`, `409`, `412`, `425`, `429`, and `5xx`) are
