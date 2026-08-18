@@ -160,6 +160,11 @@ checks:
     script: scripts/check_object_store_conformance.py
     args: [--json]
     live_args: [--live, --json, --compose-local]
+  - id: object_store_multipart
+    category: contract
+    script: scripts/check_object_store_multipart.py
+    args: [--json]
+    live_args: [--live, --json]
   - id: provider_conformance
     category: contract
     script: scripts/check_provider_conformance.py

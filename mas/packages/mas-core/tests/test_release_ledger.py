@@ -141,6 +141,16 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     )
     docs = next(row for row in report["checks"] if row["id"] == "documentation_index")
     assert docs["status"] == "pass"
+    multipart = next(row for row in report["checks"] if row["id"] == "object_store_multipart")
+    assert multipart["category"] == "contract"
+    assert multipart["status"] == "pass"
+    assert multipart["summary"] == {
+        "abort_verified": True,
+        "cleanup_verified": True,
+        "error_count": 0,
+        "mode": "fixture",
+        "status": "pass",
+    }
     runtime_profile = next(row for row in report["checks"] if row["id"] == "runtime_install_profile")
     assert runtime_profile["status"] == "pass"
     assert runtime_profile["summary"]["locked_versions"] == {
