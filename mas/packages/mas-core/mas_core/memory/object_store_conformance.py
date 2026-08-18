@@ -17,6 +17,7 @@ benchmark, backup, and restore evidence remains an external/live gate.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -120,6 +121,7 @@ class InMemoryObjectStore:
     def __init__(self, *, bucket: str = "mas-agents") -> None:
         self.bucket = bucket
         self._objects: dict[tuple[str, str], tuple[bytes, str]] = {}
+        self._multipart_uploads: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _full_key(project_id: str, key: str) -> str:
@@ -152,6 +154,96 @@ class InMemoryObjectStore:
             size_bytes=len(payload),
             content_type=content_type,
         )
+
+    async def create_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        *,
+        content_type: str = "application/octet-stream",
+        bucket: str | None = None,
+    ) -> str:
+        """Create a deterministic fixture multipart session."""
+
+        full_key = self._full_key(project_id, key)
+        upload_id = uuid.uuid4().hex
+        self._multipart_uploads[upload_id] = {
+            "bucket": self._bucket_name(bucket),
+            "key": full_key,
+            "content_type": content_type,
+            "parts": {},
+        }
+        return upload_id
+
+    async def upload_multipart_part(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        *,
+        bucket: str | None = None,
+    ) -> str:
+        """Store one fixture part and return an S3-shaped ETag."""
+
+        if part_number < 1:
+            raise ValueError("part_number must be positive")
+        session = self._multipart_uploads[upload_id]
+        if session["bucket"] != self._bucket_name(bucket) or session["key"] != self._full_key(project_id, key):
+            raise ValueError("multipart session does not match the requested object")
+        payload = bytes(data)
+        etag = hashlib.md5(payload).hexdigest()  # noqa: S324 - fixture ETag only
+        session["parts"][part_number] = (etag, payload)
+        return f'"{etag}"'
+
+    async def complete_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+        *,
+        bucket: str | None = None,
+    ) -> None:
+        """Assemble fixture parts only when their ETags and order match."""
+
+        session = self._multipart_uploads[upload_id]
+        if session["bucket"] != self._bucket_name(bucket) or session["key"] != self._full_key(project_id, key):
+            raise ValueError("multipart session does not match the requested object")
+        expected_numbers = list(range(1, len(parts) + 1))
+        actual_numbers = [int(part["PartNumber"]) for part in parts]
+        if actual_numbers != expected_numbers:
+            raise ValueError("multipart parts must be contiguous and ordered")
+        payloads: list[bytes] = []
+        for part in parts:
+            number = int(part["PartNumber"])
+            expected_etag, payload = session["parts"][number]
+            if str(part["ETag"]).strip('"') != expected_etag:
+                raise ValueError("multipart ETag mismatch")
+            payloads.append(payload)
+        self._objects[(session["bucket"], session["key"])] = (
+            b"".join(payloads),
+            session["content_type"],
+        )
+        self._multipart_uploads.pop(upload_id, None)
+
+    async def abort_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        *,
+        bucket: str | None = None,
+    ) -> None:
+        """Discard a fixture multipart session without creating an object."""
+
+        session = self._multipart_uploads.get(upload_id)
+        if session is None:
+            return
+        if session["bucket"] != self._bucket_name(bucket) or session["key"] != self._full_key(project_id, key):
+            raise ValueError("multipart session does not match the requested object")
+        self._multipart_uploads.pop(upload_id, None)
 
     async def download(self, ref: BlobRef) -> bytes:
         payload, _content_type = self._objects[(ref.bucket, ref.key)]

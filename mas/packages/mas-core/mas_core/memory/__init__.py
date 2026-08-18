@@ -61,6 +61,16 @@ from mas_core.memory.object_store_migration import (
     ObjectStoreCopyReport,
     verify_and_copy_blobs,
 )
+from mas_core.memory.object_store_multipart import (
+    MAX_MULTIPART_PARTS,
+    MAX_MULTIPART_PAYLOAD_BYTES,
+    MIN_PART_SIZE_BYTES,
+    OBJECT_STORE_MULTIPART_SCHEMA,
+    MultipartObjectStoreAdapter,
+    MultipartUploadConfig,
+    MultipartUploadReport,
+    run_object_store_multipart_probe,
+)
 from mas_core.memory.object_store_rollout import (
     OBJECT_STORE_MIGRATION_SCHEMA,
     DualWriteRecord,
@@ -87,6 +97,14 @@ __all__ = [
     "ObjectStoreCopyCase",
     "ObjectStoreCopyReport",
     "verify_and_copy_blobs",
+    "MAX_MULTIPART_PARTS",
+    "MAX_MULTIPART_PAYLOAD_BYTES",
+    "MIN_PART_SIZE_BYTES",
+    "OBJECT_STORE_MULTIPART_SCHEMA",
+    "MultipartObjectStoreAdapter",
+    "MultipartUploadConfig",
+    "MultipartUploadReport",
+    "run_object_store_multipart_probe",
     "ENCRYPTION_ALGORITHM",
     "OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA",
     "OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA",
