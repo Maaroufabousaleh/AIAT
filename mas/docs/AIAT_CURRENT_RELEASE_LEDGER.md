@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `c0e07f210ee843cd946dcb3791b22c215cd5252b` (latest grouped verification revision)
+**Base revision:** `c20994ed507d254a96723337f523538140acee4e` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -36,9 +36,9 @@ raw-provider composition mode with durable provider-message worker/trace
 correlation.
 The current
 retained release-environment manifest reports revision
-`c0e07f210ee843cd946dcb3791b22c215cd5252b`, two changed pre-existing memory
+`c20994ed507d254a96723337f523538140acee4e`, two changed pre-existing memory
 files, and digest
-`acdc55b42a1b0eff4ec62ee6874aa0a1f26232dbcecd73bc68a8cb0abeb14b64`.
+`2ad6f29070480c71dcd9a32ccbab65ccdd097c1a50a07d4fd161213ea30a3b1d`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -83,7 +83,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Bounded security scanner adapters | static/unit/tool-service | PASS | Contract `fc528a8`; implementation hardening `5b830e9`; tools SDK alias/trace group `965ba38`; `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py packages/mas-tools-sdk/tests/test_smoke.py -q`; `uv run --isolated python scripts/check_security_adapters.py --json`; `security.scan` accepts `semgrep`, `skillspector`, and `trufflehog` compatibility aliases, routes each through the configured sandbox adapter with bounded output, and preserves the same audit/grant/rate/approval boundary |
 | Document ingest fallback | static/unit/tool-service | PASS | `uv run --isolated pytest apps/tool-service/tests/test_default_shipped_tool_catalog.py -q`; `document.ingest` invokes Docling when installed and otherwise returns usable source text with `available: true`, `configured: true`, `degraded: true`, and `backend: plain_text_fallback`; this does not claim Docling installation or external adapter certification |
 | Optional licence metadata stage | unit/regression | PASS | `test_license_metadata_stage_can_be_skipped` proves `SOURCE_REVIEW` can move directly to `SECURITY_REVIEW`; the compatibility `LICENSE_REVIEW` label is optional metadata and cannot block or delay normal internal use |
-| Release environment manifest | static/reproducibility | PASS | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with the current revision, thirteen release-input hashes covering operator pins, security evidence, worker manifests, and the prior inputs, tool identities, environment-presence flags, and deterministic digest `acdc55b42a1b0eff4ec62ee6874aa0a1f26232dbcecd73bc68a8cb0abeb14b64` without values or credentials; current WSL evidence records 2 changed pre-existing memory paths, 5/6 tools available, and 0 configured optional inputs; dirty state remains a release decision reason |
+| Release environment manifest | static/reproducibility | PASS | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with the current revision, thirteen release-input hashes covering operator pins, security evidence, worker manifests, and the prior inputs, tool identities, environment-presence flags, and deterministic digest `2ad6f29070480c71dcd9a32ccbab65ccdd097c1a50a07d4fd161213ea30a3b1d` without values or credentials; current WSL evidence records 2 changed pre-existing memory paths, 5/6 tools available, and 0 configured optional inputs; dirty state remains a release decision reason |
 | Native release-host preflight | static host/deployment prerequisite | BLOCKED (current local WSL2 host) | The opt-in `uv run --isolated python scripts/check_release_environment.py --require-native-linux --json` preflight fails closed unless the host is native Linux, Docker/Compose v2 and `runsc` are available, the tree is clean, and all ten deployment image refs are digest-pinned. The current run is retained at [`provenance/native_release_preflight.json`](provenance/native_release_preflight.json): WSL2, no registered `runsc`, dirty tree, and zero configured immutable image refs. This diagnostic does not replace native network, image/SBOM, scan, recovery, or provider evidence; licence metadata remains non-gating |
 | Operator runtime/CLI pin contract | static/source | PASS | Checker/test group `dd857ae`; `uv run --isolated python scripts/check_operator_pins.py --json` verifies nine exact production tool/dependency pins and records seven host/optional/deployment capabilities as explicitly unavailable until exact identities are supplied; this technical check is independent of licence metadata |
 | Backend and team-runner regression suite | unit/integration | PASS | `uv run --isolated pytest packages/mas-core/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests -q` |
