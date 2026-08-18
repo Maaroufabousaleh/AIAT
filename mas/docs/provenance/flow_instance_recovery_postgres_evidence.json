@@ -1,0 +1,49 @@
+{
+  "checks": {
+    "cancelled_retry_preserves_history": {
+      "status": "pass"
+    },
+    "connection_reopen_reads_all_instances": {
+      "status": "pass"
+    },
+    "connection_reopen_reads_execution_history": {
+      "status": "pass"
+    },
+    "retry_preserves_superseded_history": {
+      "status": "pass"
+    },
+    "switch_preserves_context_and_resets_execution": {
+      "status": "pass"
+    }
+  },
+  "cleanup": {
+    "companies": 1,
+    "flow_instances": 3,
+    "flow_node_executions": 2,
+    "flows": 2,
+    "projects": 3
+  },
+  "contract_commit": "1f20132a4d6445f49484d84a7c592eff26a4c2ec",
+  "expected_migration": "0042_worker_run_host_binding",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "failed_checks": [],
+  "licence_metadata_is_gate": false,
+  "local_database_access_performed": true,
+  "migration_version": "0042_worker_run_host_binding",
+  "mode": "local-postgres-flow-instance-recovery",
+  "mutation_performed": true,
+  "observed_at": "2026-08-18T10:07:33Z",
+  "remaining": {
+    "companies": 0,
+    "executions": 0,
+    "flows": 0,
+    "instances": 0,
+    "projects": 0
+  },
+  "reopened_connection": true,
+  "schema_version": "aiat.flow-instance-recovery-postgres-certification.v1",
+  "scope": "reserved local Postgres flow-instance recovery; payload-free status and counts only",
+  "status": "pass",
+  "worker_dispatch_performed": false
+}

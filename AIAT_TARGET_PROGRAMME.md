@@ -1706,6 +1706,11 @@ All project documentation available in the reviewed workspace was read and used 
   none is a worker canary or full live-run certificate.
 - `mas/scripts/check_flow_instance_recovery.py` — guarded flow-instance
   status/history and explicitly confirmed recovery-action evidence boundary.
+- `mas/scripts/check_flow_instance_recovery_postgres.py` and
+  `mas/docs/provenance/flow_instance_recovery_postgres_evidence.json` — local
+  Postgres retry-history, flow-switch/context, cancelled-retry, connection
+  reopen, and scoped-cleanup certificate; native/live worker, provider, audit,
+  watchdog, and UI recovery remain separate gates.
 - `mas/scripts/check_runtime_compatibility.py` and
   `mas/docs/provenance/runtime_compatibility.yaml` — exact optional
   Microsoft Agent Framework/MCP compatibility lock and non-mutating activation

@@ -229,8 +229,10 @@ external client-language SDK compatibility yet.
 - [x] Make flow retry evidence-preserving: prior node executions are marked
   `SUPERSEDED` rather than deleted, including the no-safe-node storage
   fallback; the new retry attempt becomes the only traversal authority, and
-  original inputs/outputs/errors/timestamps remain queryable. Native DB and
-  live failure/recovery proof remain open.
+  original inputs/outputs/errors/timestamps remain queryable. The local
+  Postgres certificate (`1f20132`) reopens the database and verifies retry,
+  switch/context, cancelled retry, and scoped cleanup; native release-host,
+  worker/provider, audit-authority, and live failure/recovery proof remain open.
 - [x] Add `aiat.workflow-watchdog-recovery.v1` deterministic evidence for boot
   grace, downtime-aware watchdog timeout, universal failure transition,
   recorded-safe-state retry, terminal-state exclusion, explicit human
