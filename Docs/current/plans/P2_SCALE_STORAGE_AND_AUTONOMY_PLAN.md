@@ -84,18 +84,21 @@
   placement/capacity scheduler, real host-loss or split-brain proof, or
   gVisor/Firecracker host certification.
 - [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
-  checker with host health/lease, labels, capabilities, sandbox/isolation,
-  slot/memory/GPU capacity, priority ordering, and duplicate-ID rejection
-  (`db22e60`; evidence at
+  checker with host-plane isolation, host health/lease, labels, capabilities,
+  sandbox/isolation, slot/memory/GPU capacity, priority ordering, and
+  duplicate-ID rejection (`3fb15db`, building on `db22e60`; evidence at
   [`worker_placement_contract.json`](../../../mas/docs/provenance/worker_placement_contract.json)).
   This is a pure read-only contract; scheduler settlement is covered by
   `d9917f8`, and host fencing/recovery is covered by `72e59ec`.
 - [x] Add the durable authenticated worker-host registry and heartbeat lease
-  boundary through migration `0037_worker_host_registry` (`500fc57`). The
+  boundary through migration `0037_worker_host_registry` (`500fc57`), then
+  persist explicit `control`, `tool`, `data`, and `worker` host planes through
+  migration `0041_worker_host_planes` (`3fb15db`). The
   Postgres certificate at
   [`worker_host_registry_postgres_evidence.json`](../../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)
   proves token-digest registration, wrong-token rejection, AIAT-owned lease
-  renewal, redacted public projections, placement snapshot read-back after
+  renewal, redacted public projections, placement snapshot and worker-plane
+  read-back after
   connection reopen, expired-lease visibility, and scoped cleanup. Durable
   capacity reservation/commit is covered separately below; host fencing and
   recovery are covered by `72e59ec`; scheduler integration is covered by
@@ -119,9 +122,12 @@
   Re-registration fences stale heartbeats and old reservations; expired-host
   reconciliation marks the host OFFLINE, advances its generation, expires
   current reservations, and excludes it from placement after reopen.
-- [ ] Separate control/tool/data hosts from worker pools and prove live worker
-  dispatch, multi-host Firecracker/gVisor operation, and provider-backed
-  recovery.
+- [x] Persist explicit `control`, `tool`, `data`, and `worker` host planes and
+  make worker placement fail closed on non-worker planes through migration
+  `0041_worker_host_planes` (`3fb15db`; host-plane/placement evidence is
+  retained in the worker-host and placement certificates).
+- [ ] Prove live dispatch on the worker plane, multi-host Firecracker/gVisor
+  operation, and provider-backed recovery.
 - Certify gVisor across supported hosts.
 - Add Firecracker worker pools for high-risk tasks with image/rootfs, network, secrets, artifact, and cleanup controls.
 - [x] Prove durable in-flight shell/adapter/skill-bundle/steward version

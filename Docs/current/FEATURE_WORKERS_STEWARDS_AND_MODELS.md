@@ -48,18 +48,23 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   dispatch, host-loss recovery, and multi-host execution remain separate.
 - `mas_core.worker_registry.placement` and `scripts/check_worker_placement.py`
   define the deterministic `aiat.worker-placement.v1` predicate. It filters
-  unready or expired hosts, enforces labels/capabilities/sandbox/isolation and
-  slot/memory/GPU capacity, chooses deterministically by priority and remaining
-  capacity, and fails closed on duplicate host IDs. The contract is pure and
-  non-mutating; durable capacity reservation/settlement is provided by the
-  host-reservation ledger below, and `HostScheduler` connects the registry,
-  placement predicate, and row-locked ledger for deterministic multi-host
-  selection/fallback without dispatch.
+  unready or expired hosts, enforces the worker host plane plus
+  labels/capabilities/sandbox/isolation and slot/memory/GPU capacity, chooses
+  deterministically by priority and remaining capacity, and fails closed on
+  duplicate host IDs. The contract is pure and non-mutating; durable capacity
+  reservation/settlement is provided by the host-reservation ledger below,
+  and `HostScheduler` connects the registry, placement predicate, and
+  row-locked ledger for deterministic multi-host selection/fallback without
+  dispatch.
 - `mas_core.worker_registry.host_registry.WorkerHostRegistry` and
   `scripts/check_worker_host_registry_postgres.py` now provide the durable
   `aiat.worker-host-registry.v1` boundary. Registration authenticates a host
   with a token digest, heartbeat renews an AIAT-owned lease, public rows redact
   credential material, and placement snapshots survive connection reopen.
+  Migration `0041_worker_host_planes` persists an explicit `control`, `tool`,
+  `data`, or `worker` plane; worker placement defaults to and fails closed on
+  the `worker` plane, so control/tool/data hosts cannot satisfy a worker-run
+  request accidentally.
   Capacity reservation/commit/expiry is provided by
   `mas_core.worker_registry.host_reservations.HostCapacityReservationLedger`
   and its Postgres checker; `mas_core.worker_registry.host_scheduler.HostScheduler`
@@ -499,13 +504,16 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   the active bundle under the worker-row lock and validates ownership; live
   dispatch and full multi-host rollout/version evidence remain separate gates.
 - [x] Define the deterministic `aiat.worker-placement.v1` policy and fixture
-  checker (`db22e60`) for host health/lease, labels, capabilities,
-  sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection.
+  checker with host-plane isolation, host health/lease, labels, capabilities,
+  sandbox/isolation, capacity, priority ordering, and duplicate-ID rejection
+  (`3fb15db`, building on `db22e60`; evidence at
+  [`worker_placement_contract.json`](../../mas/docs/provenance/worker_placement_contract.json)).
   It is a pure read-only contract; scheduler settlement is covered by
   `d9917f8`, and host fencing/recovery is covered by `72e59ec`.
 - [x] Add durable authenticated host registration, heartbeat lease renewal,
   redacted public host projections, and placement snapshot read-back through
-  migration `0037_worker_host_registry` (`500fc57`; evidence at
+  migration `0037_worker_host_registry` (`500fc57`), then persist explicit
+  host planes through migration `0041_worker_host_planes` (`3fb15db`; evidence at
   [`worker_host_registry_postgres_evidence.json`](../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)).
   Host fencing and recovery are covered by `72e59ec`; scheduler integration is
   covered by `d9917f8`.

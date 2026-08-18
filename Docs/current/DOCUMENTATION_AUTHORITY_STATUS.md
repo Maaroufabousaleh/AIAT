@@ -245,26 +245,28 @@ snapshots the active bundle under the worker-row lock and validates worker /
 steward ownership. Multi-host execution and live dispatch remain separate;
 licence metadata remains informational and non-gating.
 
-The deterministic placement group `db22e60` adds the maintained
+The deterministic placement group `db22e60`, extended by `3fb15db`, adds the maintained
 [`worker_placement_contract.json`](../../mas/docs/provenance/worker_placement_contract.json)
 certificate and the `aiat.worker-placement.v1` policy module. Its pure
-predicate filters explicit host snapshots by readiness/lease, labels,
-capabilities, sandbox/isolation, and slot/memory/GPU capacity, applies stable
-priority/free-capacity ordering, and rejects duplicate host IDs without
-mutation or dispatch. The multi-host scheduler certificate `d9917f8` below
-connects this predicate to the durable reservation ledger; host-loss/
-split-brain, worker dispatch, and Firecracker evidence remain separate;
+predicate filters explicit host snapshots by worker-plane identity,
+readiness/lease, labels, capabilities, sandbox/isolation, and slot/memory/GPU
+capacity, applies stable priority/free-capacity ordering, and rejects duplicate
+host IDs without mutation or dispatch. Migration `0041_worker_host_planes`
+rejects control/tool/data hosts with an explicit `host_plane_mismatch` decision.
+The multi-host scheduler certificate `d9917f8` below connects this predicate to
+the durable reservation ledger; host-loss/split-brain, worker dispatch, and
+Firecracker evidence remain separate;
 licence metadata remains informational and non-gating.
 
-The durable host-registry group `500fc57` adds migration
-`0037_worker_host_registry` and the maintained
+The durable host-registry group `500fc57`, extended by `3fb15db`, adds migration
+`0037_worker_host_registry` and `0041_worker_host_planes` plus the maintained
 [`worker_host_registry_postgres_evidence.json`](../../mas/docs/provenance/worker_host_registry_postgres_evidence.json)
 certificate. It proves token-digest registration, wrong-token rejection,
 heartbeat lease renewal, credential-redacted public projections, placement
-snapshot read-back after connection reopen, and expired-lease visibility with
-scoped cleanup. The current host projection includes a durable lease
-generation; fencing and recovery are certified by `72e59ec` below. Licence
-metadata remains informational and non-gating.
+snapshot and worker-plane read-back after connection reopen, and expired-lease
+visibility with scoped cleanup. The current host projection includes a durable
+host plane and lease generation; fencing and recovery are certified by `72e59ec`
+below. Licence metadata remains informational and non-gating.
 
 The durable host-reservation group `232c0bb` adds migration
 `0038_worker_host_reservations` and the maintained

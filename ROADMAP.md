@@ -494,8 +494,8 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Worker readiness health-read hardening | [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py), [`test_check_worker_run_readiness.py`](mas/scripts/tests/test_check_worker_run_readiness.py), and commits `2eea80a`, `dac268c` |
 | Durable worker-run lease/recovery evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_lease_recovery_postgres.py`](mas/scripts/check_worker_lease_recovery_postgres.py), [`test_check_worker_lease_recovery_postgres.py`](mas/scripts/tests/test_check_worker_lease_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_lease_recovery_postgres_evidence.json) |
 | Durable in-flight worker-version pinning (shell/adapter/skill-bundle/steward) | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), migration [`0040_worker_run_skill_bundle_pin`](mas/migrations/versions/0040_worker_run_skill_bundle_pin.py), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json) |
-| Deterministic worker placement policy | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`placement.py`](mas/packages/mas-core/mas_core/worker_registry/placement.py), [`check_worker_placement.py`](mas/scripts/check_worker_placement.py), [local evidence](mas/docs/provenance/worker_placement_contract.json) |
-| Durable authenticated worker-host registry | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_registry.py`](mas/packages/mas-core/mas_core/worker_registry/host_registry.py), [`0037_worker_host_registry.py`](mas/migrations/versions/0037_worker_host_registry.py), [`check_worker_host_registry_postgres.py`](mas/scripts/check_worker_host_registry_postgres.py), [local evidence](mas/docs/provenance/worker_host_registry_postgres_evidence.json) |
+| Deterministic worker placement policy with host-plane isolation | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`placement.py`](mas/packages/mas-core/mas_core/worker_registry/placement.py), [`check_worker_placement.py`](mas/scripts/check_worker_placement.py), migration [`0041_worker_host_planes`](mas/migrations/versions/0041_worker_host_planes.py), [local evidence](mas/docs/provenance/worker_placement_contract.json) |
+| Durable authenticated worker-host registry with host-plane persistence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_registry.py`](mas/packages/mas-core/mas_core/worker_registry/host_registry.py), migrations [`0037_worker_host_registry`](mas/migrations/versions/0037_worker_host_registry.py) and [`0041_worker_host_planes`](mas/migrations/versions/0041_worker_host_planes.py), [`check_worker_host_registry_postgres.py`](mas/scripts/check_worker_host_registry_postgres.py), [local evidence](mas/docs/provenance/worker_host_registry_postgres_evidence.json) |
 | Durable worker-host capacity reservations | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_reservations.py`](mas/packages/mas-core/mas_core/worker_registry/host_reservations.py), [`0038_worker_host_reservations.py`](mas/migrations/versions/0038_worker_host_reservations.py), [`check_worker_host_reservations_postgres.py`](mas/scripts/check_worker_host_reservations_postgres.py), [local evidence](mas/docs/provenance/worker_host_reservations_postgres_evidence.json) |
 | Durable worker-host multi-host scheduler | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_scheduler.py`](mas/packages/mas-core/mas_core/worker_registry/host_scheduler.py), [`check_worker_host_scheduler_postgres.py`](mas/scripts/check_worker_host_scheduler_postgres.py), [local evidence](mas/docs/provenance/worker_host_scheduler_postgres_evidence.json) |
 | Durable worker-host fencing and expired-host recovery | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_recovery.py`](mas/packages/mas-core/mas_core/worker_registry/host_recovery.py), [`0039_worker_host_fencing.py`](mas/migrations/versions/0039_worker_host_fencing.py), [`check_worker_host_recovery_postgres.py`](mas/scripts/check_worker_host_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_host_recovery_postgres_evidence.json) |
@@ -1281,6 +1281,13 @@ proves shell, adapter, skill-bundle, and steward read-back across a registry
 advance and connection reopen. Live worker dispatch and multi-host execution
 remain open.
 
+`3fb15db` adds migration `0041_worker_host_planes` and carries the host-plane
+contract through durable registration, public placement snapshots, and the
+pure placement predicate. Worker requests require the `worker` plane by
+default; `control`, `tool`, and `data` hosts are rejected with an explicit
+`host_plane_mismatch` decision. This closes the metadata/policy separation
+boundary only; live worker dispatch and sandbox/provider recovery remain open.
+
 **Progress:** the provider-neutral `aiat.object-store-conformance.v1` fixture
 and offline report command pass against the deterministic in-memory adapter.
 The `aiat.object-store-copy.v1` helper also verifies explicit source/target
@@ -1412,6 +1419,11 @@ certificate is retained at
 [`worker_version_pinning_postgres_evidence.json`](mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
 Multi-host version evidence, live dispatch, and provider/sandbox recovery
 remain open.
+`3fb15db` carries the worker-plane boundary into the maintained placement and
+host-registry certificates through migration `0041_worker_host_planes`.
+Control, tool, and data hosts are represented explicitly but rejected by the
+worker placement predicate; live dispatch, multi-host sandbox execution, and
+provider-backed recovery remain open.
 Commit `85369fe` adds the shared `aiat.mail-edge-observation.v1` and
 `aiat.mail-edge-coverage.v1` contracts plus
 [`check_mail_edge_observations.py`](mas/scripts/check_mail_edge_observations.py).
@@ -1835,8 +1847,9 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
 3. [x] Certify the bounded local Postgres worker lease/recovery boundary
    (`a413997`), shell/adapter/skill-bundle/steward in-flight version pinning
    (`6a10b0e`, building on `dbf6d10`/`8bb0a91`), deterministic placement policy
-   (`db22e60`), authenticated durable host registration/heartbeat lease state
-   (`500fc57`), host capacity reservation/settlement (`232c0bb`), canonical
+   (`db22e60`, extended with worker-plane isolation by `3fb15db`), authenticated
+   durable host registration/heartbeat lease state (`500fc57`, host-plane
+   persistence by `3fb15db`), host capacity reservation/settlement (`232c0bb`), canonical
    multi-host selection/scheduling (`d9917f8`), and durable host
    fencing/recovery (`72e59ec`); [ ] prove live worker dispatch, provider/
    sandbox recovery, and Firecracker worker pools.
