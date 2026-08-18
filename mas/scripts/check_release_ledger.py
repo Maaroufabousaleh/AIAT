@@ -4,8 +4,9 @@ The checker runs the existing bounded verifiers listed in
 ``docs/provenance/release_ledger.yaml``. It does not replace their individual
 contracts, and it never upgrades missing live evidence into a pass. The
 default profile is suitable for CI and evaluates static/fixture evidence;
-``--live`` adds every configured live probe and classifies unavailable Docker,
-provider, or API state as ``blocked``.
+``--live`` runs every configured live probe or validates an explicitly
+registered retained live-evidence certificate, classifying unavailable Docker,
+provider, API, or evidence state as ``blocked``.
 
 Each child verifier is bounded by a timeout (60 seconds for live checks by
 default, 120 seconds for static checks). Operators may override the bound with
@@ -58,6 +59,8 @@ class CheckSpec:
     script: str
     args: tuple[str, ...]
     live_args: tuple[str, ...] = ()
+    retained_evidence_path: str = ""
+    retained_evidence_schema: str = ""
 
 
 def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[CheckSpec]]:
@@ -78,6 +81,19 @@ def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[C
         script_path = (MAS_ROOT / script).resolve()
         if MAS_ROOT not in script_path.parents or script_path.suffix != ".py":
             raise ValueError(f"release ledger script escapes repository: {script}")
+        retained = row.get("retained_live_evidence") or {}
+        if retained and not isinstance(retained, dict):
+            raise ValueError("retained_live_evidence must be a mapping")
+        retained_path = str(retained.get("path") or "").strip()
+        retained_schema = str(retained.get("schema_version") or "").strip()
+        if retained_path:
+            evidence_path = (MAS_ROOT / retained_path).resolve()
+            if MAS_ROOT not in evidence_path.parents or evidence_path.suffix != ".json":
+                raise ValueError(f"release ledger evidence escapes repository: {retained_path}")
+            if not retained_schema:
+                raise ValueError("retained live evidence must declare schema_version")
+            if not tuple(str(value) for value in row.get("live_args") or []):
+                raise ValueError("retained live evidence requires a live_args entry")
         seen.add(check_id)
         checks.append(
             CheckSpec(
@@ -86,6 +102,8 @@ def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[C
                 script=script,
                 args=tuple(str(value) for value in row.get("args") or []),
                 live_args=tuple(str(value) for value in row.get("live_args") or []),
+                retained_evidence_path=retained_path,
+                retained_evidence_schema=retained_schema,
             )
         )
     if not checks:
@@ -325,6 +343,164 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
     return _redact(summary)
 
 
+def _retained_provider_rows(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Normalize the two provider shapes used by retained object-store evidence."""
+
+    raw = payload.get("providers")
+    if isinstance(raw, dict):
+        rows: list[dict[str, Any]] = []
+        for name, value in raw.items():
+            if not isinstance(value, dict):
+                return None
+            rows.append({"name": str(name), **value})
+        return rows
+    if isinstance(raw, list):
+        rows = []
+        for value in raw:
+            if not isinstance(value, dict):
+                return None
+            name = value.get("name", value.get("provider"))
+            if not isinstance(name, str) or not name.strip():
+                return None
+            rows.append({"name": name, **value})
+        return rows
+    return None
+
+
+def _validate_retained_live_evidence(spec: CheckSpec) -> tuple[str, str, dict[str, Any] | None]:
+    """Validate a reviewed live certificate without retaining its raw payload in the ledger."""
+
+    evidence_path = (MAS_ROOT / spec.retained_evidence_path).resolve()
+    try:
+        raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return "blocked", f"retained live evidence is unavailable: {type(exc).__name__}", None
+    if not isinstance(raw, dict):
+        return "blocked", "retained live evidence must be a JSON object", None
+
+    status = str(raw.get("status") or "").lower()
+    if status == "blocked":
+        return "blocked", "retained live evidence is blocked", raw
+    if status in {"fail", "failed", "error"}:
+        return "fail", "retained live evidence records a failure", raw
+    if status != "pass":
+        return "fail", "retained live evidence has no passing status", raw
+
+    problems: list[str] = []
+    if raw.get("schema_version") != spec.retained_evidence_schema:
+        problems.append("schema version does not match the registered evidence contract")
+    mode = str(raw.get("mode") or "").lower()
+    if "live" not in mode:
+        problems.append("evidence mode is not live")
+    if not isinstance(raw.get("evidence_commit"), str) or not raw["evidence_commit"].strip():
+        problems.append("evidence commit is missing")
+    observed_at = raw.get("observed_at")
+    if not isinstance(observed_at, str) or not observed_at.strip():
+        problems.append("observed_at is missing")
+    else:
+        try:
+            datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            problems.append("observed_at is not an ISO timestamp")
+    if raw.get("payload_free") is not True:
+        problems.append("payload_free must be true")
+    if raw.get("secret_free") is not True:
+        problems.append("secret_free must be true")
+    if raw.get("licence_metadata_is_gate") not in {False, None}:
+        problems.append("licence metadata must remain non-gating")
+
+    provider_rows = _retained_provider_rows(raw)
+    if provider_rows is None:
+        problems.append("provider results are missing or malformed")
+    else:
+        names = [str(row.get("name")) for row in provider_rows]
+        if len(names) != 2 or set(names) != {"minio", "seaweedfs"}:
+            problems.append("evidence must cover exactly MinIO and SeaweedFS")
+        for row in provider_rows:
+            if row.get("status") != "pass":
+                problems.append(f"{row.get('name', 'provider')} did not pass")
+                continue
+            if row.get("error_count", 0) != 0:
+                problems.append(f"{row.get('name', 'provider')} reported errors")
+
+    if spec.check_id == "object_store_resource_profile":
+        if raw.get("invalid_run_excluded") is not True:
+            problems.append("the invalid harness run is not explicitly excluded")
+        for row in provider_rows or []:
+            if row.get("measurement_source") != "procfs":
+                problems.append(f"{row.get('name', 'provider')} lacks procfs measurements")
+            if row.get("checksum_readback") != "checked":
+                problems.append(f"{row.get('name', 'provider')} lacks checksum read-back")
+            if row.get("cleanup_verified") is not True:
+                problems.append(f"{row.get('name', 'provider')} cleanup is not verified")
+    elif spec.check_id == "object_store_multipart":
+        for field in ("checksum_readback", "multipart_create_part_complete", "multipart_abort_without_object"):
+            if raw.get(field) != "checked":
+                problems.append(f"multipart evidence field {field} is not checked")
+        for row in provider_rows or []:
+            if row.get("abort_verified") is not True:
+                problems.append(f"{row.get('name', 'provider')} abort is not verified")
+            if row.get("cleanup_verified") is not True or row.get("remaining_fixture_count") != 0:
+                problems.append(f"{row.get('name', 'provider')} cleanup is not zero-residue")
+    elif spec.check_id == "object_store_provider_outage":
+        cleanup = raw.get("cleanup")
+        if not isinstance(cleanup, dict) or any(
+            cleanup.get(field) != 0
+            for field in (
+                "provider_containers_remaining",
+                "helper_containers_remaining",
+                "disposable_volumes_remaining",
+                "disposable_networks_created",
+                "canonical_network_residue_aliases",
+            )
+        ):
+            problems.append("outage cleanup is not zero-residue")
+        for row in provider_rows or []:
+            for field in (
+                "process_outage_observed",
+                "restart_verified",
+                "recovery_endpoint_observed",
+                "checksum_readback_verified",
+                "cleanup_verified",
+                "container_removed",
+                "disposable_storage_cleanup_verified",
+            ):
+                if row.get(field) is not True:
+                    problems.append(f"{row.get('name', 'provider')} {field} is not verified")
+            if (
+                row.get("recovery_readback_verified") is not True
+                and row.get("checksum_readback_verified") is not True
+            ):
+                problems.append(f"{row.get('name', 'provider')} recovery read-back is not verified")
+
+    if problems:
+        return "fail", "; ".join(dict.fromkeys(problems)), raw
+    return "pass", "retained live evidence validated", raw
+
+
+def _run_retained_live_evidence(spec: CheckSpec) -> dict[str, Any]:
+    status, reason, payload = _validate_retained_live_evidence(spec)
+    summary = _safe_summary(payload, "", "") if payload is not None else {}
+    summary.update(
+        {
+            "evidence_mode": "retained-live",
+            "evidence_ref": spec.retained_evidence_path,
+            "evidence_schema": spec.retained_evidence_schema,
+            "reason": reason,
+        }
+    )
+    return {
+        "id": f"{spec.check_id}:live",
+        "base_id": spec.check_id,
+        "category": spec.category,
+        "mode": "live",
+        "status": status,
+        "exit_code": {"pass": 0, "blocked": 2, "fail": 1}[status],
+        "pending_evidence_count": 0,
+        "summary": _redact(summary),
+    }
+
+
 def _status_for(returncode: int, payload: dict[str, Any] | None, *, live: bool = False) -> str:
     effective = payload.get("live") if live and isinstance(payload, dict) else payload
     if not isinstance(effective, dict):
@@ -386,6 +562,8 @@ def _run_checks(specs: list[CheckSpec], *, live: bool) -> list[dict[str, Any]]:
 
 
 def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
+    if live and spec.retained_evidence_path:
+        return _run_retained_live_evidence(spec)
     args = spec.live_args if live else spec.args
     command = [sys.executable, spec.script, *args]
     timeout = _check_timeout_seconds(live=live)
