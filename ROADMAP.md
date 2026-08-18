@@ -487,6 +487,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Worker/runtime declaration, persisted-binding reconciliation, run-lifecycle fixture, selected run-readiness preflight, and durable local run evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [`check_worker_reconciliation.py`](mas/scripts/check_worker_reconciliation.py) (static/`--live`), [`check_worker_run_lifecycle.py`](mas/scripts/check_worker_run_lifecycle.py), [`check_worker_run_postgres_evidence.py`](mas/scripts/check_worker_run_postgres_evidence.py), [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py) (fixture/read-only `--live`), [`generate_worker_certification_matrix.py`](mas/scripts/generate_worker_certification_matrix.py), [`test_worker_certification_matrix.py`](mas/packages/mas-core/tests/test_worker_certification_matrix.py), [matrix](mas/docs/provenance/worker_certification_matrix.yaml), [durable evidence](mas/docs/provenance/worker_run_postgres_evidence.json) |
 | Worker readiness health-read hardening | [`check_worker_run_readiness.py`](mas/scripts/check_worker_run_readiness.py), [`test_check_worker_run_readiness.py`](mas/scripts/tests/test_check_worker_run_readiness.py), and commits `2eea80a`, `dac268c` |
 | Durable worker-run lease/recovery evidence | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_lease_recovery_postgres.py`](mas/scripts/check_worker_lease_recovery_postgres.py), [`test_check_worker_lease_recovery_postgres.py`](mas/scripts/tests/test_check_worker_lease_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_lease_recovery_postgres_evidence.json) |
+| Durable in-flight worker-version pinning | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py), [`test_check_worker_version_pinning_postgres.py`](mas/scripts/tests/test_check_worker_version_pinning_postgres.py), [local evidence](mas/docs/provenance/worker_version_pinning_postgres_evidence.json) |
 | Model-profile catalogue dashboard proxy | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py) |
 | Default worker implementation binding matrix | [`check_default_worker_bindings.py`](mas/scripts/check_default_worker_bindings.py), [`test_default_worker_bindings.py`](mas/packages/mas-core/tests/test_default_worker_bindings.py), [worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Default runtime packaging contract | [`check_runtime_install_profile.py`](mas/scripts/check_runtime_install_profile.py), [`pyproject.toml`](mas/apps/orchestrator-api/pyproject.toml), [`uv.lock`](mas/uv.lock), and [orchestrator Dockerfile](mas/infra/docker/Dockerfile.orchestrator-api) |
@@ -1203,6 +1204,13 @@ eight transitions survive connection reopen. This is not a canonical host
 registry, placement/capacity scheduler, real host-loss/split-brain, gVisor, or
 Firecracker certificate.
 
+`dbf6d10` adds the bounded local Postgres in-flight version-pin certificate
+(`8bb0a91` exposes version labels in the report): a `RUNNING` shell-v1 /
+adapter-v1 / steward-v1 run remains pinned after the registry advances to
+shell-v2 / adapter-v2 and a new queued run uses the replacement shell/adapter.
+The current `worker_runs` schema has no `skill_bundle_id`, so complete bundle
+pinning and multi-host version evidence remain open.
+
 **Progress:** the provider-neutral `aiat.object-store-conformance.v1` fixture
 and offline report command pass against the deterministic in-memory adapter.
 The `aiat.object-store-copy.v1` helper also verifies explicit source/target
@@ -1324,6 +1332,15 @@ cleanup leaves zero reserved rows. Its retained evidence is
 This closes only the local queue lease/recovery boundary; host registration,
 placement/capacity, real host-loss/split-brain, gVisor/Firecracker, and live
 worker/provider evidence remain open.
+`dbf6d10` (with report-label follow-up `8bb0a91`) adds
+[`check_worker_version_pinning_postgres.py`](mas/scripts/check_worker_version_pinning_postgres.py):
+one `RUNNING` version-one run remains pinned to its original shell, adapter,
+and steward after the registry advances to version two, while a new queued run
+uses the replacement shell/adapter. The connection-reopened, payload-free
+certificate is retained at
+[`worker_version_pinning_postgres_evidence.json`](mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
+The current schema does not persist a skill-bundle ID on `worker_runs`, so
+complete bundle pinning and multi-host version evidence remain open.
 Commit `85369fe` adds the shared `aiat.mail-edge-observation.v1` and
 `aiat.mail-edge-coverage.v1` contracts plus
 [`check_mail_edge_observations.py`](mas/scripts/check_mail_edge_observations.py).
@@ -1745,8 +1762,10 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    optional routing changes remain separate follow-up work.
 2. Certify optional memory/workflow services only where justified.
 3. [x] Certify the bounded local Postgres worker lease/recovery boundary
-   (`a413997`); [ ] add canonical multi-host host registration, placement and
-   capacity, real host-loss/split-brain proof, and Firecracker worker pools.
+   (`a413997`) and shell/adapter/steward in-flight version pinning
+   (`dbf6d10`, `8bb0a91`); [ ] add canonical multi-host host registration,
+   placement and capacity, complete bundle pinning, real host-loss/split-brain
+   proof, and Firecracker worker pools.
 4. [x] Certify the bounded governed self-improvement lifecycle and exact
    rollback against local Compose Postgres (`10983c8`); [ ] complete the live
    issue/worker/provider/deployment lifecycle and independent recovery proof.

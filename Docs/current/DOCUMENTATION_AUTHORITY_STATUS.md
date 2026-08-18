@@ -233,6 +233,16 @@ placement/capacity, real host-loss/split-brain, gVisor/Firecracker, and live
 worker/provider evidence remain separate. Licence metadata remains
 informational and non-gating.
 
+The durable version-pinning group `dbf6d10` (label-readback follow-up
+`8bb0a91`) adds the maintained local certificate
+[`worker_version_pinning_postgres_evidence.json`](../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
+It proves that a version-one `RUNNING` run retains its shell, adapter, and
+steward references after the registry advances to version two, while a new
+queued run uses the replacement shell/adapter. The current `worker_runs`
+schema does not persist a skill-bundle ID, so complete bundle pinning and
+multi-host version evidence remain separate; licence metadata remains
+informational and non-gating.
+
 The optional Microsoft Agent Framework phase is now reflected in the authority
 set by `b937a89`: the isolated profile pins MAF `1.13.0` with MCP `1.29.0`, the
 real adapter accepts an explicit AIAT client boundary, and the deterministic

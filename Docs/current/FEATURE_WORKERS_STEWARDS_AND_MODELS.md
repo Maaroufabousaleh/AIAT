@@ -25,6 +25,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   connection reopen. The report is payload-free and removes only its reserved
   rows; it does not implement or certify a host registry, placement service,
   real host loss/split-brain behavior, gVisor, or Firecracker.
+- `scripts/check_worker_version_pinning_postgres.py --json` certifies the
+  durable in-flight pin boundary: a `RUNNING` version-one run retains its
+  shell, adapter, and steward references after the mutable registry advances
+  to version two, and a new queued run reads the replacement shell/adapter.
+  The report survives a Postgres connection reopen, is payload-free, and
+  cleans its reserved version/run graph. The current `worker_runs` schema has
+  no `skill_bundle_id` column, so full bundle pinning remains explicitly open.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
@@ -431,6 +438,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   read-back, and scoped cleanup. Canonical host registration, placement,
   multi-host scheduling, real host-loss/split-brain, gVisor, and Firecracker
   evidence remain separate gates.
+- [x] Certify durable in-flight shell/adapter/steward version pinning
+  (`dbf6d10`, label-readback follow-up `8bb0a91`) while the worker registry
+  advances to a replacement version. The current worker-run schema does not
+  persist a skill-bundle ID, so bundle-level pinning and full multi-host
+  rollout/version evidence remain separate gates.
 - [x] Add the read-only `aiat.worker-run-readiness.v1` evaluator and
   `check_worker_run_readiness.py` preflight (`5553b19`). It requires an
   operator-selected worker/project, fails closed on missing activation
