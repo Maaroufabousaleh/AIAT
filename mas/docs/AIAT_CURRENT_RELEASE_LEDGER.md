@@ -1,14 +1,15 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-18
-**Base revision:** `84ec4fff4fadb8b15107589e0e7627a022e3ed39` (latest grouped verification revision)
+**Base revision:** `3e81606f8b647075413baa1224afdce21c5d1cd7` (latest grouped verification revision)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 The latest grouped verification at this revision (2026-08-18) confirms the
 policy-backed network boundary matrix, the durable local Postgres flow-instance
 recovery certificate (`1f20132`), the bounded multi-host duplicate-effect and
-replay certificate (`d45e4dd`), the deterministic workflow-control extension
+replay certificate (`d45e4dd`), the complete governed worker run-version pin
+certificate (`7c1ef74`), the deterministic workflow-control extension
 (`9972b3b`), and the static aggregation at 51/51 checks passing, two pending
 technical evidence items, and a dirty working tree;
 the conservative decision remains
@@ -66,12 +67,13 @@ raw-provider composition mode with durable provider-message worker/trace
 correlation; `1f20132` adds the reserved local Postgres flow-instance recovery
 certificate, `2ad5d4c` records its evidence and target-programme updates, and
 `d45e4dd`/`84ec4ff` extend and document bounded multi-host duplicate-effect
-protection.
+protection, and `7c1ef74`/`3e81606` extend and document complete local
+governed run-version pinning.
 The retained release-environment manifest from the latest unconfigured live
-run reports revision `84ec4fff4fadb8b15107589e0e7627a022e3ed39`, two changed
+run reports revision `3e81606f8b647075413baa1224afdce21c5d1cd7`, two changed
 pre-existing memory files, fifteen tracked inputs (including the boundary
 policy), and digest
-`269bd16fca3565f75841d884a422a9ceaf39df96b208e309d7aa016fe83f9e63`.
+`e9fd48142980e5086481f087749c496da965ec3a59a6bbed77da12fc8a3a212e`.
 
 This ledger replaces reliance on the historical July snapshot for the current
 implementation pass. It records what was actually run and keeps unavailable
@@ -94,8 +96,8 @@ and `cb1c665`, `fcb0f4b`, `7828b48`, `6b0413b`, `140af1c`, `89091c1`, `83e39e6`,
 `b07299b`, `038d5f2`, `85369fe`, `f8829d6`, `b3fca97`, `9a80c6c`, and
 `1d8aed5`, `10983c8`, `a413997`, `dbf6d10`, `8bb0a91`, `db22e60`,
 `500fc57`, `7dfba8c`, `232c0bb`, `d9917f8`, `72e59ec`, `08f1610e`, and
-`3116efe`, `9972b3b`, `02c59fe`, `1f20132`, `2ad5d4c`, `d45e4dd`, and
-`84ec4ff` are
+`3116efe`, `9972b3b`, `02c59fe`, `1f20132`, `2ad5d4c`, `d45e4dd`, `84ec4ff`,
+`7c1ef74`, and `3e81606` are
 also recorded
 in the rows below with separate documentation commits. The focused
 worker-registry policy group `d8cafbb` is recorded below as well; aggregate
