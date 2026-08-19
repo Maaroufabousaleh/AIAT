@@ -207,6 +207,31 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert retention_execution["status"] == "pass"
     assert retention_execution["summary"]["status"] == "pass"
     assert retention_execution["summary"]["project_scope"]["incomplete_mapping_rejected"] is True
+    encryption = next(
+        row for row in report["checks"] if row["id"] == "object_store_encryption"
+    )
+    assert encryption["category"] == "recovery"
+    assert encryption["status"] == "pass"
+    assert encryption["summary"]["encryption_algorithm"] == "AES-256-GCM"
+    assert encryption["summary"]["manifest_secret_free"] is True
+    assert encryption["summary"]["wrong_key_rejected"] is True
+    assert encryption["summary"]["tamper_rejected"] is True
+    assert encryption["summary"]["remaining_fixture_counts"] == {
+        "blocked_restore": 0,
+        "encrypted_backup": 0,
+        "encrypted_restore": 0,
+        "source": 0,
+    }
+    assert "manifest" not in encryption["summary"]
+    clean_restore = next(
+        row for row in report["checks"] if row["id"] == "object_store_clean_environment_restore"
+    )
+    assert clean_restore["category"] == "recovery"
+    assert clean_restore["status"] == "pass"
+    assert clean_restore["summary"]["child_process_distinct"] is True
+    assert clean_restore["summary"]["bundle_removed_after_restore"] is True
+    assert clean_restore["summary"]["payload_free"] is True
+    assert "child_report" not in clean_restore["summary"]
     runtime_profile = next(row for row in report["checks"] if row["id"] == "runtime_install_profile")
     assert runtime_profile["status"] == "pass"
     assert runtime_profile["summary"]["locked_versions"] == {
@@ -249,6 +274,8 @@ def test_release_ledger_redacts_secret_shaped_diagnostics() -> None:
     assert "also-secret" not in rendered
     assert "container_count" in summary["live"]
     assert module._status_for(0, {"status": "pass", "live": {"status": "blocked"}}, live=True) == "blocked"
+    assert module._redact(True, key="secret_free") is True
+    assert module._redact(0, key="credential_count") == 0
 
     native_summary = module._safe_summary(
         {

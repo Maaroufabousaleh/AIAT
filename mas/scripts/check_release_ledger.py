@@ -133,6 +133,11 @@ def _git_metadata() -> dict[str, Any]:
 
 def _redact(value: Any, *, key: str = "") -> Any:
     if _SECRET_KEY_RE.search(key):
+        # Boolean/numeric safety attestations are scalar evidence, not secret
+        # values. Preserve them so release rows can prove payload/secret
+        # boundaries without retaining the underlying material.
+        if isinstance(value, (bool, int, float)) or value is None:
+            return value
         return "[redacted]"
     if isinstance(value, dict):
         return {str(name): _redact(item, key=str(name)) for name, item in value.items()}
@@ -189,6 +194,18 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
         "provider_managed_kms_checked",
         "cleanup_counts",
         "remaining_fixture_counts",
+        "encryption_algorithm",
+        "manifest_secret_free",
+        "plaintext_keys_absent",
+        "wrong_key_rejected",
+        "tamper_rejected",
+        "clean_target_rejected_before_mutation",
+        "provider_managed_sse_or_kms_checked",
+        "bundle_object_count",
+        "bundle_removed_after_restore",
+        "child_process_distinct",
+        "child_return_code",
+        "key_material_retained",
         "worker_cleanup_deleted_counts",
         "remaining_worker_fixture_counts",
         "remaining_identity_fixture_rows",

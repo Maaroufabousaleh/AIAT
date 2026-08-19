@@ -281,6 +281,14 @@ checks:
     category: recovery
     script: scripts/check_object_store_backup_restore.py
     args: [--json]
+  - id: object_store_encryption
+    category: recovery
+    script: scripts/check_object_store_encryption.py
+    args: [--json]
+  - id: object_store_clean_environment_restore
+    category: recovery
+    script: scripts/check_object_store_clean_environment_restore.py
+    args: [--json]
   - id: object_store_migration
     category: recovery
     script: scripts/check_object_store_migration.py
