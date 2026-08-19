@@ -380,12 +380,36 @@ async def _run_sandboxed_process(
             "configured": True,
             "backend": "sandbox_adapter",
         }
+    raw_output = adapter_result.get("stdout")
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_empty_output",
+        }
     try:
-        result = json.loads(adapter_result.get("stdout") or "")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Sandbox adapter returned invalid JSON") from exc
+        result = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_invalid_json",
+        }
     if not isinstance(result, dict):
-        raise RuntimeError("Sandbox adapter response must be a JSON object")
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_invalid_result_shape",
+        }
     result.setdefault("available", True)
     result["configured"] = True
     result["backend"] = "sandbox_adapter"

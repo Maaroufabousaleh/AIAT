@@ -217,6 +217,50 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [
+        ("", "sandbox_adapter_empty_output"),
+        ("not-json", "sandbox_adapter_invalid_json"),
+        ("[]", "sandbox_adapter_invalid_result_shape"),
+    ],
+)
+async def test_command_run_safe_reports_degraded_sandbox_output(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_qa",
+            tool_name="command.run_safe",
+            kwargs={"command": ["pytest", "tests"]},
+        )
+    )
+
+    assert response.success is True
+    assert response.result == {
+        "available": False,
+        "configured": True,
+        "backend": "sandbox_adapter",
+        "sandbox_profile": "gvisor",
+        "degraded": True,
+        "reason": reason,
+    }
+
+
+@pytest.mark.anyio
 async def test_run_process_retains_only_configured_output_limit(tmp_path):
     from tool_service.tools.adapters import _run_process
 
