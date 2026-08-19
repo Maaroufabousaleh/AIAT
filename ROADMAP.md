@@ -1373,6 +1373,10 @@ The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
 `965ba38`. Worker registry registration and authority-bearing updates now
 constrain update-policy values and revalidate persisted capability grants before
 mutation (`d8cafbb`; focused worker configuration coverage 66/66).
+The optional external `code.review` boundary (`10b1af2`) now turns empty,
+malformed, and non-object successful stdout into stable degraded results rather
+than generic registry errors; exact external review identity and representative
+certification remain open.
 provider-specific PM/DevOps adapters still need their own conformance evidence.
 
 Required outcomes:

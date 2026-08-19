@@ -167,6 +167,10 @@ external client-language SDK compatibility yet.
 - [x] Make the credential-free AIAT diff reviewer the default code-review
   adapter and publish a catalogue that keeps generic external candidates
   fail-closed until exact repository/revision/version evidence exists.
+- [x] Bound optional external `code.review` stdout (`10b1af2`): empty,
+  malformed, or non-object JSON now returns an explicit degraded result rather
+  than a generic registry error; external adapter identity and representative
+  review certification remain open.
 - [x] Reconcile the AIAT-owned OpenCode runtime Compose sandbox contract; complete
   upstream OpenCode security disposition/rerun, digest-pinned gVisor smoke and
   network denial, canary, and optional OpenHands core certification remain open.
