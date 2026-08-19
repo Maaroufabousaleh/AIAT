@@ -1,0 +1,188 @@
+schema_version: aiat.optional-memory-services.v1
+programme_scope: personal-internal-only
+policy:
+  default_enabled: false
+  state_authority: aiat
+  project_scope_required: true
+  licence_metadata_is_gate: false
+  activation_requires: explicit_operator_approval_and_technical_evidence
+services:
+  - id: letta
+    display_name: Letta
+    category: long_memory
+    status: candidate
+    default_enabled: false
+    integration_mode: aiat_worker_adapter
+    adapter: mas_core.worker_registry.letta_adapter.LettaAdapter
+    provenance:
+      source_kind: external_runtime
+      version_status: exact_pin_required_before_activation
+      metadata_ref: mas/docs/provenance/third_party_components.yaml
+      licence_metadata_ref: mas/docs/provenance/third_party_components.yaml
+    steward:
+      id: optional-service-letta
+      owner: aiat
+      runtime_tier: external
+      sandbox_profile: gvisor
+      network_mode: egress-deny-all
+    authority_boundary:
+      state_owner: aiat
+      retention_owner: aiat
+      deletion_owner: aiat
+      project_scope_required: true
+      canonical_write_path: aiat_memory_boundary
+    data_boundary:
+      input_scope: approved_project_context_only
+      output_scope: bounded_memory_references_and_scalar_status
+      credentials: opaque_aiat_credential_references_only
+      raw_payload_retention: forbidden
+    measurable_value:
+      baseline: postgres_pgvector
+      metrics:
+        - retrieval_recall_at_k
+        - task_completion_quality
+        - p95_latency_ms
+        - cost_per_successful_task
+      threshold: measurable_improvement_over_baseline_without_authority_duplication
+      budget_owner: aiat
+      stop_condition: no_measured_gain_or_budget_breach
+    conformance:
+      required_checks:
+        - exact_source_and_version
+        - aiat_worker_manifest_and_steward
+        - project_scope_and_retention
+        - sandbox_and_network_negative_matrix
+        - bounded_input_output_contract
+        - health_timeout_and_cleanup
+    outage_recovery:
+      failure_classification: external_runtime_unavailable_or_timeout
+      degraded_mode: fail_closed_to_aiat_canonical_memory
+      recovery_check: restart_reconcile_and_no_duplicate_memory_write
+    backup_restore:
+      backup_scope: aiat_owned_metadata_and_approved_memory_records
+      restore_check: clean_target_checksum_and_scope_reconciliation
+      cleanup_check: disable_then_remove_all_reserved_service_state
+    removal:
+      disable_action: remove_from_default_worker_bindings
+      data_delete_action: aiat_approved_scoped_export_and_delete
+      rollback_check: restore_pgvector_baseline_and_reopen_project_reads
+
+  - id: qdrant
+    display_name: Qdrant
+    category: retrieval_enrichment
+    status: candidate
+    default_enabled: false
+    integration_mode: aiat_bounded_vector_adapter
+    adapter: external_adapter_pending_exact_contract
+    provenance:
+      source_kind: external_service
+      version_status: exact_pin_required_before_activation
+      metadata_ref: mas/docs/provenance/third_party_components.yaml
+      licence_metadata_ref: mas/docs/provenance/third_party_components.yaml
+    steward:
+      id: optional-service-qdrant
+      owner: aiat
+      runtime_tier: external
+      sandbox_profile: gvisor
+      network_mode: egress-allowlist
+    authority_boundary:
+      state_owner: aiat
+      retention_owner: aiat
+      deletion_owner: aiat
+      project_scope_required: true
+      canonical_write_path: aiat_memory_boundary
+    data_boundary:
+      input_scope: project_scoped_embeddings_with_explicit_namespace
+      output_scope: ranked_references_not_canonical_project_state
+      credentials: opaque_aiat_credential_references_only
+      raw_payload_retention: forbidden
+    measurable_value:
+      baseline: postgres_pgvector
+      metrics:
+        - retrieval_recall_at_k
+        - query_p95_latency_ms
+        - index_storage_bytes
+        - cost_per_query
+      threshold: measurable_retrieval_or_latency_gain_within_declared_budget
+      budget_owner: aiat
+      stop_condition: no_measured_gain_or_budget_breach
+    conformance:
+      required_checks:
+        - exact_source_and_version
+        - namespace_and_project_isolation
+        - checksum_or_idempotent_upsert
+        - deletion_and_retention_reconciliation
+        - sandbox_and_network_negative_matrix
+        - outage_timeout_and_cleanup
+    outage_recovery:
+      failure_classification: external_retrieval_service_unavailable_or_timeout
+      degraded_mode: fall_back_to_postgres_pgvector
+      recovery_check: replay_namespace_and_compare_ranked_reference_counts
+    backup_restore:
+      backup_scope: aiat_owned_embedding_manifest_and_source_references
+      restore_check: clean_namespace_rebuild_and_checksum_reconciliation
+      cleanup_check: delete_reserved_collection_and_verify_zero_vectors
+    removal:
+      disable_action: remove_adapter_from_retrieval_policy
+      data_delete_action: export_or_rebuild_from_aiat_source_then_delete_collection
+      rollback_check: restore_pgvector_retrieval_and_compare_scope
+
+  - id: temporal
+    display_name: Temporal
+    category: durable_workflow_execution
+    status: candidate
+    default_enabled: false
+    integration_mode: aiat_workflow_adapter
+    adapter: external_adapter_pending_exact_contract
+    provenance:
+      source_kind: external_service
+      version_status: exact_pin_required_before_activation
+      metadata_ref: mas/docs/provenance/third_party_components.yaml
+      licence_metadata_ref: mas/docs/provenance/third_party_components.yaml
+    steward:
+      id: optional-service-temporal
+      owner: aiat
+      runtime_tier: external
+      sandbox_profile: gvisor
+      network_mode: egress-allowlist
+    authority_boundary:
+      state_owner: aiat
+      retention_owner: aiat
+      deletion_owner: aiat
+      project_scope_required: true
+      canonical_write_path: aiat_workflow_boundary
+    data_boundary:
+      input_scope: aiat_approved_workflow_commands_and_version_pins
+      output_scope: bounded_execution_events_and_aiat_references
+      credentials: opaque_aiat_credential_references_only
+      raw_payload_retention: forbidden
+    measurable_value:
+      baseline: aiat_watchdog_and_worker_run_controller
+      metrics:
+        - durable_resume_success_rate
+        - p95_recovery_latency_ms
+        - duplicate_effect_rate
+        - cost_per_workflow_run
+      threshold: measurable_recovery_gain_without_replacing_aiat_authority
+      budget_owner: aiat
+      stop_condition: no_measured_gain_or_authority_duplication
+    conformance:
+      required_checks:
+        - exact_source_and_version
+        - aiat_workflow_and_worker_run_binding
+        - deterministic_idempotency_and_version_pinning
+        - sandbox_and_network_negative_matrix
+        - outage_recovery_and_replay
+        - backup_restore_and_cleanup
+    outage_recovery:
+      failure_classification: external_workflow_service_unavailable_or_timeout
+      degraded_mode: retain_aiat_controller_and_fail_closed_new_dispatch
+      recovery_check: reconcile_open_runs_without_duplicate_terminal_effects
+    backup_restore:
+      backup_scope: aiat_workflow_definitions_and_scalar_execution_references
+      restore_check: clean_namespace_restore_and_version_reconciliation
+      cleanup_check: terminate_reserved_namespace_and_verify_zero_external_runs
+    removal:
+      disable_action: stop_new_external_workflow_dispatch
+      data_delete_action: reconcile_orphaned_runs_then_delete_reserved_namespace
+      rollback_check: restore_aiat_watchdog_controller_and_replay_safe_state
