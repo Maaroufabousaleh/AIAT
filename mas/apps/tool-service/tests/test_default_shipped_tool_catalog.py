@@ -622,6 +622,40 @@ async def test_diagram_render_does_not_report_success_without_artifact(
 
 
 @pytest.mark.anyio
+async def test_external_code_review_reports_invalid_output_without_raising(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_CODE_REVIEW_COMMAND", "review-adapter")
+
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": "not-json",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="review-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_qa",
+            tool_name="code.review",
+            kwargs={"mode": "diff"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "aiat_code_review"
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == "code_review_invalid_json"
+    assert response.result["review"] is None
+
+
+@pytest.mark.anyio
 async def test_cicd_configure_writes_real_github_actions_workflow(
     make_registry, tmp_path, monkeypatch
 ):

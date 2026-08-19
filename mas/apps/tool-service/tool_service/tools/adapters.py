@@ -179,6 +179,45 @@ def _normalize_diagram_result(
     return result
 
 
+def _decode_code_review_output(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize optional review-process JSON without tripping the registry."""
+    result["configured"] = True
+    if result.get("returncode") != 0:
+        return result
+    raw_output = result.get("stdout")
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_empty_output",
+                "review": None,
+            }
+        )
+        return result
+    try:
+        parsed = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_invalid_json",
+                "review": None,
+            }
+        )
+        return result
+    if not isinstance(parsed, dict):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_invalid_result_shape",
+                "review": None,
+            }
+        )
+        return result
+    result["review"] = parsed
+    return result
+
+
 def _workspace_cwd(project_id: str = "", path: str = ".") -> Path:
     root = _workspace_root()
     if path in ("", "."):
@@ -698,8 +737,7 @@ class CodeReviewTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 120)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
         )
-        if result.get("returncode") == 0 and result.get("stdout"):
-            result["review"] = json.loads(result["stdout"])
+        result = _decode_code_review_output(result)
         result["backend"] = "aiat_code_review"
         return result
 
