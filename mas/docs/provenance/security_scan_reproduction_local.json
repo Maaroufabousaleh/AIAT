@@ -1,0 +1,73 @@
+{
+  "schema_version": "aiat.security-scan-reproduction-local.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-19T00:42:03Z",
+  "source": {
+    "repository": "https://github.com/anomalyco/opencode",
+    "release": "v1.17.13",
+    "commit": "10c894bdeef3618f5666fb506ef7f9491bb964d8",
+    "clone_retained": false
+  },
+  "scanner": {
+    "name": "semgrep",
+    "version": "1.168.0",
+    "mode": "auto-ruleset",
+    "raw_output_retained": false,
+    "result_sha256": "654c4288b395551dda9b765b9a480570e7715f0ee8f2832a3ce9c7b6a75c43c1",
+    "result_bytes": 831023,
+    "external_network_access_performed": true
+  },
+  "status": "findings_review_required",
+  "scan": {
+    "target_file_count": 5062,
+    "finding_count": 316,
+    "severity_counts": {
+      "ERROR": 19,
+      "MEDIUM": 1,
+      "WARNING": 279,
+      "INFO": 17
+    },
+    "rule_counts": {
+      "dockerfile.security.missing-user-entrypoint.missing-user-entrypoint": 1,
+      "dockerfile.security.missing-user.missing-user": 1,
+      "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization": 11,
+      "javascript.express.security.cors-misconfiguration.cors-misconfiguration": 1,
+      "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp": 13,
+      "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal": 261,
+      "javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop": 1,
+      "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true": 3,
+      "javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring": 6,
+      "javascript.lang.security.detect-child-process.detect-child-process": 2,
+      "package_managers.bun.bun-missing-minimum-release-age.bun-missing-minimum-release-age": 1,
+      "problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification": 2,
+      "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell": 7,
+      "yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag": 1,
+      "yaml.github-actions.security.run-shell-injection.run-shell-injection": 5
+    },
+    "scanner_error_count": 55,
+    "scanner_error_status": "observed_parser_or_engine_errors",
+    "rule_total_matches_findings": true
+  },
+  "aiat_boundary_regression": {
+    "status": "pass",
+    "workspace_path_traversal_rejection": "pass",
+    "run_scoped_grant_and_tamper_rejection": "pass",
+    "sandbox_contract": "pass_static",
+    "security_review_register": "pass_contract_but_gate_blocked"
+  },
+  "failure_classification": {
+    "harness_configuration_failure": "not_observed",
+    "provider_functional_failure": "not_applicable_external_source_scan",
+    "provider_resource_limit_failure": "not_tested",
+    "infrastructure_environment_failure": "not_observed",
+    "security_gate_failure": "unresolved_upstream_findings_and_scanner_errors"
+  },
+  "release_boundary": {
+    "technical_gate_status": "blocked",
+    "operator_review_required": true,
+    "activation_or_deployment_mutation": false,
+    "licence_metadata_is_gate": false,
+    "payloads_credentials_source_or_container_logs_retained": false,
+    "scope": "Exact-source reproduction only; this does not certify OpenCode activation, gVisor/Firecracker smoke, worker canary, or deployment security."
+  }
+}
