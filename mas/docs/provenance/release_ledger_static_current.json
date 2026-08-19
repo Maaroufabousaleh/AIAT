@@ -1,0 +1,29 @@
+{
+  "schema_version": "aiat.release-ledger-static-summary.v1",
+  "programme_scope": "personal-internal-only",
+  "evidence_commit": "aa7d2b2",
+  "observed_at": "2026-08-19T04:08:50Z",
+  "profile": "static",
+  "status": "pass",
+  "counts": {
+    "total": 59,
+    "pass": 59,
+    "fail": 0,
+    "blocked": 0
+  },
+  "pending_evidence_count": 2,
+  "release_decision": "NO-RELEASE",
+  "decision_reasons": [
+    "live profile was not included",
+    "2 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "new_registered_checks": [
+    "object_store_lifecycle",
+    "trace_retention_execution"
+  ],
+  "payload_free": true,
+  "secret_free": true,
+  "licence_metadata_is_gate": false,
+  "scope": "scalar release-ledger aggregation; no deployment mutation or credential output"
+}
