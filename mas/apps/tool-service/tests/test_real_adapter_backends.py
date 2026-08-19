@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from tool_service.mcp_client import invoke_mcp_tool
 from tool_service.rate_limiter import RateLimiterPool
 from tool_service.registry import ToolRegistry
 from tool_service.sandbox_runner import execute as execute_sandbox
+from tool_service.sandbox_runner import main as sandbox_main
 from tool_service.tools.adapters import CodeReviewTool
 from tool_service.tools.all_tools import get_all_tools
 
@@ -141,6 +143,21 @@ def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(t
         "available": False,
         "configured": True,
         "reason": "gvisor_container_launch_failed",
+        "sandbox_profile": "gvisor",
+    }
+
+
+def test_sandbox_runner_cli_does_not_emit_raw_request_errors(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["sandbox-runner", "--json-stdin"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not-json"))
+
+    sandbox_main()
+
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": "sandbox_request_invalid",
         "sandbox_profile": "gvisor",
     }
 

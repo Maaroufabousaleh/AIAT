@@ -212,8 +212,27 @@ def main() -> None:
     parser.parse_args()
     try:
         result = execute(_read_payload())
-    except Exception as exc:
-        result = {"available": False, "error": str(exc), "sandbox_profile": "gvisor"}
+    except ValueError:
+        result = {
+            "available": False,
+            "configured": True,
+            "reason": "sandbox_request_invalid",
+            "sandbox_profile": "gvisor",
+        }
+    except (OSError, subprocess.SubprocessError):
+        result = {
+            "available": False,
+            "configured": True,
+            "reason": "sandbox_runtime_error",
+            "sandbox_profile": "gvisor",
+        }
+    except Exception:
+        result = {
+            "available": False,
+            "configured": True,
+            "reason": "sandbox_execution_error",
+            "sandbox_profile": "gvisor",
+        }
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
 
