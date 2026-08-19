@@ -1,0 +1,73 @@
+{
+  "schema_version": "aiat.optional-memory-services-contract.v1",
+  "evidence_commit": "2760c7a",
+  "observed_at": "2026-08-19T02:10:22Z",
+  "mode": "static-candidate-contract",
+  "status": "pass",
+  "catalogue": "mas/docs/provenance/optional_memory_services.yaml",
+  "catalogue_schema_version": "aiat.optional-memory-services.v1",
+  "service_count": 3,
+  "enabled_service_count": 0,
+  "services": [
+    {
+      "id": "letta",
+      "category": "long_memory",
+      "status": "candidate",
+      "default_enabled": false,
+      "integration_mode": "aiat_worker_adapter",
+      "steward_id": "optional-service-letta",
+      "required_conformance_count": 6,
+      "measurable_metric_count": 4,
+      "authority_owner": "aiat",
+      "raw_payload_retention": "forbidden",
+      "removal_defined": true
+    },
+    {
+      "id": "qdrant",
+      "category": "retrieval_enrichment",
+      "status": "candidate",
+      "default_enabled": false,
+      "integration_mode": "aiat_bounded_vector_adapter",
+      "steward_id": "optional-service-qdrant",
+      "required_conformance_count": 6,
+      "measurable_metric_count": 4,
+      "authority_owner": "aiat",
+      "raw_payload_retention": "forbidden",
+      "removal_defined": true
+    },
+    {
+      "id": "temporal",
+      "category": "durable_workflow_execution",
+      "status": "candidate",
+      "default_enabled": false,
+      "integration_mode": "aiat_workflow_adapter",
+      "steward_id": "optional-service-temporal",
+      "required_conformance_count": 6,
+      "measurable_metric_count": 4,
+      "authority_owner": "aiat",
+      "raw_payload_retention": "forbidden",
+      "removal_defined": true
+    }
+  ],
+  "checks": {
+    "static_schema": true,
+    "disabled_by_default": true,
+    "aiat_authority_boundary": true,
+    "project_scope_required": true,
+    "bounded_data_contract": true,
+    "value_metrics_declared": true,
+    "outage_recovery_declared": true,
+    "backup_restore_declared": true,
+    "removal_and_rollback_declared": true,
+    "network_access_performed": false,
+    "mutation_performed": false
+  },
+  "live_value_evidence": "not_run; explicit operator endpoints, version pins, and certified sandboxes are required",
+  "provider_functional_failure": "not observed; no optional provider was contacted",
+  "provider_resource_limit_failure": "not checked",
+  "harness_configuration_failure": "not observed",
+  "infrastructure_environment_failure": "not observed",
+  "payload_free": true,
+  "secret_free": true,
+  "licence_metadata_is_gate": false
+}
