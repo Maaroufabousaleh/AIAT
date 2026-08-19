@@ -2181,6 +2181,13 @@ Required outcomes:
   parity, one human-confirmed trace-scoped delete, held-row preservation, and
   cleanup. Production registry/storage authority, erasure, durable audit,
   provider recovery, and restore rollback remain.
+- [x] harden project-scoped retention execution (`61d2353`): a
+  `project:<id>` scope requires the matching explicit `project_id`, and every
+  non-invalid candidate—including retained and held candidates—must resolve
+  through the project map before preview or adapter mutation. Scalar evidence
+  is [`trace_retention_project_scope_contract.json`](mas/docs/provenance/trace_retention_project_scope_contract.json);
+  live hold authority, erasure, durable audit, provider parity, and restore
+  rollback remain separate gates.
 - [x] payload-free `aiat.trace-incident.v1` summary and deterministic/
   fail-closed checker (`c357fdf`); scalar failure references and partial/empty
   coverage are descriptive;

@@ -590,6 +590,13 @@
   scoped cleanup leaves zero rows. This is local fixture evidence only;
   production hold-registry authority, durable audit, erasure, archive,
   provider-diverse recovery, and restore rollback remain open.
+- [x] Harden project-scoped retention execution (`61d2353`). A
+  `project:<id>` scope now requires the matching explicit project ID, and
+  every non-invalid candidate—including retained and held rows—must resolve
+  through the project map before preview or apply. The scalar guard certificate
+  is [`trace_retention_project_scope_contract.json`](../../../mas/docs/provenance/trace_retention_project_scope_contract.json);
+  live hold authority, erasure, durable audit, provider parity, and restore
+  rollback remain open.
 - [x] Connect the native transport/API observation writer to the refreshed local
   orchestrator deployment, run the operator trace query after applying the
   current migrations, and retain secret-safe evidence in

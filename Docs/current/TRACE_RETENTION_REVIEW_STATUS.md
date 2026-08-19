@@ -41,6 +41,11 @@ normalizing only evidence references, scalar counts, and evaluation time.
 Commit `67f5eae` adds the provider-neutral read-only
 `RetentionLegalHoldRegistry` contract and deterministic in-memory adapter;
 the rehearsal now obtains its authoritative snapshot through that boundary.
+Commit `61d2353` closes two project-scope fail-open paths: a `project:<id>`
+scope must include the matching explicit `project_id`, and every non-invalid
+candidate—including retained and held candidates—must have a matching entry
+in `project_by_record` before preview or apply. The scalar guard certificate is
+[`trace_retention_project_scope_contract.json`](../../mas/docs/provenance/trace_retention_project_scope_contract.json).
 `scripts/check_trace_retention_execution.py` proves the preview/apply and audit
 invariants, while `--live` remains blocked until reviewed registry/storage
 recovery adapters are configured.
@@ -79,7 +84,7 @@ when it declares the retention-plan schema, `mode: read-only-plan`, and
 
 The operator incident API/dashboard groups (`b4b7cef`, `869202c`) and the
 retention plan group (`f8829d6`, `b3fca97`, `9a80c6c`) and execution rehearsal
-(`01996c9`, `57e13cb`, `15054ba`, `5d71309`, `67f5eae`) consume the same bounded trace evidence authority but do not claim
+(`01996c9`, `57e13cb`, `15054ba`, `5d71309`, `67f5eae`, `61d2353`) consume the same bounded trace evidence authority but do not claim
 live retention enforcement. They expose only safe incident metadata, finding
 references, counts, policy scalars, and an auditable fixture result; production
 retention execution remains an independent storage/recovery action.
@@ -87,11 +92,11 @@ retention execution remains an independent storage/recovery action.
 ## Remaining gates
 
 - Connect the guarded execution contract to an operator/recovery worker with
-  project narrowing, an authoritative legal-hold/erasure registry, durable
-  audit records, live backup/read-back parity, and restore-tested rollback. The
-  current `legal_hold` metadata guard, typed hold/parity evidence, typed audit
-  envelope, provider-neutral hold-registry read adapter, and
-  `InMemoryRetentionStore` are fail-safe rehearsal boundaries, not live
+  an authoritative legal-hold/erasure registry, durable audit records, live
+  backup/read-back parity, and restore-tested rollback. The project narrowing
+  guard (`61d2353`), current `legal_hold` metadata guard, typed hold/parity
+  evidence, typed audit envelope, provider-neutral hold-registry read adapter,
+  and `InMemoryRetentionStore` are fail-safe rehearsal boundaries, not live
   authority, durable audit, or database mutation.
 - Prove retention behavior against restored storage and a representative live
   multi-service trace workload.

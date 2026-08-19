@@ -71,9 +71,13 @@ non-mutation, database-local backup/read-back parity, one trace-scoped delete
 transaction after human confirmation, two held rows left intact, and scoped
 cleanup; evidence is
 [`trace_retention_execution_live.json`](../../mas/docs/provenance/trace_retention_execution_live.json).
+`61d2353` hardens the project-scoped execution boundary: a `project:<id>`
+scope must carry the matching explicit `project_id`, and every non-invalid
+candidate—including retained and held candidates—must resolve through the
+project map before preview or apply. The deterministic guard certificate is
+[`trace_retention_project_scope_contract.json`](../../mas/docs/provenance/trace_retention_project_scope_contract.json).
 Production hold-registry authority, archive storage, erasure, durable audit,
-project-wide narrowing, provider-diverse recovery, and restore rollback remain
-open.
+provider-diverse recovery, and restore rollback remain open.
 `6ebb12c` adds a local gateway-worker/mail-edge composition certificate. It runs
 the real `GatewayWorkerAdapter` and `WorkerRunController`, projects bounded
 worker usage/artifact/native-span rows, and feeds verified delivered/bounced
@@ -292,7 +296,9 @@ The API projects these values into `aiat.trace-retention-policy.v1`. They are
 operator-facing configuration metadata. They do not grant authority, bypass
 approvals, or turn resource notices into gates. Project-level narrowing,
 legal-hold/erasure authority, and production retention enforcement require a
-separate live storage/recovery slice.
+separate live storage/recovery slice. The execution contract now rejects an
+unbound project scope and incomplete candidate-to-project mappings before any
+adapter call; this closes the local project-narrowing guard only.
 
 The local retention planner now exposes `aiat.trace-retention-plan.v1`. It
 classifies native-span metadata as `retain`, `archive`, `delete`, or `invalid`,
@@ -311,7 +317,9 @@ typed bounded audit envelope (`5d71309`). The fixture obtains its hold snapshot
 through `InMemoryRetentionLegalHoldRegistry` (`67f5eae`). The local Postgres
 adapter (`96f5fc0`) now exercises the same guarded contract against a reserved
 database fixture; its evidence is local-only and does not replace production
-hold, audit, erasure, archive, or restore gates.
+hold, audit, erasure, archive, provider-parity, or restore gates. The project
+scope hardening (`61d2353`) rejects missing project IDs and incomplete mappings
+for retained/held candidates as well as mutation candidates.
 
 The operator-only `GET /observability/retention/plan` route reads a bounded set
 of native-span metadata, applies the company retention policy, and returns the
@@ -406,9 +414,9 @@ storage returns `blocked` with exit code 2 and no secret material.
   live worker dispatch or provider coverage is claimed yet.
 - Connect the guarded execution contract to live storage and recovery workers;
   source legal holds from a live authoritative registry, persist audit records,
-  prove backup/restore parity, and add erasure/rollback. The provider-neutral
-  registry read contract (`67f5eae`), planner metadata guard, and
-  `InMemoryRetentionStore` rehearsal are not live enforcement.
+  prove backup/restore parity, and add erasure/rollback. The local project
+  scope guard (`61d2353`) and provider-neutral registry read contract
+  (`67f5eae`) are not live enforcement.
 - Extend the bounded dashboard summary with richer chronology only after the
   incident projection is populated by native/live deployment evidence; the
   current `aiat.trace-incident.v1` API, proxy, and deep-link boundary is
