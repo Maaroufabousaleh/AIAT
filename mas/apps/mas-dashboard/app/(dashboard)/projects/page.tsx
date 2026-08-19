@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, FormEvent, useMemo, useRef } from "react";
+import { useState, useEffect, FormEvent, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { WORKFLOW_STATES, STATE_COLORS, type WorkflowState } from "@/lib/constants";
@@ -108,7 +108,7 @@ export default function ProjectsPage() {
     }
   };
 
-  function handleAccessDenied() {
+  const handleAccessDenied = useCallback(() => {
     const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null;
     setAccessDenied(true);
     setHasReadContext(hadData);
@@ -119,9 +119,9 @@ export default function ProjectsPage() {
     setShowCreate(false);
     setFilter("non-archived");
     setExpandedId(null);
-  }
+  }, []);
 
-  async function load() {
+  const load = useCallback(async () => {
     if (accessDenied) return;
     const hadData = projectsRef.current !== null || flowsRef.current !== null;
     if (!hadData) setLoading(true);
@@ -158,9 +158,9 @@ export default function ProjectsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [accessDenied, handleAccessDenied]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   function resetCreateForm() {
     setNewName("");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ShieldCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -55,9 +55,13 @@ export default function GovernancePage() {
   const [stale, setStale] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [hasReadContext, setHasReadContext] = useState(false);
+  const profilesRef = useRef<ModelProfile[]>([]);
+  const catalogueRef = useRef<ModelCatalogue | null>(null);
+  const runsRef = useRef<WorkerRun[]>([]);
+  const stewardsRef = useRef<Steward[]>([]);
 
-  async function refresh() {
-    const hadData = profiles.length > 0 || catalogue !== null || runs.length > 0 || stewards.length > 0;
+  const refresh = useCallback(async () => {
+    const hadData = profilesRef.current.length > 0 || catalogueRef.current !== null || runsRef.current.length > 0 || stewardsRef.current.length > 0;
     setLoading(true);
     setError("");
     try {
@@ -77,10 +81,18 @@ export default function GovernancePage() {
         throw new Error("Governance data is unavailable from the control plane");
       }
       const [profileData, catalogueData, runData, stewardData] = await Promise.all([profileResponse.json(), catalogueResponse.json(), runResponse.json(), stewardResponse.json()]);
-      setProfiles(Array.isArray(profileData) ? profileData : []);
-      setCatalogue(catalogueData && typeof catalogueData === "object" ? catalogueData as ModelCatalogue : null);
-      setRuns(Array.isArray(runData) ? runData : []);
-      setStewards(Array.isArray(stewardData) ? stewardData : []);
+      const nextProfiles = Array.isArray(profileData) ? profileData as ModelProfile[] : [];
+      const nextCatalogue = catalogueData && typeof catalogueData === "object" ? catalogueData as ModelCatalogue : null;
+      const nextRuns = Array.isArray(runData) ? runData as WorkerRun[] : [];
+      const nextStewards = Array.isArray(stewardData) ? stewardData as Steward[] : [];
+      profilesRef.current = nextProfiles;
+      catalogueRef.current = nextCatalogue;
+      runsRef.current = nextRuns;
+      stewardsRef.current = nextStewards;
+      setProfiles(nextProfiles);
+      setCatalogue(nextCatalogue);
+      setRuns(nextRuns);
+      setStewards(nextStewards);
       setStale(false);
       setAccessDenied(false);
       setHasReadContext(true);
@@ -91,9 +103,9 @@ export default function GovernancePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   return (
     <main className="dashboard-page min-h-full p-6 lg:p-8" aria-label="Governance">
