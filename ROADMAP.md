@@ -1077,7 +1077,9 @@ The codebase already includes:
   retaining raw output; `31a4cd2` adds stable infrastructure reasons for
   direct gVisor runtime probe timeout/failure, invalid runtime metadata, and
   container launch failure without retaining raw exception text. Findings
-  review and exact scanner certification remain separate gates.
+  review and exact scanner certification remain separate gates. Commit
+  `f04a71a` also scrubs the sandbox runner's malformed-request, subprocess,
+  and unexpected-error paths into scalar reason codes without an `error` field.
 - `document.ingest` uses Docling through the optional extensions profile when
   installed and returns an explicit, usable degraded `plain_text_fallback`
   result otherwise; missing Docling is not treated as a tool or licence gate.
@@ -1397,7 +1399,8 @@ itself, so adapter protocol failures remain explicit degraded results rather
 than registry exceptions. Commit `31a4cd2` applies the same scalar, secret-safe
 classification to Docker runtime probes and gVisor container launch failures;
 the missing-`runsc` result remains fail-closed and live sandbox certification is
-still open.
+still open. Commit `f04a71a` removes raw top-level runner exception text from
+the direct CLI boundary as well.
 The optional external `code.review` boundary (`10b1af2`) now turns empty,
 malformed, and non-object successful stdout into stable degraded results rather
 than generic registry errors; exact external review identity and representative

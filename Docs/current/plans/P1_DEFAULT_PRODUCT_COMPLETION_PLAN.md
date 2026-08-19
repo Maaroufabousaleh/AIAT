@@ -205,6 +205,9 @@ external client-language SDK compatibility yet.
   probe timeouts, probe failures, invalid runtime metadata, and container
   launch errors now return stable infrastructure reasons without raw exception
   text; the no-`runsc` result remains fail-closed.
+- [x] Scrub sandbox-runner top-level errors (`f04a71a`): malformed requests,
+  subprocess failures, and unexpected execution errors now emit scalar reason
+  codes without an `error` field or raw exception text.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default
