@@ -69,8 +69,8 @@ runtime/model, KMS/backup configuration, mail, self-improvement, and security
 review prerequisites. The protected memory files keep the tree dirty, so this
 aggregate remains descriptive and does not alter **NO-RELEASE**.
 
-The host-safe local Compose sweep at `2026-08-19T06:10:28Z` (implementation
-`38a8ab7`) uses `--live --compose-local` to map host-side checks to the published
+The host-safe local Compose sweep at `2026-08-19T06:23:37Z` (implementation
+`38a8ab7`, evidence refresh `a415a1b`) uses `--live --compose-local` to map host-side checks to the published
 loopback ports while retaining explicit remote overrides. It records 79 passes,
 zero failures, six blocked checks, and four pending items across 85 checks; the
 payload-free scalar summary is [`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).

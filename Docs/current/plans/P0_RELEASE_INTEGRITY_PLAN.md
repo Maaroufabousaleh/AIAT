@@ -37,8 +37,9 @@ gates and are not replaced by local fixture evidence or licence metadata.
 
 The host-safe local Compose ledger mode (`38a8ab7`) now supplies the published
 loopback endpoints to host-side live children instead of leaking internal
-Compose service names. Its scalar sweep at `2026-08-19T06:10:28Z` records 79
-pass, 0 fail, and 6 blocked across 85 checks with four pending evidence items;
+Compose service names. Its refreshed scalar sweep (`a415a1b`) at
+`2026-08-19T06:23:37Z` records 79 pass, 0 fail, and 6 blocked across 85 checks
+with four pending evidence items;
 the summary is retained at
 [`release_ledger_live_compose_local_current.json`](../../../mas/docs/provenance/release_ledger_live_compose_local_current.json).
 This advances only local live-observability coverage and does not waive native

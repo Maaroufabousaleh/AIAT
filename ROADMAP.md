@@ -35,9 +35,9 @@ change the P0 ledger or the global `NO-RELEASE` decision.
 
 The next P0 harness slice (`38a8ab7`) adds `check_release_ledger.py
 --live --compose-local`, which supplies published loopback endpoints to host-side
-live children and preserves explicit endpoint overrides. The post-fix scalar
-sweep at `2026-08-19T06:10:28Z` records 79/85 pass, 0 fail, and 6 blocked with
-four pending items; it is retained at
+live children and preserves explicit endpoint overrides. The refreshed scalar
+sweep (`a415a1b`) at `2026-08-19T06:23:37Z` against the current revision records
+79/85 pass, 0 fail, and 6 blocked with four pending items; it is retained at
 [`release_ledger_live_compose_local_current.json`](mas/docs/provenance/release_ledger_live_compose_local_current.json).
 The global release decision remains `NO-RELEASE`.
 
