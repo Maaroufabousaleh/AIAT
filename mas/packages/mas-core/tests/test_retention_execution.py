@@ -293,6 +293,51 @@ def test_project_scope_mismatch_fails_before_adapter_mutation() -> None:
     assert store.audit_records == []
 
 
+def test_project_scope_requires_explicit_project_id() -> None:
+    store = _store()
+
+    with pytest.raises(RetentionExecutionError, match="requires project_id"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            actor="planner",
+            actor_kind="system",
+            mode="preview",
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
+            audit_id="missing-project-id-audit",
+            evaluated_at=NOW,
+        )
+
+    assert store.audit_records == []
+
+
+def test_project_scope_requires_mapping_for_retained_and_held_candidates() -> None:
+    store = _store()
+    project_by_record = {
+        record_id: "project-1"
+        for record_id in store.records
+        if record_id not in {"planner-hold", "authority-hold"}
+    }
+
+    with pytest.raises(RetentionExecutionError, match="project mapping"):
+        execute_retention_plan(
+            _plan(),
+            store=store,
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record=project_by_record,
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
+            actor="planner",
+            actor_kind="system",
+            mode="preview",
+            audit_id="incomplete-project-map-audit",
+            evaluated_at=NOW,
+        )
+
+    assert store.audit_records == []
+
+
 def test_apply_requires_authoritative_hold_snapshot() -> None:
     store = _store()
     with pytest.raises(RetentionExecutionError, match="authoritative legal-hold snapshot"):

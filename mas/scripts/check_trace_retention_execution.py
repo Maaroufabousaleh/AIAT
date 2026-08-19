@@ -175,6 +175,42 @@ def build_report() -> dict[str, object]:
         audit_id="apply-audit",
         evaluated_at=EVALUATED_AT,
     )
+    missing_project_id_rejected = False
+    try:
+        execute_retention_plan(
+            _plan(),
+            store=_store(),
+            scope="project:project-1",
+            actor="fixture-planner",
+            actor_kind="system",
+            mode="preview",
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
+            audit_id="missing-project-id-audit",
+            evaluated_at=EVALUATED_AT,
+        )
+    except RetentionExecutionError as exc:
+        missing_project_id_rejected = "requires project_id" in str(exc)
+
+    incomplete_project_map_rejected = False
+    try:
+        execute_retention_plan(
+            _plan(),
+            store=_store(),
+            scope="project:project-1",
+            project_id="project-1",
+            project_by_record={
+                record_id: "project-1"
+                for record_id in ("archive-1", "delete-1")
+            },
+            authoritative_legal_hold_snapshot=_hold_snapshot(),
+            actor="fixture-planner",
+            actor_kind="system",
+            mode="preview",
+            audit_id="incomplete-project-map-audit",
+            evaluated_at=EVALUATED_AT,
+        )
+    except RetentionExecutionError as exc:
+        incomplete_project_map_rejected = "project mapping" in str(exc)
     safe = (
         preview.status == "preview"
         and preview.mutation_performed is False
@@ -191,6 +227,9 @@ def build_report() -> dict[str, object]:
         and store.records.get("planner-hold", {}).get("status") == "active"
         and store.records.get("authority-hold", {}).get("status") == "active"
         and len(store.audit_records) == 1
+        and apply.scope == "project:project-1"
+        and missing_project_id_rejected
+        and incomplete_project_map_rejected
     )
     return {
         "schema_version": CHECK_SCHEMA,
@@ -213,6 +252,12 @@ def build_report() -> dict[str, object]:
             "backup_parity_verified": apply.backup_parity_verified,
             "legal_hold_snapshot_verified": apply.legal_hold_snapshot_ref is not None,
             "audit_count": len(store.audit_records),
+        },
+        "project_scope": {
+            "scope": apply.scope,
+            "explicit_project_id": apply.scope == "project:project-1",
+            "missing_project_id_rejected": missing_project_id_rejected,
+            "incomplete_mapping_rejected": incomplete_project_map_rejected,
         },
         "licence_metadata_is_gate": False,
         "scope": "deterministic in-memory rehearsal; no database, network, or provider state changed",

@@ -523,17 +523,22 @@ def execute_retention_plan(
         raise RetentionExecutionError("actor_kind must be human or system")
     if mode not in {"preview", "apply"}:
         raise RetentionExecutionError("mode must be preview or apply")
-    normalized_project_id = str(project_id).strip() if project_id is not None else None
-    if normalized_project_id == "":
-        raise RetentionExecutionError("project_id must not be blank")
-    if normalized_project_id is not None:
+    normalized_project_id = (
+        _token(project_id, name="project_id", max_length=160)
+        if project_id is not None
+        else None
+    )
+    if normalized_scope.startswith("project:"):
+        if normalized_project_id is None:
+            raise RetentionExecutionError("project scope requires project_id")
         if normalized_scope != f"project:{normalized_project_id}":
             raise RetentionExecutionError("project scope must match project_id")
         if not isinstance(project_by_record, Mapping):
             raise RetentionExecutionError("project scope requires project_by_record")
-    elif not (
-        normalized_scope.startswith("trace:") or normalized_scope.startswith("project:")
-    ):
+    elif normalized_scope.startswith("trace:"):
+        if normalized_project_id is not None:
+            raise RetentionExecutionError("trace scope cannot include project_id")
+    else:
         raise RetentionExecutionError("execution scope must be trace:<id> or project:<id>")
 
     if backup_parity_evidence is not None and not isinstance(
@@ -592,7 +597,25 @@ def execute_retention_plan(
         if candidate.disposition == "invalid":
             invalid_count += 1
             continue
-        candidate_record_id = str(candidate.record_id or "").strip()
+        candidate_record_id = _token(
+            candidate.record_id,
+            name="record_id",
+            max_length=160,
+        )
+        candidate_project_id: str | None = None
+        if normalized_project_id is not None:
+            assert project_by_record is not None
+            candidate_project_id = (
+                str(project_by_record.get(candidate_record_id) or "").strip() or None
+            )
+            if candidate_project_id is None:
+                raise RetentionExecutionError(
+                    f"project mapping is missing for retention candidate: {candidate_record_id}"
+                )
+            if candidate_project_id != normalized_project_id:
+                raise RetentionExecutionError(
+                    f"retention candidate is outside the selected project: {candidate_record_id}"
+                )
         authority_hold = active_holds.get(candidate_record_id)
         if (
             authority_hold is not None
@@ -610,14 +633,6 @@ def execute_retention_plan(
         if has_hold:
             held_count += 1
             continue
-        candidate_project_id: str | None = None
-        if normalized_project_id is not None:
-            assert project_by_record is not None
-            candidate_project_id = str(project_by_record.get(candidate_record_id) or "").strip() or None
-            if candidate_project_id != normalized_project_id:
-                raise RetentionExecutionError(
-                    f"retention candidate is outside the selected project: {candidate.record_id}"
-                )
         actions.append(
             RetentionAction(
                 record_id=_token(candidate.record_id, name="record_id", max_length=160),
