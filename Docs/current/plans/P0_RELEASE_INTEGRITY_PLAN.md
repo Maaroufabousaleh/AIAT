@@ -4,7 +4,7 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-18):** in progress. The licence metadata boundary,
+**Current status (2026-08-19):** in progress. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -22,13 +22,13 @@ profile read-back, and configured current-ledger run are retained as
 descriptive evidence; native image/SBOM, clean native-Linux release-host
 metric scale, provider-managed KMS, independent-host recovery, and frozen
 clean-ledger evidence remain open.
-The latest configured Compose release profile (2026-08-18T21:19:12Z,
-revision `14e1351`) is 75 pass, 0 fail, 6 blocked, and 4 pending across 81
-checks, with `NO-RELEASE`. The six live blockers are native release-host and
-immutable image identity, gVisor runtime, Firecracker launcher, operator-owned
-outbound-mail credentials/recipient, and an operator-selected
-self-improvement source/project; the security review register remains
-technically blocked by 316 findings, 54 engine warnings, and one open review.
+The latest configured Compose release profile retained in evidence is 76 pass,
+0 fail, 5 blocked, and 4 pending across 81 checks, with `NO-RELEASE`. The
+current unconfigured aggregate at 2026-08-19T02:28:28Z is 67 pass, 0 fail,
+14 blocked, and 4 pending across 81 checks. Native release host/runsc and
+immutable image identity, gVisor, Firecracker, trace/runtime configuration,
+outbound mail, self-improvement source selection, provider KMS, clean-host/
+disaster recovery, and the technical security review remain open.
 These are distinct technical/operator gates and are not replaced by local
 fixture evidence or licence metadata.
 
@@ -213,9 +213,9 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   without retaining values; the current WSL run is explicitly blocked and is
   retained at [`native_release_preflight.json`](../../../mas/docs/provenance/native_release_preflight.json).
 - [x] Include the native preflight as the `release_environment:live` child in
-  the aggregate ledger (`4d7a495`) and retain the current unconfigured 77-check
+  the aggregate ledger (`4d7a495`) and retain the current unconfigured 81-check
   result at [`release_ledger_live_current.json`](../../../mas/docs/provenance/release_ledger_live_current.json);
-  the configured 81-check profile (75 pass, 6 blocked, 4 pending) remains
+  the configured 81-check profile (76 pass, 5 blocked, 4 pending) remains
   descriptive evidence at [`release_ledger_live.json`](../../../mas/docs/provenance/release_ledger_live.json).
 - [x] Bound each child checker with a configurable, capped timeout; a timed-out
   live checker is recorded as `blocked` and never upgraded to pass.
