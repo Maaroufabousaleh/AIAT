@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, live AIAT credentials-manager secret-boundary certificate, and a disabled-by-default optional Letta/Qdrant/Temporal evaluation contract; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and live optional-service value/recovery evidence remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, live AIAT credentials-manager secret-boundary certificate, and disabled-by-default optional Letta/Qdrant/Temporal contracts with bounded Qdrant/Temporal adapters; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and live optional-service value/recovery evidence remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -195,6 +195,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Scalar resource profile: [`mas/packages/mas-core/mas_core/memory/object_store_resource_profile.py`](../../mas/packages/mas-core/mas_core/memory/object_store_resource_profile.py)
 - Resource profile fixture/live boundary: [`mas/scripts/check_object_store_resource_profile.py`](../../mas/scripts/check_object_store_resource_profile.py)
 - Resource profile tests: [`mas/packages/mas-core/tests/test_object_store_resource_profile.py`](../../mas/packages/mas-core/tests/test_object_store_resource_profile.py)
+- Optional Qdrant/Temporal adapter contracts: [`mas/packages/mas-core/mas_core/memory/optional_services.py`](../../mas/packages/mas-core/mas_core/memory/optional_services.py) and [`mas/packages/mas-core/tests/test_optional_services.py`](../../mas/packages/mas-core/tests/test_optional_services.py)
 - Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
 - Provider-process outage/recovery checker: [`mas/scripts/check_object_store_provider_outage.py`](../../mas/scripts/check_object_store_provider_outage.py), focused tests [`mas/scripts/tests/test_check_object_store_provider_outage.py`](../../mas/scripts/tests/test_check_object_store_provider_outage.py), and scalar evidence [`mas/docs/provenance/object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
@@ -216,6 +217,13 @@ source/version, bounded input/output, measurable value over the declared
 baseline, outage/degraded-mode behaviour, backup/restore, and removal/rollback
 evidence before activation. The static contract/checker retain scalar metadata
 only and do not install, contact, select, or mutate a candidate:
+
+Commit `0f1db19` adds dependency-free `QdrantVectorAdapter` and
+`TemporalWorkflowAdapter` contracts over injected backends. They require exact
+versions, hash project IDs into opaque namespaces, bound vector/workflow input,
+accept only checksum references for workflow signals, normalize unavailable
+services to stable retryable errors, and return scalar references without
+provider payloads. These adapters are not enabled or selected by default.
 
 - Catalogue: [`mas/docs/provenance/optional_memory_services.yaml`](../../mas/docs/provenance/optional_memory_services.yaml)
 - Checker: [`mas/scripts/check_optional_memory_services.py`](../../mas/scripts/check_optional_memory_services.py)

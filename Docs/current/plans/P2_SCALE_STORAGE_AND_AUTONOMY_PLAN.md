@@ -164,7 +164,11 @@
   with retained scalar evidence at
   [`optional_memory_services_contract.json`](../../../mas/docs/provenance/optional_memory_services_contract.json).
   The Letta shell's unavailable/error boundary is payload-free and scalar-only
-  (`7052d33`); Qdrant and Temporal adapters remain pending exact contracts.
+  (`7052d33`). Commit `0f1db19` adds dependency-free, injected-backend
+  `QdrantVectorAdapter` and `TemporalWorkflowAdapter` contracts with exact
+  version validation, opaque project namespaces, bounded inputs, stable
+  failure classification, scalar-only results, and no default activation;
+  external clients are not imported or contacted by the contract tests.
 - [ ] Run live value, outage, backup/restore, and removal tests only after an
   operator selects exact endpoints, versions, budgets, and certified
   sandboxes; no optional service is enabled or selected by this contract.
