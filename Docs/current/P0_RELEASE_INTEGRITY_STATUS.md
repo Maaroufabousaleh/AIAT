@@ -1,9 +1,9 @@
 # P0 Release Integrity Status
 
 **Updated:** 2026-08-18
-- Current continuation refresh (`b2d02ea`, aggregate evidence `b6176df`) runs the static ledger at 57/57
-  pass and the configured Compose aggregation at 75 pass/0 fail/6 blocked
-  across 81 checks (`23:31:51Z`, canonical host-loopback), with four pending evidence items and
+- Current continuation refresh (`296d89b`, aggregate evidence `f6063e0`) runs the static ledger at 57/57
+  pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
+  across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and
   `NO-RELEASE`. The local Postgres host-execution, multi-host, lease,
   host-fencing, and queued-run loss checks pass serially after their harnesses
   were isolated with fixture labels and deterministic priorities; their scalar
@@ -16,6 +16,11 @@
   SBOM, vulnerability scan, source/lock, clean native build, and deployment
   identity evidence remain unobserved, so the production image gate stays
   blocked and the global `NO-RELEASE` decision is unchanged.
+- The first post-image aggregate attempt used `MAS_API_KEY` where the local
+  deployment requires the distinct `AIAT_OPERATOR_API_KEY`; its 403 trace
+  read-back is classified as harness/configuration invalid and excluded. The
+  corrected operator-key rerun passes 76/81 checks with five explicit external
+  blockers and zero failures.
 - The 2026-08-18 continuation verification re-runs the static release ledger
   at 57/57 pass and confirms the API/protocol contract, documentation index,
   provenance inventory, docs-index scope guard, and host-owned restart-boundary
@@ -636,7 +641,7 @@ single frozen commit before production claims are made.
   [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json).
   The configured 81-check profile remains retained at
   [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json)
-  with 75 passes, six blocked probes, and four pending evidence items; both profiles yield
+  with 76 passes, five blocked probes, and four pending evidence items; both profiles yield
   `NO-RELEASE`. These are evidence records, not a release pass.
 
 ### CEO/service dashboard boundary
@@ -898,7 +903,7 @@ single frozen commit before production claims are made.
 | Outbound-mail lifecycle fixture | PASS (static/unit/fixture; relay live open) | `uv run --isolated pytest packages/mas-core/tests/test_outbound_mail_lifecycle.py -q`; `uv run --isolated python scripts/check_outbound_mail_lifecycle.py --json` drives the actual `IdentityService` through approval pause, request/submission idempotency, definitive provider-failure retry, ambiguous-outage reconciliation hold, and secret-safe output without external relay calls |
 | Self-improvement candidate detection | PASS (static/unit/fixture; live signal sources open) | Commit `4d8dddf`; `uv run --isolated pytest packages/mas-core/tests/test_improvement_candidates.py -q`; `uv run --isolated python scripts/check_self_improvement_candidates.py --json` reconciles defect, metric, upstream-update, cost, and operator-goal signals with deterministic deduplication/risk/budget mapping, conflicting-ID rejection, secret-safe metadata, and zero project/budget/credential/deployment side effects |
 | Self-improvement lifecycle persistence | PASS (local Compose Postgres certificate; live worker/provider boundary open) | Commit `10983c8`; `uv run --isolated pytest mas/scripts/tests/test_check_self_improvement_postgres_evidence.py -q` plus focused self-improvement/storage tests and Ruff pass. `docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_self_improvement_postgres_evidence.py --json'` reaches migration `0036_native_trace_spans`, persists the canonical project and revisioned lifecycle through six technical gates, rejects a stale CAS snapshot, records human approval, verifies five checksum/size read-backs, promotes and exactly rolls back, persists a terminal outcome/history, reopens the durable row, and removes only the reserved project; evidence is [`provenance/self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json). This is local control-plane evidence only; selected model-backed worker, provider callback, budget settlement, deployment, and live issue reconciliation remain open; licence metadata is informational only |
-| Machine-readable release ledger | PASS (57/57 static aggregation; native live-ledger gate `4d7a495`); BLOCKED/NO-RELEASE (current and configured live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 57/57 static checks passing, including the bounded multipart, resource-profile, provider-outage, credentials-manager, identity-provider, and flow-runtime children, with `NO-RELEASE`. The unconfigured 77-check `--live --json` snapshot records 58 pass/19 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the configured Compose profile remains 75 pass/6 blocked/0 fail across 81 checks, with the model-profile catalogue now at complete 93/93 coverage after the exact unreferenced smoke residue was removed and read back. Native preflight, image identity, Firecracker/gVisor, provider/KMS host configuration, outbound mail, self-improvement source, and security-review children remain explicit; the cleanup advances only model-profile reconciliation and does not change `NO-RELEASE`; licence metadata remains non-gating. |
+| Machine-readable release ledger | PASS (57/57 static aggregation; native live-ledger gate `4d7a495`); BLOCKED/NO-RELEASE (current and configured live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 57/57 static checks passing, including the bounded multipart, resource-profile, provider-outage, credentials-manager, identity-provider, and flow-runtime children, with `NO-RELEASE`. The unconfigured 77-check `--live --json` snapshot records 58 pass/19 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the corrected configured Compose profile at 2026-08-18T23:57:08Z records 76 pass/5 blocked/0 fail across 81 checks and is retained at [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json), with the model-profile catalogue at complete 93/93 coverage and local image/trace/tool-trace/SLO children passing. Native preflight, image SBOM/scan artifacts, Firecracker/gVisor, provider/KMS host configuration, outbound mail, self-improvement source, and security-review children remain explicit; the key-alias harness run that produced a 403 trace read-back is excluded, and the corrected operator-key rerun does not change `NO-RELEASE`; licence metadata remains non-gating. |
 | Release environment manifest | PASS (secret-safe static identity; refreshed policy input) | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with fifteen input hashes, including the network-boundary policy, security review register, tool identities, environment-presence flags, and a deterministic per-revision manifest digest without printing values or credentials. The report records the current branch, revision, changed-path count, and dirty state; its digest must be captured again for the eventual frozen release commit. |
 | Native release-host preflight | BLOCKED (current local WSL2 host) | The opt-in `uv run --isolated python scripts/check_release_environment.py --require-native-linux --json` check was refreshed at 2026-08-18T23:19:12Z (`f793225`) and fails closed unless the host is native Linux, Docker/Compose v2 and `runsc` are available, the tree is clean, and all ten deployment image refs are digest-pinned. The current WSL2 result is retained at [`provenance/native_release_preflight.json`](../../mas/docs/provenance/native_release_preflight.json) with safe blockers for host identity, `runsc`, dirty state, and absent image refs. It is a prerequisite diagnostic only; native network, image/SBOM, scan, recovery, and provider evidence remain open, and licence metadata is non-gating. |
 
