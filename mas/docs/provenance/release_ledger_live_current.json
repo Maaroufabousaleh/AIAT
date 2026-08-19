@@ -1,27 +1,27 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T15:53:05.092363Z",
+  "observed_at": "2026-08-19T02:28:28.002753Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 77,
-    "pass": 58,
+    "total": 81,
+    "pass": 67,
     "fail": 0,
-    "blocked": 19
+    "blocked": 14
   },
   "pending_evidence_count": 4,
   "decision_reasons": [
-    "19 check(s) are externally blocked",
+    "14 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
   "git": {
-    "revision": "417b6674413d2f63c7ecd0d8631d71572e3167a6",
+    "revision": "a14e5c04c9de6ed1993821eb46bad37528660a2b",
     "working_tree_clean": false
   },
-  "manifest_digest": "199b293732099da8df37b9607efebb0869cb84c5cd3c7e5c54e2af1e3852ff9",
+  "manifest_digest": "cbef16684ca2272bb64dbb385c82698c1878bdb233bb5eb1c4f4a7bf49c71fcc",
   "live_configuration": {
     "orchestrator_url_configured": false,
     "credentials_printed": false,
@@ -51,7 +51,6 @@
     "live_tool_trace:live",
     "slo_capacity:live",
     "worker_reconciliation:live",
-    "default_worker_bindings:live",
     "image_provenance:live",
     "metric_series_budget:live",
     "sandbox_runtime_readiness:live",
@@ -59,11 +58,7 @@
     "runtime_benchmarks:live",
     "model_profile_catalogue:live",
     "outbound_mail_lifecycle:live",
-    "self_improvement_candidate_detection:live",
-    "object_store_multipart:live",
-    "object_store_resource_profile:live",
-    "object_store_provider_outage:live",
-    "credentials_manager_live:live"
+    "self_improvement_candidate_detection:live"
   ],
   "pending_evidence": [
     "coding_worker security scan findings require review in static and live reconciliation rows",
@@ -72,10 +67,10 @@
   "historical_configured_profile": {
     "ref": "release_ledger_live.json",
     "observed_at": "2026-08-18T16:58:17Z",
-    "total": 77,
-    "pass": 67,
+    "total": 81,
+    "pass": 76,
     "fail": 0,
-    "blocked": 10,
+    "blocked": 5,
     "pending": 4,
     "note": "Latest configured Compose aggregation with operator environment supplied without output; model/profile alias reconciliation is refreshed separately and the aggregate remains descriptive rather than a release approval."
   },
