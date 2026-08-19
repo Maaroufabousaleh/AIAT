@@ -153,10 +153,19 @@
 
 ## Workstream 2 — optional memory and workflow services
 
-- Evaluate Letta for governed long-memory use cases.
-- Evaluate Qdrant where it materially improves retrieval beyond pgvector.
-- Evaluate Temporal for durable execution where it complements rather than replaces AIAT controllers.
-- For each, create an external worker/service steward, exact provenance, data-boundary review, conformance, cost, outage, backup, and removal plan.
+- [x] Define the disabled-by-default candidate catalogue and evaluation contract
+  for Letta, Qdrant, and Temporal in
+  [`optional_memory_services.yaml`](../../../mas/docs/provenance/optional_memory_services.yaml).
+- [x] Define an AIAT-owned steward, exact-provenance pointer, project-scoped
+  data boundary, measurable-value metrics, conformance checks, outage/degraded
+  mode, backup/restore, and removal/rollback plan for each candidate. The
+  payload-free static checker is
+  [`check_optional_memory_services.py`](../../../mas/scripts/check_optional_memory_services.py)
+  with retained scalar evidence at
+  [`optional_memory_services_contract.json`](../../../mas/docs/provenance/optional_memory_services_contract.json).
+- [ ] Run live value, outage, backup/restore, and removal tests only after an
+  operator selects exact endpoints, versions, budgets, and certified
+  sandboxes; no optional service is enabled or selected by this contract.
 
 **Decision gate:** optional services remain disabled unless they provide measurable value without duplicating canonical authority.
 

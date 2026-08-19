@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, and live AIAT credentials-manager secret-boundary certificate; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and optional memory services remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, live AIAT credentials-manager secret-boundary certificate, and a disabled-by-default optional Letta/Qdrant/Temporal evaluation contract; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and live optional-service value/recovery evidence remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -207,6 +207,23 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - API observation schema/table/migration: [`mas/packages/mas-core/mas_core/observability/api_observations.py`](../../mas/packages/mas-core/mas_core/observability/api_observations.py), [`mas/packages/mas-core/mas_core/memory/models.py`](../../mas/packages/mas-core/mas_core/memory/models.py), [`mas/migrations/versions/0034_api_request_observations.py`](../../mas/migrations/versions/0034_api_request_observations.py)
 - Direct evidence trace columns/migration: [`mas/migrations/versions/0035_trace_correlation_evidence.py`](../../mas/migrations/versions/0035_trace_correlation_evidence.py)
 
+## Optional service evaluation contract
+
+Letta, Qdrant, and Temporal are candidates only; Postgres/pgvector and the
+AIAT worker/run controllers remain canonical. The catalogue is disabled by
+default and requires an explicit operator-selected project scope, exact
+source/version, bounded input/output, measurable value over the declared
+baseline, outage/degraded-mode behaviour, backup/restore, and removal/rollback
+evidence before activation. The static contract/checker retain scalar metadata
+only and do not install, contact, select, or mutate a candidate:
+
+- Catalogue: [`mas/docs/provenance/optional_memory_services.yaml`](../../mas/docs/provenance/optional_memory_services.yaml)
+- Checker: [`mas/scripts/check_optional_memory_services.py`](../../mas/scripts/check_optional_memory_services.py)
+- Evidence: [`mas/docs/provenance/optional_memory_services_contract.json`](../../mas/docs/provenance/optional_memory_services_contract.json)
+
+Live candidate value and recovery evidence remains open. Resource metadata and
+source notices stay in the provenance catalogue; they are not activation gates.
+
 ## Store ownership
 
 | Store | Allowed purpose | Prohibited purpose |
@@ -311,7 +328,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
   encrypted-at-rest, retention, clean-host/clean-environment, and cross-store
   evidence; the same-provider local rehearsal and fresh-process encrypted
   restore certificate are already retained separately.
-- Certify Letta, Qdrant, and Temporal only if their benefit exceeds operational cost.
+- Execute the live Letta, Qdrant, and Temporal value/recovery/removal tests only
+  after explicit endpoints, versions, budgets, project scope, and certified
+  sandboxes are supplied; the static candidate contract is retained, but no
+  optional service is enabled or selected.
 - Extend the current company trace retention metadata to project-level narrowing
   and explicit erasure/hold workflows once the live retention runner exists.
 - The refreshed local orchestrator is at migration `0036_native_trace_spans`
