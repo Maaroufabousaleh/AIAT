@@ -97,6 +97,18 @@ mail, self-improvement, and unresolved security-review gates remain blocked
 without new provider or payload evidence. The static release ledger remains
 57/57 with `NO-RELEASE`.
 
+The next ordered sweep at `2026-08-19T02:21:17Z` against `9542c58` preserves
+the same boundaries. Native certification remains blocked by WSL2, missing
+`runsc`, protected dirty paths, and missing immutable deployment image refs;
+the KMS probe is blocked by missing credentials-evidence configuration; the
+three-endpoint backup/restore probe is blocked by missing endpoint credentials;
+image provenance is blocked by missing deployment refs; and the security
+review register passes structurally while its technical gate remains blocked
+by the 316 findings and 55 scanner/parser errors. These are respectively
+environment, harness/configuration, and operator-review blockers, not provider
+functional or provider-resource failures. The static ledger remains 57/57
+and `NO-RELEASE`.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated

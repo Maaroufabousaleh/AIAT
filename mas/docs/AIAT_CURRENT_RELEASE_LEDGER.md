@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `353f163` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T01:03:07Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `9542c58` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T02:15:22Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -45,6 +45,18 @@ native Linux/runsc/image-ref, gVisor, provider-KMS, three-endpoint
 backup/restore, runtime/model/steward, mail, self-improvement, and unresolved
 security-review gates remain blocked without new provider, credential, or
 payload evidence. No live probe changed the release decision.
+
+The next ordered sweep at `2026-08-19T02:21:17Z` against `9542c58` preserves
+the same classifications. Native certification is blocked by the WSL2 host,
+unregistered `runsc`, protected dirty paths, and missing immutable deployment
+image refs. The KMS probe is blocked by missing credentials-evidence
+configuration; the three-endpoint backup/restore probe is blocked by missing
+endpoint credentials; image provenance is blocked by missing deployment refs;
+and the security review register is structurally valid while its technical
+gate remains blocked by 316 findings and 55 scanner/parser errors. These are
+environment, harness/configuration, or operator-review blockers, not provider
+functional or provider-resource failures. The static ledger remains 57/57
+and the decision remains **NO-RELEASE**.
 
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration
