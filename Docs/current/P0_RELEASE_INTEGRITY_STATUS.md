@@ -10,6 +10,12 @@
   evidence has zero residual rows. Native host/image/gVisor/Firecracker,
   outbound-mail, self-improvement, security-review, external KMS, clean-host,
   and disaster-recovery gates remain separate.
+- The documentation-index verifier fix (`e4a6dbf`) removes WSL/DrvFS symlink
+  dereference from lexical link normalization. Its refreshed run at
+  `2026-08-19T00:36:44Z` checks 13 feature documents, 3 plans, and 22
+  maintained documents with zero errors; the static release ledger remains
+  57/57 pass with `NO-RELEASE`. This is a validation-performance fix only and
+  does not advance blocked live gates.
 - The local image-provenance follow-up (`75f9be0`) reconciles all ten supplied
   immutable references with matching Docker `RepoDigests` on the current WSL2
   engine. The scalar certificate is [`image_provenance_local_identity.json`](../../mas/docs/provenance/image_provenance_local_identity.json);

@@ -30,6 +30,13 @@ host-fencing, lease, and queued-run loss certificates reproducible with
 payload-free, zero-residue evidence. Independent hosts, gVisor/Firecracker,
 provider outage, clean-host, and disaster-recovery gates remain open.
 
+The documentation-index/release-ledger verifier repair (`e4a6dbf`) now uses
+lexical link normalization instead of dereferencing every repository symlink.
+The maintained documentation check completes with 13 feature documents, 3
+plans, 22 checked documents, and no errors; the static ledger refresh at
+`2026-08-19T00:36:44Z` is 57/57 pass with `NO-RELEASE`. This changes verifier
+performance only and does not waive live release gates.
+
 The optional Microsoft Agent Framework profile was freshly installed and
 re-certified in an operator-owned `.venv-maf` (`9bde609`): MAF `1.13.0` with
 MCP `1.29.0` imports, completes the bounded fake-client adapter probe, and
