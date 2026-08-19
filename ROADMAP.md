@@ -109,6 +109,15 @@ environment, harness/configuration, and operator-review blockers, not provider
 functional or provider-resource failures. The static ledger remains 57/57
 and `NO-RELEASE`.
 
+The complete unconfigured `--live` aggregate at `2026-08-19T02:24:05Z`
+against `b001c60` reports 67 passes, zero failures, 14 externally blocked
+checks, and four pending evidence items out of 81. The corrected MinIO/
+SeaweedFS resource, multipart, and provider-process outage certificates remain
+passes; the blocked checks are native-host/runsc, image-ref, gVisor/Firecracker,
+runtime/model, KMS/backup configuration, mail, self-improvement, and security
+review prerequisites. The protected memory files keep the tree dirty, so the
+aggregate decision remains `NO-RELEASE`.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated

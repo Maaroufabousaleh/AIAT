@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `9542c58` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T02:15:22Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `b001c60` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T02:24:05Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -57,6 +57,15 @@ gate remains blocked by 316 findings and 55 scanner/parser errors. These are
 environment, harness/configuration, or operator-review blockers, not provider
 functional or provider-resource failures. The static ledger remains 57/57
 and the decision remains **NO-RELEASE**.
+
+The complete unconfigured `--live` aggregate at `2026-08-19T02:24:05Z`
+against `b001c60` reports 67 passes, zero failures, 14 externally blocked
+checks, and four pending evidence items out of 81. The corrected MinIO/
+SeaweedFS resource, multipart, and provider-process outage certificates remain
+passes; the blocked checks are native-host/runsc, image-ref, gVisor/Firecracker,
+runtime/model, KMS/backup configuration, mail, self-improvement, and security
+review prerequisites. The protected memory files keep the tree dirty, so this
+aggregate remains descriptive and does not alter **NO-RELEASE**.
 
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration
