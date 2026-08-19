@@ -201,6 +201,21 @@ cd mas
 MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live.py
 ```
 
+For the host-side live release ledger against the local Compose stack, use the
+published loopback ports; Compose-internal names such as `orchestrator-api` and
+`tool-service` are not host endpoints:
+
+```bash
+cd mas
+export AIAT_ORCHESTRATOR_URL=http://127.0.0.1:8000
+export AIAT_TOOL_SERVICE_URL=http://127.0.0.1:8002
+export AIAT_OPERATOR_API_KEY='<operator-key-from-the-local-environment>'
+uv run python scripts/check_release_ledger.py --live --compose-local --json
+```
+
+The report is scalar-only and keeps blocked native/provider/operator gates
+blocked; it never treats licence metadata as a release gate.
+
 ## Runtime Shape
 
 Base compose defines the core infrastructure, control-plane services, analytics,

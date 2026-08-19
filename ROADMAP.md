@@ -33,6 +33,14 @@ Compose seven-test attempts that received no fixture-backed data are classified
 `TEST-HARNESS/EXECUTION INVALID`, excluded from release evidence, and do not
 change the P0 ledger or the global `NO-RELEASE` decision.
 
+The next P0 harness slice (`38a8ab7`) adds `check_release_ledger.py
+--live --compose-local`, which supplies published loopback endpoints to host-side
+live children and preserves explicit endpoint overrides. The post-fix scalar
+sweep at `2026-08-19T06:10:28Z` records 79/85 pass, 0 fail, and 6 blocked with
+four pending items; it is retained at
+[`release_ledger_live_compose_local_current.json`](mas/docs/provenance/release_ledger_live_compose_local_current.json).
+The global release decision remains `NO-RELEASE`.
+
 The latest configured Compose release aggregation (`2026-08-18T23:57:08Z`,
 revision `296d89b`, evidence refresh `f6063e0`) remains 76 pass/0 fail/5 blocked across 81 checks with
 four pending evidence items and `NO-RELEASE`. The same revision fixes shared-

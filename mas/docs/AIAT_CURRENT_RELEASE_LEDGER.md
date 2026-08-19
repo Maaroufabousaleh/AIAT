@@ -69,6 +69,15 @@ runtime/model, KMS/backup configuration, mail, self-improvement, and security
 review prerequisites. The protected memory files keep the tree dirty, so this
 aggregate remains descriptive and does not alter **NO-RELEASE**.
 
+The host-safe local Compose sweep at `2026-08-19T06:10:28Z` (implementation
+`38a8ab7`) uses `--live --compose-local` to map host-side checks to the published
+loopback ports while retaining explicit remote overrides. It records 79 passes,
+zero failures, six blocked checks, and four pending items across 85 checks; the
+payload-free scalar summary is [`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).
+This improves harness reproducibility only; native host/image, gVisor,
+Firecracker, outbound mail, self-improvement source, pending security review,
+and clean-worktree gates remain open.
+
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration
 invalid and excluded. The corrected invocation used `AIAT_OPERATOR_API_KEY`,

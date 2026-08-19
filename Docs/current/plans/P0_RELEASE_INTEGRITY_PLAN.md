@@ -35,6 +35,16 @@ source selection, provider KMS, clean-host/disaster recovery, and the
 technical security review remain open. These are distinct technical/operator
 gates and are not replaced by local fixture evidence or licence metadata.
 
+The host-safe local Compose ledger mode (`38a8ab7`) now supplies the published
+loopback endpoints to host-side live children instead of leaking internal
+Compose service names. Its scalar sweep at `2026-08-19T06:10:28Z` records 79
+pass, 0 fail, and 6 blocked across 85 checks with four pending evidence items;
+the summary is retained at
+[`release_ledger_live_compose_local_current.json`](../../../mas/docs/provenance/release_ledger_live_compose_local_current.json).
+This advances only local live-observability coverage and does not waive native
+host, image, sandbox, mail, self-improvement, pending security review, or clean
+worktree gates.
+
 ## Why this plan is first
 
 AIAT already implements most core control-plane concepts. The immediate risk is not missing ambition; it is inconsistent truth at activation boundaries. P0 closes contradictions that could activate an insufficiently scanned worker, expose a data service, create unbounded telemetry, deploy mutable code, or give CEO automation operator-level UI access.

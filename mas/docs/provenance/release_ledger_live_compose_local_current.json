@@ -1,0 +1,40 @@
+{
+  "schema_version": "aiat.release-ledger-live-compose-local-summary.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-19T06:10:28.859304+00:00",
+  "profile": "live-compose-local",
+  "status": "blocked",
+  "release_decision": "NO-RELEASE",
+  "counts": {
+    "total": 85,
+    "pass": 79,
+    "fail": 0,
+    "blocked": 6
+  },
+  "pending_evidence_count": 4,
+  "decision_reasons": [
+    "6 check(s) are externally blocked",
+    "4 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "git": {
+    "revision": "38a8ab729fda7bb38c5342fa483473c277326a77",
+    "working_tree_clean": false,
+    "changed_path_count": 2
+  },
+  "endpoint_mode": "published loopback ports for the local Compose stack; endpoint values are not retained",
+  "blocked_checks": [
+    "release_environment:live",
+    "image_provenance:live",
+    "sandbox_runtime_readiness:live",
+    "firecracker_worker_pool_readiness:live",
+    "outbound_mail_lifecycle:live",
+    "self_improvement_candidate_detection:live"
+  ],
+  "failed_checks": [],
+  "payload_free": true,
+  "secret_free": true,
+  "licence_metadata_is_gate": false,
+  "resource_gate_status": "pass",
+  "invalid_resource_run_excluded": true
+}
