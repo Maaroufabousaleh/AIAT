@@ -25,6 +25,14 @@ The scalar MinIO/SeaweedFS resource profile is complete; any remaining
 "resource profiling" reference below means production resource budgets and
 native-host portability, which are separate evidence gates.
 
+The latest bounded P1 implementation slice (`60839f4`) stabilizes the
+Governance and Projects dashboard refresh callbacks and last-known-state refs.
+Dashboard lint, typecheck, and production build pass, and the production-server
+source-built Governance/Projects suites pass 7/7. Source-dev and existing
+Compose seven-test attempts that received no fixture-backed data are classified
+`TEST-HARNESS/EXECUTION INVALID`, excluded from release evidence, and do not
+change the P0 ledger or the global `NO-RELEASE` decision.
+
 The latest configured Compose release aggregation (`2026-08-18T23:57:08Z`,
 revision `296d89b`, evidence refresh `f6063e0`) remains 76 pass/0 fail/5 blocked across 81 checks with
 four pending evidence items and `NO-RELEASE`. The same revision fixes shared-

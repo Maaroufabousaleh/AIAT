@@ -8,6 +8,17 @@ loaded messages, invalidate in-flight stream callbacks, and hide reconnect,
 retry, filter, pause, clear, and copy controls (`118ff18`, source-built
 `streams-states.spec.ts` 3/3).
 
+The 2026-08-19 dashboard lifecycle repair (`60839f4`) makes the Governance
+and Projects refresh loaders stable callbacks, keeps last-known snapshots in
+refs for retry/error classification, and removes their missing-dependency lint
+warnings without changing the API contract. `npm run lint`, `npm run typecheck`,
+and `npm run build` pass. The production-server source-built suites pass 7/7
+(`governance-states.spec.ts` 3/3 and `projects-states.spec.ts` 4/4). Two local
+seven-test attempts against source-dev and the existing Compose container did
+not receive their fixture-backed data and are classified
+`TEST-HARNESS/EXECUTION INVALID`; they are excluded from release evidence and
+do not advance the dashboard or global release gates.
+
 The Projects list now applies the same access boundary to its paired project and
 active-flow reads plus create/archive/delete mutations: 401/403 responses
 expose a named access-denied region, retain only previously loaded definitions
