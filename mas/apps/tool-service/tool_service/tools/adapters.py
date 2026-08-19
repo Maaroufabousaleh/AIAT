@@ -660,9 +660,17 @@ class SecurityScanTool(BaseTool):
         if result.get("stdout"):
             try:
                 parsed = json.loads(result["stdout"])
-                result["findings_count"] = len(parsed.get("results", []))
             except json.JSONDecodeError:
                 result["findings_count"] = None
+                result["degraded"] = True
+                result["reason"] = "semgrep_invalid_json"
+            else:
+                if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+                    result["findings_count"] = len(parsed["results"])
+                else:
+                    result["findings_count"] = None
+                    result["degraded"] = True
+                    result["reason"] = "semgrep_invalid_result_shape"
         result["backend"] = "semgrep"
         result["scanner"] = scanner
         return result
