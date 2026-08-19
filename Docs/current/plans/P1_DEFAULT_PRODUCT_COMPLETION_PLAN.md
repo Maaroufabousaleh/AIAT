@@ -189,6 +189,11 @@ external client-language SDK compatibility yet.
   backend/rendered/path/size metadata; missing, empty, timed-out, or failed
   output is reported with a stable degraded reason. This remains adapter
   conformance work, not external Mermaid image certification.
+- [x] Harden Semgrep result parsing (`583796f`): malformed or non-object
+  successful scanner JSON now returns a bounded degraded result with a stable
+  reason and no finding count, rather than escaping as a generic tool error.
+  Exact scanner execution, findings review, and external certification remain
+  separate security gates.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default

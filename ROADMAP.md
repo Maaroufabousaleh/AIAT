@@ -1063,7 +1063,10 @@ The codebase already includes:
 - the bounded `security.scan` adapter now supports `semgrep`, `skillspector`,
   and `trufflehog` aliases through the configured sandbox process, with output
   limits and the same audit/grant/rate/approval controls as the existing
-  scanner path.
+  scanner path. Commit `583796f` additionally normalizes malformed or
+  non-object Semgrep JSON into stable degraded results rather than generic
+  registry errors; findings review and exact scanner certification remain
+  separate gates.
 - `document.ingest` uses Docling through the optional extensions profile when
   installed and returns an explicit, usable degraded `plain_text_fallback`
   result otherwise; missing Docling is not treated as a tool or licence gate.
@@ -1373,6 +1376,9 @@ The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
 `965ba38`. Worker registry registration and authority-bearing updates now
 constrain update-policy values and revalidate persisted capability grants before
 mutation (`d8cafbb`; focused worker configuration coverage 66/66).
+Commit `583796f` bounds malformed and wrong-shape Semgrep output with explicit
+degraded reasons and no raw evidence retention; it does not advance the
+findings-review or external scanner-certification gates.
 The optional external `code.review` boundary (`10b1af2`) now turns empty,
 malformed, and non-object successful stdout into stable degraded results rather
 than generic registry errors; exact external review identity and representative
