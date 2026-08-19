@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-compose-local-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-19T06:10:28.859304+00:00",
+  "observed_at": "2026-08-19T06:23:37.174074+00:00",
   "profile": "live-compose-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -18,7 +18,7 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "38a8ab729fda7bb38c5342fa483473c277326a77",
+    "revision": "13c96c13ae13f8b1935c227db89a77a867e551ec",
     "working_tree_clean": false,
     "changed_path_count": 2
   },
