@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.release-ledger-live-current-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-19T02:28:28.002753Z",
+  "observed_at": "2026-08-19T04:27:30.724376Z",
   "profile": "live-current-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 81,
-    "pass": 67,
+    "total": 83,
+    "pass": 69,
     "fail": 0,
     "blocked": 14
   },
@@ -18,10 +18,10 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "a14e5c04c9de6ed1993821eb46bad37528660a2b",
+    "revision": "627f7bdf5903d9dd38e9ff159b6a27f577f6c308",
     "working_tree_clean": false
   },
-  "manifest_digest": "cbef16684ca2272bb64dbb385c82698c1878bdb233bb5eb1c4f4a7bf49c71fcc",
+  "manifest_digest": "f65e73287a1296aa2c1b045f1516886e19c711346515a90560a247f1f2266c43",
   "live_configuration": {
     "orchestrator_url_configured": false,
     "credentials_printed": false,
@@ -92,7 +92,7 @@
     "checks_passed": 12,
     "cleanup_verified": true,
     "provider_managed_kms_status": "not_configured",
-    "aggregate_live_child_status": "blocked_missing_configuration"
+    "aggregate_live_child_status": "pass"
   },
   "secret_policy": "credentials, image values, URLs, and dependency payloads are never retained"
 }
