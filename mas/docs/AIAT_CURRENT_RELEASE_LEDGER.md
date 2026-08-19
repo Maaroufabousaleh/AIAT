@@ -15,7 +15,7 @@ the bounded multipart object-store boundary (`a2f35de`), the guarded provider-di
 (`ecbef00`) and its boundary-compatibility fix (`d9cc04e`), the bounded
 resource profile (`3791b3f`), the corrected live provider-process outage/recovery
 wave (`d92b3dc`/`407a4f9`), the live AIAT credentials-manager boundary certificate
-(`12ba7c7`/`1808a15`), the fresh configured Compose trace/metrics/worker/runtime/model
+(`12ba7c7`/`1808a15`/`1c1df03`), the fresh configured Compose trace/metrics/worker/runtime/model
 read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), and the static aggregation at 57/57 checks passing, two pending
 evidence items, and a dirty working tree;
 the conservative decision remains
@@ -180,7 +180,8 @@ evidence remain open.
 
 The live AIAT credentials-manager boundary certificate (`12ba7c7`, scalar
 evidence [`provenance/credentials_manager_live_evidence.json`](provenance/credentials_manager_live_evidence.json),
-registered by `d101901`) passes against the running Compose Postgres boundary.
+registered by `d101901`, refreshed in `1c1df03` at 2026-08-19T00:58:09Z
+against `e2511c1`) passes against the running Compose Postgres boundary.
 It verifies ciphertext-at-rest before persistence, metadata-only projection,
 policy denial, approved server-side resolution, one-use approval, rate-limit
 denial, durable audit rows, and zero fixture residue without retaining key

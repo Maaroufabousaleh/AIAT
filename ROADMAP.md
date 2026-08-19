@@ -113,10 +113,12 @@ disaster-recovery evidence remain open. The release ledger now validates the
 multipart/resource/outage certificates as retained live evidence through the
 registered scalar paths, without retaining payloads, credentials, logs, or
 disposable state. The live AIAT credentials-manager
-certificate (`12ba7c7`/`1808a15`) separately passes ciphertext-at-rest,
+certificate (`12ba7c7`/`1808a15`, scalar refresh `1c1df03`) separately passes
+ciphertext-at-rest,
 metadata redaction, policy/approval/rate-limit enforcement, server-side
 resolution, audit persistence, and zero fixture residue against Compose
-Postgres. It advances the AIAT-owned secret-management boundary only; no
+Postgres (refreshed 2026-08-19T00:58:09Z against `e2511c1`). It advances the
+AIAT-owned secret-management boundary only; no
 provider-managed KMS/SSE endpoint is configured or inferred.
 
 The storage phase now also has a bounded same-provider provider-pair certificate
@@ -237,8 +239,8 @@ provider-pair, clean-host/disaster-recovery, and outage evidence remain open.
 The current resource/release continuation supersedes the older aggregate
 snapshot above: `3791b3f`/`bb0fa8f`/`c90fc13` retain the corrected two-provider
 resource and multipart wave, `d92b3dc`/`407a4f9` retain the corrected actual
-provider-process outage/recovery wave, `12ba7c7`/`1808a15` retain the live
-AIAT credentials-manager boundary certificate, and the refreshed configured
+provider-process outage/recovery wave, `12ba7c7`/`1808a15`/`1c1df03` retain the
+live AIAT credentials-manager boundary certificate, and the refreshed configured
 aggregate at `2026-08-18T23:57:08Z` records 76 pass, 0 fail, 5 blocked, and
 4 pending across 81 checks at revision `296d89b`; the model-profile catalogue
 now has complete 93/93 coverage after bounded stale-fixture cleanup. It remains `NO-RELEASE`

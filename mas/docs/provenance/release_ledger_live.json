@@ -172,6 +172,8 @@
   "local_credentials_manager_evidence": {
     "status": "pass",
     "ref": "credentials_manager_live_evidence.json",
+    "evidence_commit": "1c1df03",
+    "observed_at": "2026-08-19T00:58:09Z",
     "mode": "compose-local-live",
     "checks_passed": 12,
     "cleanup_verified": true,
