@@ -1,7 +1,7 @@
 # AIAT Roadmap
 
 **Roadmap baseline:** 2026-08-10
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-19
 **Programme authority:** [AIAT_TARGET_PROGRAMME.md](AIAT_TARGET_PROGRAMME.md)  
 **Current phase:** P0 release integrity
 

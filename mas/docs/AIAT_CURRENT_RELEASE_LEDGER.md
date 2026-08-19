@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
-**Run date:** 2026-08-18
-**Base revision:** `f6063e0` (latest reviewed implementation/evidence revision; aggregate refresh `f6063e0`)
+**Run date:** 2026-08-19
+**Base revision:** `7af980b` (latest reviewed implementation/evidence revision; aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -16,7 +16,7 @@ the bounded multipart object-store boundary (`a2f35de`), the guarded provider-di
 resource profile (`3791b3f`), the corrected live provider-process outage/recovery
 wave (`d92b3dc`/`407a4f9`), the live AIAT credentials-manager boundary certificate
 (`12ba7c7`/`1808a15`), the fresh configured Compose trace/metrics/worker/runtime/model
-read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), and the static aggregation at 57/57 checks passing, two pending
+read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), and the static aggregation at 57/57 checks passing, four pending
 evidence items, and a dirty working tree;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`

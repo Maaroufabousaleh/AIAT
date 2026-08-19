@@ -1,6 +1,6 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-08-18
+**Updated:** 2026-08-19
 - Current continuation refresh (`296d89b`, aggregate evidence `f6063e0`) runs the static ledger at 57/57
   pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
   across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and
