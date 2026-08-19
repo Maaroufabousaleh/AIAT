@@ -1364,6 +1364,10 @@ plain text with an explicit degraded/backend reason when it is absent. Commit
 Docling stdout into stable degraded results rather than generic registry errors.
 This is not external Docling certification; installation and live adapter
 evidence remain part of the open R2 work.
+The Mermaid adapter boundary (`faee65c`) now requires a non-empty render
+artifact before reporting success and retains only scalar output metadata;
+external Mermaid image installation and representative certification remain
+open.
 The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
 `trufflehog` compatibility aliases; the SDK/manifest forwarding group is
 `965ba38`. Worker registry registration and authority-bearing updates now

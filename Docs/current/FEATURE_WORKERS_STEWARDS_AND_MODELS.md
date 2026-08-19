@@ -690,6 +690,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   those cases return `degraded: true` with a stable reason rather than a
   generic registry `TOOL_ERROR`. This is fallback/boundary behaviour, not
   Docling certification; the external runtime remains an optional extension.
+- `diagram.render` uses the Mermaid CLI only when the optional `mmdc` binary is
+  present. Commit `faee65c` now verifies that a successful process produced a
+  non-empty artifact and returns bounded `backend`, `rendered`, `output`,
+  `output_exists`, and `output_size_bytes` metadata; missing, empty, timed-out,
+  or failed output is a stable degraded result. Rendered content is not copied
+  into evidence, and this is adapter-boundary conformance rather than external
+  Mermaid image certification.
 - Tool-service image profiles now separate the general gateway from browser/Docling/Semgrep/Mermaid extensions; the browser dependency is opt-in in the core package and `infra/docker/image-budgets.yaml` records compressed, uncompressed, startup, and memory ceilings for both profiles.
 
 ## Code anchors
@@ -716,6 +723,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Code-review adapter catalogue/default (`fc528a8`): [`mas/docs/provenance/code_review_adapters.yaml`](../../mas/docs/provenance/code_review_adapters.yaml), [`mas/scripts/check_code_review_adapters.py`](../../mas/scripts/check_code_review_adapters.py), [`mas/apps/tool-service/tool_service/code_review_runner.py`](../../mas/apps/tool-service/tool_service/code_review_runner.py), and [`CodeReviewTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py)
 - Security adapter aliases/fixture (`fc528a8`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py)
 - Document ingestion/fallback and bounded Docling output: [`DocumentIngestTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_document_ingest_falls_back_to_text_when_docling_missing`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), [`test_document_ingest_reports_invalid_docling_output_without_raising`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `document.ingest` readiness probe
+- Mermaid render boundary: [`DiagramRenderTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_diagram_render_reports_successful_artifact_metadata`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), [`test_diagram_render_does_not_report_success_without_artifact`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `diagram.render` readiness probe
 - Steward lifecycle contract (`c80e339`, fixture coverage `fe6fb8d`): [`mas/scripts/check_worker_steward_contract.py`](../../mas/scripts/check_worker_steward_contract.py) and [`test_worker_steward_contract.py`](../../mas/packages/mas-core/tests/test_worker_steward_contract.py). The deterministic domain exercise covers candidate immutability, compatibility evidence, promotion regression blocking, and rollback without claiming database or live-worker certification.
 - Metadata-only provenance/evaluator group (`cbdcfa6`, enforcement hardening `9b84af3`): [`mas/scripts/check_provenance.py`](../../mas/scripts/check_provenance.py), [`worker_registry/evaluator.py`](../../mas/packages/mas-core/mas_core/worker_registry/evaluator.py), [`operational_promotion_checks`](../../mas/packages/mas-core/mas_core/worker_registry/steward.py), and the default-manifest regression tests. Source/version provenance and technical security remain operational gates; detected, missing, unclassified, or restricted licence values are retained as operator notices only and cannot block certification, rollout, activation, or normal internal use. The same group records the current coding/tester security findings state and keeps both manifests pending until technical triage passes.
 - Executive reconciliation verifier: [`mas/scripts/check_executive_reconciliation.py`](../../mas/scripts/check_executive_reconciliation.py)
@@ -753,7 +761,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 | General specialists | LangGraph 0.6.11 or CrewAI 1.6.1 | Approved provenance; complete worker-by-worker live certification. |
 | Microsoft ecosystem | Microsoft Agent Framework `1.13.0` | Isolated profile (`agent-framework==1.13.0`, MCP `1.29.0`) is deterministically certified; default workspace/provider activation remains blocked by MCP `1.23.3` versus required `>=1.27,<2`. |
 | Coding/testing | OpenCode 1.17.13; OpenHands core optional | OpenCode interface approved; manifest scan evidence requires reconciliation. |
-| Documents | Docling + Spec Kit + Mermaid | Bounded extension image/subprocess; `document.ingest` remains usable through an explicit, degraded plain-text fallback when Docling is absent. |
+| Documents | Docling + Spec Kit + Mermaid | Bounded extension image/subprocess; `document.ingest` remains usable through an explicit degraded plain-text fallback when Docling is absent, and `diagram.render` reports only verified artifact metadata when Mermaid is present. |
 | Security | Semgrep CLI + SkillSpector baseline | TruffleHog and other bounded scanners are normal selectable adapters; scanner choice is technical, not licence-driven. |
 | Planning | ccpm + GitHub Issues starting profile | Plane and OpenProject are normal selectable provider adapters; AIAT remains canonical. |
 | DevOps | OpenTofu + GitHub Actions starting profile | Ansible and other CLI/IaC adapters remain normally selectable behind the same boundary. |

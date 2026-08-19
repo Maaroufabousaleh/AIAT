@@ -180,6 +180,11 @@ external client-language SDK compatibility yet.
   degraded structured reason instead of escaping as a generic tool error.
   This improves the local adapter contract but does not certify the external
   Docling/Spec Kit/Mermaid extension image.
+- [x] Harden the Mermaid render boundary (`faee65c`): a successful `mmdc`
+  process now requires a non-empty output artifact and returns bounded
+  backend/rendered/path/size metadata; missing, empty, timed-out, or failed
+  output is reported with a stable degraded reason. This remains adapter
+  conformance work, not external Mermaid image certification.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default
