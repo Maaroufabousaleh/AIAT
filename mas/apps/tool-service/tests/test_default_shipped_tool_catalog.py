@@ -507,6 +507,54 @@ async def test_document_ingest_uses_docling_runner_when_installed(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [
+        ("not-json", "docling_invalid_json"),
+        ("[]", "docling_invalid_result_shape"),
+        ("", "docling_empty_output"),
+    ],
+)
+async def test_document_ingest_reports_invalid_docling_output_without_raising(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes", encoding="utf-8")
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/docling" if name == "docling" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="writer",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="document.ingest",
+            kwargs={"path": "notes.md"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "docling"
+    assert response.result["available"] is True
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == reason
+    assert response.result["document"] is None
+
+
+@pytest.mark.anyio
 async def test_cicd_configure_writes_real_github_actions_workflow(
     make_registry, tmp_path, monkeypatch
 ):

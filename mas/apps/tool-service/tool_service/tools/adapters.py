@@ -78,6 +78,51 @@ def _command_allowed(argv: list[str]) -> bool:
     return any(tuple(argv[: len(prefix)]) == prefix for prefix in _command_allowlist())
 
 
+def _decode_docling_output(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the Docling runner boundary without leaking parser errors.
+
+    The runner is an optional external-process boundary.  A successful process
+    exit does not guarantee that its stdout is valid JSON, so malformed output
+    must be reported as a bounded degraded result rather than escaping through
+    the tool registry as an opaque ``TOOL_ERROR``.
+    """
+    result["configured"] = True
+    raw_output = result.get("stdout")
+    if result.get("returncode") != 0:
+        return result
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_empty_output",
+                "document": None,
+            }
+        )
+        return result
+    try:
+        parsed = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_invalid_json",
+                "document": None,
+            }
+        )
+        return result
+    if not isinstance(parsed, dict):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_invalid_result_shape",
+                "document": None,
+            }
+        )
+        return result
+    result["document"] = parsed
+    return result
+
+
 def _workspace_cwd(project_id: str = "", path: str = ".") -> Path:
     root = _workspace_root()
     if path in ("", "."):
@@ -381,9 +426,7 @@ class DocumentIngestTool(BaseTool):
                 max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
             )
             result["backend"] = "docling"
-            if result.get("returncode") == 0 and result.get("stdout"):
-                result["document"] = json.loads(result["stdout"])
-            return result
+            return _decode_docling_output(result)
         return {
             "available": True,
             "configured": True,
