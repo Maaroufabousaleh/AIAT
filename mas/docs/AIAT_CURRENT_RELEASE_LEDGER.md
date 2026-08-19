@@ -39,7 +39,12 @@ Firecracker readiness, image identity/SBOM requirement, runtime/model live
 probes, outbound mail, self-improvement, and security review checks. Static
 contracts and focused regression suites pass; live blockers remain limited to
 the documented operator-owned host, runtime, artifact, credential, or
-signal-selection prerequisites.
+signal-selection prerequisites. A follow-up scalar-only sweep at
+`2026-08-19T01:56:47Z` against `7860b14` preserves those classifications:
+native Linux/runsc/image-ref, gVisor, provider-KMS, three-endpoint
+backup/restore, runtime/model/steward, mail, self-improvement, and unresolved
+security-review gates remain blocked without new provider, credential, or
+payload evidence. No live probe changed the release decision.
 
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration

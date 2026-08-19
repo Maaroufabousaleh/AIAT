@@ -90,7 +90,12 @@ Firecracker readiness, image identity/SBOM requirement, runtime/model live
 probes, outbound mail, self-improvement, and security review checks. Static
 contracts and focused regression suites pass; live results remain blocked only
 by the documented host, runtime, artifact, credential, or operator-selection
-prerequisites. The static release ledger remains 57/57 with `NO-RELEASE`.
+prerequisites. The follow-up sweep at `2026-08-19T01:56:47Z` against
+`7860b14` preserves those classifications: native Linux/runsc/image-ref,
+gVisor, provider-KMS, three-endpoint backup/restore, runtime/model/steward,
+mail, self-improvement, and unresolved security-review gates remain blocked
+without new provider or payload evidence. The static release ledger remains
+57/57 with `NO-RELEASE`.
 
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
