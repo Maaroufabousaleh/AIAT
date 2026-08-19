@@ -52,8 +52,8 @@ workspace remains intentionally on MCP `1.23.3`, so default-profile/provider
 activation is still blocked and this refresh advances only the isolated
 profile evidence.
 
-The native-host preflight was rerun at `2026-08-19T03:20:46Z`
-(`b37cbce`) against revision `76d326b` and remains blocked by the WSL2 host
+The native-host preflight was rerun at `2026-08-19T04:15:06Z` against revision
+`39cb545` and remains blocked by the WSL2 host
 identity, unavailable `runsc`, missing deployment-supplied immutable image
 refs, and the two protected dirty memory files. The native
 contract/regression slice passes; native-Linux network, sandbox, image/SBOM,
