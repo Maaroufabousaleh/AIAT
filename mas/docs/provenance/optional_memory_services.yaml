@@ -73,7 +73,7 @@ services:
     status: candidate
     default_enabled: false
     integration_mode: aiat_bounded_vector_adapter
-    adapter: external_adapter_pending_exact_contract
+    adapter: mas_core.memory.optional_services.QdrantVectorAdapter
     provenance:
       source_kind: external_service
       version_status: exact_pin_required_before_activation
@@ -133,7 +133,7 @@ services:
     status: candidate
     default_enabled: false
     integration_mode: aiat_workflow_adapter
-    adapter: external_adapter_pending_exact_contract
+    adapter: mas_core.memory.optional_services.TemporalWorkflowAdapter
     provenance:
       source_kind: external_service
       version_status: exact_pin_required_before_activation

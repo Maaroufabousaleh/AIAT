@@ -20,6 +20,11 @@ CATALOGUE_SCHEMA = "aiat.optional-memory-services.v1"
 MAS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOGUE = MAS_ROOT / "docs" / "provenance" / "optional_memory_services.yaml"
 EXPECTED_IDS = ("letta", "qdrant", "temporal")
+EXPECTED_ADAPTERS = {
+    "letta": "mas_core.worker_registry.letta_adapter.LettaAdapter",
+    "qdrant": "mas_core.memory.optional_services.QdrantVectorAdapter",
+    "temporal": "mas_core.memory.optional_services.TemporalWorkflowAdapter",
+}
 REQUIRED_TOP_LEVEL = {
     "id",
     "display_name",
@@ -111,6 +116,10 @@ def _validate(catalogue: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]
             errors.append(f"{prefix}.status must be candidate")
         if service.get("default_enabled") is not False:
             errors.append(f"{prefix}.default_enabled must be false")
+        service_id = str(service.get("id") or "")
+        expected_adapter = EXPECTED_ADAPTERS.get(service_id)
+        if expected_adapter and service.get("adapter") != expected_adapter:
+            errors.append(f"{prefix}.adapter must be {expected_adapter!r}")
         for section, required in REQUIRED_SECTIONS.items():
             value = service.get(section)
             if not isinstance(value, dict):
@@ -148,6 +157,8 @@ def _validate(catalogue: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]
                 "status": service.get("status"),
                 "default_enabled": service.get("default_enabled"),
                 "integration_mode": service.get("integration_mode"),
+                "adapter": service.get("adapter"),
+                "adapter_contract": "exact" if service.get("adapter") == expected_adapter else "invalid",
                 "steward_id": (service.get("steward") or {}).get("id"),
                 "required_conformance_count": len((service.get("conformance") or {}).get("required_checks") or []),
                 "measurable_metric_count": len((service.get("measurable_value") or {}).get("metrics") or []),
@@ -175,6 +186,7 @@ def build_report(*, catalogue_path: Path = DEFAULT_CATALOGUE, live: bool = False
         "services": rows,
         "service_count": len(rows),
         "enabled_service_count": sum(row.get("default_enabled") is True for row in rows),
+        "exact_adapter_contract_count": sum(row.get("adapter_contract") == "exact" for row in rows),
         "mutation_performed": False,
         "network_access_performed": False,
         "licence_metadata_is_gate": False,

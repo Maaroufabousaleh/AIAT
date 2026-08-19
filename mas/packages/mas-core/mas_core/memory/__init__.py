@@ -88,6 +88,24 @@ from mas_core.memory.object_store_rollout import (
     ObjectStoreMigrationError,
     ObjectStoreMigrationWorkflow,
 )
+from mas_core.memory.optional_services import (
+    OPTIONAL_MEMORY_ADAPTER_SCHEMA,
+    QDRANT_ADAPTER_SCHEMA,
+    TEMPORAL_ADAPTER_SCHEMA,
+    OptionalServiceContractError,
+    OptionalServiceHealth,
+    OptionalServiceUnavailable,
+    QdrantBackend,
+    QdrantVectorAdapter,
+    TemporalBackend,
+    TemporalWorkflowAdapter,
+    VectorDeleteResult,
+    VectorPoint,
+    VectorSearchHit,
+    VectorWriteResult,
+    WorkflowCommand,
+    WorkflowRunReference,
+)
 from mas_core.memory.storage import AgentStorage
 
 __all__ = [
@@ -144,5 +162,21 @@ __all__ = [
     "MigrationTransition",
     "ObjectStoreMigrationError",
     "ObjectStoreMigrationWorkflow",
+    "OPTIONAL_MEMORY_ADAPTER_SCHEMA",
+    "QDRANT_ADAPTER_SCHEMA",
+    "TEMPORAL_ADAPTER_SCHEMA",
+    "OptionalServiceContractError",
+    "OptionalServiceHealth",
+    "OptionalServiceUnavailable",
+    "QdrantBackend",
+    "QdrantVectorAdapter",
+    "TemporalBackend",
+    "TemporalWorkflowAdapter",
+    "VectorDeleteResult",
+    "VectorPoint",
+    "VectorSearchHit",
+    "VectorWriteResult",
+    "WorkflowCommand",
+    "WorkflowRunReference",
     "metadata",
 ]
