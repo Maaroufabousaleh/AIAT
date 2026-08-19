@@ -1359,9 +1359,11 @@ live worker-run, and rollback evidence remain open.
 
 The document adapter also has a coherent local fallback contract: the optional
 Docling extension is used when present, while the core profile returns usable
-plain text with an explicit degraded/backend reason when it is absent. This is
-not external Docling certification; installation and live adapter evidence
-remain part of the open R2 work.
+plain text with an explicit degraded/backend reason when it is absent. Commit
+`eadf62c` additionally normalizes empty, malformed, and non-object successful
+Docling stdout into stable degraded results rather than generic registry errors.
+This is not external Docling certification; installation and live adapter
+evidence remain part of the open R2 work.
 The bounded security adapter also exposes tested `semgrep`, `skillspector`, and
 `trufflehog` compatibility aliases; the SDK/manifest forwarding group is
 `965ba38`. Worker registry registration and authority-bearing updates now

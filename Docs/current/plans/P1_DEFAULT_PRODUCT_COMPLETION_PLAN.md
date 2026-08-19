@@ -175,6 +175,11 @@ external client-language SDK compatibility yet.
   installed: the Docling runner is selected when present and the core profile
   returns an explicit degraded `plain_text_fallback` result otherwise. Full
   Docling/Spec Kit/Mermaid adapter certification remains a separate item.
+- [x] Harden the optional Docling subprocess boundary (`eadf62c`): a successful
+  process with empty, malformed, or non-object stdout now returns an explicit
+  degraded structured reason instead of escaping as a generic tool error.
+  This improves the local adapter contract but does not certify the external
+  Docling/Spec Kit/Mermaid extension image.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default
