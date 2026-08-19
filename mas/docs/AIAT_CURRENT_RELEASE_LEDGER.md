@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `e2511c1` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T00:55:56Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `353f163` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T01:03:07Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -32,6 +32,14 @@ rerun; evidence refresh `f6063e0`) is retained at
 the model-profile child now has complete 93/93 coverage after bounded removal
 of one unreferenced local smoke fixture. The aggregate remains descriptive and
 does not change **NO-RELEASE**.
+
+The ordered continuation sweep at `2026-08-19T01:03:07Z` reran the native
+preflight, AIAT credentials boundary, clean-process/backup restore, gVisor and
+Firecracker readiness, image identity/SBOM requirement, runtime/model live
+probes, outbound mail, self-improvement, and security review checks. Static
+contracts and focused regression suites pass; live blockers remain limited to
+the documented operator-owned host, runtime, artifact, credential, or
+signal-selection prerequisites.
 
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration

@@ -31,6 +31,14 @@
   read-back is classified as harness/configuration invalid and excluded. The
   corrected operator-key rerun passes 76/81 checks with five explicit external
   blockers and zero failures.
+- The 2026-08-19 ordered gate sweep reruns the native preflight, AIAT
+  credentials boundary, clean-process/backup restore, gVisor and Firecracker
+  readiness, image identity/SBOM requirement, runtime/model live probes,
+  outbound mail, self-improvement, and security review checks. Static
+  contracts and focused regression suites pass; live blockers remain confined
+  to the documented operator-owned host, runtime, artifact, credential, or
+  signal-selection prerequisites. The final static aggregation remains 57/57
+  pass with `NO-RELEASE`.
 - The 2026-08-18 continuation verification re-runs the static release ledger
   at 57/57 pass and confirms the API/protocol contract, documentation index,
   provenance inventory, docs-index scope guard, and host-owned restart-boundary

@@ -85,6 +85,14 @@ selected signal source/project scope. Their fixtures and corrected 56-test
 mail/self-improvement regression slice pass; the initial identity-test import
 miss is excluded as harness/configuration invalid.
 
+The ordered continuation sweep at `2026-08-19T01:03:07Z` reruns the native
+preflight, AIAT credentials boundary, clean-process/backup restore, gVisor and
+Firecracker readiness, image identity/SBOM requirement, runtime/model live
+probes, outbound mail, self-improvement, and security review checks. Static
+contracts and focused regression suites pass; live results remain blocked only
+by the documented host, runtime, artifact, credential, or operator-selection
+prerequisites. The static release ledger remains 57/57 with `NO-RELEASE`.
+
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated
