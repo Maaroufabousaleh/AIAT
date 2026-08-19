@@ -4,7 +4,10 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-19):** in progress. The licence metadata boundary,
+**Current status (2026-08-19):** in progress. The static release ledger is
+61/61 pass; the latest unconfigured live aggregation at
+`2026-08-19T04:47:35Z` is 71 pass, 0 fail, 14 blocked, and 4 pending across
+85 checks with `NO-RELEASE`. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -17,20 +20,20 @@ boundary now uses an authenticated control-plane storage API and fails closed
 when its startup health probe cannot reach durable storage. See the [P0 status
 record](../P0_RELEASE_INTEGRITY_STATUS.md).
 The refreshed local Docker-backed network matrix, provider-diverse resource/
-multipart/outage certificates, local image budget probes, complete 93/93 model
-profile read-back, and configured current-ledger run are retained as
-descriptive evidence; native image/SBOM, clean native-Linux release-host
-metric scale, provider-managed KMS, independent-host recovery, and frozen
-clean-ledger evidence remain open.
-The latest configured Compose release profile retained in evidence is 76 pass,
-0 fail, 5 blocked, and 4 pending across 81 checks, with `NO-RELEASE`. The
-current unconfigured aggregate at 2026-08-19T02:28:28Z is 67 pass, 0 fail,
-14 blocked, and 4 pending across 81 checks. Native release host/runsc and
-immutable image identity, gVisor, Firecracker, trace/runtime configuration,
-outbound mail, self-improvement source selection, provider KMS, clean-host/
-disaster recovery, and the technical security review remain open.
-These are distinct technical/operator gates and are not replaced by local
-fixture evidence or licence metadata.
+multipart/outage certificates, AIAT-owned encrypted-envelope and fresh-process
+restore prerequisites, local image budget probes, complete 93/93 model profile
+read-back, and configured current-ledger run are retained as descriptive
+evidence; native image/SBOM, clean native-Linux release-host metric scale,
+provider-managed KMS, independent-host recovery, and frozen clean-ledger
+evidence remain open. The prior nonexistent object-store network-alias run is
+classified as harness/configuration invalid and excluded from provider
+evidence. The latest configured Compose release profile retained in evidence
+is 76 pass, 0 fail, 5 blocked, and 4 pending across 81 checks, with
+`NO-RELEASE`. Native release host/runsc and immutable image identity, gVisor,
+Firecracker, trace/runtime configuration, outbound mail, self-improvement
+source selection, provider KMS, clean-host/disaster recovery, and the
+technical security review remain open. These are distinct technical/operator
+gates and are not replaced by local fixture evidence or licence metadata.
 
 ## Why this plan is first
 
