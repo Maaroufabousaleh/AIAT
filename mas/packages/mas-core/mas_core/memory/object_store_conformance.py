@@ -252,6 +252,18 @@ class InMemoryObjectStore:
     async def delete(self, ref: BlobRef) -> None:
         self._objects.pop((ref.bucket, ref.key), None)
 
+    async def delete_by_key(
+        self,
+        project_id: str,
+        key: str,
+        *,
+        bucket: str | None = None,
+    ) -> None:
+        """Delete by an already scoped key for explicit lifecycle cleanup."""
+
+        full_key = self._full_key(project_id, key.removeprefix(f"{project_id}/"))
+        self._objects.pop((self._bucket_name(bucket), full_key), None)
+
     async def list_objects(
         self,
         project_id: str,
