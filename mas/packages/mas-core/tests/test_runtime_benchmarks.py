@@ -19,6 +19,17 @@ def _load_runner():
     return module
 
 
+def test_parser_prefers_operator_key_over_legacy_aliases(monkeypatch) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("AIAT_OPERATOR_API_KEY", "operator-key")
+    monkeypatch.setenv("AIAT_API_KEY", "legacy-key")
+    monkeypatch.setenv("MAS_API_KEY", "service-key")
+
+    args = runner._parser().parse_args([])
+
+    assert args.api_key == "operator-key"
+
+
 def test_missing_live_configuration_is_blocked_without_secret_output() -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--live", "--json", "--api-key", "secret-value"],

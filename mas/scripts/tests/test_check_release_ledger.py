@@ -6,6 +6,7 @@ import json
 
 from check_release_ledger import (
     CheckSpec,
+    _compose_local_environment,
     _load_inventory,
     _run_retained_live_evidence,
     _validate_retained_live_evidence,
@@ -22,6 +23,35 @@ def _spec(path: str, schema: str, check_id: str) -> CheckSpec:
         retained_evidence_path=path,
         retained_evidence_schema=schema,
     )
+
+
+def test_compose_local_environment_uses_published_loopback_defaults(monkeypatch) -> None:
+    for key in (
+        "AIAT_ORCHESTRATOR_URL",
+        "ORCHESTRATOR_API_URL",
+        "AIAT_TOOL_SERVICE_URL",
+        "TOOL_SERVICE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    environment = _compose_local_environment()
+
+    assert environment["AIAT_ORCHESTRATOR_URL"] == "http://127.0.0.1:8000"
+    assert environment["ORCHESTRATOR_API_URL"] == "http://127.0.0.1:8000"
+    assert environment["AIAT_TOOL_SERVICE_URL"] == "http://127.0.0.1:8002"
+    assert environment["TOOL_SERVICE_URL"] == "http://127.0.0.1:8002"
+
+
+def test_compose_local_environment_preserves_explicit_endpoints(monkeypatch) -> None:
+    monkeypatch.setenv("AIAT_ORCHESTRATOR_URL", "https://operator.example/orchestrator")
+    monkeypatch.setenv("AIAT_TOOL_SERVICE_URL", "https://operator.example/tools")
+
+    environment = _compose_local_environment()
+
+    assert environment["AIAT_ORCHESTRATOR_URL"] == "https://operator.example/orchestrator"
+    assert environment["ORCHESTRATOR_API_URL"] == "https://operator.example/orchestrator"
+    assert environment["AIAT_TOOL_SERVICE_URL"] == "https://operator.example/tools"
+    assert environment["TOOL_SERVICE_URL"] == "https://operator.example/tools"
 
 
 def test_inventory_registers_retained_object_store_live_evidence() -> None:

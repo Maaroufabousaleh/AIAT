@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_model_profile_catalogue.py"
 
 
@@ -15,6 +14,17 @@ def _load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_parser_prefers_operator_key_over_legacy_aliases(monkeypatch) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("AIAT_OPERATOR_API_KEY", "operator-key")
+    monkeypatch.setenv("AIAT_API_KEY", "legacy-key")
+    monkeypatch.setenv("MAS_API_KEY", "service-key")
+
+    args = runner._parser().parse_args([])
+
+    assert args.api_key == "operator-key"
 
 
 class _Response:

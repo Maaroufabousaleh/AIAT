@@ -720,7 +720,12 @@ def _check_worker_count() -> int:
     return min(value, _MAX_CHECK_WORKERS)
 
 
-def _run_checks(specs: list[CheckSpec], *, live: bool) -> list[dict[str, Any]]:
+def _run_checks(
+    specs: list[CheckSpec],
+    *,
+    live: bool,
+    environment: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Run independent child verifiers concurrently while preserving inventory order."""
 
     if not specs:
@@ -731,10 +736,22 @@ def _run_checks(specs: list[CheckSpec], *, live: bool) -> list[dict[str, Any]]:
     ) as executor:
         # executor.map preserves input order, keeping reports deterministic even
         # though independent child processes finish at different times.
-        return list(executor.map(lambda spec: _run_check(spec, live=live), specs))
+        if environment is None:
+            return list(executor.map(lambda spec: _run_check(spec, live=live), specs))
+        return list(
+            executor.map(
+                lambda spec: _run_check(spec, live=live, environment=environment),
+                specs,
+            )
+        )
 
 
-def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
+def _run_check(
+    spec: CheckSpec,
+    *,
+    live: bool,
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
     if live and spec.retained_evidence_path:
         return _run_retained_live_evidence(spec)
     args = spec.live_args if live else spec.args
@@ -744,7 +761,7 @@ def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
         result = subprocess.run(
             command,
             cwd=MAS_ROOT,
-            env=os.environ.copy(),
+            env=environment or os.environ.copy(),
             capture_output=True,
             text=True,
             check=False,
@@ -779,11 +796,48 @@ def _run_check(spec: CheckSpec, *, live: bool) -> dict[str, Any]:
     }
 
 
-def build_report(*, include_live: bool = False) -> dict[str, Any]:
+def _compose_local_environment() -> dict[str, str]:
+    """Return safe host endpoints for a local Compose live-ledger run.
+
+    Compose services use names such as ``orchestrator-api`` and
+    ``tool-service`` internally.  Release checkers run on the host, where the
+    published loopback ports are the canonical boundary.  Explicit operator
+    endpoint overrides remain authoritative; this helper only supplies local
+    defaults when neither supported host-side variable is configured.
+    """
+
+    environment = os.environ.copy()
+    orchestrator_url = (
+        environment.get("AIAT_ORCHESTRATOR_URL", "").strip()
+        or environment.get("ORCHESTRATOR_API_URL", "").strip()
+        or "http://127.0.0.1:8000"
+    )
+    tool_service_url = (
+        environment.get("AIAT_TOOL_SERVICE_URL", "").strip()
+        or environment.get("TOOL_SERVICE_URL", "").strip()
+        or "http://127.0.0.1:8002"
+    )
+    environment["AIAT_ORCHESTRATOR_URL"] = orchestrator_url
+    environment["ORCHESTRATOR_API_URL"] = (
+        environment.get("ORCHESTRATOR_API_URL", "").strip() or orchestrator_url
+    )
+    environment["AIAT_TOOL_SERVICE_URL"] = tool_service_url
+    environment["TOOL_SERVICE_URL"] = environment.get("TOOL_SERVICE_URL", "").strip() or tool_service_url
+    return environment
+
+
+def build_report(*, include_live: bool = False, compose_local: bool = False) -> dict[str, Any]:
     inventory, specs = _load_inventory()
     checks = _run_checks(specs, live=False)
     if include_live:
-        checks.extend(_run_checks([spec for spec in specs if spec.live_args], live=True))
+        live_environment = _compose_local_environment() if compose_local else None
+        checks.extend(
+            _run_checks(
+                [spec for spec in specs if spec.live_args],
+                live=True,
+                environment=live_environment,
+            )
+        )
     counts = {status: sum(row["status"] == status for row in checks) for status in ("pass", "blocked", "fail")}
     pending_count = sum(int(row["pending_evidence_count"]) for row in checks)
     overall_status = "fail" if counts["fail"] else ("blocked" if counts["blocked"] else "pass")
@@ -801,7 +855,11 @@ def build_report(*, include_live: bool = False) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "checked_at": datetime.now(tz=UTC).isoformat(),
-        "profile": "live" if include_live else "static",
+        "profile": (
+            "live-compose-local"
+            if include_live and compose_local
+            else ("live" if include_live else "static")
+        ),
         "status": overall_status,
         "release_decision": release,
         "decision_reasons": reasons,
@@ -818,6 +876,7 @@ def build_report(*, include_live: bool = False) -> dict[str, Any]:
             "licence_metadata_is_gate": False,
             "blocked_live_evidence_is_pass": False,
         },
+        "compose_local": compose_local,
         "checks": checks,
         "scope": "bounded release-evidence aggregation; no deployment mutation or credential output",
     }
@@ -826,10 +885,15 @@ def build_report(*, include_live: bool = False) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true", help="include configured live probes")
+    parser.add_argument(
+        "--compose-local",
+        action="store_true",
+        help="with --live, use published loopback ports for a local Compose stack",
+    )
     parser.add_argument("--json", action="store_true", help="emit the full machine-readable report")
     args = parser.parse_args(argv)
     try:
-        report = build_report(include_live=args.live)
+        report = build_report(include_live=args.live, compose_local=args.compose_local)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         if args.json:
             print(json.dumps({"schema_version": SCHEMA, "status": "fail", "reason": str(exc)}))

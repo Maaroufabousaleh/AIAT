@@ -526,7 +526,11 @@ def main(argv: list[str] | None = None) -> int:
         "--url",
         default=os.getenv("AIAT_FLOW_RUNTIME_URL", os.getenv("AIAT_ORCHESTRATOR_URL", DEFAULT_URL)),
     )
-    parser.add_argument("--api-key", default=os.getenv("AIAT_API_KEY", os.getenv("MAS_API_KEY", "")))
+    parser.add_argument(
+        "--api-key",
+        default=os.getenv("AIAT_OPERATOR_API_KEY", os.getenv("AIAT_API_KEY", os.getenv("MAS_API_KEY", ""))),
+        help="operator bearer key (AIAT_OPERATOR_API_KEY/AIAT_API_KEY/MAS_API_KEY); never included in the report",
+    )
     parser.add_argument("--timeout", type=float, default=REQUEST_TIMEOUT_SECONDS)
     parser.add_argument("--evidence-output", help="write the scalar live certificate to this path")
     args = parser.parse_args(argv)

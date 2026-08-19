@@ -41,8 +41,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("AIAT_API_KEY", os.environ.get("MAS_API_KEY", "")),
-        help="optional bearer key (or AIAT_API_KEY/MAS_API_KEY); never included in the report",
+        default=os.environ.get(
+            "AIAT_OPERATOR_API_KEY",
+            os.environ.get("AIAT_API_KEY", os.environ.get("MAS_API_KEY", "")),
+        ),
+        help="optional operator bearer key (AIAT_OPERATOR_API_KEY/AIAT_API_KEY/MAS_API_KEY); never included in the report",
     )
     parser.add_argument(
         "--timeout",

@@ -41,8 +41,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-key",
-        default=os.getenv("AIAT_API_KEY", os.getenv("MAS_API_KEY", "")),
-        help="optional bearer key; never included in the report",
+        default=os.getenv("AIAT_OPERATOR_API_KEY", os.getenv("AIAT_API_KEY", os.getenv("MAS_API_KEY", ""))),
+        help="optional operator bearer key (AIAT_OPERATOR_API_KEY/AIAT_API_KEY/MAS_API_KEY); never included in the report",
     )
     parser.add_argument("--instance-id", help="flow instance UUID to inspect or act on")
     parser.add_argument(
