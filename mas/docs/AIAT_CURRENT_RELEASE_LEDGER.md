@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `b001c60` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T02:24:05Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `627f7bd` (latest reviewed implementation/evidence revision; static ledger remains 59/59; unconfigured aggregate refresh `2026-08-19T04:27:30Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -58,9 +58,9 @@ environment, harness/configuration, or operator-review blockers, not provider
 functional or provider-resource failures. The static ledger remains 59/59
 and the decision remains **NO-RELEASE**.
 
-The complete unconfigured `--live` aggregate at `2026-08-19T02:24:05Z`
-against `b001c60` reports 67 passes, zero failures, 14 externally blocked
-checks, and four pending evidence items out of 81. The corrected MinIO/
+The complete unconfigured `--live` aggregate at `2026-08-19T04:27:30Z`
+against `627f7bd` reports 69 passes, zero failures, 14 externally blocked
+checks, and four pending evidence items out of 83. The corrected MinIO/
 SeaweedFS resource, multipart, and provider-process outage certificates remain
 passes; the blocked checks are native-host/runsc, image-ref, gVisor/Firecracker,
 runtime/model, KMS/backup configuration, mail, self-improvement, and security
