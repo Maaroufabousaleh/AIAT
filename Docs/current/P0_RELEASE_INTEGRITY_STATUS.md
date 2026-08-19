@@ -44,7 +44,10 @@
   production `GatewayWorkerAdapter` over a bounded local gateway fixture
   (`8ed53df`). The security review register/checker (`23e908e`) now proves
   complete rule-count coverage and owner/next-action metadata for the exact
-  scan while retaining `technical_gate_status: blocked`. The release decision
+  scan while retaining `technical_gate_status: blocked`; follow-up `0ddbcc8`
+  binds the register to the retained exact-source reproduction certificate,
+  source commit, 316 findings, 55 parser/engine errors, and its payload-free
+  retention boundary. The release decision
   remains `NO-RELEASE` because live evidence, two pending worker security
   reviews, and a clean worktree are still absent. The workflow-control fixture
   extension (`9972b3b`) also passes deterministic cancellation, escalation,

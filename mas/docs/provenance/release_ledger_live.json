@@ -87,8 +87,9 @@
     "finding_count": 316,
     "scanner_error_count": 55,
     "aiat_boundary_regression": "pass",
+    "review_register_reproduction_binding": "pass",
     "technical_gate_status": "blocked",
-    "note": "The exact pinned OpenCode source reproduces the recorded finding count; unresolved findings and scanner/parser errors remain operator-review work. AIAT run-scoped grants, workspace path rejection, sandbox contract, and review-register regressions pass."
+    "note": "The exact pinned OpenCode source reproduces the recorded finding count; the review register is machine-bound to this source commit, finding/error counts, blocked technical status, and payload-free retention flags. Unresolved findings and scanner/parser errors remain operator-review work. AIAT run-scoped grants, workspace path rejection, sandbox contract, and review-register regressions pass."
   },
   "local_trace_transport_evidence": {
     "status": "pass",

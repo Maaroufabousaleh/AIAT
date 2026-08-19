@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `fc0b9e9` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T00:36:44Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `0ddbcc8` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T00:51:11Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -54,8 +54,10 @@ The exact pinned OpenCode scan was reproduced at `fc0b9e9` against commit
 certificate [`provenance/security_scan_reproduction_local.json`](provenance/security_scan_reproduction_local.json)
 records the same 316 findings and 55 parser/engine errors without retaining
 source or raw findings. AIAT-side workspace path, run-scoped grant, sandbox,
-and review-register regressions pass; unresolved upstream findings remain
-blocked pending operator disposition.
+and review-register regressions pass. Follow-up `0ddbcc8` makes the review
+checker require the certificate's exact source commit, finding/error counts,
+technical blocked status, and source/raw-output retention flags; unresolved
+upstream findings remain blocked pending operator disposition.
 
 The bounded mail-boundary follow-up `3edff39`/`35e52e1` also passes its
 regression scope: the mail-edge relay verifier is covered by 11/11 tests and
@@ -206,9 +208,12 @@ provider outage, KMS, clean-host, and disaster-recovery evidence remain open.
 The security review increment `23e908e` adds a machine-checked register for
 the exact OpenCode/Semgrep evidence. It maps all 15 rule groups to exactly 316
 findings, records a personal-operator owner and next action, and tracks the 54
-engine warnings. The register is a coherence contract only: its static check
-passes while `technical_gate_status: blocked` and both worker manifests remain
-`findings_review_required`.
+engine warnings. Follow-up `0ddbcc8` requires the register to point at the
+exact-source reproduction certificate and validates its 55 parser/engine
+errors, source commit, finding count, technical blocked status, and
+secret-safe retention flags. The register is a coherence contract only: its
+static check passes while `technical_gate_status: blocked` and both worker
+manifests remain `findings_review_required`.
 
 The `f999695` worker-plane provider runner remains fail-closed by default and
 requires explicit operator opt-in. The retained live certificate
@@ -556,11 +561,13 @@ suite rejects a direct `LICENSE_REVIEW` → `BLOCKED` transition.
   denial and positive control-plane storage evidence are still required to
   close the historical network defect.
 - Coding/tester security evidence has been executed but is not clean: the
-  exact-source Semgrep report has 316 findings and 54 engine warnings. Both
+  exact-source Semgrep report has 316 findings, 54 historical engine warnings,
+  and 55 parser/engine errors in the fresh reproduction. Both
   manifests remain `findings_review_required` and cannot be activated solely
   because OpenCode interface evidence exists. The machine-checked review
-  register at `provenance/security_scan_review.yaml` assigns the complete rule
-  inventory to the personal operator; it records follow-up work, not a waiver.
+  register at `provenance/security_scan_review.yaml` is bound to the fresh
+  reproduction by `0ddbcc8`, assigns the complete rule inventory to the
+  personal operator, and records follow-up work, not a waiver.
 - Production images and dependency/runtime records still need deployment-supplied
   immutable digest, source, lock, generated SBOM, and scan reconciliation. The
   static checker now also rejects duplicate inventory identities, missing local
