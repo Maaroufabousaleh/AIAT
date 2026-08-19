@@ -13,9 +13,13 @@
 - The local image-provenance follow-up (`75f9be0`) reconciles all ten supplied
   immutable references with matching Docker `RepoDigests` on the current WSL2
   engine. The scalar certificate is [`image_provenance_local_identity.json`](../../mas/docs/provenance/image_provenance_local_identity.json);
-  SBOM, vulnerability scan, source/lock, clean native build, and deployment
-  identity evidence remain unobserved, so the production image gate stays
-  blocked and the global `NO-RELEASE` decision is unchanged.
+  the bounded local SBOM observation (`662fb65`) is recorded in
+  [`image_sbom_local_observation.json`](../../mas/docs/provenance/image_sbom_local_observation.json)
+  with ten CycloneDX 1.4 summaries and 2,430 components. A deployment
+  vulnerability scan still needs operator authentication or an offline scanner;
+  source/lock, clean native build, and deployment identity evidence remain
+  unproven, so the production image gate stays blocked and the global
+  `NO-RELEASE` decision is unchanged.
 - The first post-image aggregate attempt used `MAS_API_KEY` where the local
   deployment requires the distinct `AIAT_OPERATOR_API_KEY`; its 403 trace
   read-back is classified as harness/configuration invalid and excluded. The

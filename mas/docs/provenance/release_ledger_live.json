@@ -69,12 +69,15 @@
     "ref": "image_provenance_local_identity.json",
     "image_count": 10,
     "matched_digest_count": 10,
-    "sbom_status": "not_checked",
-    "scan_status": "not_checked",
+    "sbom_status": "observed_local",
+    "sbom_observation_ref": "image_sbom_local_observation.json",
+    "sbom_observed_image_count": 10,
+    "sbom_observed_component_count": 2430,
+    "scan_status": "blocked_operator_auth",
     "source_revision_status": "not_checked",
     "lock_hash_status": "not_checked",
     "native_clean_build_status": "not_checked",
-    "note": "All ten supplied digest references match local Docker RepoDigests. This local identity observation does not certify deployment SBOM, vulnerability scan, source/lock, clean-build, or native release evidence."
+    "note": "All ten supplied digest references match local Docker RepoDigests. A separate scalar-only local CycloneDX SBOM observation covers all ten image stores, but deployment SBOM, vulnerability scan, source/lock, clean-build, or native release evidence remains unproven."
   },
   "local_trace_transport_evidence": {
     "status": "pass",

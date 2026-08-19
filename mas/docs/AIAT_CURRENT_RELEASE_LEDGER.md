@@ -41,10 +41,13 @@ scalar summaries.
 
 The local image identity follow-up at `75f9be0` reconciles all ten supplied
 digest references with Docker `RepoDigests` on the current WSL2 engine. Its
-scalar-only certificate is [`provenance/image_provenance_local_identity.json`](provenance/image_provenance_local_identity.json);
-SBOM, vulnerability scan, source/lock, clean native build, and deployment
-reconciliation remain explicitly unobserved and do not advance the production
-image gate.
+scalar-only certificate is [`provenance/image_provenance_local_identity.json`](provenance/image_provenance_local_identity.json).
+The follow-up local SBOM observation (`662fb65`) is retained at
+[`provenance/image_sbom_local_observation.json`](provenance/image_sbom_local_observation.json)
+with ten CycloneDX 1.4 summaries and 2,430 components. A deployment
+vulnerability scan still needs operator authentication or an offline scanner;
+source/lock, clean native build, and deployment reconciliation remain
+explicitly unproven and do not advance the production image gate.
 
 The bounded mail-boundary follow-up `3edff39`/`35e52e1` also passes its
 regression scope: the mail-edge relay verifier is covered by 11/11 tests and

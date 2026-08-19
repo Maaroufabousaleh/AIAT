@@ -45,6 +45,15 @@ dirty memory files. The native contract/regression slice passes; native-Linux
 network, sandbox, image/SBOM, recovery, and provider evidence still require an
 operator-owned release host.
 
+The local image SBOM follow-up (`662fb65`) now records scalar CycloneDX 1.4
+observations for all ten locally pinned images (2,430 components total) at
+[`mas/docs/provenance/image_sbom_local_observation.json`](mas/docs/provenance/image_sbom_local_observation.json).
+The observation does not substitute for deployment SBOM artifacts or a
+vulnerability scan: Docker Scout requires operator authentication here and no
+offline scanner is installed. Source/lock, clean native build, and native-host
+image certification therefore remain blocked; licence metadata remains
+non-gating.
+
 The security/adversarial-isolation rerun (`2026-08-18T23:26:40Z`) passes the
 review-register, scanner-alias, 39-worker sandbox declaration, and 11-runner
 WSL2 network checks, with 29 focused regressions green. It does not close the
