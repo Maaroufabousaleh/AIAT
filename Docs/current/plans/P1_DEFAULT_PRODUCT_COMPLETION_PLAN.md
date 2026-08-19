@@ -201,6 +201,10 @@ external client-language SDK compatibility yet.
 - [x] Bound the configured sandbox adapter response (`7ff464d`): empty,
   malformed, or non-object successful adapter output now returns scalar
   degraded reasons without raw adapter payloads or a generic tool error.
+- [x] Classify direct gVisor runtime failures (`31a4cd2`): Docker CLI/runtime
+  probe timeouts, probe failures, invalid runtime metadata, and container
+  launch errors now return stable infrastructure reasons without raw exception
+  text; the no-`runsc` result remains fail-closed.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default
