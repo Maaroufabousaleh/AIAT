@@ -175,6 +175,14 @@
   sandbox, and network regressions pass 29/29. The technical security gate
   remains blocked pending the operator's finding dispositions, and native
   `runsc`/host smoke evidence remains separate.
+- The exact-source Semgrep reproduction (`fc0b9e9`) against OpenCode
+  `10c894bdeef3618f5666fb506ef7f9491bb964d8` reproduces 316 findings with
+  Semgrep 1.168.0; its scalar certificate is
+  [`security_scan_reproduction_local.json`](../../mas/docs/provenance/security_scan_reproduction_local.json).
+  The reproduction also reports 55 parser/engine errors, so the technical gate
+  remains blocked rather than being upgraded from the historical review. The
+  AIAT-side OpenCode workspace/grant/sandbox boundary regression passes; no
+  upstream finding is treated as resolved without an operator disposition.
 - The remaining live-gate probes were rerun after correcting the test harness:
   outbound mail is blocked only for operator-owned relay credentials and a
   safe recipient, while self-improvement candidate detection is blocked only

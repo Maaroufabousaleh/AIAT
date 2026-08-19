@@ -67,6 +67,13 @@ WSL2 network checks, with 29 focused regressions green. It does not close the
 technical gate: 316 external findings, 54 engine warnings, and one open
 operator review remain, while native `runsc`/host smoke evidence is unavailable.
 
+The exact pinned OpenCode scan was reproduced at `fc0b9e9` against commit
+`10c894bdeef3618f5666fb506ef7f9491bb964d8` with Semgrep 1.168.0. The scalar
+certificate is [`mas/docs/provenance/security_scan_reproduction_local.json`](mas/docs/provenance/security_scan_reproduction_local.json);
+it records 316 findings and 55 parser/engine errors without retaining source
+or raw findings. AIAT-side workspace/grant/sandbox boundary regressions pass,
+but upstream findings remain blocked pending operator disposition.
+
 The remaining live-gate probes also fail closed at the correct operator
 boundary: outbound mail requires operator-owned relay credentials plus a safe
 recipient, and self-improvement candidate detection requires an explicitly

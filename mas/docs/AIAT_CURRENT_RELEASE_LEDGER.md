@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-19
-**Base revision:** `e4a6dbf` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T00:36:44Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `fc0b9e9` (latest reviewed implementation/evidence revision; static ledger refresh `2026-08-19T00:36:44Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -48,6 +48,14 @@ with ten CycloneDX 1.4 summaries and 2,430 components. A deployment
 vulnerability scan still needs operator authentication or an offline scanner;
 source/lock, clean native build, and deployment reconciliation remain
 explicitly unproven and do not advance the production image gate.
+
+The exact pinned OpenCode scan was reproduced at `fc0b9e9` against commit
+`10c894bdeef3618f5666fb506ef7f9491bb964d8` with Semgrep 1.168.0. The scalar
+certificate [`provenance/security_scan_reproduction_local.json`](provenance/security_scan_reproduction_local.json)
+records the same 316 findings and 55 parser/engine errors without retaining
+source or raw findings. AIAT-side workspace path, run-scoped grant, sandbox,
+and review-register regressions pass; unresolved upstream findings remain
+blocked pending operator disposition.
 
 The bounded mail-boundary follow-up `3edff39`/`35e52e1` also passes its
 regression scope: the mail-edge relay verifier is covered by 11/11 tests and

@@ -79,6 +79,17 @@
     "native_clean_build_status": "not_checked",
     "note": "All ten supplied digest references match local Docker RepoDigests. A separate scalar-only local CycloneDX SBOM observation covers all ten image stores, but deployment SBOM, vulnerability scan, source/lock, clean-build, or native release evidence remains unproven."
   },
+  "local_security_scan_reproduction": {
+    "status": "findings_review_required",
+    "ref": "security_scan_reproduction_local.json",
+    "source_commit": "10c894bdeef3618f5666fb506ef7f9491bb964d8",
+    "scanner": "semgrep 1.168.0 auto-ruleset",
+    "finding_count": 316,
+    "scanner_error_count": 55,
+    "aiat_boundary_regression": "pass",
+    "technical_gate_status": "blocked",
+    "note": "The exact pinned OpenCode source reproduces the recorded finding count; unresolved findings and scanner/parser errors remain operator-review work. AIAT run-scoped grants, workspace path rejection, sandbox contract, and review-register regressions pass."
+  },
   "local_trace_transport_evidence": {
     "status": "pass",
     "aggregate_current_status": "pass",
