@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -70,7 +71,13 @@ def _link_target(source: Path, raw: str) -> Path | None:
     target = target.split("#", 1)[0].split("?", 1)[0]
     if not target:
         return None
-    return (source.parent / target).resolve()
+    # Do not dereference every repository symlink here.  The maintained
+    # authority set contains hundreds of links and this check is routinely
+    # run from WSL/DrvFS, where ``Path.resolve()`` can spend minutes walking
+    # inaccessible or permission-protected temporary directories.  Link
+    # validation only needs a normalized filesystem path; ``exists()`` below
+    # still follows a target when the platform permits it.
+    return Path(os.path.normpath(str(source.parent / target)))
 
 
 def _local_link_errors(path: Path) -> list[str]:

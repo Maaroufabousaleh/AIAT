@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_docs_index.py"
+
+
+def test_link_target_normalization_does_not_dereference_symlinks() -> None:
+    namespace: dict[str, object] = {
+        "__name__": "check_docs_index_test",
+        "__file__": str(SCRIPT),
+    }
+    exec(SCRIPT.read_text(encoding="utf-8"), namespace)
+    link_target = namespace["_link_target"]
+    source = Path("/tmp/aiat-docs/source.md")
+
+    target = link_target(source, "../docs/target.md")
+
+    assert target == Path(os.path.normpath("/tmp/aiat-docs/../docs/target.md"))
 
 
 def test_docs_index_has_one_target_thirteen_features_and_three_plans() -> None:
