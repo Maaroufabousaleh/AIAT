@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.release-ledger-static-summary.v1",
   "programme_scope": "personal-internal-only",
-  "evidence_commit": "aa7d2b2",
-  "observed_at": "2026-08-19T04:08:50Z",
+  "evidence_commit": "57504a7",
+  "observed_at": "2026-08-19T04:46:00Z",
   "profile": "static",
   "status": "pass",
   "counts": {
-    "total": 59,
-    "pass": 59,
+    "total": 61,
+    "pass": 61,
     "fail": 0,
     "blocked": 0
   },
@@ -20,7 +20,9 @@
   ],
   "new_registered_checks": [
     "object_store_lifecycle",
-    "trace_retention_execution"
+    "trace_retention_execution",
+    "object_store_encryption",
+    "object_store_clean_environment_restore"
   ],
   "payload_free": true,
   "secret_free": true,
