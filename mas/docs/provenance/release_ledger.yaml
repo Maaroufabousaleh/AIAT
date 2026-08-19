@@ -187,6 +187,14 @@ checks:
     retained_live_evidence:
       path: docs/provenance/object_store_provider_outage_live_evidence.json
       schema_version: aiat.object-store-provider-outage.v1
+  - id: object_store_lifecycle
+    category: recovery
+    script: scripts/check_object_store_lifecycle.py
+    args: [--json]
+  - id: trace_retention_execution
+    category: recovery
+    script: scripts/check_trace_retention_execution.py
+    args: [--json]
   - id: credentials_manager_live
     category: security
     script: scripts/check_credentials_manager_live.py

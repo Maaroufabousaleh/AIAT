@@ -193,6 +193,20 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert resource_profile["summary"]["measurement_source"] in {"procfs", "resource"}
     assert resource_profile["summary"]["cleanup_verified"] is True
     assert resource_profile["summary"]["error_count"] == 0
+    lifecycle_contract = next(
+        row for row in report["checks"] if row["id"] == "object_store_lifecycle"
+    )
+    assert lifecycle_contract["category"] == "recovery"
+    assert lifecycle_contract["status"] == "pass"
+    assert lifecycle_contract["summary"]["mode"] == "fixture"
+    assert lifecycle_contract["summary"]["status"] == "pass"
+    retention_execution = next(
+        row for row in report["checks"] if row["id"] == "trace_retention_execution"
+    )
+    assert retention_execution["category"] == "recovery"
+    assert retention_execution["status"] == "pass"
+    assert retention_execution["summary"]["status"] == "pass"
+    assert retention_execution["summary"]["project_scope"]["incomplete_mapping_rejected"] is True
     runtime_profile = next(row for row in report["checks"] if row["id"] == "runtime_install_profile")
     assert runtime_profile["status"] == "pass"
     assert runtime_profile["summary"]["locked_versions"] == {
@@ -215,7 +229,7 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
 def test_release_ledger_redacts_secret_shaped_diagnostics() -> None:
     from importlib.util import module_from_spec, spec_from_file_location
 
-    spec = spec_from_file_location("check_release_ledger", SCRIPT)
+    spec = spec_from_file_location("check_release_ledger_redaction", SCRIPT)
     assert spec and spec.loader
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
