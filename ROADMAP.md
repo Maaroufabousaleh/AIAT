@@ -159,6 +159,17 @@ Postgres (refreshed 2026-08-19T01:18:46Z against `bb7330f`, evidence
 AIAT-owned secret-management boundary only; no
 provider-managed KMS/SSE endpoint is configured or inferred.
 
+The next executable storage slice is now implemented in `7f1a3c1`: the
+`aiat.object-store-lifecycle.v1` contract compares scalar provider inventory
+with canonical AIAT references, classifies orphan/expired candidates, retains
+size drift, protects content-addressed legal holds, and requires unchanged
+inventory plus explicit confirmation before garbage collection. Its fixture
+verifies the retained set after deletion and zero disposable residue in
+[`mas/docs/provenance/object_store_lifecycle_contract.json`](mas/docs/provenance/object_store_lifecycle_contract.json).
+This advances the local lifecycle boundary only; provider retention authority,
+live garbage collection, retention parity, clean-host, and disaster-recovery
+remain open.
+
 The storage phase now also has a bounded same-provider provider-pair certificate
 (`351444a`/`f385bd7`): two local MinIO endpoints pass checksum dual-write,
 adapter-boundary primary-loss rejection, secondary-only clean restore, and

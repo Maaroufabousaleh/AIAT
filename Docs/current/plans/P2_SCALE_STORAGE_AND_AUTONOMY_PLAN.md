@@ -145,6 +145,16 @@
   The local process-outage gate passes; production resource budgets/portability,
   provider-managed encryption/KMS, independent-host, clean-host, disaster
   recovery, and production cutover remain open.
+- [x] Add the bounded `aiat.object-store-lifecycle.v1` orphan/expiry and
+  garbage-collection contract (`7f1a3c1`). The preview compares a scalar
+  provider inventory with canonical AIAT references, retains size drift for
+  review, protects keys from a verified content-addressed legal-hold snapshot,
+  and requires an unchanged inventory plus explicit confirmation before
+  deleting planned keys. The deterministic fixture verifies post-delete
+  retained inventory and zero fixture residue; evidence is retained at
+  [`object_store_lifecycle_contract.json`](../../../mas/docs/provenance/object_store_lifecycle_contract.json).
+  Provider-owned retention authority, live garbage-collection scheduling,
+  retention parity, clean-host, and disaster-recovery evidence remain open.
 - Run the encrypted envelope against Garage, R2, B2, or another approved
   backend and retain provider-managed encryption/key-custody plus clean-host,
   provider-pair, and disaster-recovery restore evidence.

@@ -1,7 +1,7 @@
 # Data, Storage, Memory, and Retention Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, live AIAT credentials-manager secret-boundary certificate, and disabled-by-default optional Letta/Qdrant/Temporal contracts with bounded Qdrant/Temporal adapters; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, clean-host/disaster-recovery restore, and live optional-service value/recovery evidence remain target work
+**Status:** Postgres/pgvector/Redis/MinIO implemented; the S3-compatible contract, checksum copy, deterministic backup/restore fixture, AIAT-owned AES-256-GCM backup envelope, local fresh-process encrypted-restore certificate, governed migration workflow fixture and guarded provider-diverse live rehearsal, bounded object-store benchmark contract, bounded scalar resource profile, deployed local MinIO conformance, same-provider backup/restore rehearsal, bounded same-provider and provider-diverse dual-endpoint provider-pair recovery, disposable MinIO/SeaweedFS comparison, corrected provider-process outage/recovery certificate, bounded object-lifecycle/orphan/garbage-collection/legal-hold contract, live AIAT credentials-manager secret-boundary certificate, and disabled-by-default optional Letta/Qdrant/Temporal contracts with bounded Qdrant/Temporal adapters; provider-managed encryption/KMS, provider durability/custody, production routing/retention cutover, broader resource budgets/portability, live provider lifecycle authority, clean-host/disaster-recovery restore, and live optional-service value/recovery evidence remain target work
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -134,6 +134,16 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
   This closes the local process-outage gate only; provider-managed KMS,
   production thresholds, independent-host, clean-host, and disaster-recovery
   evidence remain separate.
+- The bounded `aiat.object-store-lifecycle.v1` contract (`7f1a3c1`) compares a
+  scalar provider inventory with AIAT canonical references, classifies orphan
+  and expired candidates, retains size drift for review, and protects
+  authoritative legal-hold keys. Confirmed execution requires an unchanged
+  inventory, a verified content-addressed hold snapshot, and explicit human
+  confirmation before deleting only planned keys; post-delete inventory and
+  fixture cleanup are verified. The payload-free fixture certificate is
+  [`object_store_lifecycle_contract.json`](../../mas/docs/provenance/object_store_lifecycle_contract.json).
+  This is a local lifecycle boundary, not provider-managed retention authority,
+  live garbage collection, or disaster-recovery evidence.
 - The live AIAT credentials-manager certificate verifies the secret boundary
   against Compose Postgres: ciphertext-at-rest, metadata-only projection,
   policy denial, approved server-side resolution, one-use approval,
@@ -198,6 +208,7 @@ AIAT stores durable truth in explicit canonical systems and exposes storage thro
 - Optional Qdrant/Temporal adapter contracts: [`mas/packages/mas-core/mas_core/memory/optional_services.py`](../../mas/packages/mas-core/mas_core/memory/optional_services.py) and [`mas/packages/mas-core/tests/test_optional_services.py`](../../mas/packages/mas-core/tests/test_optional_services.py)
 - Provider-pair dual-write/recovery checker: [`mas/scripts/check_object_store_provider_pair.py`](../../mas/scripts/check_object_store_provider_pair.py) and retained evidence [`mas/docs/provenance/object_store_provider_pair_evidence.json`](../../mas/docs/provenance/object_store_provider_pair_evidence.json)
 - Provider-process outage/recovery checker: [`mas/scripts/check_object_store_provider_outage.py`](../../mas/scripts/check_object_store_provider_outage.py), focused tests [`mas/scripts/tests/test_check_object_store_provider_outage.py`](../../mas/scripts/tests/test_check_object_store_provider_outage.py), and scalar evidence [`mas/docs/provenance/object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json)
+- Object lifecycle/orphan/legal-hold contract: [`mas/packages/mas-core/mas_core/memory/object_store_lifecycle.py`](../../mas/packages/mas-core/mas_core/memory/object_store_lifecycle.py), focused tests [`mas/packages/mas-core/tests/test_object_store_lifecycle.py`](../../mas/packages/mas-core/tests/test_object_store_lifecycle.py), checker [`mas/scripts/check_object_store_lifecycle.py`](../../mas/scripts/check_object_store_lifecycle.py), and scalar evidence [`mas/docs/provenance/object_store_lifecycle_contract.json`](../../mas/docs/provenance/object_store_lifecycle_contract.json)
 - Context/checkpoints: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Database migrations: [`mas/migrations/versions/`](../../mas/migrations/versions/)
 - Blob tools: [`mas/apps/tool-service/tool_service/tools/infra.py`](../../mas/apps/tool-service/tool_service/tools/infra.py)
@@ -352,7 +363,10 @@ Each data class declares retention, archive, legal hold, export, deletion, backu
   while direct model/artifact/integration evidence and API, PM/SCM, and recovery
   projections already have bounded durable read paths.
 - Prove Postgres point-in-time recovery and cross-store consistency after restore.
-- Add object lifecycle, orphan detection, garbage collection, and legal-hold tests.
+- The bounded object-lifecycle contract and fixture now cover orphan detection,
+  expiry candidates, size-drift retention, confirmed garbage collection, and
+  legal-hold protection; live provider inventory authority, retention parity,
+  and operator-owned garbage-collection scheduling remain open.
 
 ## Acceptance criteria
 
