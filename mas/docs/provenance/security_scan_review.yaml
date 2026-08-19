@@ -10,6 +10,10 @@ policy:
   review_register_is_not_a_waiver: true
   licence_metadata_is_gate: false
 
+latest_reproduction:
+  path: mas/docs/provenance/security_scan_reproduction_local.json
+  schema_version: aiat.security-scan-reproduction-local.v1
+
 reviews:
   - id: opencode-1.17.13-semgrep-2026-08-10-review
     scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10

@@ -22,6 +22,7 @@ DEFAULT_SCAN = MAS_ROOT / "docs" / "provenance" / "security_scan_evidence.yaml"
 DEFAULT_REVIEW = MAS_ROOT / "docs" / "provenance" / "security_scan_review.yaml"
 SCHEMA = "aiat.security-scan-review.v1"
 SCAN_SCHEMA = "aiat.security-scan-evidence.v1"
+REPRO_SCHEMA = "aiat.security-scan-reproduction-local.v1"
 SCAN_STATUSES = {"passed", "findings_review_required", "blocked"}
 REVIEW_STATUSES = {"open", "in_review", "resolved"}
 
@@ -49,6 +50,80 @@ def _resolve_scan_ref(reference: str, scan_path: Path) -> tuple[str, str] | None
     if resolved != scan_path.resolve():
         return None
     return str(resolved), scan_id.strip()
+
+
+def _load_reproduction(
+    review_document: dict[str, Any],
+    scan_index: dict[str, dict[str, Any]],
+) -> tuple[list[str], dict[str, Any]]:
+    """Validate the latest exact-source reproduction without retaining findings."""
+
+    errors: list[str] = []
+    summary: dict[str, Any] = {"status": "missing"}
+    reference = review_document.get("latest_reproduction")
+    if not isinstance(reference, dict):
+        return ["security review must declare latest_reproduction metadata"], summary
+    raw_path = str(reference.get("path") or "").strip()
+    expected_schema = str(reference.get("schema_version") or "").strip()
+    if not raw_path or expected_schema != REPRO_SCHEMA:
+        return ["latest_reproduction must declare a repository path and reproduction schema"], summary
+    path = (REPO_ROOT / raw_path).resolve()
+    if REPO_ROOT not in path.parents or not path.is_file():
+        return ["latest_reproduction path must identify a repository JSON file"], summary
+    try:
+        reproduction = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"latest_reproduction could not be loaded: {type(exc).__name__}"], summary
+    if not isinstance(reproduction, dict):
+        return ["latest_reproduction must contain a JSON object"], summary
+    if reproduction.get("schema_version") != REPRO_SCHEMA:
+        errors.append("latest_reproduction schema_version is invalid")
+    if reproduction.get("programme_scope") != "personal-internal-only":
+        errors.append("latest_reproduction must remain personal-internal-only")
+    source = reproduction.get("source")
+    scanner = reproduction.get("scanner")
+    scan = reproduction.get("scan")
+    boundary = reproduction.get("aiat_boundary_regression")
+    release = reproduction.get("release_boundary")
+    if not isinstance(source, dict) or not str(source.get("commit") or "").strip():
+        errors.append("latest_reproduction source commit is required")
+    if not isinstance(scanner, dict) or not str(scanner.get("version") or "").strip():
+        errors.append("latest_reproduction scanner version is required")
+    if not isinstance(scan, dict):
+        errors.append("latest_reproduction scan summary is required")
+        scan = {}
+    if not isinstance(boundary, dict) or boundary.get("status") != "pass":
+        errors.append("latest_reproduction AIAT boundary regression must pass")
+    if not isinstance(release, dict) or release.get("technical_gate_status") != "blocked":
+        errors.append("latest_reproduction must preserve a blocked technical gate")
+    if isinstance(scanner, dict) and scanner.get("raw_output_retained") is not False:
+        errors.append("latest_reproduction must not retain raw scanner output")
+    if isinstance(source, dict) and source.get("clone_retained") is not False:
+        errors.append("latest_reproduction must not retain the source clone")
+    finding_count = _non_negative_int(scan.get("finding_count"))
+    scanner_error_count = _non_negative_int(scan.get("scanner_error_count"))
+    if finding_count is None:
+        errors.append("latest_reproduction finding_count must be a non-negative integer")
+    if scanner_error_count is None:
+        errors.append("latest_reproduction scanner_error_count must be a non-negative integer")
+    if scan.get("rule_total_matches_findings") is not True:
+        errors.append("latest_reproduction must assert rule-total/finding parity")
+    if len(scan_index) == 1:
+        historical = next(iter(scan_index.values()))
+        if finding_count is not None and finding_count != _non_negative_int(historical.get("finding_count")):
+            errors.append("latest_reproduction finding_count disagrees with the registered scan")
+        if isinstance(source, dict) and str(source.get("commit") or "") != str(historical.get("source_commit") or ""):
+            errors.append("latest_reproduction source commit disagrees with the registered scan")
+    summary = {
+        "path": raw_path,
+        "status": str(reproduction.get("status") or ""),
+        "source_commit": str(source.get("commit") or "") if isinstance(source, dict) else "",
+        "scanner_version": str(scanner.get("version") or "") if isinstance(scanner, dict) else "",
+        "finding_count": finding_count,
+        "scanner_error_count": scanner_error_count,
+        "technical_gate_status": str(release.get("technical_gate_status") or "") if isinstance(release, dict) else "",
+    }
+    return errors, summary
 
 
 def inspect(
@@ -241,6 +316,9 @@ def inspect(
     if missing_reviews:
         errors.append(f"scans without a review row: {missing_reviews}")
 
+    reproduction_errors, reproduction_summary = _load_reproduction(review_document, scan_index)
+    errors.extend(reproduction_errors)
+
     return {
         "schema_version": SCHEMA,
         "mode": "static",
@@ -252,6 +330,7 @@ def inspect(
         "review_required_count": review_required_count,
         "technical_gate_status": technical_gate_status,
         "reviews": review_rows,
+        "latest_reproduction": reproduction_summary,
         "licence_metadata_is_gate": False,
         "scope": "secret-safe security-finding review register; no scan, waiver, activation, or deployment mutation",
     }

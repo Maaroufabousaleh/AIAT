@@ -32,6 +32,22 @@ def test_current_review_register_covers_open_scan_without_waiving_gate() -> None
     assert report["technical_gate_status"] == "blocked"
     assert report["licence_metadata_is_gate"] is False
     assert report["reviews"][0]["status"] == "open"
+    assert report["latest_reproduction"]["finding_count"] == 316
+    assert report["latest_reproduction"]["scanner_error_count"] == 55
+    assert report["latest_reproduction"]["technical_gate_status"] == "blocked"
+
+
+def test_review_register_requires_latest_reproduction(tmp_path: Path) -> None:
+    module = _load_module()
+    review = yaml.safe_load(REVIEW.read_text(encoding="utf-8"))
+    review.pop("latest_reproduction", None)
+    review_path = tmp_path / "review.yaml"
+    review_path.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+
+    report = module.inspect(SCAN, review_path)
+
+    assert report["status"] == "fail"
+    assert any("latest_reproduction" in error for error in report["errors"])
 
 
 def test_review_register_rejects_unassigned_rule(tmp_path: Path) -> None:
