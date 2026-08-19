@@ -576,8 +576,12 @@ class SecurityScanTool(BaseTool):
                 max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
             )
             findings_count: int | None = None
-            raw_output = str(result.get("stdout") or "")
-            if raw_output:
+            raw_value = result.get("stdout")
+            raw_output = raw_value if isinstance(raw_value, str) else ""
+            if result.get("returncode") == 0 and not raw_output.strip():
+                result["degraded"] = True
+                result["reason"] = "skillspector_empty_output"
+            elif raw_output:
                 try:
                     parsed = json.loads(raw_output)
                 except json.JSONDecodeError:
@@ -585,11 +589,16 @@ class SecurityScanTool(BaseTool):
                 else:
                     if isinstance(parsed, dict):
                         findings = parsed.get("findings")
-                        findings_count = len(findings) if isinstance(findings, list) else 0
+                        if isinstance(findings, list):
+                            findings_count = len(findings)
+                        else:
+                            result["degraded"] = True
+                            result["reason"] = "skillspector_invalid_result_shape"
                     elif isinstance(parsed, list):
                         findings_count = len(parsed)
                     else:
-                        findings_count = 0
+                        result["degraded"] = True
+                        result["reason"] = "skillspector_invalid_result_shape"
             result["backend"] = "skillspector"
             result["scanner"] = scanner
             result["findings_count"] = findings_count
@@ -657,9 +666,16 @@ class SecurityScanTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 90)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
         )
-        if result.get("stdout"):
+        raw_output = result.get("stdout")
+        if result.get("available") and result.get("returncode") == 0 and (
+            not isinstance(raw_output, str) or not raw_output.strip()
+        ):
+            result["findings_count"] = None
+            result["degraded"] = True
+            result["reason"] = "semgrep_empty_output"
+        elif result.get("available") and isinstance(raw_output, str) and raw_output.strip():
             try:
-                parsed = json.loads(result["stdout"])
+                parsed = json.loads(raw_output)
             except json.JSONDecodeError:
                 result["findings_count"] = None
                 result["degraded"] = True

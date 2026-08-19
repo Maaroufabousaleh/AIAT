@@ -361,7 +361,11 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     ("stdout", "reason"),
-    [("[]", "semgrep_invalid_result_shape"), ("not-json", "semgrep_invalid_json")],
+    [
+        ("", "semgrep_empty_output"),
+        ("[]", "semgrep_invalid_result_shape"),
+        ("not-json", "semgrep_invalid_json"),
+    ],
 )
 async def test_security_scan_reports_invalid_semgrep_shape_without_raising(
     make_registry, tmp_path, monkeypatch, stdout, reason
@@ -386,6 +390,40 @@ async def test_security_scan_reports_invalid_semgrep_shape_without_raising(
     assert response.success is True
     assert response.result["backend"] == "semgrep"
     assert response.result["scanner"] == "semgrep"
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == reason
+    assert response.result["findings_count"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [("", "skillspector_empty_output"), ('{"status":"ok"}', "skillspector_invalid_result_shape")],
+)
+async def test_security_scan_reports_degraded_skillspector_output(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        return {"available": True, "returncode": 0, "stdout": stdout}
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SKILLSPECTOR_COMMAND", "skillspector scan --json .")
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="security.scan",
+            kwargs={"path": ".", "scanner": "skillspector"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "skillspector"
+    assert response.result["scanner"] == "skillspector"
     assert response.result["degraded"] is True
     assert response.result["reason"] == reason
     assert response.result["findings_count"] is None
