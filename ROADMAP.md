@@ -141,7 +141,9 @@ zero cleanup. Provider-diverse migration, actual provider outage, KMS,
 clean-host, and disaster-recovery evidence remain later gates.
 
 The optional memory/workflow phase now has a disabled-by-default static
-candidate contract (`2760c7a`/`5d62ca6`) for Letta, Qdrant, and Temporal. It
+candidate contract (`2760c7a`/`5d62ca6`) for Letta, Qdrant, and Temporal. The
+Letta shell's unavailable/error output is now payload-free and scalar-only
+(`7052d33`). The contract
 declares AIAT authority, project-scoped bounded data, measurable-value
 baselines, outage/degraded modes, backup/restore, and removal/rollback checks;
 no candidate is enabled, selected, contacted, or treated as a release gate.
@@ -2187,7 +2189,8 @@ Required outcomes:
   disaster-recovery restore proof (the provider-neutral encrypted envelope and
   local fresh-process restore prerequisites are implemented);
 - optional Letta/Qdrant/Temporal evaluated through the disabled-by-default
-  static contract (`2760c7a`/`5d62ca6`) and adopted only after live
+  static contract (`2760c7a`/`5d62ca6`, with the Letta boundary at `7052d33`)
+  and adopted only after live
   measurable-value, outage, backup/restore, and removal gates;
 - multi-host gVisor pools and separately certified Firecracker high-risk pools.
 

@@ -398,6 +398,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   schema-integrity correction and does not add external provider or sandbox
   certification.
 - Native, process, HTTP, MCP/runtime adapter patterns plus LangGraph, CrewAI, MAF, Letta, AutoGen, and OpenCode-specific code paths.
+- The optional Letta shell now keeps the external-runtime boundary payload-free
+  on unavailable and error results (`7052d33`): it reports only bounded input
+  presence/length metadata and stable failure reasons, never task/context
+  values, persona or memory configuration, or raw exception text. Letta remains
+  a disabled-by-default candidate pending live value and recovery evidence.
 - Dedicated steward records, documentation/capability snapshots, immutable skill bundles and adapters, certification, rollout, canary, monitoring, and rollback.
 - Versioned model profiles and deterministic intersection of company/worker/project/task/privacy/capability/budget constraints (implementation group `288996e`).
 - The LLM gateway uses one explicit transient-status vocabulary (`408`, `409`,
@@ -783,7 +788,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 | Security | Semgrep CLI + SkillSpector baseline | TruffleHog and other bounded scanners are normal selectable adapters; scanner choice is technical, not licence-driven. |
 | Planning | ccpm + GitHub Issues starting profile | Plane and OpenProject are normal selectable provider adapters; AIAT remains canonical. |
 | DevOps | OpenTofu + GitHub Actions starting profile | Ansible and other CLI/IaC adapters remain normally selectable behind the same boundary. |
-| Memory/workflow | Letta, Qdrant, Temporal | Optional until certified and operationally proven. |
+| Memory/workflow | Letta, Qdrant, Temporal | Disabled-by-default candidate contract; Letta output boundary is bounded, while all live value/recovery certification remains open. |
 
 ## Model rules
 
