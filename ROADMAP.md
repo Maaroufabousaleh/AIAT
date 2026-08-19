@@ -45,13 +45,12 @@ workspace remains intentionally on MCP `1.23.3`, so default-profile/provider
 activation is still blocked and this refresh advances only the isolated
 profile evidence.
 
-The native-host preflight was rerun at `2026-08-19T00:53:04Z`
-(`e2511c1`) against revision `7295114` with all ten local digest-pinned image
-refs supplied and remains blocked by the WSL2 host identity, unavailable
-`runsc`, and the two protected dirty memory files. The native
-contract/regression slice passes; native-Linux
-network, sandbox, image/SBOM, recovery, and provider evidence still require an
-operator-owned release host.
+The native-host preflight was rerun at `2026-08-19T01:14:11Z`
+(`f80ebf4`) against revision `8d07102` and remains blocked by the WSL2 host
+identity, unavailable `runsc`, missing deployment-supplied immutable image
+refs, and the two protected dirty memory files. The native
+contract/regression slice passes; native-Linux network, sandbox, image/SBOM,
+recovery, and provider evidence still require an operator-owned release host.
 
 The local image SBOM follow-up (`662fb65`) now records scalar CycloneDX 1.4
 observations for all ten locally pinned images (2,430 components total) at
