@@ -198,6 +198,9 @@ external client-language SDK compatibility yet.
   (`7e41ea6`): empty Semgrep output and empty or wrong-shape SkillSpector JSON
   are explicit degraded results, while unavailable sandbox failures retain
   their canonical fail-closed reason.
+- [x] Bound the configured sandbox adapter response (`7ff464d`): empty,
+  malformed, or non-object successful adapter output now returns scalar
+  degraded reasons without raw adapter payloads or a generic tool error.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default

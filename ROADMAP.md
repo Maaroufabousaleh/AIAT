@@ -1067,7 +1067,9 @@ The codebase already includes:
   non-object Semgrep JSON into stable degraded results rather than generic
   registry errors, and `7e41ea6` extends that boundary to empty Semgrep output
   and empty or wrong-shape SkillSpector JSON while preserving unavailable
-  sandbox errors; findings review and exact scanner certification remain
+  sandbox errors. Commit `7ff464d` also normalizes empty, malformed, or
+  non-object successful responses from the configured sandbox adapter without
+  retaining raw output; findings review and exact scanner certification remain
   separate gates.
 - `document.ingest` uses Docling through the optional extensions profile when
   installed and returns an explicit, usable degraded `plain_text_fallback`
@@ -1383,6 +1385,9 @@ degraded reasons and no raw evidence retention; it does not advance the
 findings-review or external scanner-certification gates. Commit `7e41ea6`
 also prevents empty successful scanner responses from becoming implicit
 zero-finding passes and preserves the canonical fail-closed sandbox result.
+Commit `7ff464d` applies the same bounded-output rule to the sandbox adapter
+itself, so adapter protocol failures remain explicit degraded results rather
+than registry exceptions.
 The optional external `code.review` boundary (`10b1af2`) now turns empty,
 malformed, and non-object successful stdout into stable degraded results rather
 than generic registry errors; exact external review identity and representative
