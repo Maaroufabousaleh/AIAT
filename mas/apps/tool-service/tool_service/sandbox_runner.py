@@ -36,21 +36,36 @@ def _read_payload() -> dict[str, Any]:
     return value
 
 
-def _runtime_available(docker: str) -> bool:
-    probe = subprocess.run(
-        [docker, "info", "--format", "{{json .Runtimes}}"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+def _runtime_probe(docker: str) -> tuple[bool, str]:
+    """Return a scalar runtime result without exposing Docker error text."""
+    try:
+        probe = subprocess.run(
+            [docker, "info", "--format", "{{json .Runtimes}}"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "gvisor_runtime_probe_timeout"
+    except OSError:
+        return False, "gvisor_runtime_probe_failed"
     if probe.returncode != 0:
-        return False
+        return False, "gvisor_runtime_probe_failed"
     try:
         runtimes = json.loads(probe.stdout)
     except json.JSONDecodeError:
-        return False
-    return "runsc" in runtimes
+        return False, "gvisor_runtime_probe_invalid_response"
+    if not isinstance(runtimes, dict):
+        return False, "gvisor_runtime_probe_invalid_response"
+    if "runsc" not in runtimes:
+        return False, "gvisor_runsc_runtime_not_available"
+    return True, ""
+
+
+def _runtime_available(docker: str) -> bool:
+    """Compatibility helper for callers that only need the boolean result."""
+    return _runtime_probe(docker)[0]
 
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
@@ -84,11 +99,19 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(workspace_read_only, bool):
         raise ValueError("workspace_read_only must be a boolean")
     docker = shutil.which(os.getenv("AIAT_SANDBOX_DOCKER_BINARY", "docker"))
-    if docker is None or not _runtime_available(docker):
+    if docker is None:
         return {
             "available": False,
             "configured": True,
-            "reason": "gvisor_runsc_runtime_not_available",
+            "reason": "gvisor_docker_cli_not_available",
+            "sandbox_profile": "gvisor",
+        }
+    runtime_available, runtime_reason = _runtime_probe(docker)
+    if not runtime_available:
+        return {
+            "available": False,
+            "configured": True,
+            "reason": runtime_reason,
             "sandbox_profile": "gvisor",
         }
 
@@ -138,7 +161,15 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     started = time.monotonic()
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-        process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file)
+        try:
+            process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file)
+        except OSError:
+            return {
+                "available": False,
+                "configured": True,
+                "reason": "gvisor_container_launch_failed",
+                "sandbox_profile": "gvisor",
+            }
         try:
             returncode: int | None = process.wait(timeout=timeout)
             timed_out = False

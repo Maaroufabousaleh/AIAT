@@ -13,8 +13,8 @@ from tool_service.mcp_client import invoke_mcp_tool
 from tool_service.rate_limiter import RateLimiterPool
 from tool_service.registry import ToolRegistry
 from tool_service.sandbox_runner import execute as execute_sandbox
-from tool_service.tools.all_tools import get_all_tools
 from tool_service.tools.adapters import CodeReviewTool
+from tool_service.tools.all_tools import get_all_tools
 
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest
@@ -22,7 +22,10 @@ from mas_core.protocols.tool import ToolRequest
 
 def test_sandbox_runner_never_falls_back_when_runsc_is_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr("tool_service.sandbox_runner._runtime_available", lambda _docker: False)
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (False, "gvisor_runsc_runtime_not_available"),
+    )
 
     result = execute_sandbox(
         {
@@ -48,7 +51,10 @@ def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_p
 
     monkeypatch.setenv("TOOL_SECRET", "must-not-reach-generated-tests")
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr("tool_service.sandbox_runner._runtime_available", lambda _docker: True)
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (True, ""),
+    )
     monkeypatch.setattr(
         "tool_service.sandbox_runner.subprocess.Popen",
         lambda command, **_kwargs: captured.setdefault("command", command) and CompletedProcess(),
@@ -73,6 +79,70 @@ def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_p
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in command
     assert "must-not-reach-generated-tests" not in command
     assert any(value.endswith(",readonly") for value in command)
+
+
+@pytest.mark.parametrize(
+    ("probe_error", "reason"),
+    [
+        (subprocess.TimeoutExpired("docker", 10), "gvisor_runtime_probe_timeout"),
+        (OSError("docker unavailable"), "gvisor_runtime_probe_failed"),
+    ],
+)
+def test_sandbox_runner_classifies_runtime_probe_failures_without_raw_errors(
+    tmp_path, monkeypatch, probe_error, reason
+):
+    def fail_probe(*_args, **_kwargs):
+        raise probe_error
+
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr("tool_service.sandbox_runner.subprocess.run", fail_probe)
+
+    result = execute_sandbox(
+        {
+            "argv": ["pytest"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "profile": "gvisor",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": reason,
+        "sandbox_profile": "gvisor",
+    }
+
+
+def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (True, ""),
+    )
+
+    def fail_launch(*_args, **_kwargs):
+        raise OSError("docker launch failed")
+
+    monkeypatch.setattr("tool_service.sandbox_runner.subprocess.Popen", fail_launch)
+
+    result = execute_sandbox(
+        {
+            "argv": ["pytest"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "profile": "gvisor",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": "gvisor_container_launch_failed",
+        "sandbox_profile": "gvisor",
+    }
 
 
 def test_code_review_reports_structured_findings_without_secret_text(tmp_path):
