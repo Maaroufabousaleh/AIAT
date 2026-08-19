@@ -1065,7 +1065,9 @@ The codebase already includes:
   limits and the same audit/grant/rate/approval controls as the existing
   scanner path. Commit `583796f` additionally normalizes malformed or
   non-object Semgrep JSON into stable degraded results rather than generic
-  registry errors; findings review and exact scanner certification remain
+  registry errors, and `7e41ea6` extends that boundary to empty Semgrep output
+  and empty or wrong-shape SkillSpector JSON while preserving unavailable
+  sandbox errors; findings review and exact scanner certification remain
   separate gates.
 - `document.ingest` uses Docling through the optional extensions profile when
   installed and returns an explicit, usable degraded `plain_text_fallback`
@@ -1378,7 +1380,9 @@ constrain update-policy values and revalidate persisted capability grants before
 mutation (`d8cafbb`; focused worker configuration coverage 66/66).
 Commit `583796f` bounds malformed and wrong-shape Semgrep output with explicit
 degraded reasons and no raw evidence retention; it does not advance the
-findings-review or external scanner-certification gates.
+findings-review or external scanner-certification gates. Commit `7e41ea6`
+also prevents empty successful scanner responses from becoming implicit
+zero-finding passes and preserves the canonical fail-closed sandbox result.
 The optional external `code.review` boundary (`10b1af2`) now turns empty,
 malformed, and non-object successful stdout into stable degraded results rather
 than generic registry errors; exact external review identity and representative

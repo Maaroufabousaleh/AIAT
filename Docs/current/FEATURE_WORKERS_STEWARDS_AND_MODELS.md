@@ -687,7 +687,10 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   routes all three through the same bounded sandbox/audit boundary. Commit
   `583796f` also normalizes malformed or non-object Semgrep JSON into stable
   degraded reasons without retaining raw scanner output; findings review and
-  exact external scan certification remain separate gates.
+  exact external scan certification remain separate gates. Commit `7e41ea6`
+  extends the boundary to successful empty Semgrep output and empty or
+  wrong-shape SkillSpector JSON while preserving the canonical unavailable
+  sandbox result.
 - `document.ingest` uses the Docling runner when its binary is installed and
   returns an explicit, usable `plain_text_fallback` result when it is not:
   `available` and `configured` stay true, `degraded` is true, and the response
@@ -728,7 +731,7 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - Runtime adapter conformance probe (`9a10a4b`): [`mas/scripts/check_runtime_adapter_conformance.py`](../../mas/scripts/check_runtime_adapter_conformance.py) and [`runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Deterministic LangGraph/CrewAI fixtures pass manifest/message translation, bounded completion, health, and shutdown; package-import and worker-canary evidence remain separate.
 - MAF/MCP compatibility contract, isolated profile, and deterministic certification (`b937a89`, extending `fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/infra/runtime/maf/README.md`](../../mas/infra/runtime/maf/README.md), [`mas/infra/runtime/maf/requirements.txt`](../../mas/infra/runtime/maf/requirements.txt), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py), [`mas/scripts/check_maf_runtime.py`](../../mas/scripts/check_maf_runtime.py), and [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json)
 - Code-review adapter catalogue/default and bounded external output (`fc528a8`, `10b1af2`): [`mas/docs/provenance/code_review_adapters.yaml`](../../mas/docs/provenance/code_review_adapters.yaml), [`mas/scripts/check_code_review_adapters.py`](../../mas/scripts/check_code_review_adapters.py), [`mas/apps/tool-service/tool_service/code_review_runner.py`](../../mas/apps/tool-service/tool_service/code_review_runner.py), [`CodeReviewTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), and [`test_external_code_review_reports_invalid_output_without_raising`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py)
-- Security adapter aliases/fixture and bounded Semgrep parsing (`fc528a8`, `583796f`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py), and [`test_security_scan_reports_invalid_semgrep_shape_without_raising`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py)
+- Security adapter aliases/fixture and bounded scanner output (`fc528a8`, `583796f`, `7e41ea6`): [`mas/scripts/check_security_adapters.py`](../../mas/scripts/check_security_adapters.py), [`SecurityScanTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`ToolRegistry`](../../mas/apps/tool-service/tool_service/registry.py), [`test_security_scan_reports_invalid_semgrep_shape_without_raising`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and [`test_security_scan_reports_degraded_skillspector_output`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py)
 - Document ingestion/fallback and bounded Docling output: [`DocumentIngestTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_document_ingest_falls_back_to_text_when_docling_missing`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), [`test_document_ingest_reports_invalid_docling_output_without_raising`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `document.ingest` readiness probe
 - Mermaid render boundary: [`DiagramRenderTool`](../../mas/apps/tool-service/tool_service/tools/adapters.py), [`test_diagram_render_reports_successful_artifact_metadata`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), [`test_diagram_render_does_not_report_success_without_artifact`](../../mas/apps/tool-service/tests/test_default_shipped_tool_catalog.py), and the `diagram.render` readiness probe
 - Steward lifecycle contract (`c80e339`, fixture coverage `fe6fb8d`): [`mas/scripts/check_worker_steward_contract.py`](../../mas/scripts/check_worker_steward_contract.py) and [`test_worker_steward_contract.py`](../../mas/packages/mas-core/tests/test_worker_steward_contract.py). The deterministic domain exercise covers candidate immutability, compatibility evidence, promotion regression blocking, and rollback without claiming database or live-worker certification.
@@ -824,8 +827,9 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   available through the shared bounded `security.scan` adapter; scanner
   availability and findings remain technical evidence. Semgrep malformed and
   wrong-shape output is normalized to a stable degraded result (`583796f`),
-  while provider-specific PM/DevOps adapters still require their own
-  conformance evidence.
+  successful empty output and wrong-shape SkillSpector JSON are likewise
+  bounded (`7e41ea6`), while provider-specific PM/DevOps adapters still
+  require their own conformance evidence.
 - [x] Publish an exact MAF/MCP compatibility lock and fail-closed activation
   preflight, then certify the isolated MAF/MCP profile through the real adapter
   with a deterministic fake client (`b937a89`); provider configuration,

@@ -194,6 +194,10 @@ external client-language SDK compatibility yet.
   reason and no finding count, rather than escaping as a generic tool error.
   Exact scanner execution, findings review, and external certification remain
   separate security gates.
+- [x] Bound successful scanner output across the shared security adapter
+  (`7e41ea6`): empty Semgrep output and empty or wrong-shape SkillSpector JSON
+  are explicit degraded results, while unavailable sandbox failures retain
+  their canonical fail-closed reason.
 - Provision one dedicated steward and immutable compatibility matrix per external worker.
 - [x] Exercise deterministic shadow, read-only canary, promotion, regression
   blocking, and pre-activation rollback for every externally sourced default
