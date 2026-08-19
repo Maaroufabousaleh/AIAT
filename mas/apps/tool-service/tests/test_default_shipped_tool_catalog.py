@@ -555,6 +555,73 @@ async def test_document_ingest_reports_invalid_docling_output_without_raising(
 
 
 @pytest.mark.anyio
+async def test_diagram_render_reports_successful_artifact_metadata(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        output = Path(argv[-1])
+        output.write_bytes(b"<svg></svg>")
+        return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="diagram-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="diagram.render",
+            kwargs={"source": "flowchart TD\n  A --> B", "output": "diagram.svg"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "mermaid"
+    assert response.result["configured"] is True
+    assert response.result["rendered"] is True
+    assert response.result["output_exists"] is True
+    assert response.result["output_size_bytes"] == len(b"<svg></svg>")
+
+
+@pytest.mark.anyio
+async def test_diagram_render_does_not_report_success_without_artifact(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="diagram-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="diagram.render",
+            kwargs={"source": "flowchart TD\n  A --> B", "output": "missing.svg"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "mermaid"
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["rendered"] is False
+    assert response.result["output_exists"] is False
+    assert response.result["reason"] == "mermaid_output_missing"
+
+
+@pytest.mark.anyio
 async def test_cicd_configure_writes_real_github_actions_workflow(
     make_registry, tmp_path, monkeypatch
 ):

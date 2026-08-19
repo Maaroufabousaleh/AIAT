@@ -123,6 +123,62 @@ def _decode_docling_output(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _normalize_diagram_result(
+    result: dict[str, Any], *, output_path: Path, output_name: str
+) -> dict[str, Any]:
+    """Expose only bounded Mermaid render metadata after the subprocess exits."""
+    result.update(
+        {
+            "backend": "mermaid",
+            "configured": True,
+            "output": output_name,
+            "rendered": False,
+            "output_exists": False,
+        }
+    )
+    if result.get("available") is False:
+        result.setdefault("degraded", True)
+        result.setdefault("reason", "mermaid_adapter_unavailable")
+        return result
+    returncode = result.get("returncode")
+    if returncode != 0:
+        result.update(
+            {
+                "degraded": True,
+                "reason": "mermaid_render_timed_out"
+                if result.get("timed_out")
+                else "mermaid_render_failed",
+            }
+        )
+        return result
+    try:
+        output_stat = output_path.stat()
+    except OSError:
+        result.update({"degraded": True, "reason": "mermaid_output_missing"})
+        return result
+    if not output_path.is_file():
+        result.update({"degraded": True, "reason": "mermaid_output_not_file"})
+        return result
+    if output_stat.st_size <= 0:
+        result.update(
+            {
+                "degraded": True,
+                "reason": "mermaid_output_empty",
+                "output_exists": True,
+                "output_size_bytes": output_stat.st_size,
+            }
+        )
+        return result
+    result.update(
+        {
+            "rendered": True,
+            "output_exists": True,
+            "output_size_bytes": output_stat.st_size,
+        }
+    )
+    return result
+
+
 def _workspace_cwd(project_id: str = "", path: str = ".") -> Path:
     root = _workspace_root()
     if path in ("", "."):
@@ -694,7 +750,7 @@ class DiagramRenderTool(BaseTool):
         cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
         output = str(kwargs.get("output", "diagram.svg"))
         out_path = _safe_workspace_path(output, project_id=kwargs.get("project_id", ""))
-        return await _run_process(
+        result = await _run_process(
             [
                 mmdc,
                 "-p",
@@ -709,6 +765,7 @@ class DiagramRenderTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 30)),
             max_output_bytes=64_000,
         )
+        return _normalize_diagram_result(result, output_path=out_path, output_name=output)
 
 
 class MCPInvokeTool(BaseTool):
