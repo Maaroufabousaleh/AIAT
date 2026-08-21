@@ -60,6 +60,130 @@ and [`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenanc
 | MinIO/SeaweedFS resource and provider-functional wave | Both providers pass the identical bounded resource, multipart, checksum/read-back, abort, outage/read-back, and cleanup assertions; the invalid alias run is excluded. **No retained provider failure.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | Preserve only the structured scalar evidence. Do not rerun the wave unless the provider fixture, workload, or external environment materially changes. |
 | AIAT-owned credentials boundary | Compose live certificate passes all 12 checks with zero fixture rows; provider-managed KMS remains separate. **Functional pass; external configuration still open.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | No further identical probe is needed. Reopen only if the credentials implementation or configured external custody changes. |
 
+## External input inventory
+
+This inventory names required inputs without recording values. Empty or missing
+inputs are configuration blockers, not provider failures. Values belong in the
+operator secret store or host configuration and must never be copied into
+evidence, commits, logs, or this document.
+
+### Native host and optional Firecracker
+
+The certification host must provide native Linux, Docker/Compose, registered
+`runsc`, the immutable `*_IMAGE_REF` values checked by
+`check_release_environment.py`, and a clean certification clone. Firecracker
+is conditional: if promoted, the host must additionally provide `/dev/kvm`,
+read/write KVM access, the certified `aiat-firecracker-launcher`, the
+`firecracker` binary, immutable kernel/rootfs inputs, and the bounded artifact
+directory expected by `check_firecracker_worker_pool.py`. No Firecracker value
+is currently configured in the repository.
+
+### OCI Object Storage plus Vault/KMS proposal
+
+The proposed external identifiers are:
+
+```text
+OBJECT_STORE_PROVIDER=oci
+OCI_REGION=<operator value>
+OCI_NAMESPACE=<operator value>
+OCI_BUCKET=<operator value>
+OCI_KMS_KEY_ID=<operator key identifier>
+OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS
+```
+
+The current S3-compatible `BlobClient` and object-store checkers accept an
+endpoint, access key, secret key, bucket, and region, but do not yet expose an
+OCI-native bucket-encryption read-back or a provider-managed SSE/KMS evidence
+field. Therefore the OCI target is not live-ready merely because these names
+are supplied: an implementation/evidence adapter must first be added, then a
+real put/read/checksum/multipart/delete run must verify the bucket encryption
+state. Do not place credentials or key material in the matrix.
+
+### Stalwart/Resend mail acceptance
+
+Production identity configuration currently requires these names (values stay
+in the secret environment):
+
+```text
+MAS_ENVIRONMENT=production
+IDENTITY_PROFILE=production
+IDENTITY_DATABASE_PASSWORD or IDENTITY_DATABASE_DSN
+IDENTITY_SERVICE_SECRET
+IDENTITY_CONTENT_ENCRYPTION_KEY
+STALWART_API_KEY
+STALWART_JMAP_SERVICE_TOKEN
+RESEND_API_KEY
+IDENTITY_CLIENT_PUBLIC_KEYS_JSON
+IDENTITY_CLIENT_SCOPES_JSON
+AGENT_MAIL_DOMAIN=agents.aiat.ca
+MAIL_HOSTNAME=mail.aiat.ca
+OUTBOUND_RELAY_PROVIDER=resend
+OUTBOUND_RELAY_HOST=smtp.resend.com
+OUTBOUND_RELAY_PORT=465 or 587
+OUTBOUND_RELAY_TLS_MODE=implicit or starttls
+OUTBOUND_RELAY_CERTIFIED=true       # only after live certification
+DIRECT_MX_OUTBOUND_ENABLED=false
+DEFAULT_OUTBOUND_ENABLED=false
+```
+
+The opt-in governed acceptance additionally requires these names:
+
+```text
+AIAT_RUN_LIVE_IDENTITY_TESTS=1
+LIVE_IDENTITY_SERVICE_URL
+LIVE_MAIL_HOST
+LIVE_SMTP_PORT
+LIVE_SMTP_ENVELOPE_FROM
+LIVE_IDENTITY_OUTBOUND_RECIPIENT
+LIVE_IDENTITY_REQUIRE_REPLY=1
+LIVE_IDENTITY_SUSPEND_WORKER_B=1
+LIVE_IDENTITY_COMPANY_ID
+LIVE_IDENTITY_WORKER_A_ID
+LIVE_IDENTITY_WORKER_B_ID
+LIVE_IDENTITY_OPERATOR_CLIENT_ID
+LIVE_IDENTITY_OPERATOR_PRIVATE_KEY
+LIVE_IDENTITY_WORKER_A_CLIENT_ID
+LIVE_IDENTITY_WORKER_A_PRIVATE_KEY
+LIVE_IDENTITY_WORKER_B_CLIENT_ID
+LIVE_IDENTITY_WORKER_B_PRIVATE_KEY
+LIVE_IDENTITY_REPLY_TIMEOUT_SECONDS
+```
+
+The acceptance must prove Stalwart submission, Resend relay, external receipt,
+reply return through Stalwart, and the required revocation case. Submission
+alone is not delivery evidence; direct MX outbound remains disabled.
+
+### Self-improvement staging
+
+No self-improvement live secret variable is currently defined. The current
+`check_self_improvement_candidates.py --live` path intentionally returns
+blocked until an operator supplies and scopes:
+
+- one signal source and adapter (`defect`, `metric`, `upstream_update`, `cost`,
+  or explicit `operator_goal`);
+- company/project scope, owner, budget, evidence policy, and source revision;
+- an approved worker/provider/model profile and isolated branch/workspace;
+- immutable change, provenance, SBOM, migration, and rollback artifact
+  references; and
+- human approval, kill-switch, shadow/canary thresholds, and rollback policy.
+
+The existing local Postgres certificate proves the lifecycle writer only. This
+is an implementation/governance boundary, not a missing credential that the
+operator should guess. Because this capability is currently `DEFERRED`, no
+live self-improvement run should be attempted until the operator promotes it.
+
+### Security finding remediation boundary
+
+The 316 findings and scanner/parser errors are from the exact external
+OpenCode source revision recorded in
+[`security_scan_evidence.yaml`](../../mas/docs/provenance/security_scan_evidence.yaml),
+not from a retained AIAT source tree. AIAT's local workspace/grant/sandbox
+boundary regression already passes. A safe code remediation requires either a
+new upstream revision, an operator-owned fork/patch source, or a narrowed
+replacement runtime; without one of those, the coding agent cannot honestly
+rewrite upstream findings from the scalar register. No finding is accepted by
+this document, and coding/tester activation remains blocked.
+
 ### Explicit failure taxonomy
 
 - **Harness/configuration failure:** the earlier nonexistent Docker network alias
