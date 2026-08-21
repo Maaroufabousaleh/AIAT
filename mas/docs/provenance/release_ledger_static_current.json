@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-08-21T19:40:43.219655+00:00",
+  "checked_at": "2026-08-21T20:23:48.380050+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -41,10 +41,10 @@
         "git": {
           "branch": "agent/fix-review-p1",
           "changed_path_count": 3,
-          "revision": "2656cb3d97d4c5ae65434036bd2650046270c568",
+          "revision": "8670095a6f3d3b4d4b35ab4f528245d25fbc31be",
           "working_tree_clean": false
         },
-        "manifest_digest": "8d8d5df4a8f2795398871e7d06431f75e1c60f5158e23ad9d66fc51cebdd2006",
+        "manifest_digest": "25930cd4f0b1a8c8941596463808672f3f258090af4de2839468e650aba95ad7",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -773,15 +773,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 60.208,
+        "cpu_time_ms": 53.083,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 94134272,
-        "rss_before_bytes": 94048256,
-        "rss_peak_bytes": 131895296,
+        "rss_after_bytes": 94351360,
+        "rss_before_bytes": 94195712,
+        "rss_peak_bytes": 132042752,
         "status": "pass",
-        "wall_time_ms": 56.111
+        "wall_time_ms": 49.318
       }
     },
     {
@@ -1404,7 +1404,7 @@
     "branch": "agent/fix-review-p1",
     "changed_path_count": 3,
     "clean": false,
-    "revision": "2656cb3d97d4c5ae65434036bd2650046270c568"
+    "revision": "8670095a6f3d3b4d4b35ab4f528245d25fbc31be"
   },
   "pending_evidence_count": 2,
   "policy": {
