@@ -154,6 +154,10 @@ checks:
     category: security
     script: scripts/check_security_scan_review.py
     args: [--json]
+  - id: opencode_candidate_certification
+    category: security
+    script: scripts/check_opencode_candidate_certification.py
+    args: [--json]
   - id: worker_steward_contract
     category: governance
     script: scripts/check_worker_steward_contract.py
@@ -163,6 +167,10 @@ checks:
     script: scripts/check_object_store_conformance.py
     args: [--json]
     live_args: [--live, --json, --compose-local]
+  - id: object_store_oci_sse_kms_contract
+    category: contract
+    script: scripts/check_object_store_oci_sse_kms.py
+    args: [--json]
   - id: object_store_multipart
     category: contract
     script: scripts/check_object_store_multipart.py

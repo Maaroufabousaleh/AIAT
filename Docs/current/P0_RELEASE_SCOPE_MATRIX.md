@@ -35,6 +35,22 @@ provider evidence and provider verdicts. Retained scalar evidence is in
 [`object_store_multipart_provider_diverse_evidence.json`](../../mas/docs/provenance/object_store_multipart_provider_diverse_evidence.json),
 and [`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenance/object_store_provider_outage_live_evidence.json).
 
+The software-side certification boundaries added in this wave are explicitly
+fail-closed. The manual
+[`native-linux-gvisor-certification.yml`](../../.github/workflows/native-linux-gvisor-certification.yml)
+workflow is eligible for the canonical native-Linux interpretation because the
+target programme does not require a persistent host; it has not been run, so
+native/runsc evidence remains open. The OCI adapter's deterministic contract
+passes through [`check_object_store_oci_sse_kms.py`](../../mas/scripts/check_object_store_oci_sse_kms.py)
+and the release ledger, but the live OCI target is still operator-owned. The
+historical OpenCode 1.17.13 scan is retained only as
+`FAILED_UNREPRODUCIBLE`; the fresh v1.18.21 candidate has immutable source and
+image provenance plus a passing AIAT boundary regression, but its local run is
+blocked by missing scanner/SBOM tools. Its evidence is
+[`candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json)
+and its manual workflow is
+[`opencode-candidate-certification.yml`](../../.github/workflows/opencode-candidate-certification.yml).
+
 ## Classification rules
 
 | Classification | Meaning for this release |
@@ -47,14 +63,15 @@ and [`object_store_provider_outage_live_evidence.json`](../../mas/docs/provenanc
 
 | Capability / gate | Current evidence and blocker class | Proposed current classification | Operator action before resuming release work |
 | --- | --- | --- | --- |
-| Native-Linux certification host | WSL2 is the current environment; native host, clean-host checks, and native network/sandbox evidence are absent. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Provision one disposable or dedicated native-Linux validation host, install Docker/Compose, provide immutable deployment image references, and run the native exit runbook once. |
-| Default gVisor worker sandbox (`runsc`) | The target programme requires gVisor as the default external-worker sandbox; `runsc` is not registered on the current host. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Install/configure gVisor on the native host and run the governed smoke, network-denial, cleanup, and attribution suite. No silent `runc` fallback is permitted. |
+| Native-Linux certification host | WSL2 is the current environment; the manual standard Ubuntu GitHub-hosted workflow is now implemented but has not produced a certification artifact. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Dispatch [`native-linux-gvisor-certification.yml`](../../.github/workflows/native-linux-gvisor-certification.yml) against the exact candidate SHA, retain its immutable artifact, and run the remaining native release checks on an accepted host. `ubuntu-slim` is not acceptable. |
+| Default gVisor worker sandbox (`runsc`) | The target programme requires gVisor as the default external-worker sandbox; WSL2 Docker Desktop cannot register the WSL-installed runtime. The CI runner path is implemented but unrun. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Use the native Linux workflow to install/register `runsc`, prove digest-pinned smoke and cleanup, then run the governed network-denial and attribution suite. No silent `runc` fallback is permitted. |
 | Firecracker high-risk isolation tier | The target programme calls Firecracker optional for high-risk work; the launch contract is statically valid, but launcher/binary/KVM evidence is absent. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep high-risk Firecracker workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide KVM, launcher, microVM smoke/network, cleanup, and recovery evidence. |
 | Deployment image identity, SBOM, scan, and clean native build | Local image observations exist, but deployment-supplied immutable refs, native build reconciliation, SBOM/scan artifacts, and vulnerability dispositions are not complete. **Infrastructure/operator evidence.** | `REQUIRED_FOR_RELEASE` | Provide the ten immutable deployment refs and matching SBOM/scan/disposition artifacts on the certification host. |
-| Provider-managed object-store SSE/KMS and external key custody | AIAT-owned encrypted envelope and fresh-process restore pass locally; no provider-managed KMS/SSE target or custody/rotation evidence is configured. **External configuration.** | `DEFERRED` for the current MinIO plus AIAT-envelope profile | Keep provider-managed encryption disabled and make no provider-KMS claim. If provider-backed encrypted restore is part of the intended release, promote this row to `REQUIRED_FOR_RELEASE` and supply a real supported target, rotation, custody, and restore evidence. |
-| External mail relay and delivery | Stalwart/Resend contracts and local fixtures pass, but operator-owned relay credentials, DNS/PTR state, and a safe recipient for live delivery/outage evidence are absent. **External configuration.** | `DEFERRED` for the current internal release | Keep external delivery disabled and make no live-delivery claim. If email is in release scope, promote to `REQUIRED_FOR_RELEASE` and provide the relay, domain, safe-recipient, queue/restore, and callback evidence. |
+| Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
+| External mail relay and delivery | Stalwart/Resend contracts and local fixtures pass, but operator-owned relay credentials, DNS/PTR state, and a safe recipient for live delivery/outage evidence are absent. **External configuration.** | `REQUIRED_FOR_RELEASE` if email remains in this release | Supply the live Stalwart/Resend/DNS state and run the governed external-delivery/reply and outage/restore acceptance. Keep direct MX outbound disabled until that evidence exists. |
 | Self-improvement live signal and worker/provider path | The guarded lifecycle, approvals, rollback, and local Postgres certificate pass; no operator-selected signal source/project scope is configured. **External configuration/governance.** | `DEFERRED` for the current release | Keep candidate detection and live self-improvement disabled. If enabled, constrain the signal source/project, retain the human kill switch and approval, and promote the full live path to `REQUIRED_FOR_RELEASE`. |
-| Security/adversarial findings | Exact-source review records 316 findings and parser/engine errors; the review register is structurally valid but awaits operator dispositions. **Operator decision.** | `REQUIRED_FOR_RELEASE` | For every finding group, record `ACCEPT`, `REMEDIATE`, or `DEFER`, with rationale, owner, expiry/compensating controls, and follow-up evidence. The coding agent must not auto-accept findings. |
+| OpenCode Program D candidate | The historical v1.17.13 scan is `FAILED_UNREPRODUCIBLE` because its raw findings/source snapshot were not retained. Fresh v1.18.21 source/image provenance and the AIAT boundary regression pass, while scanner/SBOM tooling is missing on this host. **Security/tooling.** | `REQUIRED_FOR_RELEASE` | Run the manual fresh candidate workflow with pinned Semgrep, TruffleHog, SkillSpector, Syft, raw sanitized JSON/SARIF/log evidence, and scanner-error separation. Keep coding/tester inactive until the technical scan passes; do not remediate the historical ghost counts. |
+| Security/adversarial findings | Exact-source historical findings are not accepted or used as patch instructions; a fresh reproducible candidate scan is now the technical source of truth. **Operator decision.** | `REQUIRED_FOR_RELEASE` | Review actual fresh findings by severity/applicability. Remediate AIAT wrapper/configuration findings in code; choose newer upstream or an operator-owned fork for genuine upstream findings. The coding agent must not auto-accept risk. |
 | Protected memory files | `mas/packages/mas-core/mas_core/memory/checkpoints.py` and `mas/packages/mas-core/mas_core/memory/storage.py` are pre-existing dirty operator files. **Repository/operator hygiene.** | `REQUIRED_FOR_RELEASE` | Decide deliberately whether to commit them in an operator-owned commit, restore them, or record an approved dirty exception. Do not let a general cleanup or release commit modify, stage, discard, or normalize them. |
 | Clean-host/bootstrap and disaster-recovery restore | Local encrypted/fresh-process and disposable-provider prerequisites pass; clean native-host bootstrap, external endpoint recovery, and disaster-recovery evidence remain absent. **Infrastructure/external configuration.** | `REQUIRED_FOR_RELEASE` | After the scope decisions and native host are available, run clean-host bootstrap and restore with only scalar evidence and verified zero residue. |
 | MinIO/SeaweedFS resource and provider-functional wave | Both providers pass the identical bounded resource, multipart, checksum/read-back, abort, outage/read-back, and cleanup assertions; the invalid alias run is excluded. **No retained provider failure.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | Preserve only the structured scalar evidence. Do not rerun the wave unless the provider fixture, workload, or external environment materially changes. |
@@ -80,7 +97,8 @@ is currently configured in the repository.
 
 ### OCI Object Storage plus Vault/KMS proposal
 
-The proposed external identifiers are:
+The adapter is implemented and its fixture contract is registered as a
+non-live ledger check. The proposed external identifiers are:
 
 ```text
 OBJECT_STORE_PROVIDER=oci
@@ -91,13 +109,17 @@ OCI_KMS_KEY_ID=<operator key identifier>
 OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS
 ```
 
-The current S3-compatible `BlobClient` and object-store checkers accept an
-endpoint, access key, secret key, bucket, and region, but do not yet expose an
-OCI-native bucket-encryption read-back or a provider-managed SSE/KMS evidence
-field. Therefore the OCI target is not live-ready merely because these names
-are supplied: an implementation/evidence adapter must first be added, then a
-real put/read/checksum/multipart/delete run must verify the bucket encryption
-state. Do not place credentials or key material in the matrix.
+The live command is:
+
+```text
+uv run --package mas-core --extra oci python scripts/check_object_store_oci_sse_kms.py --live --json
+```
+
+The target is not live-ready merely because these names are supplied: the
+operator must provide the real bucket/key and governed OCI config or instance
+principal, then the command must verify bucket identity, provider encryption
+metadata, checksum/read-back, multipart/abort, deletion, and zero residue.
+Do not place credentials or key material in the matrix.
 
 ### Stalwart/Resend mail acceptance
 
@@ -174,14 +196,16 @@ live self-improvement run should be attempted until the operator promotes it.
 
 ### Security finding remediation boundary
 
-The 316 findings and scanner/parser errors are from the exact external
-OpenCode source revision recorded in
+The historical 316 findings and scanner/parser errors are from the exact
+external OpenCode source revision recorded in
 [`security_scan_evidence.yaml`](../../mas/docs/provenance/security_scan_evidence.yaml),
-not from a retained AIAT source tree. AIAT's local workspace/grant/sandbox
-boundary regression already passes. A safe code remediation requires either a
-new upstream revision, an operator-owned fork/patch source, or a narrowed
-replacement runtime; without one of those, the coding agent cannot honestly
-rewrite upstream findings from the scalar register. No finding is accepted by
+not from a retained AIAT source tree, and is classified
+`FAILED_UNREPRODUCIBLE` rather than accepted. The fresh v1.18.21 candidate
+retains an immutable source commit/archive reference and image digest and
+passes the AIAT workspace/grant/sandbox boundary regression; its current
+scanner/SBOM run is blocked because those tools are unavailable in WSL. A
+safe code remediation requires actual fresh findings, a newer safe upstream
+revision, or an operator-owned fork/patch source. No finding is accepted by
 this document, and coding/tester activation remains blocked.
 
 ### Explicit failure taxonomy
@@ -198,9 +222,9 @@ this document, and coding/tester activation remains blocked.
 - **Infrastructure/environment failure:** WSL2/no native Linux, unavailable
   `runsc`, missing Firecracker host capability, and missing deployment image
   artifacts remain external host prerequisites.
-- **External configuration/governance:** KMS/SSE, mail relay, and
-  self-improvement require an intentional scope choice and operator-owned
-  configuration; they must not be simulated.
+- **External configuration/governance:** the required OCI KMS/SSE target and
+  mail relay require operator-owned configuration; deferred self-improvement
+  must remain disabled and must not be simulated.
 - **Operator decision/hygiene:** security findings and protected memory-file
   state require a human disposition and are not silently normalized by the
   implementation agent.

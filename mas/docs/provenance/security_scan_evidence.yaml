@@ -5,9 +5,9 @@ policy:
   licence_metadata_is_gate: false
   findings_require_review: true
 
-# This is a secret-safe summary of the exact-source scan. The full temporary
-# scanner output is intentionally not copied into the repository; the digest
-# identifies the captured JSON artifact from the evidence run.
+# This is a historical, secret-safe summary of the exact-source scan. The full
+# temporary scanner output and source clone were not retained, so this row is
+# not remediation input and cannot be treated as a reproducible certification.
 scans:
   - id: opencode-1.17.13-semgrep-2026-08-10
     scanner: semgrep
@@ -19,6 +19,11 @@ scans:
     target_workers: [coding_worker, tester]
     captured_at: 2026-08-10
     status: findings_review_required
+    classification: FAILED_UNREPRODUCIBLE
+    raw_findings_retained: false
+    source_snapshot_retained: false
+    remediation_input: false
+    replacement_candidate_ref: mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json
     scanned_file_count: 5062
     finding_count: 316
     engine_warning_count: 54

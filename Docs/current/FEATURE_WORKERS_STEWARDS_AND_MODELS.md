@@ -807,9 +807,11 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 - [x] Update `check_provenance.py` so licence classification cannot fail validation in personal-internal mode.
 - [x] Keep the historical `LICENSE_REVIEW` intake label metadata-only; it cannot transition directly to `BLOCKED`, and the normal path can skip it.
 - [x] Resolve the prior coding/tester `certification_status: approved` versus
-  security evidence contradiction; the exact OpenCode `v1.17.13` Semgrep
-  evidence is recorded as `findings_review_required` (316 findings, 54 engine
-  warnings), manifests remain pending, and activation is blocked meanwhile.
+  security evidence contradiction; the exact OpenCode `v1.17.13` scan is now
+  classified `FAILED_UNREPRODUCIBLE` because its raw findings/source snapshot
+  were not retained. The fresh pinned v1.18.21 candidate retains commit/image
+  provenance and a passing AIAT boundary probe, but its scanner/SBOM gate is
+  blocked and manifests remain pending.
 - [x] Add a machine-checked, owner/action security review register
   (`23e908e`; `scripts/check_security_scan_review.py`) that maps every exact
   Semgrep rule count to a technical next action and tracks all 54 engine

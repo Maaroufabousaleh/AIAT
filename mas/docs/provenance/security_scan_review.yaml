@@ -14,6 +14,15 @@ latest_reproduction:
   path: mas/docs/provenance/security_scan_reproduction_local.json
   schema_version: aiat.security-scan-reproduction-local.v1
 
+# The historical reproduction remains for audit traceability only. The fresh
+# candidate package is the new technical source of truth and is currently
+# blocked on scanner/SBOM tooling; it is not an activation waiver.
+latest_candidate:
+  path: mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json
+  schema_version: aiat.opencode-candidate-certification.v1
+  status: blocked
+  remediation_input: true
+
 reviews:
   - id: opencode-1.17.13-semgrep-2026-08-10-review
     scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10
@@ -21,9 +30,11 @@ reviews:
     status: open
     gate_status: blocked
     next_action: >-
-      Review every finding and engine warning against the exact source
-      revision in an isolated review run, record a technical disposition, and
-      rerun the bounded scan before either coding_worker or tester can activate.
+      Treat the historical 1.17.13 row as FAILED_UNREPRODUCIBLE and do not use
+      its scalar counts as patch instructions. Run the fresh pinned candidate
+      workflow, retain sanitized raw scanner/SBOM evidence, classify actual
+      findings, and rerun the bounded scan before either coding_worker or
+      tester can activate.
     engine_warning_action: >-
       Re-run the scanner with a supported ruleset and capture a warning-free
       result or a bounded explanation for each warning before activation.

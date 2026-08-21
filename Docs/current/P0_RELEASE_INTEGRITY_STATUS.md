@@ -5,12 +5,21 @@
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are
 required for this release; Firecracker is an optional unverified high-risk
-tier, while provider-managed KMS/SSE, external mail, and live self-improvement
-are deferred unless the operator promotes them. Security dispositions and the
-two protected memory files remain required human actions. This documentation
-does not change the ledger or the `NO-RELEASE` decision, and no identical live
-audit should run until external state changes.
-- Current continuation refresh (`57504a7`, aggregate evidence `cb290ff`) runs the static ledger at 61/61
+tier. Provider-managed KMS/SSE is release-required but still operator-target
+ blocked; external mail is release-required only if email remains in scope;
+ self-improvement is deferred for this release. Security dispositions and the
+ two protected memory files remain required human actions. This documentation
+ does not change the ledger or the `NO-RELEASE` decision, and no identical live
+ audit should run until external state changes.
+- The 2026-08-21 software certification wave adds the native-Linux gVisor
+  `workflow_dispatch` path (`e3af166`), the OCI SSE/KMS evidence adapter and
+  deterministic fixture (`2fe6f48`), and a fresh pinned OpenCode v1.18.21
+  candidate certificate (`60f60a1`). The static ledger is now 63/63 pass with
+  `NO-RELEASE`; the native workflow has not yet run, OCI live evidence still
+  needs an operator target, and the OpenCode technical gate is blocked on the
+  configured scanner/SBOM tools. The historical 316-finding OpenCode run is
+  `FAILED_UNREPRODUCIBLE` and is not remediation input.
+- Current continuation refresh (`57504a7`, aggregate evidence `cb290ff`) runs the static ledger at 63/63
   pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
   across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and
   `NO-RELEASE`. The local Postgres host-execution, multi-host, lease,
@@ -404,10 +413,13 @@ single frozen commit before production claims are made.
 ### Worker manifest truth
 
 - `coding_worker` and `tester` now declare `evaluation_status: pending` and
-  `certification_status: pending` while their exact OpenCode source scan is
-  recorded as `findings_review_required` (316 findings, 54 engine warnings).
-  The scan summary is linked from both manifests; their OpenCode interface
-  evidence is not treated as a passed security scan substitute.
+  `certification_status: pending`. The historical OpenCode v1.17.13 scan is
+  recorded as `FAILED_UNREPRODUCIBLE` because its raw findings and source
+  snapshot were not retained; its 316/54 counts are not remediation input. A
+  fresh pinned v1.18.21 candidate retains exact commit/image provenance and a
+  passing AIAT boundary probe, but its technical gate remains blocked until
+  the configured scanners and SBOM tool run. The candidate report is linked
+  from the manifests; no worker activation is claimed.
 - `scripts/check_worker_reconciliation.py` (runtime catalogue/checker group
   `80e0ca3`) validates all 39 manifests against
   the shared runtime catalogue, transport/isolation contract, default company
@@ -448,16 +460,16 @@ single frozen commit before production claims are made.
   configuration, model-backed canary, sandbox, live worker execution, or
   rollback; the default production MCP pin remains `1.23.3`.
 - `mas/docs/provenance/security_scan_evidence.yaml` records the exact
-  OpenCode `v1.17.13` commit and Semgrep `1.168.0` result. The evidence is
-  deliberately non-passing because it contains 19 `ERROR` findings and 54
-  engine warnings; activation remains fail-closed until technical triage is
-  complete.
+  OpenCode `v1.17.13` historical run as `FAILED_UNREPRODUCIBLE`; its raw
+  findings and source snapshot were not retained, so the scalar counts are
+  not remediation instructions. The replacement v1.18.21 candidate is
+  [`provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json)
+  and remains blocked until its configured scanner/SBOM evidence is complete.
 - `mas/docs/provenance/security_scan_review.yaml` and
-  `scripts/check_security_scan_review.py` (`23e908e`) provide the bounded
-  triage contract: one personal-operator review row, all 15 Semgrep rule
-  groups mapped to exactly 316 findings, and a separate follow-up for 54
-  engine warnings. The checker reports a coherent register as static `pass`
-  but preserves `technical_gate_status: blocked`; it never waives findings or
+  `scripts/check_security_scan_review.py` (`23e908e`) preserve the historical
+  triage register while pointing the next review at the reproducible v1.18.21
+  candidate. The checker reports a coherent register as static `pass` but
+  preserves `technical_gate_status: blocked`; it never waives findings or
   consults licence metadata as a gate.
 - `scripts/check_worker_steward_contract.py` runs the actual steward domain for
   each externally sourced default worker through immutable candidate,
@@ -678,7 +690,7 @@ single frozen commit before production claims are made.
 
 - `scripts/check_release_ledger.py --json` (base aggregator `eff4eef`, native live-ledger gate `4d7a495`) now
   aggregates the checked-in verifier inventory into `aiat.release-ledger.v1`.
-  The latest static run reports 59/59 configured
+  The latest static run reports 63/63 configured
   fixture/contract/documentation/release-environment/operator-pin/governance
   checks passing, two worker security findings-review evidence items, and
   `NO-RELEASE` because the worktree is dirty and live evidence was not
@@ -905,7 +917,7 @@ single frozen commit before production claims are made.
 | External-account action policy and mail correlation | PASS (static/API/unit, preparatory P1) | Commits `f577675`, `cfafe38`, `2d21a2f`, `aab6285`, and `2d04b30`; `PYTHONPATH=apps/identity-service uv run --isolated pytest apps/identity-service/tests/test_identity_service.py apps/identity-service/tests/test_provider_adapters.py -q`; versioned action taxonomy, closure human-approval/session-revocation path, safe delivery-attempt trace/span persistence, normalized provider-event migration `0003_mail_edge_observations`, exact raw-body Resend/Svix verification, provider-facing ingress, and local in-memory plus rebuilt Compose/Postgres ingress certificates pass; secret-safe evidence is [`../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json). Configured external provider callback, deployed/live outage, selected worker, and complete mail-edge evidence remain open |
 | Production image contract | PASS (static + SBOM schema); BLOCKED (live) | Commits `42b03a3` and `2804a9f` add CycloneDX structure, unique inventory/ref identity, checked-in build-recipe, bounded digest/lock, and repository-contained artifact-path validation; `uv run --isolated pytest packages/mas-core/tests/test_image_provenance_runner.py -q` (8 passed) and `uv run --isolated python scripts/check_image_provenance.py --json` pass the static contract. `--live --require-sbom --json` exits 2 because deployment-supplied immutable `*_IMAGE_REF` values and release artifacts are absent; no SBOM licence field is used as a gate |
 | Operator runtime/CLI pin contract | PASS (static; host-only entries explicit unavailable) | `uv run --isolated python scripts/check_operator_pins.py --json` verifies exact production CLI/dependency declarations and records explicit reasons for unavailable host, optional, and deployment-supplied capabilities; no licence metadata is a gate |
-| Worker manifest/runtime/provenance reconciliation | PASS (static + authenticated local live binding; technical findings remain open) | `uv run --isolated python scripts/check_worker_reconciliation.py --json` validates 39 manifests; the authenticated local `--live --json` run (evidence refreshed 2026-08-11 in `180f9e0`) matches all 39 persisted defaults with zero missing rows or binding mismatches, retained at [`provenance/worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). Coding/tester rows still link to exact Semgrep evidence with 316 findings and remain `findings_review_required`; host package availability is advisory and Compose import readiness is recorded separately |
+| Worker manifest/runtime/provenance reconciliation | PASS (static + authenticated local live binding; OpenCode technical gate blocked) | `uv run --isolated python scripts/check_worker_reconciliation.py --json` validates 39 manifests; the authenticated local `--live --json` run (evidence refreshed 2026-08-11 in `180f9e0`) matches all 39 persisted defaults with zero missing rows or binding mismatches, retained at [`provenance/worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). Coding/tester rows remain pending the fresh pinned OpenCode v1.18.21 scanner/SBOM gate; the historical unreproducible counts are not remediation input, host package availability is advisory, and Compose import readiness is recorded separately |
 | Team-runner manifest identity bindings | static/unit | PASS | Commit `d9b1262`; `uv run --isolated pytest packages/mas-core/tests/test_team_worker_manifest_refs.py apps/team-runner/tests/test_team_config.py -q` and `uv run --isolated python scripts/check_team_worker_manifest_refs.py --json` reconcile 11 team files and 39 exact agent→manifest IDs; no registration/activation mutation and licence metadata remains informational |
 | Team-runner startup manifest enforcement | unit/startup contract | PASS | Commit `569231f`; `uv run --isolated pytest apps/team-runner/tests/test_team_config.py apps/team-runner/tests/test_shutdown.py -q` verifies production-style mounted-manifest reconciliation, fail-closed missing references, exact `AgentConfig` propagation, and health metadata; startup remains read-only and does not register or activate workers |
 | Default worker implementation bindings | PASS (static); BLOCKED (live without operator environment) | `uv run --isolated pytest packages/mas-core/tests/test_default_worker_bindings.py -q`; `uv run --isolated python scripts/check_default_worker_bindings.py --json` reconciles all 15 documented default worker slots across department, runtime, transport, isolation, runtime-catalogue support, runtime/integration adapter entrypoints, capability, adapter configuration, and required tools. `--live --json` is fail-closed and does not mutate runtime state; licence metadata remains informational only |
@@ -966,7 +978,7 @@ single frozen commit before production claims are made.
 | Outbound-mail lifecycle fixture | PASS (static/unit/fixture; relay live open) | `uv run --isolated pytest packages/mas-core/tests/test_outbound_mail_lifecycle.py -q`; `uv run --isolated python scripts/check_outbound_mail_lifecycle.py --json` drives the actual `IdentityService` through approval pause, request/submission idempotency, definitive provider-failure retry, ambiguous-outage reconciliation hold, and secret-safe output without external relay calls |
 | Self-improvement candidate detection | PASS (static/unit/fixture; live signal sources open) | Commit `4d8dddf`; `uv run --isolated pytest packages/mas-core/tests/test_improvement_candidates.py -q`; `uv run --isolated python scripts/check_self_improvement_candidates.py --json` reconciles defect, metric, upstream-update, cost, and operator-goal signals with deterministic deduplication/risk/budget mapping, conflicting-ID rejection, secret-safe metadata, and zero project/budget/credential/deployment side effects |
 | Self-improvement lifecycle persistence | PASS (local Compose Postgres certificate; live worker/provider boundary open) | Commit `10983c8`; `uv run --isolated pytest mas/scripts/tests/test_check_self_improvement_postgres_evidence.py -q` plus focused self-improvement/storage tests and Ruff pass. `docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_self_improvement_postgres_evidence.py --json'` reaches migration `0036_native_trace_spans`, persists the canonical project and revisioned lifecycle through six technical gates, rejects a stale CAS snapshot, records human approval, verifies five checksum/size read-backs, promotes and exactly rolls back, persists a terminal outcome/history, reopens the durable row, and removes only the reserved project; evidence is [`provenance/self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json). This is local control-plane evidence only; selected model-backed worker, provider callback, budget settlement, deployment, and live issue reconciliation remain open; licence metadata is informational only |
-| Machine-readable release ledger | PASS (61/61 static aggregation; native live-ledger gate `4d7a495`); BLOCKED/NO-RELEASE (current and configured live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 61/61 static checks passing, including the bounded object-store lifecycle and trace-retention execution checks registered by `aa7d2b2` plus encrypted-backup and fresh-process restore checks registered by `57504a7`, with `NO-RELEASE`; scalar summary is [`provenance/release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json). The current unconfigured 85-check `--live --json` snapshot at 2026-08-19T04:47:35Z records 71 pass/14 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the corrected configured Compose profile at 2026-08-18T23:57:08Z records 76 pass/5 blocked/0 fail across 81 checks and is retained at [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json). Native preflight, image SBOM/scan artifacts, Firecracker/gVisor, provider/KMS host configuration, outbound mail, self-improvement source, and security-review children remain explicit; the key-alias harness run that produced a 403 trace read-back is excluded, and the corrected operator-key rerun does not change `NO-RELEASE`; licence metadata remains non-gating. |
+| Machine-readable release ledger | PASS (63/63 static aggregation; native live-ledger gate `4d7a495`); BLOCKED/NO-RELEASE (current and configured live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 63/63 static checks passing, including the bounded object-store lifecycle, OCI SSE/KMS contract fixture, fresh OpenCode candidate provenance/boundary contract, trace-retention execution checks registered by `aa7d2b2`, plus encrypted-backup and fresh-process restore checks registered by `57504a7`, with `NO-RELEASE`; scalar summary is [`provenance/release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json). The current unconfigured 85-check `--live --json` snapshot at 2026-08-19T04:47:35Z records 71 pass/14 blocked/0 fail with four pending items and is retained at [`provenance/release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json); the corrected configured Compose profile at 2026-08-18T23:57:08Z records 76 pass/5 blocked/0 fail across 81 checks and is retained at [`provenance/release_ledger_live.json`](../../mas/docs/provenance/release_ledger_live.json). Native preflight, image SBOM/scan artifacts, Firecracker/gVisor, provider/KMS target configuration, outbound mail, self-improvement source, and security-review children remain explicit; the key-alias harness run that produced a 403 trace read-back is excluded, and the corrected operator-key rerun does not change `NO-RELEASE`; licence metadata remains non-gating. |
 | Release environment manifest | PASS (secret-safe static identity; refreshed policy input) | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with fifteen input hashes, including the network-boundary policy, security review register, tool identities, environment-presence flags, and a deterministic per-revision manifest digest without printing values or credentials. The report records the current branch, revision, changed-path count, and dirty state; its digest must be captured again for the eventual frozen release commit. |
 | Host-safe local Compose release-ledger sweep | BLOCKED/NO-RELEASE (79/85 pass, 6 blocked, 0 fail) | Implementation `38a8ab7` adds `check_release_ledger.py --live --compose-local` to map host-side children to published loopback endpoints while preserving explicit overrides. Scalar evidence refresh `5f0c611` is [`provenance/release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json), observed at 2026-08-21T17:42:45Z; four pending evidence items and the six native/image/sandbox/mail/self-improvement blockers remain. The transient first-aggregate network-boundary health failure was excluded after narrow and broader reruns passed. |
 | Native release-host preflight | BLOCKED (current local WSL2 host) | The opt-in `uv run --isolated python scripts/check_release_environment.py --require-native-linux --json` check was refreshed at 2026-08-21T17:38:47Z against revision `2dbad30`. The current WSL2 result is retained at [`provenance/native_release_preflight.json`](../../mas/docs/provenance/native_release_preflight.json) with safe blockers for host identity, `runsc`, missing deployment-supplied immutable image refs, and dirty state. It is a prerequisite diagnostic only; native network, image/SBOM, scan, recovery, and provider evidence remain open, and licence metadata is non-gating. |
