@@ -31,30 +31,23 @@ jobs:
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
 
-      - name: Install pinned scanner tooling
+      - name: Provision pinned scanner and SBOM tooling
+        id: provision-tools
         working-directory: mas
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check \
-            "semgrep==1.168.0" \
-            "skillspector @ git+https://github.com/NVIDIA/skillspector@698e2bf29c7d32aa8211ada677382460c01900d7"
-          install_dir="$RUNNER_TEMP/aiat-scanners"
-          mkdir -p "$install_dir"
-          curl --fail --location --silent --show-error \
-            "https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz" \
-            --output "$RUNNER_TEMP/syft.tar.gz"
-          echo "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  $RUNNER_TEMP/syft.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/syft.tar.gz" -C "$install_dir"
-          curl --fail --location --silent --show-error \
-            "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz" \
-            --output "$RUNNER_TEMP/trufflehog.tar.gz"
-          echo "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4  $RUNNER_TEMP/trufflehog.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/trufflehog.tar.gz" -C "$install_dir"
-          echo "$install_dir" >> "$GITHUB_PATH"
-          semgrep --version
-          skillspector --version
-          syft version
-          trufflehog --version
+          set +e
+          mkdir -p ../artifacts/opencode-candidate
+          python3 scripts/provision_opencode_certification_tools.py \
+            --output ../artifacts/opencode-candidate \
+            --install-dir "$RUNNER_TEMP/aiat-opencode-tools" \
+            --python python3
+          status=$?
+          if [ -f ../artifacts/opencode-candidate/tooling-paths.txt ]; then
+            cat ../artifacts/opencode-candidate/tooling-paths.txt >> "$GITHUB_PATH"
+          fi
+          echo "exit_status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - name: Install AIAT test environment
         working-directory: mas
@@ -76,6 +69,7 @@ jobs:
             --version "$CANDIDATE_VERSION" \
             --image-ref "$CANDIDATE_IMAGE" \
             --output ../artifacts/opencode-candidate \
+            --tooling-manifest ../artifacts/opencode-candidate/tooling-provisioning.json \
             --boundary-command "uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_sandbox_runtime_readiness.py apps/tool-service/tests/test_opencode_workspace.py -q"
           status=$?
           set -e

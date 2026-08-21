@@ -40,6 +40,11 @@ SENSITIVE_VALUE = re.compile(
     r"(?i)(?:bearer\s+[a-z0-9._~+/=-]{12,}|gh[pousr]_[a-z0-9]{20,}|sk-[a-z0-9]{20,})"
 )
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "WARNING", "INFO", "ERROR")
+TOOL_INSTALLATION_FAILURE = "TOOL_INSTALLATION_FAILURE"
+SCANNER_EXECUTION_FAILURE = "SCANNER_EXECUTION_FAILURE"
+SECURITY_FINDING = "SECURITY_FINDING"
+SBOM_FAILURE = "SBOM_FAILURE"
+AIAT_BOUNDARY_FAILURE = "AIAT_BOUNDARY_FAILURE"
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -172,6 +177,19 @@ def _parse_json_output(path: Path) -> tuple[Any | None, str | None]:
     return value, None
 
 
+def _load_json(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {"status": "not_supplied", "failure_classes": []}
+    value, error = _parse_json_output(path)
+    if error or not isinstance(value, dict):
+        return {
+            "status": "blocked",
+            "failure_classes": [TOOL_INSTALLATION_FAILURE],
+            "error_type": "tooling_manifest_invalid",
+        }
+    return value
+
+
 def _semgrep_summary(value: Any) -> tuple[int, Counter[str], int, str | None]:
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
         return 0, Counter(), 0, "semgrep_output_shape_invalid"
@@ -237,6 +255,7 @@ def _run_scanner(
             "finding_count": 0,
             "scanner_error_count": 1,
             "scanner_errors": ["executable_unavailable"],
+            "failure_class": TOOL_INSTALLATION_FAILURE,
             "raw_output_retained": False,
         }
     actual_command = [executable, *command[1:]]
@@ -257,6 +276,7 @@ def _run_scanner(
             "finding_count": 0,
             "scanner_error_count": 1,
             "scanner_errors": [type(exc).__name__],
+            "failure_class": SCANNER_EXECUTION_FAILURE,
             "raw_output_retained": False,
         }
     stdout_text = result.stdout or ""
@@ -283,16 +303,18 @@ def _run_scanner(
     if result.returncode != 0 and finding_count == 0 and scanner_error_count == 0:
         scanner_error_count = 1
         scanner_errors.append(f"exit_{result.returncode}_without_structured_findings")
+    failure_class = SCANNER_EXECUTION_FAILURE if scanner_error_count else (SECURITY_FINDING if finding_count else None)
     return {
         "name": scanner,
         "status": "pass" if scanner_error_count == 0 else "blocked",
         "available": True,
-        "command": actual_command[:4] + (["<source>"] if len(actual_command) > 4 else []),
+        "invocation": ["<source>" if argument == str(source) else argument for argument in actual_command],
         "exit_status": result.returncode,
         "finding_count": finding_count,
         "severity_counts": dict(sorted(severities.items())),
         "scanner_error_count": scanner_error_count,
         "scanner_errors": scanner_errors,
+        "failure_class": failure_class,
         "raw_json_path": str(stdout_path.name),
         "stderr_log_path": str(stderr_path.name),
         "raw_output_retained": True,
@@ -304,8 +326,18 @@ def _run_scanner(
 def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
     executable = shutil.which("syft")
     path = output_dir / "sbom.cdx.json"
+    stdout_path = output_dir / "syft.stdout.log"
+    stderr_path = output_dir / "syft.stderr.log"
+    invocation = [executable or "syft", f"dir:{source}", f"cyclonedx-json={path}"]
     if executable is None:
-        return {"status": "blocked", "available": False, "scanner_error": "syft_unavailable", "path": path.name}
+        return {
+            "status": "blocked",
+            "available": False,
+            "failure_class": SBOM_FAILURE,
+            "scanner_error": "syft_unavailable",
+            "invocation": invocation,
+            "path": path.name,
+        }
     try:
         result = subprocess.run(
             [executable, f"dir:{source}", "-o", f"cyclonedx-json={path}"],
@@ -316,22 +348,48 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"status": "blocked", "available": True, "scanner_error": type(exc).__name__, "path": path.name}
+        return {
+            "status": "blocked",
+            "available": True,
+            "failure_class": SBOM_FAILURE,
+            "scanner_error": type(exc).__name__,
+            "invocation": invocation,
+            "path": path.name,
+        }
+    stdout_path.write_text(_redacted_text(result.stdout or ""), encoding="utf-8")
+    stderr_path.write_text(_redacted_text(result.stderr or ""), encoding="utf-8")
     if result.returncode != 0 or not path.is_file():
         return {
             "status": "blocked",
             "available": True,
             "exit_status": result.returncode,
+            "failure_class": SBOM_FAILURE,
             "scanner_error": "syft_failed_or_missing_output",
+            "invocation": invocation,
+            "stdout_path": stdout_path.name,
+            "stderr_path": stderr_path.name,
             "path": path.name,
         }
     value, error = _parse_json_output(path)
     if error or not isinstance(value, dict):
-        return {"status": "blocked", "available": True, "scanner_error": "sbom_shape_invalid", "path": path.name}
+        return {
+            "status": "blocked",
+            "available": True,
+            "failure_class": SBOM_FAILURE,
+            "scanner_error": "sbom_shape_invalid",
+            "invocation": invocation,
+            "stdout_path": stdout_path.name,
+            "stderr_path": stderr_path.name,
+            "path": path.name,
+        }
     return {
         "status": "pass",
         "available": True,
+        "exit_status": result.returncode,
         "version": _tool_version("syft", output_dir).get("version"),
+        "invocation": invocation,
+        "stdout_path": stdout_path.name,
+        "stderr_path": stderr_path.name,
         "path": path.name,
         "sha256": _sha256_file(path),
         "component_count": len(value.get("components") or []) if isinstance(value.get("components"), list) else 0,
@@ -366,6 +424,7 @@ def certify(
     image_ref: str,
     output_dir: Path,
     boundary_command: list[str] | None = None,
+    tooling_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     blockers: list[str] = []
@@ -373,6 +432,8 @@ def certify(
     scanner_rows: list[dict[str, Any]] = []
     sbom: dict[str, Any] = {"status": "not_run"}
     boundary: dict[str, Any] = {"status": "not_run"}
+    tooling = _load_json(tooling_manifest_path)
+    tool_versions: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="aiat-opencode-candidate-") as temporary:
         try:
             source_metadata, source = _prepare_source(repository, version, Path(temporary))
@@ -382,7 +443,7 @@ def certify(
         if source is not None:
             _write_json(output_dir / "source-manifest.json", source_metadata)
             for name in ("semgrep", "trufflehog", "skillspector", "syft"):
-                _tool_version(name, output_dir)
+                tool_versions[name] = _tool_version(name, output_dir)
             scanner_rows.extend(
                 [
                     _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--metrics=off", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
@@ -407,8 +468,26 @@ def certify(
         blockers.append("one_or_more_scanners_unavailable_or_failed")
     if sbom.get("status") != "pass":
         blockers.append("sbom_not_generated")
+    if tooling.get("status") == "blocked":
+        blockers.append("tool_provisioning_failed")
     if boundary.get("status") != "pass":
         blockers.append("aiat_boundary_regression_not_passed")
+    failure_classes = {
+        str(row["failure_class"])
+        for row in scanner_rows
+        if row.get("failure_class")
+    }
+    failure_classes.update(
+        str(item)
+        for item in tooling.get("failure_classes", [])
+        if item
+    )
+    if sbom.get("failure_class"):
+        failure_classes.add(str(sbom["failure_class"]))
+    if boundary.get("status") != "pass":
+        failure_classes.add(AIAT_BOUNDARY_FAILURE)
+    if findings:
+        failure_classes.add(SECURITY_FINDING)
     if blockers:
         decision = "blocked"
     elif findings:
@@ -427,13 +506,17 @@ def certify(
         "candidate_image_digest": image_digest,
         "source": source_metadata or {"status": "not_prepared", "clone_retained": False},
         "scanners": scanner_rows,
+        "tool_versions": tool_versions,
+        "tooling_provisioning": tooling,
         "scanner_errors": scanner_errors,
         "raw_findings_count": findings,
         "upstream_findings": findings,
+        "security_findings_interpretable": not any(row.get("status") != "pass" for row in scanner_rows),
         "aiat_local_findings": 0 if boundary.get("status") == "pass" else None,
         "findings_by_severity": dict(sorted(severity_counts.items())),
         "sbom": sbom,
         "aiat_local_boundary": boundary,
+        "failure_classes": sorted(failure_classes),
         "remediation_required": bool(findings or scanner_errors or blockers),
         "fork_required": False,
         "active_worker_status": "inactive_until_certification_passes",
@@ -463,6 +546,11 @@ def main(argv: list[str] | None = None) -> int:
         "--boundary-command",
         help="quoted command for AIAT wrapper/grant/sandbox regression tests",
     )
+    parser.add_argument(
+        "--tooling-manifest",
+        type=Path,
+        help="structured provisioning result produced before scanning",
+    )
     args = parser.parse_args(argv)
     boundary = shlex.split(args.boundary_command) if args.boundary_command else None
     report = certify(
@@ -471,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
         image_ref=args.image_ref,
         output_dir=args.output,
         boundary_command=boundary,
+        tooling_manifest_path=args.tooling_manifest,
     )
     print(json.dumps({key: report[key] for key in ("status", "candidate_version", "candidate_commit", "scanner_errors", "raw_findings_count", "findings_by_severity", "blockers")}, sort_keys=True, indent=2))
     return 0 if report["status"] == "passed" else 2 if report["status"] == "blocked" else 1

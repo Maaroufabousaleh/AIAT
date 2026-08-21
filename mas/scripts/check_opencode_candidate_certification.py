@@ -18,6 +18,13 @@ DEFAULT_PATH = REPO_ROOT / "mas" / "docs" / "provenance" / "opencode-candidate" 
 SCHEMA = "aiat.opencode-candidate-certification.v1"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
+FAILURE_CLASSES = {
+    "TOOL_INSTALLATION_FAILURE",
+    "SCANNER_EXECUTION_FAILURE",
+    "SECURITY_FINDING",
+    "SBOM_FAILURE",
+    "AIAT_BOUNDARY_FAILURE",
+}
 
 
 def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
@@ -66,6 +73,17 @@ def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
     scanners = report.get("scanners")
     if not isinstance(scanners, list) or {str(row.get("name")) for row in scanners if isinstance(row, dict)} != {"semgrep", "trufflehog", "skillspector"}:
         errors.append("candidate evidence must enumerate Semgrep, TruffleHog, and SkillSpector")
+    failure_classes = report.get("failure_classes")
+    if not isinstance(failure_classes, list) or not set(failure_classes).issubset(FAILURE_CLASSES):
+        errors.append("candidate evidence contains an unknown failure classification")
+    if report.get("status") == "blocked" and report.get("security_findings_interpretable") is True:
+        errors.append("blocked tooling must not mark security findings interpretable")
+    if not isinstance(report.get("tool_versions"), dict):
+        errors.append("candidate evidence must retain tool version probes")
+    if not isinstance(report.get("tooling_provisioning"), dict):
+        errors.append("candidate evidence must retain tooling provisioning evidence")
+    if not isinstance(report.get("sbom"), dict):
+        errors.append("candidate evidence must retain SBOM status")
     technical_gate = "passed" if report.get("status") == "passed" else "blocked"
     return {
         "schema_version": "aiat.opencode-candidate-certification-review.v1",

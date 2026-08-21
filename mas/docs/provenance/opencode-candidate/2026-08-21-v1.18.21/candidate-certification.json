@@ -25,6 +25,10 @@
     "raw_scanner_outputs_retained_sanitized": false,
     "source_clone_retained": false
   },
+  "failure_classes": [
+    "SBOM_FAILURE",
+    "TOOL_INSTALLATION_FAILURE"
+  ],
   "findings_by_severity": {},
   "fork_required": false,
   "programme_scope": "personal-internal-only",
@@ -32,6 +36,12 @@
   "remediation_required": true,
   "sbom": {
     "available": false,
+    "failure_class": "SBOM_FAILURE",
+    "invocation": [
+      "syft",
+      "dir:/tmp/aiat-opencode-candidate-io0p9fok/source",
+      "cyclonedx-json=docs/provenance/opencode-candidate/2026-08-21-v1.18.21/sbom.cdx.json"
+    ],
     "path": "sbom.cdx.json",
     "scanner_error": "syft_unavailable",
     "status": "blocked"
@@ -40,6 +50,7 @@
   "scanners": [
     {
       "available": false,
+      "failure_class": "TOOL_INSTALLATION_FAILURE",
       "finding_count": 0,
       "name": "semgrep",
       "raw_output_retained": false,
@@ -51,6 +62,7 @@
     },
     {
       "available": false,
+      "failure_class": "TOOL_INSTALLATION_FAILURE",
       "finding_count": 0,
       "name": "trufflehog",
       "raw_output_retained": false,
@@ -62,6 +74,7 @@
     },
     {
       "available": false,
+      "failure_class": "TOOL_INSTALLATION_FAILURE",
       "finding_count": 0,
       "name": "skillspector",
       "raw_output_retained": false,
@@ -74,6 +87,7 @@
   ],
   "schema_version": "aiat.opencode-candidate-certification.v1",
   "scope": "fresh pinned OpenCode source/SBOM/scanner candidate certification; no activation or release decision",
+  "security_findings_interpretable": false,
   "source": {
     "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
     "clone_retained": false,
@@ -86,6 +100,32 @@
     "tag": "v1.18.21"
   },
   "status": "blocked",
+  "tool_versions": {
+    "semgrep": {
+      "available": false,
+      "name": "semgrep",
+      "version": null
+    },
+    "skillspector": {
+      "available": false,
+      "name": "skillspector",
+      "version": null
+    },
+    "syft": {
+      "available": false,
+      "name": "syft",
+      "version": null
+    },
+    "trufflehog": {
+      "available": false,
+      "name": "trufflehog",
+      "version": null
+    }
+  },
+  "tooling_provisioning": {
+    "failure_classes": [],
+    "status": "not_supplied"
+  },
   "upstream_findings": 0,
   "upstream_repository": "https://github.com/anomalyco/opencode.git"
 }
