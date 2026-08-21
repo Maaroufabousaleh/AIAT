@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.native-release-preflight-evidence.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-19T04:15:06.676261+00:00",
+  "observed_at": "2026-08-21T17:38:47.047245+00:00",
   "mode": "local-preflight",
   "status": "blocked",
   "source_command": "scripts/check_release_environment.py --require-native-linux --json",
@@ -11,7 +11,7 @@
     "native_linux": false
   },
   "git": {
-    "revision": "39cb545665464b17f783273e5a2e084843eefba0",
+    "revision": "2dbad307243403b9e93fee3e1ade3a40aab38f3b",
     "working_tree_clean": false
   },
   "docker": {

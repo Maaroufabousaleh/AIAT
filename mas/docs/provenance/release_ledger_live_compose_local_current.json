@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-live-compose-local-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-19T06:23:37.174074+00:00",
+  "observed_at": "2026-08-21T17:42:45.830393+00:00",
   "profile": "live-compose-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
@@ -32,6 +32,17 @@
     "self_improvement_candidate_detection:live"
   ],
   "failed_checks": [],
+  "excluded_attempts": [
+    {
+      "observed_at": "2026-08-21T17:40:21.556173+00:00",
+      "check": "network_boundary:live",
+      "classification": "infrastructure/environment transient container-health race",
+      "initial_summary": "team-dept-devops control-plane storage health failed",
+      "narrow_rerun": "pass",
+      "broader_rerun": "pass",
+      "retained_payloads_or_logs": false
+    }
+  ],
   "payload_free": true,
   "secret_free": true,
   "licence_metadata_is_gate": false,
