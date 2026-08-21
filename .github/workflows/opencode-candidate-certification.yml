@@ -1,0 +1,92 @@
+name: OpenCode Candidate Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact AIAT candidate commit to certify"
+        required: true
+        type: string
+      opencode_version:
+        description: "Exact OpenCode release tag/version"
+        required: false
+        default: "1.18.21"
+        type: string
+      opencode_image_ref:
+        description: "Linux amd64 OpenCode image with an immutable digest"
+        required: false
+        default: "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact AIAT candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned scanner tooling
+        working-directory: mas
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check \
+            "semgrep==1.168.0" \
+            "skillspector @ git+https://github.com/NVIDIA/skillspector@698e2bf29c7d32aa8211ada677382460c01900d7"
+          install_dir="$RUNNER_TEMP/aiat-scanners"
+          mkdir -p "$install_dir"
+          curl --fail --location --silent --show-error \
+            "https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz" \
+            --output "$RUNNER_TEMP/syft.tar.gz"
+          echo "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  $RUNNER_TEMP/syft.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/syft.tar.gz" -C "$install_dir"
+          curl --fail --location --silent --show-error \
+            "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz" \
+            --output "$RUNNER_TEMP/trufflehog.tar.gz"
+          echo "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4  $RUNNER_TEMP/trufflehog.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/trufflehog.tar.gz" -C "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          semgrep --version
+          skillspector --version
+          syft version
+          trufflehog --version
+
+      - name: Install AIAT test environment
+        working-directory: mas
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.4.30
+          uv sync --locked --dev
+
+      - name: Run fresh reproducible candidate certification
+        working-directory: mas
+        env:
+          CANDIDATE_VERSION: ${{ inputs.opencode_version }}
+          CANDIDATE_IMAGE: ${{ inputs.opencode_image_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../artifacts/opencode-candidate
+          set +e
+          uv run --isolated python scripts/opencode_candidate_certify.py \
+            --version "$CANDIDATE_VERSION" \
+            --image-ref "$CANDIDATE_IMAGE" \
+            --output ../artifacts/opencode-candidate \
+            --boundary-command "uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_sandbox_runtime_readiness.py apps/tool-service/tests/test_opencode_workspace.py -q"
+          status=$?
+          set -e
+          test "$status" -eq 0 || test "$status" -eq 1 || test "$status" -eq 2
+          exit "$status"
+
+      - name: Upload reproducible candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-candidate-${{ github.run_id }}
+          path: artifacts/opencode-candidate/
+          if-no-files-found: error
+          retention-days: 30

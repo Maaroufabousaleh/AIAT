@@ -1,0 +1,91 @@
+{
+  "active_worker_status": "inactive_until_certification_passes",
+  "aiat_local_boundary": {
+    "logs_sanitized": true,
+    "returncode": 0,
+    "status": "pass",
+    "stderr_path": "aiat-boundary.stderr.log",
+    "stdout_path": "aiat-boundary.stdout.log"
+  },
+  "aiat_local_findings": 0,
+  "blockers": [
+    "one_or_more_scanners_unavailable_or_failed",
+    "sbom_not_generated"
+  ],
+  "candidate_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+  "candidate_image_digest": "56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+  "candidate_image_ref": "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+  "candidate_tag": "v1.18.21",
+  "candidate_version": "1.18.21",
+  "evidence_policy": {
+    "credentials_persisted": false,
+    "immutable_provenance_retained": true,
+    "licence_metadata_is_gate": false,
+    "payloads_persisted": false,
+    "raw_scanner_outputs_retained_sanitized": true,
+    "source_clone_retained": false
+  },
+  "findings_by_severity": {},
+  "fork_required": false,
+  "programme_scope": "personal-internal-only",
+  "raw_findings_count": 0,
+  "remediation_required": true,
+  "sbom": {
+    "available": false,
+    "path": "sbom.cdx.json",
+    "scanner_error": "syft_unavailable",
+    "status": "blocked"
+  },
+  "scanner_errors": 3,
+  "scanners": [
+    {
+      "available": false,
+      "finding_count": 0,
+      "name": "semgrep",
+      "raw_output_retained": false,
+      "scanner_error_count": 1,
+      "scanner_errors": [
+        "executable_unavailable"
+      ],
+      "status": "blocked"
+    },
+    {
+      "available": false,
+      "finding_count": 0,
+      "name": "trufflehog",
+      "raw_output_retained": false,
+      "scanner_error_count": 1,
+      "scanner_errors": [
+        "executable_unavailable"
+      ],
+      "status": "blocked"
+    },
+    {
+      "available": false,
+      "finding_count": 0,
+      "name": "skillspector",
+      "raw_output_retained": false,
+      "scanner_error_count": 1,
+      "scanner_errors": [
+        "executable_unavailable"
+      ],
+      "status": "blocked"
+    }
+  ],
+  "schema_version": "aiat.opencode-candidate-certification.v1",
+  "scope": "fresh pinned OpenCode source/SBOM/scanner candidate certification; no activation or release decision",
+  "source": {
+    "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "clone_retained": false,
+    "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "commit_url": "https://github.com/anomalyco/opencode/commit/826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "file_count": 6520,
+    "immutable_provenance_ref": true,
+    "release": "1.18.21",
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "tag": "v1.18.21"
+  },
+  "status": "blocked",
+  "upstream_findings": 0,
+  "upstream_repository": "https://github.com/anomalyco/opencode.git"
+}
