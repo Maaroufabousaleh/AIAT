@@ -1,0 +1,94 @@
+name: Native Linux gVisor Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact AIAT candidate commit to certify"
+        required: true
+        type: string
+      smoke_image:
+        description: "Digest-pinned Linux image used by the sandbox suite"
+        required: false
+        default: "ubuntu:24.04"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    # ubuntu-slim is intentionally not used: the certification requires a
+    # privileged Docker Engine and systemd-managed runtime registration.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mas
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Prove native Linux
+        run: |
+          set -euo pipefail
+          uname -a
+          test "$(uname -s)" = "Linux"
+          ! uname -r | grep -Eiq 'microsoft|wsl'
+          cat /etc/os-release
+          git rev-parse HEAD
+
+      - name: Install gVisor from the official apt repository
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key \
+            | sudo gpg --dearmor --yes -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          runsc --version
+          sudo runsc install
+          sudo systemctl restart docker
+
+      - name: Install AIAT test environment
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.4.30
+          uv sync --locked --dev
+
+      - name: Resolve immutable smoke image
+        id: smoke
+        env:
+          REQUESTED_IMAGE: ${{ inputs.smoke_image }}
+        run: |
+          set -euo pipefail
+          docker pull "$REQUESTED_IMAGE"
+          digest=$(docker image inspect --format '{{json .RepoDigests}}' "$REQUESTED_IMAGE" \
+            | python3 -c 'import json,sys; values=json.load(sys.stdin); print(next((v for v in values if "@sha256:" in v), ""))')
+          test -n "$digest"
+          echo "image=$digest" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$digest" > native-gvisor-smoke-image.txt
+
+      - name: Run native gVisor certification
+        run: |
+          set -euo pipefail
+          mkdir -p ../artifacts/native-gvisor
+          uv run python scripts/check_native_gvisor_certification.py \
+            --smoke-image '${{ steps.smoke.outputs.image }}' \
+            --output ../artifacts/native-gvisor/certification.json
+
+      - name: Upload immutable certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linux-gvisor-${{ github.run_id }}
+          path: |
+            artifacts/native-gvisor/
+            mas/native-gvisor-smoke-image.txt
+          if-no-files-found: error
+          retention-days: 14
