@@ -36,10 +36,18 @@ change the P0 ledger or the global `NO-RELEASE` decision.
 The next P0 harness slice (`38a8ab7`) adds `check_release_ledger.py
 --live --compose-local`, which supplies published loopback endpoints to host-side
 live children and preserves explicit endpoint overrides. The refreshed scalar
-sweep (`a415a1b`) at `2026-08-19T06:23:37Z` against the current revision records
+sweep (`5f0c611`) at `2026-08-21T17:42:45Z` against the current revision records
 79/85 pass, 0 fail, and 6 blocked with four pending items; it is retained at
 [`release_ledger_live_compose_local_current.json`](mas/docs/provenance/release_ledger_live_compose_local_current.json).
 The global release decision remains `NO-RELEASE`.
+
+The first 2026-08-21 aggregate briefly reported `network_boundary:live` as a
+failure because `team-dept-devops` returned a transient control-plane storage
+health failure. The immediate narrow network-boundary rerun passed all eleven
+containers, the focused regression suite passed, and the broader ledger rerun
+returned to zero failures. That attempt is retained only as scalar
+infrastructure/environment classification in the live summary, not as a
+provider or release-gate failure.
 
 The latest configured Compose release aggregation (`2026-08-18T23:57:08Z`,
 revision `296d89b`, evidence refresh `f6063e0`) remains 76 pass/0 fail/5 blocked across 81 checks with
@@ -68,8 +76,8 @@ workspace remains intentionally on MCP `1.23.3`, so default-profile/provider
 activation is still blocked and this refresh advances only the isolated
 profile evidence.
 
-The native-host preflight was rerun at `2026-08-19T04:15:06Z` against revision
-`39cb545` and remains blocked by the WSL2 host
+The native-host preflight was rerun at `2026-08-21T17:38:47Z` against revision
+`2dbad30` and remains blocked by the WSL2 host
 identity, unavailable `runsc`, missing deployment-supplied immutable image
 refs, and the two protected dirty memory files. The native
 contract/regression slice passes; native-Linux network, sandbox, image/SBOM,
