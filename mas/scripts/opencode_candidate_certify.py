@@ -441,7 +441,8 @@ def certify(
         "evidence_policy": {
             "source_clone_retained": False,
             "immutable_provenance_retained": bool(source_metadata),
-            "raw_scanner_outputs_retained_sanitized": bool(scanner_rows),
+            "raw_scanner_outputs_retained_sanitized": bool(scanner_rows)
+            and all(row.get("raw_output_retained") is True for row in scanner_rows),
             "credentials_persisted": False,
             "payloads_persisted": False,
             "licence_metadata_is_gate": False,

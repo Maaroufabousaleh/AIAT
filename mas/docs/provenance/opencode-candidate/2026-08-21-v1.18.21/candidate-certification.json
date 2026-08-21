@@ -22,7 +22,7 @@
     "immutable_provenance_retained": true,
     "licence_metadata_is_gate": false,
     "payloads_persisted": false,
-    "raw_scanner_outputs_retained_sanitized": true,
+    "raw_scanner_outputs_retained_sanitized": false,
     "source_clone_retained": false
   },
   "findings_by_severity": {},
