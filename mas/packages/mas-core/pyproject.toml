@@ -20,6 +20,11 @@ dependencies = [
     "prometheus-client>=0.20",  # Phase 12 custom Prometheus metrics
 ]
 
+[project.optional-dependencies]
+oci = [
+    "oci>=2.126.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
