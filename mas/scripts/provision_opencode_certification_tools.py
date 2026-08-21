@@ -135,6 +135,8 @@ def _python_install(
         "--no-input",
         "--no-cache-dir",
         "--require-virtualenv",
+        "--report",
+        str(output_dir / f"{spec['name']}.pip-report.json"),
         str(spec["requirement"]),
     ]
     try:
@@ -161,7 +163,12 @@ def _python_install(
         "stdout_path": stdout_name,
         "stderr_path": stderr_name,
         "executable": str(executable),
+        "pip_report_path": f"{spec['name']}.pip-report.json",
     }
+    if row["status"] == "pass" and not (output_dir / str(row["pip_report_path"])).is_file():
+        row["status"] = "failed"
+        row["failure_class"] = TOOL_INSTALLATION_FAILURE
+        row["error_type"] = "pip_report_missing"
     if row["status"] != "pass":
         row["failure_class"] = TOOL_INSTALLATION_FAILURE
         row["error_type"] = "install_failed_or_executable_missing"

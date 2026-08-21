@@ -36,6 +36,8 @@ def test_fixture_provisions_all_pinned_tools_and_records_provenance(tmp_path, mo
             name = "skillspector" if "skillspector" in requirement else "semgrep"
             executable = install_dir / "venv" / "bin" / name
             executable.write_text("fixture executable", encoding="utf-8")
+            report_path = Path(command[command.index("--report") + 1])
+            report_path.write_text("{}", encoding="utf-8")
             return CompletedProcess(command, 0, "installed", "")
         executable = Path(command[0]).name
         return CompletedProcess(command, 0, f"{executable} fixture-version", "")
