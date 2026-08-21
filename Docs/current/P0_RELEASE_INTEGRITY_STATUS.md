@@ -17,8 +17,11 @@ tier. Provider-managed KMS/SSE is release-required but still operator-target
   candidate certificate (`60f60a1`). The static ledger is now 63/63 pass with
   `NO-RELEASE`; the native workflow has not yet run, OCI live evidence still
   needs an operator target, and the OpenCode technical gate is blocked on the
-  configured scanner/SBOM tools. The historical 316-finding OpenCode run is
-  `FAILED_UNREPRODUCIBLE` and is not remediation input.
+  local WSL tool state. The candidate workflow now self-provisions exact
+  Semgrep/TruffleHog/SkillSpector/Syft inputs with checksums and explicit
+  installation, execution, finding, and SBOM failure classes. The historical
+  316-finding OpenCode run is `FAILED_UNREPRODUCIBLE` and is not remediation
+  input.
 - Current continuation refresh (`57504a7`, aggregate evidence `cb290ff`) runs the static ledger at 63/63
   pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
   across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and
