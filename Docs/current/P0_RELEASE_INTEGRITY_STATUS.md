@@ -196,7 +196,7 @@
   recovery.
 - The AIAT credentials-manager live certificate (`12ba7c7`, scalar evidence
   [`credentials_manager_live_evidence.json`](../../mas/docs/provenance/credentials_manager_live_evidence.json),
-  refreshed at 2026-08-19T04:19:33Z with evidence commit `53660d3`; release
+  refreshed at 2026-08-21T17:49:10Z with evidence commit `4c6f400`; release
   child `credentials_manager_live` registered in `d101901`) passes
   against Compose Postgres. Ciphertext-at-rest, metadata-only projection,
   policy denial, approved server-side resolution, one-use approval,
