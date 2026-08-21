@@ -1,6 +1,15 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-21
+
+The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
+now records the frozen operator boundary. Native Linux and default gVisor are
+required for this release; Firecracker is an optional unverified high-risk
+tier, while provider-managed KMS/SSE, external mail, and live self-improvement
+are deferred unless the operator promotes them. Security dispositions and the
+two protected memory files remain required human actions. This documentation
+does not change the ledger or the `NO-RELEASE` decision, and no identical live
+audit should run until external state changes.
 - Current continuation refresh (`57504a7`, aggregate evidence `cb290ff`) runs the static ledger at 61/61
   pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
   across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and

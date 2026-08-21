@@ -4,7 +4,7 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-19):** in progress. The static release ledger is
+**Current status (2026-08-21):** in progress. The static release ledger is
 61/61 pass; the latest unconfigured live aggregation at
 `2026-08-19T04:47:35Z` is 71 pass, 0 fail, 14 blocked, and 4 pending across
 85 checks with `NO-RELEASE`. The licence metadata boundary,
@@ -50,6 +50,14 @@ The first 2026-08-21 aggregate's single `network_boundary:live` failure is
 classified as a transient infrastructure/container-health race: the narrow
 rerun and the broader release-ledger rerun both passed, so no provider or code
 failure is retained.
+
+The [P0 release-scope and external-prerequisite matrix](../P0_RELEASE_SCOPE_MATRIX.md)
+freezes the next boundary: native Linux and default gVisor remain required;
+Firecracker is optional/unverified unless promoted; provider-managed KMS/SSE,
+external mail, and live self-improvement are deferred for the current internal
+release unless explicitly promoted; security findings and protected memory
+files require operator disposition. Do not repeat identical live checks or
+change the ledger until a prerequisite materially changes.
 
 ## Why this plan is first
 

@@ -5,6 +5,16 @@
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
+The [P0 release-scope and external-prerequisite matrix](../../Docs/current/P0_RELEASE_SCOPE_MATRIX.md)
+is the current operator decision boundary. It records the corrected
+MinIO/SeaweedFS resource wave as a pass, excludes the invalid network-alias
+attempt, keeps native Linux/default gVisor and required image/security gates in
+scope, and treats Firecracker as optional/unverified unless promoted. It also
+records provider-managed KMS/SSE, external mail, and live self-improvement as
+deferred for this internal release pending an explicit operator choice. This
+ledger remains unchanged by that documentation-only decision and stays
+`NO-RELEASE`.
+
 The latest grouped verification at this revision (2026-08-18) confirms the
 policy-backed network boundary matrix, the durable local Postgres flow-instance
 recovery certificate (`1f20132`), the bounded multi-host duplicate-effect and

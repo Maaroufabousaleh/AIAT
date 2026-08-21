@@ -1,7 +1,7 @@
 # AIAT Roadmap
 
 **Roadmap baseline:** 2026-08-10
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-21
 **Programme authority:** [AIAT_TARGET_PROGRAMME.md](AIAT_TARGET_PROGRAMME.md)  
 **Current phase:** P0 release integrity
 
@@ -24,6 +24,16 @@ AIAT selection or execution gate.
 The scalar MinIO/SeaweedFS resource profile is complete; any remaining
 "resource profiling" reference below means production resource budgets and
 native-host portability, which are separate evidence gates.
+
+The current operator/external-state boundary is recorded in the [P0
+release-scope and external-prerequisite matrix](Docs/current/P0_RELEASE_SCOPE_MATRIX.md).
+It keeps native Linux and the default gVisor runtime required, classifies
+Firecracker as optional and unverified unless the operator promotes the
+high-risk tier, and explicitly dispositions provider-managed KMS/SSE, external
+mail, and live self-improvement as deferred for the current internal release.
+Security findings and the protected memory-file state remain required operator
+decisions. No identical live audit is required until a prerequisite materially
+changes; the global decision remains `NO-RELEASE`.
 
 The latest bounded P1 implementation slice (`60839f4`) stabilizes the
 Governance and Projects dashboard refresh callbacks and last-known-state refs.
