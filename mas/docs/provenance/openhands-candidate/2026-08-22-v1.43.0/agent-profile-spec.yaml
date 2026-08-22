@@ -1,0 +1,89 @@
+schema_version: aiat.openhands-agent-profile-spec.v1
+status: operator_provision_required
+purpose: bounded OpenHands coding worker under the AIAT control plane
+
+candidate:
+  release: v1.43.0
+  source_commit: 4c1237f391fe394e9f67505fe3a0bd2d81f84188
+  image_digest: sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+
+aiat_bindings:
+  model_profile_id: opencode-phase0b-coding
+  model_profile_version: "1"
+  exact_model_id: omniroute-coding
+  model_route_authority: aiat_gateway
+  workspace_policy: isolated_run_scoped
+  sandbox_profile: gvisor
+  network_policy:
+    mode: egress-allowlist
+    allowlist: [llm-gateway:4000, tool-service:8002]
+  budget_policy:
+    timeout_seconds: 300
+    max_iterations: 20
+  cancellation_policy:
+    graceful: pause
+    immediate: interrupt
+    resume: run
+  recovery_policy:
+    authority: aiat_control_plane
+    idempotency: required
+    restart_recovery: required
+  audit_policy:
+    sink: aiat_durable_audit
+    payload_retention: scalar_only
+
+agent_server_profile:
+  # Agent Server assigns this UUID when the profile is saved. Do not invent it.
+  id: null
+  name: aiat-openhands-v1-43-0-coding
+  agent_kind: openhands
+  # This must be an existing Agent Server LLM-profile name whose resolved
+  # configuration uses the AIAT gateway and exact_model_id above. It is not a
+  # direct provider credential or an arbitrary OpenHands model selection.
+  llm_profile_ref: null
+  # The operator must set this to the one disposable key supplied as
+  # OPENHANDS_MCP_SETTINGS_KEY. A null value at runtime would expose all
+  # configured MCP servers and is therefore forbidden.
+  mcp_server_refs: null
+  tools:
+    - name: terminal
+    - name: file_editor
+  enable_sub_agents: false
+  enable_switch_llm_tool: false
+  # OpenHands v1.43.0 exposes discovered skills through a deny-list. The
+  # operator must verify the server's skill-loading policy disables public,
+  # marketplace, and project skill loading; no wildcard assumption is made.
+  public_skill_loading: disabled_by_operator_server_policy
+  plugins: disabled
+  browser: disabled
+  desktop: disabled
+  vscode: disabled
+  direct_credentials: disabled
+  arbitrary_external_mcp: disabled
+
+aiat_mcp_bridge:
+  fixed_url: http://tool-service:8002/openhands/mcp
+  settings_key_env: OPENHANDS_MCP_SETTINGS_KEY
+  required_prefix: aiat-openhands-
+  allowed_tools: [aiat_tool]
+  grant_source: aiat_control_plane
+  grant_binding: worker_id_and_run_id
+  grant_ttl_seconds: 300
+  cleanup: delete_settings_entry_after_run
+
+provisioning:
+  profile_api:
+    list: GET /api/agent-profiles
+    save: POST /api/agent-profiles/{name}
+    materialize: POST /api/agent-profiles/{name}/materialize
+  required_postconditions:
+    - returned_profile_id_is_recorded_without_fabrication
+    - materialize_is_valid
+    - resolved_llm_profile_matches_aiat_exact_model
+    - mcp_refs_contain_only_the_operator_key
+    - disabled_controls_are_verified_from_server_readback
+  aiat_storage:
+    agent_profile_id: GitHub Actions repository variable OPENHANDS_AGENT_PROFILE_ID
+    mcp_settings_key: GitHub Actions repository variable OPENHANDS_MCP_SETTINGS_KEY
+  secrets:
+    - AIAT_TOOL_SECRET

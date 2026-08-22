@@ -1,0 +1,89 @@
+"""Tests for the non-secret OpenHands candidate preflight."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parents[1] / "check_openhands_candidate_preflight.py"
+SPEC = importlib.util.spec_from_file_location("check_openhands_candidate_preflight", SCRIPT)
+assert SPEC and SPEC.loader
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+def _inputs() -> tuple[dict, dict, dict, dict]:
+    return (
+        MODULE._read_yaml(MODULE.DEFAULT_MANIFEST),
+        MODULE._read_yaml(MODULE.DEFAULT_PROFILE_SPEC),
+        MODULE._read_json(MODULE.DEFAULT_INTERFACE_REPORT),
+        MODULE._read_json(MODULE.DEFAULT_MODEL_EVIDENCE),
+    )
+
+
+def test_current_candidate_fails_closed_without_operator_values() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={},
+    )
+
+    assert report["status"] == "BLOCKED_OPERATOR_CONFIGURATION"
+    assert report["model"]["catalogue_binding_valid"] is True
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["configured"] is False
+    assert report["references"]["OPENHANDS_MCP_SETTINGS_KEY"]["configured"] is False
+    assert report["references"]["OPENHANDS_MODEL_ID"]["configured"] is False
+    assert report["secret_boundary"]["AIAT_TOOL_SECRET"]["configured"] is False
+    assert report["interface_report"]["approved"] is False
+    assert report["fail_closed_contract"]["missing_required_env_is_rejected"] is True
+
+
+def test_mismatched_references_are_rejected_without_retaining_values() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    secret = "operator-secret-must-never-appear-in-report"
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={
+            "AIAT_TOOL_SECRET": secret,
+            "OPENHANDS_AGENT_PROFILE_ID": "not-a-uuid",
+            "OPENHANDS_MCP_SETTINGS_KEY": "wrong-key",
+            "OPENHANDS_MODEL_ID": "auto",
+        },
+    )
+
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
+    assert any("UUID" in error for error in report["static_errors"])
+    assert any("MCP_SETTINGS_KEY" in error for error in report["static_errors"])
+    assert any("MODEL_ID" in error for error in report["static_errors"])
+    assert secret not in json.dumps(report, sort_keys=True)
+    assert report["secret_boundary"]["AIAT_TOOL_SECRET"]["value_retained"] is False
+
+
+def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={
+            "AIAT_TOOL_SECRET": "operator-secret",
+            "OPENHANDS_AGENT_PROFILE_ID": "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31",
+            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MODEL_ID": "omniroute-coding",
+        },
+    )
+
+    assert report["status"] == "BLOCKED_OPERATOR_CONFIGURATION"
+    assert report["static_errors"] == []
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["format_valid"] is True
+    assert report["references"]["OPENHANDS_MCP_SETTINGS_KEY"]["format_valid"] is True
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["server_readback"] == "not_checked_without_operator_agent_server"
+    assert report["interface_report"]["approved"] is False

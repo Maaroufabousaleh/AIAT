@@ -8,9 +8,11 @@ metadata:
   version_pin: "v1.43.0+4c1237f391fe394e9f67505fe3a0bd2d81f84188"
   tags: [worker, dept_qa, candidate, inactive]
   update_policy: manual
-  evaluation_status: pending_complete_certification
+  evaluation_status: pending
 runtime:
   transport: http
+  timeout_seconds: 300
+  stop_grace_seconds: 60
   adapter_config:
     adapter_type: openhands_agent_server
     entrypoint: OpenHandsAgentServerAdapter
@@ -22,6 +24,31 @@ runtime:
     agent_profile_ref: operator-provisioned OpenHands profile UUID
     aiat_mcp_profile_ref: dedicated disposable aiat-openhands-* MCP settings key referenced by the profile
     aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
+    governed_profile_spec_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/agent-profile-spec.yaml
+    model_profile_ref: opencode-phase0b-coding
+    governance:
+      authority: aiat_control_plane
+      workspace_policy: isolated_run_scoped
+      allowed_local_tools: [terminal, file_editor, repository_inspection, git_diff_status, test_execution]
+      aiat_mcp_bridge:
+        url: http://tool-service:8002/openhands/mcp
+        settings_key_env: OPENHANDS_MCP_SETTINGS_KEY
+        allowlist: [aiat_tool]
+      network_policy: egress_allowlist
+      budget_policy:
+        timeout_seconds: 300
+        max_iterations: 20
+      cancellation_policy:
+        graceful: pause
+        immediate: interrupt
+        resume: run
+      recovery_policy:
+        authority: aiat_control_plane
+        idempotency: required
+        restart_recovery: required
+      audit_policy:
+        sink: aiat_durable_audit
+        payload_retention: scalar_only
     profile_controls:
       public_skills_disabled: true
       plugins_disabled: true
@@ -37,11 +64,28 @@ integration:
   certified_adapter_version: null
 runtime_tier: external
 model_mode: aiat_gateway
-model_profile_id: null
+model_profile_id: opencode-phase0b-coding
+model_requirements: [tool_calling, streaming]
 certification_status: pending
 worker_activation: inactive
 permission_grants: [repository.read, repository.write, tests.execute]
 tool_grants: [aiat.repository.read, aiat.repository.write, aiat.tests.execute]
+limits:
+  max_concurrent_tasks: 1
+  max_instances: 1
+  rate_limit_per_minute: 6
+  max_payload_size_bytes: 10485760
+checkpointing:
+  enabled: true
+  strategy: on-signal
+  every_n_calls: 1
+  store:
+    owner: aiat_control_plane
+    payload_retention: scalar_only
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true
 source_provenance:
   source_provider: github
   exact_release: "v1.43.0"
@@ -49,8 +93,10 @@ source_provenance:
   transport_type: openhands_agent_server
   license_id: MIT
   license_metadata_only: true
-  security_scan_status: not_run
-  sbom_status: not_run
+  security_scan_status: coverage_incomplete_review_only
+  security_scan_evidence_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/offline-security-triage-32594885180.md
+  sbom_status: passed
+  sbom_evidence_ref: OpenHands candidate certification artifact 32594885180
   interface_evidence_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json
 capabilities:
   - name: qa.code_implement
