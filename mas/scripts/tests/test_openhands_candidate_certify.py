@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _module():
@@ -79,3 +80,34 @@ def test_certification_keeps_scanner_errors_distinct_from_findings(monkeypatch, 
     assert certify_module.SECURITY_FINDING in report["failure_classes"]
     persisted = json.loads((tmp_path / "candidate-certification.json").read_text())
     assert persisted["runtime_applicability"]["raw_hits_are_not_exploitability_verdicts"] is True
+
+
+def test_image_cross_check_retains_only_path_classification(monkeypatch) -> None:
+    certify_module = _module()
+    monkeypatch.setattr(
+        certify_module,
+        "_run",
+        lambda command, **_: SimpleNamespace(
+            returncode=0,
+            stdout="openhands-agent-server/openhands/agent_server/api.py\t/agent-server/openhands-agent-server/openhands/agent_server/api.py\n",
+            stderr="",
+        ),
+    )
+    result = certify_module._image_cross_check(
+        "candidate-container",
+        [
+            {
+                "name": "skillspector",
+                "applicability": {
+                    "security_sensitive_paths": [
+                        "openhands-agent-server/openhands/agent_server/api.py",
+                        ".github/workflows/server.yml",
+                    ]
+                },
+            }
+        ],
+    )
+    assert result["status"] == "pass"
+    assert result["classification_counts"]["IMAGE_PRESENT_REACHABLE"] == 1
+    assert result["classification_counts"]["SOURCE_ONLY"] == 1
+    assert result["payloads_retained"] is False

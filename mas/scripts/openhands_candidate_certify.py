@@ -72,6 +72,80 @@ EXPECTED_SOURCE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 EXPECTED_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 
 
+def _relative_source_path(value: object) -> str | None:
+    """Normalize scanner paths without retaining runner-local prefixes."""
+
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("\\", "/")
+    marker = "/scan-source/"
+    if marker in normalized:
+        normalized = normalized.split(marker, 1)[1]
+    elif normalized.startswith("scan-source/"):
+        normalized = normalized[len("scan-source/") :]
+    return normalized.lstrip("./") or None
+
+
+def _path_class(path: str | None) -> str:
+    if not path:
+        return "unknown"
+    normalized = path.replace("\\", "/")
+    if normalized.startswith(".github/"):
+        return "ci_release"
+    if normalized.startswith((".agents/", ".claude/")):
+        return "agent_metadata_or_skills"
+    if normalized.startswith(("tests/", "test/")) or "/tests/" in normalized or "/fixtures/" in normalized:
+        return "tests_fixtures"
+    if normalized.startswith("examples/") or "/examples/" in normalized:
+        return "documentation_examples"
+    if normalized.startswith(("docs/", "documentation/")) or normalized.endswith((".md", ".mdx", ".rst")):
+        return "documentation_examples"
+    if normalized == "Dockerfile" or normalized.endswith("/Dockerfile") or normalized.startswith(("scripts/", "docker/")):
+        return "build_install"
+    runtime_prefixes = (
+        "openhands-sdk/openhands/",
+        "openhands-tools/openhands/",
+        "openhands-workspace/openhands/",
+        "openhands-agent-server/openhands/",
+    )
+    if normalized.startswith(runtime_prefixes):
+        return "runtime_source"
+    if normalized.endswith((".lock", ".json", ".yaml", ".yml")):
+        return "build_or_metadata"
+    return "other_source"
+
+
+def _semgrep_error_paths(error: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    direct = _relative_source_path(error.get("path"))
+    if direct:
+        paths.append(direct)
+    error_type = error.get("type")
+    if isinstance(error_type, list) and len(error_type) > 1 and isinstance(error_type[1], list):
+        for location in error_type[1]:
+            if isinstance(location, dict):
+                path = _relative_source_path(location.get("path"))
+                if path:
+                    paths.append(path)
+    return sorted(set(paths))
+
+
+def _semgrep_error_category(error_type: str, paths: list[str]) -> str:
+    if error_type == "Internal matching error":
+        return "scanner_internal_matching_failure"
+    if error_type == "PartialParsing":
+        if any(path.startswith(".github/") or path.endswith((".yml", ".yaml")) for path in paths):
+            return "embedded_github_expression_or_yaml_parsing_limitation"
+        if any(path.endswith((".md", ".mdx", ".rst")) for path in paths):
+            return "mdx_generated_or_documentation_parsing_limitation"
+        if any(_path_class(path) in {"tests_fixtures", "documentation_examples"} for path in paths):
+            return "tests_fixtures_or_examples_parsing_limitation"
+        if any(path == "Dockerfile" or path.endswith("/Dockerfile") for path in paths):
+            return "source_syntax_genuinely_unsupported"
+        return "source_syntax_genuinely_unsupported"
+    return "other"
+
+
 def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
     """Generate an image SBOM from the locally pulled immutable image."""
 
@@ -247,6 +321,97 @@ def _cleanup_container(container_name: str | None) -> dict[str, Any]:
     }
 
 
+def _image_cross_check(container_name: str | None, scanner_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cross-check security-sensitive source paths against the live image.
+
+    The probe records only path names and reachability classes.  It never reads
+    file contents, scanner snippets, credentials, or workspace payloads.
+    """
+
+    paths: set[str] = set()
+    for row in scanner_rows:
+        applicability = row.get("applicability") if isinstance(row.get("applicability"), dict) else {}
+        values = applicability.get("security_sensitive_paths")
+        if isinstance(values, list):
+            paths.update(str(value) for value in values if value)
+    if not container_name:
+        return {
+            "status": "blocked",
+            "reason": "container_name_missing",
+            "paths_checked": 0,
+            "payloads_retained": False,
+        }
+    if not paths:
+        return {
+            "status": "pass",
+            "reason": "no_security_sensitive_paths_from_scanners",
+            "paths_checked": 0,
+            "payloads_retained": False,
+        }
+    # Source-image layouts used by the pinned Agent Server image keep the
+    # monorepo below /agent-server; probing the root path as a fallback also
+    # covers generated/minimal layouts without assuming source presence.
+    candidates: dict[str, list[str]] = {}
+    for path in sorted(paths):
+        candidates[path] = [f"/agent-server/{path}", f"/{path}"]
+    args: list[str] = []
+    for path, options in candidates.items():
+        for option in options:
+            args.extend([path, option])
+    command = [
+        "docker",
+        "exec",
+        container_name,
+        "/bin/sh",
+        "-c",
+        "while [ \"$#\" -gt 1 ]; do source=$1; candidate=$2; if [ -e \"$candidate\" ]; then printf '%s\\t%s\\n' \"$source\" \"$candidate\"; fi; shift 2; done",
+        "openhands-image-path-probe",
+        *args,
+    ]
+    result = _run(command, timeout=120)
+    if result.returncode != 0:
+        return {
+            "status": "blocked",
+            "reason": "image_path_probe_failed",
+            "exit_status": result.returncode,
+            "paths_checked": len(paths),
+            "payloads_retained": False,
+        }
+    present: dict[str, list[str]] = {}
+    for line in (result.stdout or "").splitlines():
+        source, separator, candidate = line.partition("\t")
+        if separator and source in candidates and candidate in candidates[source]:
+            present.setdefault(source, []).append(candidate)
+    classifications: Counter[str] = Counter()
+    rows: list[dict[str, Any]] = []
+    for path in sorted(paths):
+        path_kind = _path_class(path)
+        if path not in present:
+            classification = "SOURCE_ONLY"
+        elif path_kind == "runtime_source":
+            classification = "IMAGE_PRESENT_REACHABLE"
+        else:
+            classification = "IMAGE_PRESENT_NOT_REACHABLE"
+        classifications[classification] += 1
+        rows.append(
+            {
+                "path": path,
+                "path_class": path_kind,
+                "classification": classification,
+                "image_paths": sorted(present.get(path, [])),
+            }
+        )
+    return {
+        "status": "pass",
+        "paths_checked": len(paths),
+        "classification_counts": dict(sorted(classifications.items())),
+        "paths": rows,
+        "aiat_wrapper_mitigated": 0,
+        "requires_upstream_fix_review": classifications.get("IMAGE_PRESENT_REACHABLE", 0),
+        "payloads_retained": False,
+    }
+
+
 def _normalize_scanner_row(row: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     """Add OpenHands-specific parser/coverage taxonomy to shared scanner output."""
 
@@ -258,29 +423,165 @@ def _normalize_scanner_row(row: dict[str, Any], output_dir: Path) -> dict[str, A
     details: list[dict[str, Any]] = []
     execution = 0
     coverage = 0
+    category_counts: Counter[str] = Counter()
+    affected_paths: set[str] = set()
+    affected_path_classes: Counter[str] = Counter()
     if isinstance(errors, list):
         for error in errors:
             if not isinstance(error, dict):
                 coverage += 1
+                category_counts["other"] += 1
                 continue
             code = str(error.get("code") or "unknown")
             error_type = error.get("type")
             normalized_type = str(error_type[0] if isinstance(error_type, list) and error_type else error_type or "unknown")
             failure = SCANNER_EXECUTION_FAILURE if code == "2" or normalized_type == "Internal matching error" else SCANNER_COVERAGE_INCOMPLETE
+            paths = _semgrep_error_paths(error)
+            category = _semgrep_error_category(normalized_type, paths)
+            category_counts[category] += 1
+            affected_paths.update(paths)
+            for affected_path in paths:
+                affected_path_classes[_path_class(affected_path)] += 1
             if failure == SCANNER_EXECUTION_FAILURE:
                 execution += 1
             else:
                 coverage += 1
-            details.append({"failure_class": failure, "error_type": normalized_type})
+            details.append(
+                {
+                    "failure_class": failure,
+                    "error_type": normalized_type,
+                    "category": category,
+                    "affected_paths": paths,
+                }
+            )
     if parse_error:
         execution += 1
-        details.append({"failure_class": SCANNER_EXECUTION_FAILURE, "error_type": "semgrep_json_invalid"})
+        category_counts["scanner_internal_matching_failure"] += 1
+        details.append(
+            {
+                "failure_class": SCANNER_EXECUTION_FAILURE,
+                "error_type": "semgrep_json_invalid",
+                "category": "scanner_internal_matching_failure",
+                "affected_paths": [],
+            }
+        )
     classes = sorted({str(item["failure_class"]) for item in details})
     row["failure_classes"] = classes
     row["scanner_errors"] = details or row.get("scanner_errors", [])
     row["coverage_error_count"] = coverage
     row["execution_error_count"] = execution
     row["failure_class"] = SCANNER_EXECUTION_FAILURE if execution else SCANNER_COVERAGE_INCOMPLETE
+    row["coverage_evidence"] = {
+        "error_category_counts": dict(sorted(category_counts.items())),
+        "affected_paths": sorted(affected_paths),
+        "affected_path_classes": dict(sorted(affected_path_classes.items())),
+        "runtime_source_paths_affected": affected_path_classes.get("runtime_source", 0),
+        "runtime_security_coverage": "known" if affected_path_classes.get("runtime_source", 0) == 0 else "incomplete",
+    }
+    return row
+
+
+def _normalize_finding_applicability(row: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Add bounded path/rule applicability summaries without retaining secrets."""
+
+    name = str(row.get("name") or "")
+    path = output_dir / str(row.get("raw_json_path") or f"{name}.json")
+    if not path.is_file():
+        return row
+    path_classes: Counter[str] = Counter()
+    rule_counts: Counter[str] = Counter()
+    runtime_rule_counts: Counter[str] = Counter()
+    categories: Counter[str] = Counter()
+    security_sensitive_paths: set[str] = set()
+    verified = 0
+    unverified = 0
+    try:
+        if name == "trufflehog":
+            rows: list[Any] = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                source = item.get("SourceMetadata")
+                data = source.get("Data") if isinstance(source, dict) else {}
+                filesystem = data.get("Filesystem") if isinstance(data, dict) else {}
+                finding_path = _relative_source_path(filesystem.get("file") if isinstance(filesystem, dict) else None)
+                path_kind = _path_class(finding_path)
+                path_classes[path_kind] += 1
+                detector = str(item.get("DetectorName") or "unknown")
+                rule_counts[detector] += 1
+                if finding_path:
+                    security_sensitive_paths.add(finding_path)
+                if item.get("Verified") is True:
+                    verified += 1
+                    categories["VERIFIED_SECRET"] += 1
+                elif path_kind == "tests_fixtures":
+                    unverified += 1
+                    categories["TEST_FIXTURE"] += 1
+                elif path_kind in {"documentation_examples", "agent_metadata_or_skills", "ci_release"}:
+                    unverified += 1
+                    categories["DOCUMENTATION_EXAMPLE"] += 1
+                else:
+                    unverified += 1
+                    categories["UNVERIFIED_CREDENTIAL_LIKE_VALUE"] += 1
+            row["applicability"] = {
+                "path_class_counts": dict(sorted(path_classes.items())),
+                "detector_counts": dict(sorted(rule_counts.items())),
+                "verified_count": verified,
+                "unverified_count": unverified,
+                "classification_counts": dict(sorted(categories.items())),
+                "actionable_count": 0,
+                "operator_review_count": categories.get("UNVERIFIED_CREDENTIAL_LIKE_VALUE", 0),
+                "security_sensitive_paths": sorted(security_sensitive_paths),
+                "raw_values_retained": False,
+            }
+            return row
+        value, parse_error = _parse_json_output(path)
+        if parse_error or not isinstance(value, dict):
+            return row
+        issues = value.get("issues") if name == "skillspector" else value.get("results")
+        if not isinstance(issues, list):
+            return row
+        for item in issues:
+            if not isinstance(item, dict):
+                continue
+            location = item.get("location") if isinstance(item.get("location"), dict) else {}
+            finding_path = _relative_source_path(location.get("file"))
+            path_kind = _path_class(finding_path)
+            path_classes[path_kind] += 1
+            rule = str(item.get("id") or item.get("finding_id") or item.get("check_id") or "unknown")
+            rule_counts[rule] += 1
+            severity = str(item.get("severity") or "unknown").upper()
+            if finding_path and severity in {"CRITICAL", "HIGH", "MEDIUM"}:
+                security_sensitive_paths.add(finding_path)
+            if path_kind == "runtime_source":
+                runtime_rule_counts[rule] += 1
+            if severity in {"CRITICAL", "HIGH", "MEDIUM"} and path_kind == "runtime_source":
+                categories[f"RUNTIME_{severity}"] += 1
+            elif path_kind == "runtime_source":
+                categories["RUNTIME_OTHER"] += 1
+            else:
+                categories["NON_RUNTIME_OR_NOT_APPLICABLE"] += 1
+        row["applicability"] = {
+            "path_class_counts": dict(sorted(path_classes.items())),
+            "rule_counts": dict(sorted(rule_counts.items())),
+            "runtime_rule_counts": dict(sorted(runtime_rule_counts.items())),
+            "classification_counts": dict(sorted(categories.items())),
+            "security_sensitive_paths": sorted(security_sensitive_paths),
+            "requested_rules": {
+                rule: rule_counts.get(rule, 0)
+                for rule in ("AE3", "AE4", "E1", "E2", "EA1", "EA2", "RP1", "SC9")
+            },
+            "raw_values_retained": False,
+        }
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return row
     return row
 
 
@@ -303,6 +604,7 @@ def certify(
     source_sbom: dict[str, Any] = {"status": "not_run"}
     image_sbom: dict[str, Any] = {"status": "not_run"}
     boundary: dict[str, Any] = {"status": "not_run"}
+    image_cross_check: dict[str, Any] = {"status": "not_run"}
     tooling = _load_json(tooling_manifest_path)
     tool_versions: dict[str, Any] = {}
     aiat_candidate_commit = _current_git_revision()
@@ -330,6 +632,7 @@ def certify(
                 _run_scanner("skillspector", ["skillspector", "scan", str(source), "--no-llm", "--format", "json"], source=source, output_dir=output_dir),
             ]
             scanner_rows = [_normalize_scanner_row(row, output_dir) for row in scanner_rows]
+            scanner_rows = [_normalize_finding_applicability(row, output_dir) for row in scanner_rows]
             source_sbom = _run_sbom(source, output_dir)
             image_sbom = _run_image_sbom(image_ref, output_dir)
             boundary = _run_boundary(boundary_command, output_dir)
@@ -346,6 +649,9 @@ def certify(
     container_probe = _container_probe(container_name)
     if container_probe.get("status") != "pass":
         blockers.append("agent_server_not_running_under_runsc")
+    image_cross_check = _image_cross_check(container_name, scanner_rows)
+    if image_cross_check.get("status") != "pass":
+        blockers.append("deployed_image_cross_check_incomplete")
     agent_server = _agent_server_probe(agent_server_url, session_api_key, EXPECTED_SOURCE_COMMIT, version)
     if agent_server.get("status") != "pass":
         checks = agent_server.get("checks") if isinstance(agent_server.get("checks"), dict) else {}
@@ -420,9 +726,10 @@ def certify(
         "findings_by_severity": dict(sorted(severity_counts.items())),
         "security_findings_interpretable": security_interpretable,
         "runtime_applicability": {
-            "status": "pending_deployed_image_cross_check",
+            "status": image_cross_check.get("status", "not_run"),
             "raw_hits_are_not_exploitability_verdicts": True,
             "source_only_and_image_reachable_classification_required": True,
+            "deployed_image_cross_check": image_cross_check,
         },
         "source_sbom": source_sbom,
         "image_sbom": image_sbom,
