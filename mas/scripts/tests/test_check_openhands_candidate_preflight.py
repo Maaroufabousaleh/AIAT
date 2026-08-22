@@ -69,7 +69,7 @@ def test_mismatched_references_are_rejected_without_retaining_values() -> None:
     assert report["secret_boundary"]["AIAT_TOOL_SECRET"]["value_retained"] is False
 
 
-def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() -> None:
+def test_valid_reference_shapes_are_ready_for_isolated_certification_but_not_activation() -> None:
     manifest, profile_spec, interface_report, model_evidence = _inputs()
     report = MODULE.evaluate(
         manifest=manifest,
@@ -86,7 +86,7 @@ def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() ->
         },
     )
 
-    assert report["status"] == "BLOCKED_OPERATOR_CONFIGURATION"
+    assert report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION"
     assert report["static_errors"] == []
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["format_valid"] is True
     assert report["references"]["OPENHANDS_MCP_SETTINGS_KEY"]["format_valid"] is True
@@ -94,3 +94,25 @@ def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() ->
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["source"] == "workflow_run_output"
     assert report["portability"]["profile_id_portable"] is False
     assert report["interface_report"]["approved"] is False
+    assert report["interface_report"]["certification_authorization_is_separate"] is True
+    assert report["activation_actions"] == ["steward_or_operator_approval_after_passed_certification"]
+
+
+def test_run_scoped_profile_uuid_is_not_a_static_ci_prerequisite() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={
+            "AIAT_TOOL_SECRET": "operator-secret",
+            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MODEL_ID": "omniroute-coding",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+        },
+    )
+    assert report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION"
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["configured"] is False
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["source"] == "workflow_run_output"

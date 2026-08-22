@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -22,7 +23,9 @@ from mas_core.worker_contract import (
 from mas_core.worker_registry.openhands_agent_server_adapter import (
     OPENHANDS_MCP_BRIDGE_URL,
     OpenHandsAgentServerAdapter,
+    OpenHandsCertificationAuthorization,
     OpenHandsInterfaceVerification,
+    issue_openhands_certification_authorization,
 )
 
 if TYPE_CHECKING:
@@ -163,6 +166,113 @@ def test_pending_report_cannot_construct_executable_adapter() -> None:
             base_url="http://openhands.test",
             worker_id="candidate",
             context=AdapterContext(secrets={"openhands_session_api_key": "secret"}),
+        )
+
+
+def _certification_context(tmp_path: Path) -> AdapterContext:
+    workspace = tmp_path / "certification-workspace"
+    workspace.mkdir(exist_ok=True)
+    return AdapterContext(
+        workspace_path=str(workspace),
+        secrets={"openhands_session_api_key": "session-secret-test", "tool_secret": "tool-secret-test"},
+        metadata={
+            "openhands_agent_profile_id": PROFILE_ID,
+            "openhands_mcp_profile_ref": "aiat-mcp-profile-test",
+            "openhands_mcp_settings_key": "aiat-openhands-test-run",
+            "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
+            "openhands_image_digest": IMAGE_DIGEST,
+            "openhands_public_skills_disabled": True,
+            "openhands_plugins_disabled": True,
+            "openhands_subagents_disabled": True,
+            "openhands_browser_disabled": True,
+            "openhands_direct_credentials_disabled": True,
+        },
+    )
+
+
+def test_pending_candidate_can_run_only_with_exact_gvisor_certification_authorization(tmp_path: Path) -> None:
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="candidate",
+        context=_certification_context(tmp_path),
+    )
+    assert adapter.certification_mode is True
+    assert adapter.activation_eligible is False
+    assert adapter.context.metadata["openhands_certification_mode"] is True
+
+
+def test_certification_authorization_cannot_be_spoofed_or_rebound_to_other_pins(tmp_path: Path) -> None:
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    rebound = replace(authorization, candidate_commit="0" * 40)
+    with pytest.raises(ValueError, match="invalid or does not match"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=rebound,
+            base_url="http://openhands.test",
+            worker_id="candidate",
+            context=_certification_context(tmp_path),
+        )
+
+    fake = OpenHandsCertificationAuthorization(
+        candidate_commit=pending.commit_sha,
+        image_digest=pending.image_digest,
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+        controller_run_id="32594885180",
+        _authority=object(),
+    )
+    with pytest.raises(ValueError, match="invalid or does not match"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=fake,
+            base_url="http://openhands.test",
+            worker_id="candidate",
+            context=_certification_context(tmp_path),
+        )
+
+
+def test_certification_authorization_requires_gvisor_and_runsc() -> None:
+    pending = verification(approved=False)
+    with pytest.raises(ValueError, match="gVisor"):
+        issue_openhands_certification_authorization(
+            pending,
+            controller_run_id="32594885180",
+            sandbox_profile="runc",
+            sandbox_runtime="runsc",
+        )
+    with pytest.raises(ValueError, match="runsc"):
+        issue_openhands_certification_authorization(
+            pending,
+            controller_run_id="32594885180",
+            sandbox_profile="gvisor",
+            sandbox_runtime="runc",
+        )
+
+
+def test_metadata_cannot_claim_certification_mode(tmp_path: Path) -> None:
+    context = _certification_context(tmp_path)
+    context.metadata["openhands_certification_mode"] = True
+    with pytest.raises(ValueError, match="requires AIAT certification authorization"):
+        OpenHandsAgentServerAdapter(
+            verification(),
+            base_url="http://openhands.test",
+            worker_id="candidate",
+            context=context,
         )
 
 

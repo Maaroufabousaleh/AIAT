@@ -245,6 +245,10 @@ jobs:
           OPENHANDS_CERT_RUN_ID: ${{ steps.runtime.outputs.run_id }}
           OPENHANDS_PROJECT_ID: ${{ steps.runtime.outputs.project_id }}
           OPENHANDS_MCP_PRECONFIGURED: "1"
+          OPENHANDS_CERTIFICATION_CONTROLLER: aiat-github-actions
+          OPENHANDS_CERT_CONTROLLER_RUN_ID: ${{ github.run_id }}
+          OPENHANDS_SANDBOX_PROFILE: gvisor
+          OPENHANDS_SANDBOX_RUNTIME: runsc
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"

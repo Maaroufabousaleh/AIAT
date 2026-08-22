@@ -38,6 +38,10 @@ class CandidateIntakeStatus(StrEnum):
     SECURITY_REVIEW = "SECURITY_REVIEW"
     INTERFACE_RESEARCH = "INTERFACE_RESEARCH"
     GENERATED = "GENERATED"
+    # A candidate in CERTIFYING may execute only through the trusted,
+    # disposable certification controller.  This is not activation approval;
+    # the candidate remains inactive until a passed certification is followed
+    # by the independent APPROVED transition.
     CERTIFYING = "CERTIFYING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -488,7 +492,7 @@ class ExternalWorkerSteward:
     ) -> CertificationRun:
         candidate = self._candidate(candidate_id)
         if candidate.intake_status != CandidateIntakeStatus.CERTIFYING:
-            raise StewardTransitionError("candidate must be in CERTIFYING before certification")
+            raise StewardTransitionError("candidate must be in CERTIFYING before certification authorization may be used")
         conformance_data = conformance.as_dict() if isinstance(conformance, ConformanceReport) else dict(conformance)
         # Operational gates are derived from immutable steward evidence, never
         # trusted from caller-selected check names.  Licence fields remain in
@@ -519,6 +523,9 @@ class ExternalWorkerSteward:
         candidate.certification_id = certification.certification_id
         candidate.evidence["certification"] = certification.model_dump(mode="json")
         if passed:
+            # A passed certification records evidence but deliberately leaves
+            # the candidate in CERTIFYING.  Only approve_candidate can grant
+            # activation approval, and rollout remains a separate transition.
             candidate.intake_status = CandidateIntakeStatus.CERTIFYING
             candidate.bundle = candidate.bundle.model_copy(update={"status": BundleStatus.CERTIFIED})
             candidate.adapter = candidate.adapter.model_copy(update={"status": BundleStatus.CERTIFIED, "conformance_report": conformance_data})

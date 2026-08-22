@@ -1,9 +1,9 @@
 """Run the governed OpenHands live adapter wave when operator state exists.
 
 The command never fabricates a profile, model, bridge grant, workspace, or
-provider credential.  It can prove health/runsc independently, but it refuses
-to start a coding conversation until the interface report is separately
-approved and all AIAT-bound configuration is present.
+provider credential.  A pending interface report may be exercised only by the
+dedicated certification controller through a run-scoped authorization.  That
+authorization is never activation approval and the worker remains inactive.
 """
 
 from __future__ import annotations
@@ -26,16 +26,17 @@ from mas_core.worker_contract import (
 from mas_core.worker_registry.openhands_agent_server_adapter import (
     OpenHandsAgentServerAdapter,
     OpenHandsInterfaceVerification,
+    issue_openhands_certification_authorization,
 )
 
 SCHEMA = "aiat.openhands-live-certification.v1"
 _REQUIRED_ENV = (
     "OPENHANDS_SESSION_API_KEY",
     "AIAT_TOOL_SECRET",
-    "OPENHANDS_AGENT_PROFILE_ID",
     "OPENHANDS_MCP_SETTINGS_KEY",
     "OPENHANDS_MODEL_ID",
 )
+_CERTIFICATION_CONTROLLER = "aiat-github-actions"
 
 
 def _status_map(status: str) -> dict[str, str]:
@@ -66,14 +67,24 @@ async def certify(
     verification = OpenHandsInterfaceVerification.from_report(report_payload)
     statuses = _status_map("BLOCKED")
     missing = [name for name in _REQUIRED_ENV if not os.getenv(name, "").strip()]
+    controller = os.getenv("OPENHANDS_CERTIFICATION_CONTROLLER", "").strip()
+    controller_run_id = os.getenv("OPENHANDS_CERT_CONTROLLER_RUN_ID", "").strip()
+    sandbox_profile = os.getenv("OPENHANDS_SANDBOX_PROFILE", "").strip()
+    sandbox_runtime = os.getenv("OPENHANDS_SANDBOX_RUNTIME", "").strip()
+    if controller != _CERTIFICATION_CONTROLLER:
+        blockers.append("certification_controller_attestation_missing")
+    if not controller_run_id:
+        blockers.append("certification_controller_run_id_missing")
+    if sandbox_profile.lower() != "gvisor":
+        blockers.append("certification_sandbox_profile_must_be_gvisor")
+    if sandbox_runtime.lower() != "runsc":
+        blockers.append("certification_sandbox_runtime_must_be_runsc")
     if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":
         missing.extend(
             name
             for name in ("OPENHANDS_CERT_RUN_ID", "OPENHANDS_PROJECT_ID")
             if not os.getenv(name, "").strip()
         )
-    if not verification.approved:
-        blockers.append("interface_verification_not_steward_approved")
     if missing:
         blockers.append("operator_configuration_missing:" + ",".join(missing))
     if blockers:
@@ -86,6 +97,15 @@ async def certify(
                 "image_digest": verification.image_digest,
             },
             "worker_activation": "INACTIVE",
+            "interface_verification": {
+                "approved": verification.approved,
+                "approval_status": "APPROVED" if verification.approved else "PENDING",
+            },
+            "certification_authorization": {
+                "status": "NOT_ISSUED",
+                "required": not verification.approved,
+            },
+            "activation_approval": {"status": "PENDING", "required": True},
             "gates": statuses,
             "events": {"retained": False},
             "cleanup": {"status": "NOT_RUN", "payloads_retained": False},
@@ -101,7 +121,10 @@ async def certify(
             "tool_secret": os.environ["AIAT_TOOL_SECRET"],
         },
         metadata={
-            "openhands_agent_profile_id": os.environ["OPENHANDS_AGENT_PROFILE_ID"],
+            # The profile UUID is materialized by the disposable Agent Server
+            # and supplied as a run-scoped workflow output.  It is not a
+            # portable repository/operator input.
+            "openhands_agent_profile_id": os.getenv("OPENHANDS_AGENT_PROFILE_ID", ""),
             "openhands_mcp_profile_ref": os.environ["OPENHANDS_MCP_SETTINGS_KEY"],
             "openhands_mcp_settings_key": os.environ["OPENHANDS_MCP_SETTINGS_KEY"],
             "openhands_mcp_preconfigured": os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1",
@@ -113,14 +136,55 @@ async def certify(
             "openhands_subagents_disabled": True,
             "openhands_browser_disabled": True,
             "openhands_direct_credentials_disabled": True,
+            "openhands_certification_controller": controller,
+            "openhands_certification_controller_run_id": controller_run_id,
+            "openhands_certification_sandbox_profile": sandbox_profile.lower(),
+            "openhands_certification_sandbox_runtime": sandbox_runtime.lower(),
         },
     )
-    adapter = OpenHandsAgentServerAdapter(
-        verification,
-        base_url=base_url,
-        worker_id="coding-worker-openhands-candidate",
-        context=context,
-    )
+    authorization = None
+    if not verification.approved:
+        try:
+            authorization = issue_openhands_certification_authorization(
+                verification,
+                controller_run_id=controller_run_id,
+                sandbox_profile=sandbox_profile,
+                sandbox_runtime=sandbox_runtime,
+            )
+        except ValueError as exc:
+            blockers.append(f"certification_authorization:{exc}")
+            return {
+                "schema_version": SCHEMA,
+                "status": "BLOCKED",
+                "candidate": {
+                    "release": verification.release,
+                    "commit_sha": verification.commit_sha,
+                    "image_digest": verification.image_digest,
+                },
+                "worker_activation": "INACTIVE",
+                "certification_authorization": {"status": "NOT_ISSUED", "required": True},
+                "activation_approval": {"status": "PENDING", "required": True},
+                "gates": statuses,
+                "events": {"retained": False},
+                "cleanup": {"status": "NOT_RUN", "payloads_retained": False},
+                "blockers": blockers,
+                "security_policy": "certification authorization never implies activation approval",
+            }
+    if authorization is not None:
+        adapter = OpenHandsAgentServerAdapter.for_certification(
+            verification,
+            authorization=authorization,
+            base_url=base_url,
+            worker_id="coding-worker-openhands-candidate",
+            context=context,
+        )
+    else:
+        adapter = OpenHandsAgentServerAdapter(
+            verification,
+            base_url=base_url,
+            worker_id="coding-worker-openhands-candidate",
+            context=context,
+        )
     request = WorkerRunRequest(
         run_id=UUID(os.environ["OPENHANDS_CERT_RUN_ID"]) if os.getenv("OPENHANDS_CERT_RUN_ID") else uuid4(),
         idempotency_key=f"openhands-live-{uuid4().hex}",
@@ -152,6 +216,15 @@ async def certify(
                 "status": "BLOCKED",
                 "candidate": {"release": verification.release, "commit_sha": verification.commit_sha, "image_digest": verification.image_digest},
                 "worker_activation": "INACTIVE",
+                "certification_authorization": {
+                    "status": "AUTHORIZED" if authorization is not None else "NOT_REQUIRED",
+                    "controller_run_id": controller_run_id if authorization is not None else None,
+                    "candidate_commit": verification.commit_sha if authorization is not None else None,
+                    "image_digest": verification.image_digest if authorization is not None else None,
+                    "sandbox_profile": sandbox_profile.lower() if authorization is not None else None,
+                    "sandbox_runtime": sandbox_runtime.lower() if authorization is not None else None,
+                },
+                "activation_approval": {"status": "PENDING", "required": True},
                 "gates": statuses,
                 "readiness": {"checks": readiness.checks, "blockers": readiness.blockers},
                 "events": {"retained": False},
@@ -184,11 +257,20 @@ async def certify(
         "status": "PASS" if not blockers and statuses["coding_task"] == "PASS" else "BLOCKED",
         "candidate": {"release": verification.release, "commit_sha": verification.commit_sha, "image_digest": verification.image_digest},
         "worker_activation": "INACTIVE",
+        "certification_authorization": {
+            "status": "AUTHORIZED" if authorization is not None else "NOT_REQUIRED",
+            "controller_run_id": controller_run_id if authorization is not None else None,
+            "candidate_commit": verification.commit_sha if authorization is not None else None,
+            "image_digest": verification.image_digest if authorization is not None else None,
+            "sandbox_profile": sandbox_profile.lower() if authorization is not None else None,
+            "sandbox_runtime": sandbox_runtime.lower() if authorization is not None else None,
+        },
+        "activation_approval": {"status": "PENDING", "required": True},
         "gates": statuses,
         "events": {"count": event_count, "payloads_retained": False},
         "cleanup": {"status": statuses["zero_residue"], "payloads_retained": False},
         "blockers": blockers,
-        "security_policy": "no findings accepted; no activation performed",
+        "security_policy": "certification authorization never implies activation approval; no activation performed",
     }
 
 

@@ -645,6 +645,65 @@ def test_external_steward_requires_gates_before_rollout() -> None:
         )
 
 
+def test_certifying_candidate_is_not_activation_eligible_without_passed_certification_and_approval() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="openhands-candidate",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/OpenHands/software-agent-sdk",
+            exact_release="v1.43.0",
+            commit_sha="b" * 40,
+            transport_type="openhands_agent_server",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    pending = steward.generate_candidate(
+        semantic_version="v1.43.0",
+        adapter_version="candidate",
+        upstream_compatibility_range="==v1.43.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(pending.candidate_id, status)
+
+    with pytest.raises(ValueError, match="passed certification"):
+        steward.approve_candidate(pending.candidate_id)
+    with pytest.raises(ValueError, match="only approved candidates"):
+        steward.start_rollout(pending.candidate_id, actor="operator")
+
+    failed = steward.certify_candidate(pending.candidate_id, conformance={"passed": False}, checks={})
+    assert failed.passed is False
+    assert pending.intake_status == CandidateIntakeStatus.REJECTED
+    with pytest.raises(ValueError, match="only approved candidates"):
+        steward.start_rollout(pending.candidate_id, actor="operator")
+
+    passed_candidate = steward.generate_candidate(
+        semantic_version="v1.43.0+2",
+        adapter_version="candidate-2",
+        upstream_compatibility_range="==v1.43.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(passed_candidate.candidate_id, status)
+    certification = steward.certify_candidate(passed_candidate.candidate_id, conformance={"passed": True}, checks={})
+    assert certification.passed is True
+    assert passed_candidate.intake_status == CandidateIntakeStatus.CERTIFYING
+    with pytest.raises(ValueError, match="only approved candidates"):
+        steward.start_rollout(passed_candidate.candidate_id, actor="operator")
+    steward.approve_candidate(passed_candidate.candidate_id)
+    assert passed_candidate.intake_status == CandidateIntakeStatus.APPROVED
+
+
 def test_certification_cannot_be_passed_with_caller_selected_operational_checks() -> None:
     steward = ExternalWorkerSteward(
         worker_id="unverified-worker",

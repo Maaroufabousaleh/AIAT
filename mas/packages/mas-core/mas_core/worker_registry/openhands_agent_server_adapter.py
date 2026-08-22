@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
@@ -69,14 +70,97 @@ _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 
+# This sentinel is intentionally module-private.  A metadata flag, request
+# extension, or caller-selected boolean is not sufficient to enter the
+# certification path; the adapter requires a token issued by the dedicated
+# AIAT certification controller and bound to the exact candidate pins.
+_CERTIFICATION_AUTHORITY = object()
+_CERTIFICATION_SANDBOX_PROFILE = "gvisor"
+_CERTIFICATION_SANDBOX_RUNTIME = "runsc"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHandsCertificationAuthorization:
+    """Opaque authorization for one isolated candidate certification run.
+
+    This is deliberately not an activation approval.  It is scoped to one
+    controller run, candidate commit/image digest, and native gVisor runtime.
+    The private authority marker prevents ordinary runtime metadata from
+    spoofing certification mode.
+    """
+
+    candidate_commit: str
+    image_digest: str
+    sandbox_profile: str
+    sandbox_runtime: str
+    controller_run_id: str
+    _authority: object = field(repr=False, compare=False)
+
+    @property
+    def scope(self) -> str:
+        return "CERTIFICATION_AUTHORIZATION"
+
+
+def issue_openhands_certification_authorization(
+    verification: OpenHandsInterfaceVerification,
+    *,
+    controller_run_id: str,
+    sandbox_profile: str,
+    sandbox_runtime: str,
+) -> OpenHandsCertificationAuthorization:
+    """Issue a run-scoped authorization for the trusted certification controller.
+
+    The caller must be the AIAT certification controller.  This helper only
+    issues a narrowly scoped token; it never changes the report's ``approved``
+    flag and never creates an activation approval.
+    """
+
+    run_id = str(controller_run_id or "").strip()
+    profile = str(sandbox_profile or "").strip().lower()
+    runtime = str(sandbox_runtime or "").strip().lower()
+    if not run_id:
+        raise ValueError("certification controller run ID is required")
+    if profile != _CERTIFICATION_SANDBOX_PROFILE:
+        raise ValueError("OpenHands certification requires the gVisor sandbox profile")
+    if runtime != _CERTIFICATION_SANDBOX_RUNTIME:
+        raise ValueError("OpenHands certification requires the runsc sandbox runtime")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", verification.commit_sha):
+        raise ValueError("OpenHands certification requires a full pinned candidate commit")
+    if not verification.image_digest.startswith("sha256:"):
+        raise ValueError("OpenHands certification requires a pinned OCI image digest")
+    return OpenHandsCertificationAuthorization(
+        candidate_commit=verification.commit_sha,
+        image_digest=verification.image_digest,
+        sandbox_profile=profile,
+        sandbox_runtime=runtime,
+        controller_run_id=run_id,
+        _authority=_CERTIFICATION_AUTHORITY,
+    )
+
+
+def _valid_certification_authorization(
+    authorization: OpenHandsCertificationAuthorization | None,
+    verification: OpenHandsInterfaceVerification,
+) -> bool:
+    return bool(
+        isinstance(authorization, OpenHandsCertificationAuthorization)
+        and authorization._authority is _CERTIFICATION_AUTHORITY
+        and authorization.controller_run_id
+        and authorization.candidate_commit == verification.commit_sha
+        and authorization.image_digest == verification.image_digest
+        and authorization.sandbox_profile == _CERTIFICATION_SANDBOX_PROFILE
+        and authorization.sandbox_runtime == _CERTIFICATION_SANDBOX_RUNTIME
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class OpenHandsInterfaceVerification:
     """Pinned interface evidence selected by an operator/steward.
 
     ``approved`` is intentionally false for the committed candidate report.
-    Constructing an executable adapter requires a separate approval record;
-    a version pin by itself is never activation evidence.
+    The ordinary constructor requires an approved report for activation, while
+    ``for_certification`` requires a separate run-scoped certification
+    authorization.  A version pin by itself is never activation evidence.
     """
 
     report_id: str
@@ -166,9 +250,12 @@ def _capabilities() -> WorkerCapabilities:
 class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
     """Parallel candidate adapter for a pinned OpenHands Agent Server.
 
-    The server-side agent profile must already contain the approved model and
+    The server-side agent profile must already contain the governed model and
     AIAT MCP bridge.  Task input can provide a prompt only; it cannot select a
-    workspace, agent profile, model, credentials, or external tools.
+    workspace, agent profile, model, credentials, or external tools.  Normal
+    construction is activation-scoped and requires approved interface
+    evidence; the explicit ``for_certification`` factory is the only pending
+    report path.
     """
 
     runtime_type = "openhands_agent_server"
@@ -182,15 +269,32 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         client: httpx.AsyncClient | None = None,
         context: AdapterContext | None = None,
         timeout_seconds: float = 60.0,
+        certification_authorization: OpenHandsCertificationAuthorization | None = None,
     ) -> None:
-        if not verification.approved:
+        context = context or AdapterContext()
+        metadata_certification_mode = context.metadata.get("openhands_certification_mode") is True
+        certification_mode = certification_authorization is not None
+        if certification_mode and not _valid_certification_authorization(certification_authorization, verification):
+            raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
+        if metadata_certification_mode and not certification_mode:
+            raise ValueError("OpenHands certification mode requires AIAT certification authorization")
+        if not verification.approved and not certification_mode:
             raise ValueError("OpenHands adapter requires an approved interface verification report")
         if not base_url or not urlsplit(base_url).scheme:
             raise ValueError("OpenHands Agent Server base URL is required")
-        context = context or AdapterContext()
         session_key = str(context.secrets.get("openhands_session_api_key") or "")
         if not session_key:
             raise ValueError("OpenHands requires a session API key from the AIAT secret boundary")
+        if certification_mode:
+            context.metadata.update(
+                {
+                    "openhands_certification_mode": True,
+                    "openhands_certification_controller_run_id": certification_authorization.controller_run_id,
+                    "openhands_certification_sandbox_profile": certification_authorization.sandbox_profile,
+                    "openhands_certification_sandbox_runtime": certification_authorization.sandbox_runtime,
+                    "openhands_activation_eligible": False,
+                }
+            )
         super().__init__(
             worker_id=worker_id,
             capabilities=_capabilities(),
@@ -198,6 +302,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             runtime_version=verification.release,
         )
         self.verification = verification
+        self._certification_authorization = certification_authorization
+        self._certification_mode = certification_mode
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self._session_key = session_key
@@ -210,6 +316,48 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._cancelled: set[UUID] = set()
         self._mcp_by_run: dict[UUID, str] = {}
         self._mcp_grant_expires_at: dict[UUID, float] = {}
+
+    @classmethod
+    def for_certification(
+        cls,
+        verification: OpenHandsInterfaceVerification,
+        *,
+        authorization: OpenHandsCertificationAuthorization,
+        base_url: str,
+        worker_id: str,
+        client: httpx.AsyncClient | None = None,
+        context: AdapterContext | None = None,
+        timeout_seconds: float = 60.0,
+    ) -> OpenHandsAgentServerAdapter:
+        """Construct the isolated certification-only adapter.
+
+        A certification authorization can execute the pinned candidate in the
+        disposable gVisor workflow, but it cannot make the adapter eligible for
+        normal worker activation.  Production callers must use the ordinary
+        constructor, which continues to require a steward-approved report.
+        """
+
+        return cls(
+            verification,
+            base_url=base_url,
+            worker_id=worker_id,
+            client=client,
+            context=context,
+            timeout_seconds=timeout_seconds,
+            certification_authorization=authorization,
+        )
+
+    @property
+    def certification_mode(self) -> bool:
+        """Whether this adapter is restricted to one certification run."""
+
+        return self._certification_mode
+
+    @property
+    def activation_eligible(self) -> bool:
+        """Whether this instance may be used by the normal activation path."""
+
+        return not self._certification_mode
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is not None:
@@ -273,7 +421,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             checks["agent_profile_bound"] = True
         except (TypeError, ValueError):
             checks["agent_profile_bound"] = False
-            blockers.append("an operator-provisioned OpenHands agent_profile_id is required")
+            blockers.append("an AIAT-governed OpenHands agent_profile_id is required (run-scoped during certification)")
+        if self._certification_mode:
+            checks["certification_authorized"] = True
+            checks["certification_gvisor_policy"] = (
+                self.context.metadata.get("openhands_certification_sandbox_profile") == _CERTIFICATION_SANDBOX_PROFILE
+                and self.context.metadata.get("openhands_certification_sandbox_runtime") == _CERTIFICATION_SANDBOX_RUNTIME
+            )
+            if not checks["certification_gvisor_policy"]:
+                blockers.append("OpenHands certification requires the governed gVisor/runsc policy")
         if not self.context.metadata.get("openhands_mcp_profile_ref"):
             checks["aiat_tool_bridge_bound"] = False
             blockers.append("the OpenHands profile must reference the approved AIAT MCP bridge")

@@ -2,9 +2,11 @@
 
 This check validates the repository-owned bindings for the inactive OpenHands
 candidate and reports which values still have to come from the operator's
-Agent Server/AIAT deployment.  It never creates a profile, MCP entry, secret,
-steward approval, worker row, or certification run.  Secret values are only
-observed as presence booleans and are never written to the report.
+Agent Server/AIAT deployment.  It distinguishes isolated certification
+authorization from the later steward activation approval.  It never creates a
+profile, MCP entry, secret, steward approval, worker row, or certification run.
+Secret values are only observed as presence booleans and are never written to
+the report.
 """
 
 from __future__ import annotations
@@ -145,6 +147,7 @@ def evaluate(
     values = dict(os.environ if env is None else env)
     static_errors: list[str] = []
     operator_actions: list[str] = []
+    activation_actions: list[str] = []
 
     metadata = manifest.get("metadata") if isinstance(manifest.get("metadata"), Mapping) else {}
     runtime = manifest.get("runtime") if isinstance(manifest.get("runtime"), Mapping) else {}
@@ -212,7 +215,9 @@ def evaluate(
 
     interface_approved = bool(interface_report.get("approved")) and str(interface_report.get("approval_status", "")).upper() == "APPROVED"
     if not interface_approved:
-        operator_actions.append("steward_or_operator_approval_of_interface_verification_report")
+        # Interface approval is still required for normal activation, but it
+        # must not block the dedicated isolated certification authorization.
+        activation_actions.append("steward_or_operator_approval_after_passed_certification")
 
     secret_present = bool(str(values.get("AIAT_TOOL_SECRET") or "").strip())
     if not secret_present:
@@ -269,10 +274,10 @@ def evaluate(
 
     if static_errors:
         status = "BLOCKED_STATIC_CONFIGURATION"
-    elif operator_actions or not model_ok or not interface_approved or not secret_present or not model_env_matches:
+    elif operator_actions or not model_ok or not secret_present or not model_env_matches:
         status = "BLOCKED_OPERATOR_CONFIGURATION"
     else:
-        status = "READY_FOR_LIVE_CERTIFICATION"
+        status = "READY_FOR_CERTIFICATION_AUTHORIZATION"
 
     return {
         "schema_version": CHECK_SCHEMA,
@@ -326,16 +331,21 @@ def evaluate(
             "report_id": interface_report.get("report_id"),
             "approval_status": interface_report.get("approval_status"),
             "approved": interface_approved,
+            "activation_approval_required": not interface_approved,
+            "certification_authorization_is_separate": True,
         },
         "static_errors": sorted(set(static_errors)),
         "operator_actions": sorted(set(operator_actions)),
+        "activation_actions": sorted(set(activation_actions)),
         "fail_closed_contract": {
             "missing_required_env_is_rejected": True,
             "mismatched_model_is_rejected": True,
             "invalid_run_scoped_profile_uuid_is_rejected_when_supplied": True,
             "invalid_mcp_key_is_rejected": True,
             "missing_model_gateway_binding_is_rejected": True,
-            "unapproved_interface_report_is_rejected": True,
+            "unapproved_interface_report_is_rejected_for_activation": True,
+            "unapproved_interface_report_does_not_block_isolated_certification": True,
+            "certification_authorization_never_implies_activation": True,
             "secret_values_are_not_retained": True,
         },
     }
@@ -377,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded, encoding="utf-8")
     print(json.dumps({"status": report["status"], "static_errors": report["static_errors"], "operator_action_count": len(report["operator_actions"])}, sort_keys=True))
-    return 0 if report["status"] == "READY_FOR_LIVE_CERTIFICATION" else 2
+    return 0 if report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION" else 2
 
 
 if __name__ == "__main__":
