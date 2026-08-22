@@ -12,12 +12,15 @@ the report.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import yaml
@@ -58,6 +61,7 @@ REQUIRED_TOOL_GRANTS = (
     "aiat.repository.write",
     "aiat.tests.execute",
 )
+LOCAL_GATEWAY_HOSTS = frozenset({"localhost", "localhost.localdomain", "host.docker.internal"})
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -220,8 +224,12 @@ def evaluate(
         activation_actions.append("steward_or_operator_approval_after_passed_certification")
 
     secret_present = bool(str(values.get("AIAT_TOOL_SECRET") or "").strip())
+    tool_secret_scope = str(values.get("AIAT_TOOL_SECRET_SCOPE") or "").strip()
     if not secret_present:
-        operator_actions.append("configure_GitHub_Actions_secret_AIAT_TOOL_SECRET_from_the_governed_tool_service_secret")
+        if tool_secret_scope == "github-run":
+            operator_actions.append("workflow_generated_AIAT_TOOL_SECRET_is_missing")
+        else:
+            operator_actions.append("workflow_must_generate_disposable_AIAT_TOOL_SECRET_before_certification")
 
     profile_value = str(values.get("OPENHANDS_AGENT_PROFILE_ID") or "").strip()
     profile_format_valid = _is_uuid(profile_value) if profile_value else None
@@ -247,6 +255,15 @@ def evaluate(
         operator_actions.append("set_GitHub_Actions_variable_OPENHANDS_MODEL_GATEWAY_URL_to_the_AIAT_gateway_endpoint")
     elif not gateway_url.startswith(("http://", "https://")):
         static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_be_an_http_url")
+    else:
+        parsed_gateway_url = urlsplit(gateway_url)
+        gateway_host = (parsed_gateway_url.hostname or "").lower()
+        local_host = gateway_host in LOCAL_GATEWAY_HOSTS or gateway_host.endswith(".localhost")
+        if not local_host and gateway_host:
+            with suppress(ValueError):
+                local_host = ipaddress.ip_address(gateway_host).is_loopback or ipaddress.ip_address(gateway_host).is_unspecified
+        if local_host:
+            static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_not_target_runner_or_operator_loopback")
     gateway_key_present = bool(str(values.get("OPENHANDS_MODEL_GATEWAY_API_KEY") or "").strip())
     if not gateway_key_present:
         operator_actions.append("configure_GitHub_Actions_secret_OPENHANDS_MODEL_GATEWAY_API_KEY_for_the_AIAT_gateway")
@@ -309,6 +326,8 @@ def evaluate(
         "secret_boundary": {
             "AIAT_TOOL_SECRET": {
                 "configured": secret_present,
+                "scope": tool_secret_scope or "unspecified",
+                "source": "workflow_run_generated" if tool_secret_scope == "github-run" else "not_proven",
                 "value_retained": False,
                 "value_printed": False,
             },
@@ -343,6 +362,7 @@ def evaluate(
             "invalid_run_scoped_profile_uuid_is_rejected_when_supplied": True,
             "invalid_mcp_key_is_rejected": True,
             "missing_model_gateway_binding_is_rejected": True,
+            "workflow_generated_tool_secret_is_required": True,
             "unapproved_interface_report_is_rejected_for_activation": True,
             "unapproved_interface_report_does_not_block_isolated_certification": True,
             "certification_authorization_never_implies_activation": True,

@@ -74,11 +74,21 @@ jobs:
             echo "$entry" >> "$GITHUB_PATH"
           done < "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-paths.txt"
 
+      - name: Generate disposable AIAT tool-service secret
+        run: |
+          set -euo pipefail
+          tool_secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          test "${#tool_secret}" -ge 32
+          echo "::add-mask::$tool_secret"
+          {
+            echo "AIAT_TOOL_SECRET=$tool_secret"
+            echo "AIAT_TOOL_SECRET_SCOPE=github-run"
+          } >> "$GITHUB_ENV"
+
       - name: Run non-secret OpenHands portability preflight
         id: preflight
         continue-on-error: true
         env:
-          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
           OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
           OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
@@ -99,8 +109,6 @@ jobs:
       - name: Start disposable AIAT tool-service bridge
         id: bridge
         continue-on-error: true
-        env:
-          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/aiat-openhands-workspace" "$RUNNER_TEMP/aiat-openhands-evidence/bridge"
@@ -218,7 +226,6 @@ jobs:
         id: runtime
         continue-on-error: true
         env:
-          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
           OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
           OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
@@ -238,7 +245,6 @@ jobs:
         id: live
         continue-on-error: true
         env:
-          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
           OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
           OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}

@@ -116,3 +116,48 @@ def test_run_scoped_profile_uuid_is_not_a_static_ci_prerequisite() -> None:
     assert report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION"
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["configured"] is False
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["source"] == "workflow_run_output"
+
+
+def test_workflow_generated_tool_secret_is_recorded_without_retaining_scope_value() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={
+            "AIAT_TOOL_SECRET": "run-secret-must-never-appear-in-report",
+            "AIAT_TOOL_SECRET_SCOPE": "github-run",
+            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MODEL_ID": "omniroute-coding",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+        },
+    )
+
+    assert report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION"
+    boundary = report["secret_boundary"]["AIAT_TOOL_SECRET"]
+    assert boundary["scope"] == "github-run"
+    assert boundary["source"] == "workflow_run_generated"
+    assert boundary["value_retained"] is False
+    assert "run-secret-must-never-appear-in-report" not in json.dumps(report, sort_keys=True)
+
+
+def test_gateway_loopback_is_rejected_as_a_nonportable_ci_endpoint() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={
+            "AIAT_TOOL_SECRET": "run-secret",
+            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MODEL_ID": "omniroute-coding",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://127.0.0.1:4000",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+        },
+    )
+
+    assert "OPENHANDS_MODEL_GATEWAY_URL_must_not_target_runner_or_operator_loopback" in report["static_errors"]
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
