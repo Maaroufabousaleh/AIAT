@@ -85,6 +85,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/startup" "$RUNNER_TEMP/aiat-openhands-workspace"
           name="aiat-openhands-cert-${GITHUB_RUN_ID}"
           key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
           echo "::add-mask::$key"
@@ -95,14 +96,45 @@ jobs:
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
             "$OPENHANDS_IMAGE"
+          healthy=0
           for _ in $(seq 1 60); do
             if curl --fail --silent --show-error \
               -H "X-Session-API-Key: $key" \
               http://127.0.0.1:18000/health >/dev/null; then
+              healthy=1
               break
             fi
             sleep 2
           done
+          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-state.json"
+          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-runtime.json"
+          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/startup/startup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-startup.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "runtime_expected": "runsc",
+                      "payloads_retained": False,
+                      "container_logs_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$healthy" != 1 ]; then
+            echo "OpenHands Agent Server did not become healthy under runsc" >&2
+            docker logs --tail 40 "$name" >&2 || true
+            exit 1
+          fi
 
       - name: Run governed OpenHands live adapter wave
         id: live
