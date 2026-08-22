@@ -110,4 +110,5 @@ def test_image_cross_check_retains_only_path_classification(monkeypatch) -> None
     assert result["status"] == "pass"
     assert result["classification_counts"]["IMAGE_PRESENT_REACHABLE"] == 1
     assert result["classification_counts"]["SOURCE_ONLY"] == 1
+    assert any(row["path_class"] == "ci_release" for row in result["paths"])
     assert result["payloads_retained"] is False

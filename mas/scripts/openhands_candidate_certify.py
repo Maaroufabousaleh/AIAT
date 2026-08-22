@@ -83,7 +83,10 @@ def _relative_source_path(value: object) -> str | None:
         normalized = normalized.split(marker, 1)[1]
     elif normalized.startswith("scan-source/"):
         normalized = normalized[len("scan-source/") :]
-    return normalized.lstrip("./") or None
+    normalized = normalized.lstrip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized or None
 
 
 def _path_class(path: str | None) -> str:
