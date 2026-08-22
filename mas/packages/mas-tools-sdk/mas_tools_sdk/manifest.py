@@ -862,6 +862,12 @@ _register(
 
 # Compatibility aliases (legacy_name -> canonical_name)
 TOOL_ALIASES: dict[str, str] = {
+    # AIAT OpenHands bridge capability labels.  These names are the stable
+    # worker-facing grant contract; they resolve only to existing bounded
+    # tool implementations and do not add new capabilities.
+    "aiat.repository.read": "repo.read",
+    "aiat.repository.write": "file_write",
+    "aiat.tests.execute": "test.run",
     # legacy document/review names
     "document_create": "document.create_draft",
     "document_get": "document.get_latest",

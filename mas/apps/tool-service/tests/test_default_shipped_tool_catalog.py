@@ -128,6 +128,9 @@ async def test_tools_endpoint_exposes_documented_defaults(client):
 
 
 def test_oss_compatibility_aliases_resolve_to_guarded_wrappers():
+    assert resolve_tool_name("aiat.repository.read") == "repo.read"
+    assert resolve_tool_name("aiat.repository.write") == "file_write"
+    assert resolve_tool_name("aiat.tests.execute") == "test.run"
     assert resolve_tool_name("semgrep") == "security.scan"
     assert resolve_tool_name("skillspector") == "security.scan"
     assert resolve_tool_name("trufflehog") == "security.scan"
