@@ -233,3 +233,48 @@ async def test_artifacts_hash_remote_files_and_reject_path_escape(tmp_path: Path
     assert artifacts[0].sha256 == hashlib.sha256(payload).hexdigest()
     assert len(recorded) == 1
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path) -> None:
+    conversation_id = str(uuid4())
+    status_reads = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal status_reads
+        if request.method == "POST" and request.url.path == "/api/conversations":
+            return httpx.Response(201, json={"id": conversation_id})
+        if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}":
+            status_reads += 1
+            if status_reads == 1:
+                return httpx.Response(
+                    200,
+                    json={"execution_status": "idle", "agent": {"llm": {"model": "openai/gpt-test"}}},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "execution_status": "finished",
+                    "metrics": {
+                        "accumulated_cost": 0.12,
+                        "accumulated_token_usage": {"prompt_tokens": 5, "completion_tokens": 7},
+                    },
+                },
+            )
+        if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/run":
+            return httpx.Response(200, json={"success": True})
+        if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}/agent_final_response":
+            return httpx.Response(200, json={"response": "implemented"})
+        if request.method == "GET" and request.url.path == "/api/git/changes":
+            return httpx.Response(200, json=[])
+        raise AssertionError(request.url)
+
+    adapter = make_adapter(tmp_path, handler)
+    result = await adapter._execute(request(workspace=tmp_path / "workspace"))
+    assert result.success is True
+    assert result.output == "implemented"
+    assert result.usage.total_tokens == 12
+    assert result.usage.cost_usd == 0.12
+    assert result.replay_metadata["openhands_conversation_id"] == conversation_id
+    assert not adapter._event_tasks
+    await adapter.close()
