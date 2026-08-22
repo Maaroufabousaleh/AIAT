@@ -25,12 +25,12 @@ try:  # Script execution from ``mas/scripts``.
     from opencode_candidate_certify import (
         AIAT_BOUNDARY_FAILURE,
         SBOM_FAILURE,
-        SCANNER_COVERAGE_INCOMPLETE,
         SCANNER_EXECUTION_FAILURE,
         SECURITY_FINDING,
         TOOL_INSTALLATION_FAILURE,
         _current_git_revision,
         _load_json,
+        _parse_json_output,
         _prepare_source,
         _redacted_text,
         _run,
@@ -45,12 +45,12 @@ except ImportError:  # pragma: no cover - package/module invocation fallback
     from scripts.opencode_candidate_certify import (  # type: ignore[no-redef]
         AIAT_BOUNDARY_FAILURE,
         SBOM_FAILURE,
-        SCANNER_COVERAGE_INCOMPLETE,
         SCANNER_EXECUTION_FAILURE,
         SECURITY_FINDING,
         TOOL_INSTALLATION_FAILURE,
         _current_git_revision,
         _load_json,
+        _parse_json_output,
         _prepare_source,
         _redacted_text,
         _run,
@@ -64,6 +64,7 @@ except ImportError:  # pragma: no cover - package/module invocation fallback
 
 
 SCHEMA = "aiat.openhands-candidate-certification.v1"
+SCANNER_COVERAGE_INCOMPLETE = "SCANNER_COVERAGE_INCOMPLETE"
 DEFAULT_REPOSITORY = "https://github.com/OpenHands/software-agent-sdk.git"
 DEFAULT_VERSION = "v1.43.0"
 DEFAULT_IMAGE = "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
@@ -225,6 +226,43 @@ def _cleanup_container(container_name: str | None) -> dict[str, Any]:
     }
 
 
+def _normalize_scanner_row(row: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Add OpenHands-specific parser/coverage taxonomy to shared scanner output."""
+
+    if row.get("name") != "semgrep" or not row.get("scanner_error_count"):
+        return row
+    path = output_dir / str(row.get("raw_json_path") or "semgrep.json")
+    value, parse_error = _parse_json_output(path)
+    errors = value.get("errors") if isinstance(value, dict) else None
+    details: list[dict[str, Any]] = []
+    execution = 0
+    coverage = 0
+    if isinstance(errors, list):
+        for error in errors:
+            if not isinstance(error, dict):
+                coverage += 1
+                continue
+            code = str(error.get("code") or "unknown")
+            error_type = error.get("type")
+            normalized_type = str(error_type[0] if isinstance(error_type, list) and error_type else error_type or "unknown")
+            failure = SCANNER_EXECUTION_FAILURE if code == "2" or normalized_type == "Internal matching error" else SCANNER_COVERAGE_INCOMPLETE
+            if failure == SCANNER_EXECUTION_FAILURE:
+                execution += 1
+            else:
+                coverage += 1
+            details.append({"failure_class": failure, "error_type": normalized_type})
+    if parse_error:
+        execution += 1
+        details.append({"failure_class": SCANNER_EXECUTION_FAILURE, "error_type": "semgrep_json_invalid"})
+    classes = sorted({str(item["failure_class"]) for item in details})
+    row["failure_classes"] = classes
+    row["scanner_errors"] = details or row.get("scanner_errors", [])
+    row["coverage_error_count"] = coverage
+    row["execution_error_count"] = execution
+    row["failure_class"] = SCANNER_EXECUTION_FAILURE if execution else SCANNER_COVERAGE_INCOMPLETE
+    return row
+
+
 def certify(
     *,
     repository: str,
@@ -270,6 +308,7 @@ def certify(
                 _run_scanner("trufflehog", ["trufflehog", "filesystem", "--json", "--no-update", str(source)], source=source, output_dir=output_dir),
                 _run_scanner("skillspector", ["skillspector", "scan", str(source), "--no-llm", "--format", "json"], source=source, output_dir=output_dir),
             ]
+            scanner_rows = [_normalize_scanner_row(row, output_dir) for row in scanner_rows]
             source_sbom = _run_sbom(source, output_dir)
             image_sbom = _run_image_sbom(image_ref, output_dir)
             boundary = _run_boundary(boundary_command, output_dir)
