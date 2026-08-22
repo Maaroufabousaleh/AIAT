@@ -9,6 +9,13 @@
   },
   "source_of_truth": {
     "store": "OpenHands Agent Server authenticated API",
+    "snapshot_scope": "historical local preflight readback; not a portable certification object",
+    "profile_store": "local disposable Agent Server persistence at /workspace/.openhands (host bind /tmp/aiat-openhands-profile-state; preflight only)",
+    "certification_store": "fresh Agent Server instance created by each GitHub run",
+    "same_authoritative_store": false,
+    "profile_id_portable": false,
+    "profile_materialization_supported": true,
+    "profile_id_source": "server-generated UUID",
     "profile_readback": "GET /api/agent-profiles/aiat-openhands-v1-43-0-coding",
     "settings_readback": "GET /api/settings",
     "materialize_readback": "POST /api/agent-profiles/aiat-openhands-v1-43-0-coding/materialize",
@@ -17,6 +24,7 @@
   "agent_server_profile": {
     "name": "aiat-openhands-v1-43-0-coding",
     "id": "0f964e63-2e3b-46cb-88de-922f199d89cf",
+    "id_scope": "local disposable instance; not a CI input",
     "revision": 0,
     "agent_kind": "openhands",
     "agent": "CodeActAgent",
@@ -37,14 +45,17 @@
   },
   "mcp_settings": {
     "key": "aiat-openhands-v1-43-0-coding",
+    "key_scope": "logical static name; entry is run-scoped",
+    "precreated_entry_after_cleanup": false,
+    "lifecycle": "create-after-start, redacted-readback, use, delete-always, verify-absent",
     "url": "http://tool-service:8002/openhands/mcp",
     "transport": "streamable-http",
-    "enabled": true,
     "grant_header": "X-AIAT-OpenHands-Grant",
     "grant_value_retained": false,
     "arbitrary_external_servers": false
   },
   "materialize": {
+    "snapshot_before_mcp_preclean": true,
     "valid": true,
     "llm_profile_resolved": true,
     "llm_model": "omniroute-coding",
@@ -76,15 +87,24 @@
   },
   "runtime_bindings": {
     "model_authority": "AIAT approved model profile",
-    "sandbox_profile": "gvisor declared in AIAT profile; live runsc not proven in WSL Docker Desktop",
+    "sandbox_profile": "gvisor; next workflow retains native runsc proof",
     "network_policy": "AIAT egress allowlist",
     "workspace_policy": "AIAT assigned isolated workspace",
     "audit_policy": "scalar durable audit; payloads and credentials excluded"
   },
+  "gvisor": {
+    "external_prerequisite_required": false,
+    "existing_live_evidence_run": "32594885180",
+    "existing_evidence": [
+      "native Ubuntu",
+      "runsc runtime",
+      "OpenHands Agent Server health/readiness under runsc"
+    ],
+    "next_workflow_requirement": "run the disposable Agent Server under runsc and retain scalar runtime evidence"
+  },
   "pending_gates": [
     "steward approval of interface-verification.json",
-    "native Linux/runsc live certification",
-    "operator wiring of CI references and AIAT_TOOL_SECRET",
-    "run-scoped MCP entry must be deleted or recreated by the adapter before the next certification run"
+    "operator wiring of CI variables/secrets and AIAT_TOOL_SECRET",
+    "next certification must materialize a fresh profile and run-scoped MCP entry"
   ]
 }

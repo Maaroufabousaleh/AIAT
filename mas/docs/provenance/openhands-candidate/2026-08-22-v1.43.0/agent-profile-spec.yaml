@@ -1,5 +1,5 @@
 schema_version: aiat.openhands-agent-profile-spec.v1
-status: operator_provision_required
+status: run_scoped_provision_required
 purpose: bounded OpenHands coding worker under the AIAT control plane
 
 candidate:
@@ -33,8 +33,10 @@ aiat_bindings:
     payload_retention: scalar_only
 
 agent_server_profile:
-  # Agent Server assigns this UUID when the profile is saved. Do not invent it.
-  id: 0f964e63-2e3b-46cb-88de-922f199d89cf
+  # Agent Server assigns this UUID when the profile is saved. It is not a
+  # portable configuration value and must be captured from the disposable
+  # certification instance's output.
+  id: null
   name: aiat-openhands-v1-43-0-coding
   agent_kind: openhands
   # This must be an existing Agent Server LLM-profile name whose resolved
@@ -83,7 +85,15 @@ provisioning:
     - mcp_refs_contain_only_the_operator_key
     - disabled_controls_are_verified_from_server_readback
   aiat_storage:
-    agent_profile_id: GitHub Actions repository variable OPENHANDS_AGENT_PROFILE_ID
-    mcp_settings_key: GitHub Actions repository variable OPENHANDS_MCP_SETTINGS_KEY
+    profile_store: disposable Agent Server persistence for the certification run
+    certification_store: fresh Agent Server instance started by the workflow
+    same_authoritative_store: false
+    profile_id_portable: false
+    profile_id_source: server_generated_uuid
+    profile_materialization: deterministic by governed profile name and pins
+    agent_profile_id: workflow run-scoped output OPENHANDS_AGENT_PROFILE_ID
+    mcp_settings_key: static logical key OPENHANDS_MCP_SETTINGS_KEY; entry is created and deleted per run
+    mcp_entry_lifecycle: create_after_start_read_back_delete_always_verify_absent
   secrets:
     - AIAT_TOOL_SECRET
+    - OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway credential; never direct provider credential)
