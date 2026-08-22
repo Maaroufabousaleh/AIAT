@@ -102,6 +102,7 @@ def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
         "technical_gate_status": technical_gate,
         "candidate_version": report.get("candidate_version"),
         "candidate_commit": commit or None,
+        "aiat_candidate_commit": aiat_commit or None,
         "candidate_image_digest": image_digest or None,
         "scanner_count": len(scanners) if isinstance(scanners, list) else 0,
         "scanner_error_count": report.get("scanner_errors"),
