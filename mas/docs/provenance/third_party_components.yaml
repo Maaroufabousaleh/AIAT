@@ -45,6 +45,18 @@ components:
     license_evidence: https://github.com/anomalyco/opencode/blob/dev/LICENSE
     integration: pinned-container
     status: available
+  - id: openhands-software-agent-sdk
+    role: candidate-coding-worker-runtime
+    license: MIT
+    version: 1.43.0
+    source: https://github.com/OpenHands/software-agent-sdk
+    source_revision: 4c1237f391fe394e9f67505fe3a0bd2d81f84188
+    license_evidence: https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/LICENSE
+    integration: candidate-agent-server-adapter
+    status: candidate-only
+    image_ref: ghcr.io/openhands/agent-server:1.43.0-python
+    image_digest: sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+    operator_notice: OpenHands Cloud and enterprise components are excluded; licence metadata is informational only for this personal internal-use programme.
   - id: docling
     role: document-ingestion
     license: MIT
