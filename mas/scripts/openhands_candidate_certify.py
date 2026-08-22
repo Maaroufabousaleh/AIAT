@@ -351,23 +351,35 @@ def _image_cross_check(container_name: str | None, scanner_rows: list[dict[str, 
             "paths_checked": 0,
             "payloads_retained": False,
         }
-    # Source-image layouts used by the pinned Agent Server image keep the
-    # monorepo below /agent-server; probing the root path as a fallback also
-    # covers generated/minimal layouts without assuming source presence.
+    # Source-image layouts vary: the pinned image may retain the monorepo
+    # root, install a package below site-packages, or copy only a workspace
+    # subtree.  Search by exact path suffixes for those layouts.  The probe
+    # emits only source/path names; it never reads file contents.
     candidates: dict[str, list[str]] = {}
+    package_prefixes = (
+        "openhands-agent-server/",
+        "openhands-sdk/",
+        "openhands-tools/",
+        "openhands-workspace/",
+    )
     for path in sorted(paths):
-        candidates[path] = [f"/agent-server/{path}", f"/{path}"]
+        suffixes = [path]
+        for prefix in package_prefixes:
+            if path.startswith(prefix):
+                suffixes.append(path[len(prefix) :])
+                break
+        candidates[path] = list(dict.fromkeys(suffixes))
     args: list[str] = []
-    for path, options in candidates.items():
-        for option in options:
-            args.extend([path, option])
+    for path, suffixes in candidates.items():
+        for suffix in suffixes:
+            args.append(f"{path}|{suffix}")
     command = [
         "docker",
         "exec",
         container_name,
         "/bin/sh",
         "-c",
-        "while [ \"$#\" -gt 1 ]; do source=$1; candidate=$2; if [ -e \"$candidate\" ]; then printf '%s\\t%s\\n' \"$source\" \"$candidate\"; fi; shift 2; done",
+        "if command -v find >/dev/null 2>&1; then find / -xdev -type f 2>/dev/null | while IFS= read -r candidate; do for pair in \"$@\"; do source=${pair%%|*}; suffix=${pair#*|}; case \"$candidate\" in */\"$suffix\") printf '%s\\t%s\\n' \"$source\" \"$candidate\";; esac; done; done; else for pair in \"$@\"; do source=${pair%%|*}; suffix=${pair#*|}; for candidate in \"/$suffix\" \"/agent-server/$source\"; do if [ -e \"$candidate\" ]; then printf '%s\\t%s\\n' \"$source\" \"$candidate\"; fi; done; done; fi",
         "openhands-image-path-probe",
         *args,
     ]
@@ -383,7 +395,7 @@ def _image_cross_check(container_name: str | None, scanner_rows: list[dict[str, 
     present: dict[str, list[str]] = {}
     for line in (result.stdout or "").splitlines():
         source, separator, candidate = line.partition("\t")
-        if separator and source in candidates and candidate in candidates[source]:
+        if separator and source in candidates and candidate:
             present.setdefault(source, []).append(candidate)
     classifications: Counter[str] = Counter()
     rows: list[dict[str, Any]] = []
