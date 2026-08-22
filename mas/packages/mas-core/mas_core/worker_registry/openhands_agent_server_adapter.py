@@ -410,7 +410,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         parsed = urlsplit(self.base_url)
         scheme = "wss" if parsed.scheme == "https" else "ws"
         socket_path = self.verification.endpoint("events_socket", conversation_id=conversation_id)
-        ws_url = f"{scheme}://{parsed.netloc}{socket_path}"
+        base_path = parsed.path.rstrip("/")
+        ws_url = f"{scheme}://{parsed.netloc}{base_path}{socket_path}"
         try:
             async with websockets.connect(ws_url) as socket:
                 await socket.send(json.dumps({"type": "auth", "session_api_key": self._session_key}))
@@ -506,8 +507,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         event_task = asyncio.create_task(self._consume_events(request, conversation_id), name=f"openhands-events-{request.run_id}")
         self._event_tasks[request.run_id] = event_task
         started = time.monotonic()
-        await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
         try:
+            await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
             while True:
                 if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                     return WorkerResult(
