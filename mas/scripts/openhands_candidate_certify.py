@@ -170,7 +170,12 @@ def _image_probe(image_ref: str) -> dict[str, Any]:
     }
 
 
-def _agent_server_probe(base_url: str | None, session_api_key: str | None, expected_commit: str) -> dict[str, Any]:
+def _agent_server_probe(
+    base_url: str | None,
+    session_api_key: str | None,
+    expected_commit: str,
+    expected_version: str | None = None,
+) -> dict[str, Any]:
     """Probe only scalar Agent Server health/readiness/build metadata."""
 
     if not base_url or not session_api_key:
@@ -191,12 +196,28 @@ def _agent_server_probe(base_url: str | None, session_api_key: str | None, expec
             continue
         if name == "readiness" and isinstance(payload, dict):
             checks[name]["reported_ready"] = str(payload.get("status", "")).lower() in {"ready", "healthy"}
+            if not checks[name]["reported_ready"]:
+                checks[name]["status"] = "blocked"
         if name == "server_info" and isinstance(payload, dict):
             versions = payload.get("versions") or payload.get("packages") or {}
-            server_version = versions.get("openhands-agent-server") if isinstance(versions, dict) else None
-            build_sha = payload.get("build_sha") or payload.get("git_sha") or payload.get("commit_sha")
+            server_version = payload.get("version")
+            if not server_version and isinstance(versions, dict):
+                server_version = versions.get("openhands-agent-server") or versions.get("server_version")
+            build_sha = (
+                payload.get("build_git_sha")
+                or payload.get("build_sha")
+                or payload.get("git_sha")
+                or payload.get("commit_sha")
+            )
             checks[name]["server_version"] = str(server_version).removeprefix("v") if server_version else None
+            checks[name]["server_version_matches"] = (
+                bool(checks[name]["server_version"])
+                and (expected_version is None or checks[name]["server_version"] == expected_version.removeprefix("v"))
+            )
             checks[name]["build_sha_matches"] = bool(build_sha) and str(build_sha) == expected_commit
+            checks[name]["provenance_proven"] = checks[name]["server_version_matches"] and checks[name]["build_sha_matches"]
+            if not checks[name]["provenance_proven"]:
+                checks[name]["status"] = "blocked"
     status = "pass" if all(row.get("status") == "pass" for row in checks.values()) else "blocked"
     return {"status": status, "checks": checks, "payloads_retained": False}
 
@@ -325,9 +346,13 @@ def certify(
     container_probe = _container_probe(container_name)
     if container_probe.get("status") != "pass":
         blockers.append("agent_server_not_running_under_runsc")
-    agent_server = _agent_server_probe(agent_server_url, session_api_key, EXPECTED_SOURCE_COMMIT)
+    agent_server = _agent_server_probe(agent_server_url, session_api_key, EXPECTED_SOURCE_COMMIT, version)
     if agent_server.get("status") != "pass":
-        blockers.append("agent_server_health_or_readiness_failed")
+        checks = agent_server.get("checks") if isinstance(agent_server.get("checks"), dict) else {}
+        if any(checks.get(name, {}).get("status") != "pass" for name in ("health", "readiness")):
+            blockers.append("agent_server_health_or_readiness_failed")
+        if checks.get("server_info", {}).get("provenance_proven") is not True:
+            blockers.append("agent_server_provenance_unproven")
 
     scanner_errors = sum(int(row.get("scanner_error_count") or 0) for row in scanner_rows)
     findings = sum(int(row.get("finding_count") or 0) for row in scanner_rows)

@@ -61,7 +61,7 @@ def test_certification_keeps_scanner_errors_distinct_from_findings(monkeypatch, 
     monkeypatch.setattr(certify_module, "_image_probe", lambda image: {"status": "pass"})
     monkeypatch.setattr(certify_module, "_run_boundary", lambda command, output: {"status": "pass"})
     monkeypatch.setattr(certify_module, "_load_json", lambda path: {"status": "pass", "failure_classes": []})
-    monkeypatch.setattr(certify_module, "_agent_server_probe", lambda base, key, commit: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_agent_server_probe", lambda base, key, commit, version: {"status": "pass"})
     monkeypatch.setattr(certify_module, "_container_probe", lambda name: {"status": "pass", "runtime": "runsc"})
     monkeypatch.setattr(certify_module, "_cleanup_container", lambda name: {"status": "pass", "remaining_containers": 0})
 
