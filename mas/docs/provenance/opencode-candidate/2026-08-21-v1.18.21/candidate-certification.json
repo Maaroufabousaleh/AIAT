@@ -1,5 +1,6 @@
 {
   "active_worker_status": "inactive_until_certification_passes",
+  "aiat_candidate_commit": "2f633f747713985234b31b2f03144e3c96f3372b",
   "aiat_local_boundary": {
     "logs_sanitized": true,
     "returncode": 0,
@@ -41,16 +42,16 @@
   "remediation_required": true,
   "sbom": {
     "available": true,
-    "component_count": 2571,
+    "component_count": 2609,
     "credentials_persisted": false,
     "exit_status": 0,
     "invocation": [
       "/home/runner/work/_temp/aiat-opencode-tools/bin/syft",
-      "dir:/tmp/aiat-opencode-candidate-khmz45ga/scan-source",
+      "dir:/tmp/aiat-opencode-candidate-xzur2ndh/scan-source",
       "cyclonedx-json=/home/runner/work/AIAT/AIAT/artifacts/opencode-candidate/sbom.cdx.json"
     ],
     "path": "sbom.cdx.json",
-    "sha256": "9aea2e3472e374c850160c2caa0ffd0866a14bc75210732309d5e8832db25c95",
+    "sha256": "91b2fb3903524fb473d0ad35b03f57c47e73e71f7fbb42e3bcbaeb68ae6c5bbc",
     "status": "pass",
     "stderr_path": "syft.stderr.log",
     "stdout_path": "syft.stdout.log",
@@ -73,7 +74,7 @@
       ],
       "name": "semgrep",
       "raw_json_path": "semgrep.json",
-      "raw_json_sha256": "1defb649efd20dacd3a6a3e813aae1201179fe8cb346ec412decf8e87b745e34",
+      "raw_json_sha256": "be778431664e15d5220438550f507e3036edb4a676a3beb4ec0a5dd3c642ff1c",
       "raw_output_retained": true,
       "raw_output_sanitized": true,
       "scanner_error_count": 54,
@@ -101,7 +102,7 @@
       ],
       "name": "trufflehog",
       "raw_json_path": "trufflehog.json",
-      "raw_json_sha256": "87a1a3e30a349fdbdec36ba3b7fb2b0c0e64a118571563134774373944801271",
+      "raw_json_sha256": "aac4ed97ef90176325186079f38e691046416a9ce492c01153fe92f303bf8b39",
       "raw_output_retained": true,
       "raw_output_sanitized": true,
       "scanner_error_count": 0,
@@ -127,7 +128,7 @@
       ],
       "name": "skillspector",
       "raw_json_path": "skillspector.json",
-      "raw_json_sha256": "7b955059ae9d6e72a46649dada344935be36eaad32e9d156208ab8b88419aadd",
+      "raw_json_sha256": "e39a391e3dc703de6abc05b8d2c1d2916f5a46208ee15636057f9f898e5a4da5",
       "raw_output_retained": true,
       "raw_output_sanitized": true,
       "scanner_error_count": 0,
