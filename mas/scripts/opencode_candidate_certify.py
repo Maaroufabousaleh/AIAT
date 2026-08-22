@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -57,6 +59,18 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _extract_source_archive(archive_bytes: bytes, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+        members = archive.getmembers()
+        for member in members:
+            target = (destination / member.name).resolve()
+            if target != root and root not in target.parents:
+                raise RuntimeError("source archive contains an unsafe path")
+        archive.extractall(destination)
 
 
 def _redact(value: Any, *, key: str = "") -> Any:
@@ -141,6 +155,9 @@ def _prepare_source(repository: str, version: str, root: Path) -> dict[str, Any]
         raise RuntimeError(f"source archive hash failed: {type(exc).__name__}") from exc
     if archive.returncode != 0:
         raise RuntimeError("source archive hash failed")
+    archive_bytes = archive.stdout or b""
+    scan_source = root / "scan-source"
+    _extract_source_archive(archive_bytes, scan_source)
     files = _run(["git", "ls-files", "-z"], cwd=source, timeout=60.0)
     file_count = len([item for item in (files.stdout or "").split("\0") if item])
     return {
@@ -149,11 +166,12 @@ def _prepare_source(repository: str, version: str, root: Path) -> dict[str, Any]
         "tag": version if version.startswith("v") else f"v{version}",
         "commit": commit,
         "commit_url": f"{repository.removesuffix('.git')}/commit/{commit}",
-        "archive_sha256": _sha256_bytes(archive.stdout or b""),
+        "archive_sha256": _sha256_bytes(archive_bytes),
         "file_count": file_count,
         "clone_retained": False,
+        "scan_tree_git_metadata_excluded": True,
         "immutable_provenance_ref": True,
-    }, source
+    }, scan_source
 
 
 def _tool_version(name: str, output_dir: Path) -> dict[str, Any]:
@@ -230,6 +248,10 @@ def _generic_summary(path: Path, scanner: str) -> tuple[int, Counter[str], int, 
         findings = len(value)
     elif isinstance(value, dict) and isinstance(value.get("findings"), list):
         findings = len(value["findings"])
+    elif isinstance(value, dict) and isinstance(value.get("issues"), list):
+        issue_rows = [item for item in value["issues"] if isinstance(item, dict)]
+        severities = Counter(str(item.get("severity") or "HIGH").upper() for item in issue_rows)
+        return len(issue_rows), severities, 0, None
     elif isinstance(value, dict) and value.get("status") in {"ok", "pass", "passed"}:
         findings = 0
     else:
@@ -325,7 +347,7 @@ def _run_scanner(
 
 def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
     executable = shutil.which("syft")
-    path = output_dir / "sbom.cdx.json"
+    path = (output_dir / "sbom.cdx.json").resolve()
     stdout_path = output_dir / "syft.stdout.log"
     stderr_path = output_dir / "syft.stderr.log"
     invocation = [executable or "syft", f"dir:{source}", f"cyclonedx-json={path}"]
@@ -446,7 +468,7 @@ def certify(
                 tool_versions[name] = _tool_version(name, output_dir)
             scanner_rows.extend(
                 [
-                    _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--metrics=off", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
+                    _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
                     _run_scanner("trufflehog", ["trufflehog", "filesystem", "--json", "--no-update", str(source)], source=source, output_dir=output_dir),
                     _run_scanner("skillspector", ["skillspector", "scan", str(source), "--no-llm", "--format", "json"], source=source, output_dir=output_dir),
                 ]

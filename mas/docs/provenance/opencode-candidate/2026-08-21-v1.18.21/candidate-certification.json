@@ -39,8 +39,8 @@
     "failure_class": "SBOM_FAILURE",
     "invocation": [
       "syft",
-      "dir:/tmp/aiat-opencode-candidate-io0p9fok/source",
-      "cyclonedx-json=docs/provenance/opencode-candidate/2026-08-21-v1.18.21/sbom.cdx.json"
+      "dir:/tmp/aiat-opencode-candidate-tx83o1bv/scan-source",
+      "cyclonedx-json=/mnt/c/projects/aiat/mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/sbom.cdx.json"
     ],
     "path": "sbom.cdx.json",
     "scanner_error": "syft_unavailable",
@@ -97,6 +97,7 @@
     "immutable_provenance_ref": true,
     "release": "1.18.21",
     "repository": "https://github.com/anomalyco/opencode.git",
+    "scan_tree_git_metadata_excluded": true,
     "tag": "v1.18.21"
   },
   "status": "blocked",

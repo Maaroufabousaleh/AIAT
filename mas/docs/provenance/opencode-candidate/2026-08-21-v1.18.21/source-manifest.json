@@ -7,5 +7,6 @@
   "immutable_provenance_ref": true,
   "release": "1.18.21",
   "repository": "https://github.com/anomalyco/opencode.git",
+  "scan_tree_git_metadata_excluded": true,
   "tag": "v1.18.21"
 }

@@ -40,6 +40,20 @@ def test_semgrep_summary_separates_findings_from_engine_errors():
     assert shape is None
 
 
+def test_generic_summary_reads_skillspector_issues_and_severity(tmp_path):
+    module = _module()
+    path = tmp_path / "skillspector-fixture.json"
+    path.write_text(
+        '{"issues":[{"severity":"HIGH"},{"severity":"CRITICAL"}],"execution_successful":true}',
+        encoding="utf-8",
+    )
+    finding_count, severities, errors, shape = module._generic_summary(path, "skillspector")
+    assert finding_count == 2
+    assert severities == {"CRITICAL": 1, "HIGH": 1}
+    assert errors == 0
+    assert shape is None
+
+
 def test_candidate_report_requires_digest_image_sbom_scanners_and_boundary(tmp_path, monkeypatch):
     module = _module()
     source = tmp_path / "source"

@@ -58,8 +58,13 @@ def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
     if report.get("status") not in {"blocked", "findings_review_required", "passed"}:
         errors.append("candidate technical status is invalid")
     source = report.get("source")
-    if not isinstance(source, dict) or source.get("clone_retained") is not False or source.get("immutable_provenance_ref") is not True:
-        errors.append("source provenance must retain an immutable reference without the clone")
+    if (
+        not isinstance(source, dict)
+        or source.get("clone_retained") is not False
+        or source.get("immutable_provenance_ref") is not True
+        or source.get("scan_tree_git_metadata_excluded") is not True
+    ):
+        errors.append("source provenance must retain an immutable reference, exclude clone metadata, and discard the clone")
     evidence_policy = report.get("evidence_policy")
     if not isinstance(evidence_policy, dict):
         errors.append("evidence policy is missing")
