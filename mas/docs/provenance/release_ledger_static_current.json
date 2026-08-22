@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-08-21T20:26:39.070800+00:00",
+  "checked_at": "2026-08-22T00:44:44.584137+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -40,11 +40,11 @@
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 3,
-          "revision": "d1ae4c2b7c10f5608379ebdc37e2811d765d8360",
+          "changed_path_count": 4,
+          "revision": "2c8becba9cf0bec69800530f446e295e06dd9f52",
           "working_tree_clean": false
         },
-        "manifest_digest": "4f3cb37aa0c63251f7a02ada6592c8e163fd02d8d4b08d9a05584dfad8b42b4e",
+        "manifest_digest": "9cfb60364e93ea885730f3feebd3f9ae533ed930d29cbe4be1aae1bfc1c723a8",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -696,7 +696,7 @@
       "status": "pass",
       "summary": {
         "errors": [],
-        "finding_count": 0,
+        "finding_count": 644,
         "mode": "static",
         "status": "pass",
         "technical_gate_status": "blocked"
@@ -773,15 +773,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 53.204,
+        "cpu_time_ms": 57.572,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 94498816,
-        "rss_before_bytes": 94318592,
-        "rss_peak_bytes": 132001792,
+        "rss_after_bytes": 93978624,
+        "rss_before_bytes": 93753344,
+        "rss_peak_bytes": 131600384,
         "status": "pass",
-        "wall_time_ms": 49.771
+        "wall_time_ms": 52.397
       }
     },
     {
@@ -1402,9 +1402,9 @@
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 3,
+    "changed_path_count": 4,
     "clean": false,
-    "revision": "d1ae4c2b7c10f5608379ebdc37e2811d765d8360"
+    "revision": "2c8becba9cf0bec69800530f446e295e06dd9f52"
   },
   "pending_evidence_count": 2,
   "policy": {

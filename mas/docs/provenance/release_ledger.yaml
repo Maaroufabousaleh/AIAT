@@ -110,6 +110,9 @@ checks:
     script: scripts/check_sandbox_runtime_readiness.py
     args: [--json]
     live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/native_gvisor_certification_live.json
+      schema_version: aiat.native-gvisor-certification-live.v1
   - id: firecracker_worker_pool_readiness
     category: integration
     script: scripts/check_firecracker_worker_pool.py
