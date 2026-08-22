@@ -1,0 +1,140 @@
+name: OpenHands Candidate Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact AIAT candidate commit to certify"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  OPENHANDS_IMAGE: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+
+jobs:
+  certify:
+    # ubuntu-slim is deliberately excluded: this job needs a privileged
+    # Docker Engine and the native runsc runtime.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mas
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Bind evidence to candidate commit
+        env:
+          EXPECTED_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$EXPECTED_SHA"
+          echo "AIAT_CANDIDATE_SHA=$actual" >> "$GITHUB_ENV"
+
+      - name: Install gVisor on native Linux
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          ! uname -r | grep -Eiq 'microsoft|wsl'
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key \
+            | sudo gpg --dearmor --yes -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          runsc --version
+          sudo runsc install
+          sudo systemctl restart docker
+          docker info | grep -A10 Runtimes
+
+      - name: Install AIAT environment
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.4.30
+          uv sync --locked --dev
+
+      - name: Provision pinned scanners and SBOM tooling
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence" "$RUNNER_TEMP/aiat-openhands-tools"
+          uv run python scripts/provision_openhands_certification_tools.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/tooling" \
+            --install-dir "$RUNNER_TEMP/aiat-openhands-tools"
+          while IFS= read -r entry; do
+            test -n "$entry"
+            echo "$entry" >> "$GITHUB_PATH"
+          done < "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-paths.txt"
+
+      - name: Pull the pinned Agent Server image
+        run: |
+          set -euo pipefail
+          docker pull "$OPENHANDS_IMAGE"
+          docker image inspect "$OPENHANDS_IMAGE" >/dev/null
+
+      - name: Start Agent Server under runsc
+        id: server
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          name="aiat-openhands-cert-${GITHUB_RUN_ID}"
+          key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+          echo "::add-mask::$key"
+          echo "container=$name" >> "$GITHUB_OUTPUT"
+          echo "session_key=$key" >> "$GITHUB_OUTPUT"
+          docker run --detach --name "$name" --runtime=runsc \
+            --publish 18000:8000 \
+            --env SESSION_API_KEY="$key" \
+            "$OPENHANDS_IMAGE"
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --show-error \
+              -H "X-Session-API-Key: $key" \
+              http://127.0.0.1:18000/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run OpenHands supply-chain and runtime evidence
+        id: certification
+        continue-on-error: true
+        env:
+          SESSION_KEY: ${{ steps.server.outputs.session_key }}
+          CONTAINER_NAME: ${{ steps.server.outputs.container }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          uv run python scripts/openhands_candidate_certify.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/certification" \
+            --tooling-manifest "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-provisioning.json" \
+            --boundary-command "uv run pytest packages/mas-core/tests/test_openhands_agent_server_adapter.py packages/mas-core/tests/test_openhands_bridge.py apps/tool-service/tests/test_openhands_mcp.py -q" \
+            --agent-server-url http://127.0.0.1:18000 \
+            --session-api-key "$SESSION_KEY" \
+            --container-name "$CONTAINER_NAME"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized OpenHands evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhands-candidate-certification-${{ github.run_id }}
+          path: ${{ runner.temp }}/aiat-openhands-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep the workflow red when certification is blocked or unresolved
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/candidate-certification.json"
+          test -f "$report"
+          status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report")
+          test "$status" = passed
