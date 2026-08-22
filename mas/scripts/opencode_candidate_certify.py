@@ -61,6 +61,15 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _current_git_revision() -> str | None:
+    try:
+        result = _run(["git", "rev-parse", "HEAD"], cwd=Path.cwd(), timeout=30.0)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    revision = (result.stdout or "").strip().lower()
+    return revision if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", revision) else None
+
+
 def _extract_source_archive(archive_bytes: bytes, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     root = destination.resolve()
@@ -456,6 +465,12 @@ def certify(
     boundary: dict[str, Any] = {"status": "not_run"}
     tooling = _load_json(tooling_manifest_path)
     tool_versions: dict[str, Any] = {}
+    aiat_candidate_commit = _current_git_revision()
+    expected_aiat_candidate = os.getenv("AIAT_CANDIDATE_SHA", "").strip().lower() or None
+    if aiat_candidate_commit is None:
+        blockers.append("aiat_candidate_commit_unavailable")
+    elif expected_aiat_candidate and aiat_candidate_commit != expected_aiat_candidate:
+        blockers.append("aiat_candidate_commit_mismatch")
     with tempfile.TemporaryDirectory(prefix="aiat-opencode-candidate-") as temporary:
         try:
             source_metadata, source = _prepare_source(repository, version, Path(temporary))
@@ -520,6 +535,7 @@ def certify(
         "schema_version": SCHEMA,
         "programme_scope": "personal-internal-only",
         "status": decision,
+        "aiat_candidate_commit": aiat_candidate_commit,
         "upstream_repository": repository,
         "candidate_version": version.lstrip("v"),
         "candidate_tag": version if version.startswith("v") else f"v{version}",

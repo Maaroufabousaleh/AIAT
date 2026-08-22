@@ -18,6 +18,7 @@ def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blo
     assert report["status"] == "pass"
     assert report["candidate_status"] == "blocked"
     assert report["technical_gate_status"] == "blocked"
+    assert len(report["candidate_commit"]) == 40
     assert report["scanner_error_count"] == 54
     assert report["active_worker_status"] == "inactive_until_certification_passes"
 

@@ -49,6 +49,9 @@ def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
     commit = str(report.get("candidate_commit") or "")
     if not COMMIT_RE.fullmatch(commit):
         errors.append("candidate commit must be a full SHA")
+    aiat_commit = str(report.get("aiat_candidate_commit") or "")
+    if not COMMIT_RE.fullmatch(aiat_commit):
+        errors.append("AIAT candidate checkout commit must be a full SHA")
     image = str(report.get("candidate_image_ref") or "")
     if not DIGEST_RE.search(image):
         errors.append("candidate image must be digest pinned")

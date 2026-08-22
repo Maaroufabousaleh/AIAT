@@ -70,6 +70,7 @@ def test_candidate_report_requires_digest_image_sbom_scanners_and_boundary(tmp_p
 
     assert report["status"] == "blocked"
     assert report["active_worker_status"] == "inactive_until_certification_passes"
+    assert len(report["aiat_candidate_commit"]) == 40
     assert "candidate image reference is not digest pinned" in report["blockers"]
     assert report["evidence_policy"]["credentials_persisted"] is False
     persisted = json.loads((tmp_path / "evidence" / "candidate-certification.json").read_text())
