@@ -65,7 +65,10 @@ async def _execute_granted_tool(parent: FastAPI, grant: OpenHandsToolGrant, tool
         ToolRequest(
             caller_id=grant.worker_id,
             caller_role=AgentRole.WORKER,
-            project_id=grant.project_id,
+            # ``OpenHandsToolGrant`` keeps the project as a UUID for signed
+            # capability validation, while the cross-service ToolRequest
+            # protocol carries the audit project identifier as text.
+            project_id=str(grant.project_id) if grant.project_id else None,
             worker_run_id=grant.run_id,
             permission_scope=sorted(grant.tool_names),
             audit_context={

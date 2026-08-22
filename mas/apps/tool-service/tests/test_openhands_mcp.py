@@ -29,12 +29,12 @@ class _Registry:
         return _Response()
 
 
-def _grant(*tools: str):
+def _grant(*tools: str, project_id=None):
     token = issue_openhands_tool_grant(
         "bridge-secret",
         worker_id="worker-from-aiat",
         run_id=uuid4(),
-        project_id=None,
+        project_id=project_id,
         tool_names=tools,
         now=100,
     )
@@ -45,7 +45,7 @@ def _grant(*tools: str):
 async def test_bridge_reconstructs_worker_identity_and_rejects_forged_context() -> None:
     registry = _Registry()
     parent = SimpleNamespace(state=SimpleNamespace(registry=registry))
-    grant = _grant("repository.read")
+    grant = _grant("repository.read", project_id=uuid4())
 
     result = await _execute_granted_tool(
         parent,
@@ -58,6 +58,7 @@ async def test_bridge_reconstructs_worker_identity_and_rejects_forged_context() 
     assert request.caller_id == "worker-from-aiat"
     assert request.caller_role.value == "worker"
     assert request.worker_run_id == grant.run_id
+    assert request.project_id == str(grant.project_id)
 
 
 @pytest.mark.asyncio
