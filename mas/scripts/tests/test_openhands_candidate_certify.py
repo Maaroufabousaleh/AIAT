@@ -35,10 +35,13 @@ def test_certification_keeps_scanner_errors_distinct_from_findings(monkeypatch, 
     monkeypatch.setattr(certify_module, "_prepare_source", fake_prepare)
     monkeypatch.setattr(certify_module, "_current_git_revision", lambda: "b" * 40)
     monkeypatch.setattr(certify_module, "_tool_version", lambda name, output: {"name": name, "available": True, "version": "pinned"})
-    monkeypatch.setattr(
-        certify_module,
-        "_run_scanner",
-        lambda name, command, source, output_dir: {
+    def fake_run_scanner(name, command, source, output_dir):
+        if name == "semgrep":
+            (output_dir / "semgrep.json").write_text(
+                json.dumps({"results": [{"extra": {"severity": "INFO"}}], "errors": [{"code": "1", "type": "parse"}]}),
+                encoding="utf-8",
+            )
+        return {
             "name": name,
             "status": "blocked" if name == "semgrep" else "pass",
             "finding_count": 2 if name == "semgrep" else 0,
@@ -50,8 +53,9 @@ def test_certification_keeps_scanner_errors_distinct_from_findings(monkeypatch, 
             "failure_class": certify_module.SCANNER_COVERAGE_INCOMPLETE if name == "semgrep" else None,
             "failure_classes": [certify_module.SCANNER_COVERAGE_INCOMPLETE] if name == "semgrep" else [],
             "raw_output_retained": True,
-        },
-    )
+            "raw_json_path": f"{name}.json",
+        }
+    monkeypatch.setattr(certify_module, "_run_scanner", fake_run_scanner)
     monkeypatch.setattr(certify_module, "_run_sbom", lambda source, output: {"status": "pass"})
     monkeypatch.setattr(certify_module, "_run_image_sbom", lambda image, output: {"status": "pass"})
     monkeypatch.setattr(certify_module, "_image_probe", lambda image: {"status": "pass"})
