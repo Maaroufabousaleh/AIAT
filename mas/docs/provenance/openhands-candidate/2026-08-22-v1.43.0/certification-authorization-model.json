@@ -1,0 +1,53 @@
+{
+  "schema_version": "aiat.openhands-certification-authorization.v1",
+  "candidate": {
+    "release": "v1.43.0",
+    "commit_sha": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
+  },
+  "interface_verification": {
+    "status": "PENDING",
+    "approved": false
+  },
+  "authorities": {
+    "certification_authorization": {
+      "state": "run_scoped",
+      "issuer": "AIAT trusted certification controller",
+      "required": [
+        "exact candidate commit and image digest",
+        "disposable Agent Server/profile/workspace",
+        "gvisor sandbox policy",
+        "runsc runtime",
+        "dedicated controller run ID"
+      ],
+      "permits": ["isolated candidate execution", "certification evidence collection"],
+      "does_not_permit": ["worker activation", "rollout", "production credentials", "activation approval"]
+    },
+    "activation_approval": {
+      "state": "PENDING",
+      "issuer": "AIAT steward approval path",
+      "requires": ["passed server-run certification", "independent approval decision"],
+      "permits": ["worker registry activation and governed rollout"]
+    }
+  },
+  "steward_state_mapping": {
+    "CERTIFYING": "certification-authorized execution only; worker remains inactive",
+    "CERTIFIED": "passed evidence recorded; activation approval still absent",
+    "APPROVED": "independent activation approval recorded; rollout may be considered"
+  },
+  "profile_and_mcp": {
+    "agent_profile_id": "AIAT-provisioned run-scoped Agent Server UUID",
+    "mcp_logical_key": "aiat-openhands-v1-43-0-coding",
+    "mcp_entry_lifecycle": "create, redacted readback, use, delete, verify absent"
+  },
+  "production_fail_closed": {
+    "pending_report_normal_constructor": "rejected",
+    "certification_mode_metadata_without_opaque_authorization": "rejected",
+    "worker_activation_without_activation_approval": "rejected"
+  },
+  "evidence_policy": {
+    "interface_report_is_not_mutated_to_approved": true,
+    "authorization_and_activation_are_separate_records": true,
+    "worker_activation": "INACTIVE"
+  }
+}

@@ -75,6 +75,7 @@
     "audit": "AIAT normalized events and audit sink; raw OpenHands payloads are not retained"
   },
   "evidence_refs": [
+    "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/certification-authorization-model.json",
     "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0",
     "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/conversation_router.py",
     "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/settings_router.py",
@@ -83,6 +84,28 @@
   ],
   "certification": {
     "status": "NOT_RUN",
+    "authorization": {
+      "status": "NOT_ISSUED",
+      "scope": "isolated pinned candidate certification only",
+      "issuer": "AIAT trusted certification controller",
+      "required_bindings": [
+        "exact candidate commit",
+        "exact OCI image digest",
+        "disposable workspace",
+        "gvisor sandbox",
+        "runsc runtime"
+      ],
+      "does_not_grant": [
+        "activation approval",
+        "worker registry activation",
+        "production rollout"
+      ]
+    },
+    "activation_approval": {
+      "status": "PENDING",
+      "requires_passed_certification": true,
+      "worker_activation": "INACTIVE"
+    },
     "worker_activation": "INACTIVE",
     "required_gates": [
       "sbom",

@@ -2,6 +2,11 @@ schema_version: aiat.openhands-agent-profile-spec.v1
 status: run_scoped_provision_required
 purpose: bounded OpenHands coding worker under the AIAT control plane
 
+governance_state:
+  certification_authorization: run_scoped_trusted_controller_only
+  activation_approval: separate_steward_transition_after_passed_certification
+  worker_activation_before_approval: forbidden
+
 candidate:
   release: v1.43.0
   source_commit: 4c1237f391fe394e9f67505fe3a0bd2d81f84188
@@ -94,6 +99,11 @@ provisioning:
     agent_profile_id: workflow run-scoped output OPENHANDS_AGENT_PROFILE_ID
     mcp_settings_key: static logical key OPENHANDS_MCP_SETTINGS_KEY; entry is created and deleted per run
     mcp_entry_lifecycle: create_after_start_read_back_delete_always_verify_absent
+    certification_authorization:
+      issuer: AIAT trusted certification controller
+      required_runtime: runsc
+      required_sandbox: gvisor
+      does_not_grant_activation: true
   secrets:
     - AIAT_TOOL_SECRET
     - OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway credential; never direct provider credential)
