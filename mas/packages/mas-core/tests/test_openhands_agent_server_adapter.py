@@ -87,6 +87,7 @@ def make_adapter(
     handler,
     *,
     registrar=None,
+    preconfigured: bool = False,
 ) -> OpenHandsAgentServerAdapter:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -101,6 +102,7 @@ def make_adapter(
             "openhands_agent_profile_id": PROFILE_ID,
             "openhands_mcp_profile_ref": "aiat-mcp-profile-test",
             "openhands_mcp_settings_key": "aiat-openhands-test-run",
+            "openhands_mcp_preconfigured": preconfigured,
             "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
             "openhands_image_digest": IMAGE_DIGEST,
             "openhands_public_skills_disabled": True,
@@ -118,6 +120,40 @@ def make_adapter(
         client=client,
         context=context,
     )
+
+
+@pytest.mark.asyncio
+async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_it(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(
+                200,
+                json={
+                    "mcp_config": {
+                        "aiat-openhands-test-run": {
+                            "url": OPENHANDS_MCP_BRIDGE_URL,
+                            "transport": "streamable-http",
+                            "enabled": True,
+                            "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                        }
+                    }
+                },
+            )
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(200, json={})
+        raise AssertionError(request)
+
+    adapter = make_adapter(tmp_path, handler, preconfigured=True)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._configure_tool_bridge(run)
+    assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
+    assert not any(call.startswith("POST /api/settings/mcp/") for call in calls)
+    await adapter._cleanup_tool_bridge(run.run_id)
+    assert "DELETE /api/settings/mcp/aiat-openhands-test-run" in calls
+    await adapter.close()
 
 
 def test_pending_report_cannot_construct_executable_adapter() -> None:

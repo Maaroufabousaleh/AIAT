@@ -14,7 +14,9 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import httpx
 
 from mas_core.worker_contract import (
     AdapterContext,
@@ -64,6 +66,12 @@ async def certify(
     verification = OpenHandsInterfaceVerification.from_report(report_payload)
     statuses = _status_map("BLOCKED")
     missing = [name for name in _REQUIRED_ENV if not os.getenv(name, "").strip()]
+    if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":
+        missing.extend(
+            name
+            for name in ("OPENHANDS_CERT_RUN_ID", "OPENHANDS_PROJECT_ID")
+            if not os.getenv(name, "").strip()
+        )
     if not verification.approved:
         blockers.append("interface_verification_not_steward_approved")
     if missing:
@@ -96,6 +104,7 @@ async def certify(
             "openhands_agent_profile_id": os.environ["OPENHANDS_AGENT_PROFILE_ID"],
             "openhands_mcp_profile_ref": os.environ["OPENHANDS_MCP_SETTINGS_KEY"],
             "openhands_mcp_settings_key": os.environ["OPENHANDS_MCP_SETTINGS_KEY"],
+            "openhands_mcp_preconfigured": os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1",
             "openhands_mcp_bridge_url": "http://tool-service:8002/openhands/mcp",
             "openhands_image_digest": verification.image_digest,
             "openhands_cleanup_conversations": True,
@@ -113,10 +122,11 @@ async def certify(
         context=context,
     )
     request = WorkerRunRequest(
-        run_id=uuid4(),
+        run_id=UUID(os.environ["OPENHANDS_CERT_RUN_ID"]) if os.getenv("OPENHANDS_CERT_RUN_ID") else uuid4(),
         idempotency_key=f"openhands-live-{uuid4().hex}",
         worker_id="coding-worker-openhands-candidate",
         task_type="coding",
+        project_id=UUID(os.environ["OPENHANDS_PROJECT_ID"]) if os.getenv("OPENHANDS_PROJECT_ID") else None,
         task_input={
             "prompt": (
                 "In this disposable certification repository, make one minimal safe code change, "
@@ -182,6 +192,34 @@ async def certify(
     }
 
 
+async def _cleanup_preconfigured_mcp(*, base_url: str, settings_key: str, session_key: str) -> dict[str, Any]:
+    """Delete and verify a workflow-created MCP entry without retaining its grant."""
+
+    if not base_url or not settings_key or not session_key:
+        return {"status": "NOT_RUN", "reason": "cleanup_inputs_missing"}
+    async with httpx.AsyncClient(
+        base_url=base_url.rstrip("/"),
+        headers={"X-Session-API-Key": session_key, "Accept": "application/json"},
+        timeout=httpx.Timeout(30.0, connect=10.0),
+    ) as client:
+        response = await client.delete(f"/api/settings/mcp/{settings_key}")
+        if response.status_code not in {200, 404}:
+            return {"status": "FAIL", "reason": f"delete_http_{response.status_code}"}
+        readback = await client.get("/api/settings")
+        if readback.status_code >= 400:
+            return {"status": "FAIL", "reason": f"readback_http_{readback.status_code}"}
+        payload = readback.json() if readback.content else {}
+        config = payload.get("mcp_config") if isinstance(payload, dict) else None
+        if not isinstance(config, dict):
+            config = payload.get("mcp_servers") if isinstance(payload, dict) else None
+        present = isinstance(config, dict) and settings_key in config
+        return {
+            "status": "FAIL" if present else "PASS",
+            "delete": "deleted" if response.status_code == 200 else "already_absent",
+            "verified_absent": not present,
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=os.getenv("OPENHANDS_AGENT_SERVER_URL", ""))
@@ -201,6 +239,18 @@ def main(argv: list[str] | None = None) -> int:
                 exercise_lifecycle=args.exercise_lifecycle,
             )
         )
+    if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":
+        cleanup = asyncio.run(
+            _cleanup_preconfigured_mcp(
+                base_url=args.base_url,
+                settings_key=os.getenv("OPENHANDS_MCP_SETTINGS_KEY", ""),
+                session_key=os.getenv("OPENHANDS_SESSION_API_KEY", ""),
+            )
+        )
+        report.setdefault("cleanup", {})["preconfigured_mcp"] = cleanup
+        if cleanup.get("status") != "PASS":
+            report.setdefault("blockers", []).append("run_scoped_mcp_cleanup_failed")
+            report["status"] = "BLOCKED"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": report.get("status"), "blockers": report.get("blockers", [])}, sort_keys=True))

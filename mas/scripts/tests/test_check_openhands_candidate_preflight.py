@@ -37,6 +37,7 @@ def test_current_candidate_fails_closed_without_operator_values() -> None:
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["configured"] is False
     assert report["references"]["OPENHANDS_MCP_SETTINGS_KEY"]["configured"] is False
     assert report["references"]["OPENHANDS_MODEL_ID"]["configured"] is False
+    assert report["references"]["OPENHANDS_MODEL_GATEWAY_URL"]["configured"] is False
     assert report["secret_boundary"]["AIAT_TOOL_SECRET"]["configured"] is False
     assert report["interface_report"]["approved"] is False
     assert report["fail_closed_contract"]["missing_required_env_is_rejected"] is True
@@ -55,6 +56,8 @@ def test_mismatched_references_are_rejected_without_retaining_values() -> None:
             "OPENHANDS_AGENT_PROFILE_ID": "not-a-uuid",
             "OPENHANDS_MCP_SETTINGS_KEY": "wrong-key",
             "OPENHANDS_MODEL_ID": "auto",
+            "OPENHANDS_MODEL_GATEWAY_URL": "not-a-url",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
         },
     )
 
@@ -78,6 +81,8 @@ def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() ->
             "OPENHANDS_AGENT_PROFILE_ID": "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31",
             "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
             "OPENHANDS_MODEL_ID": "omniroute-coding",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
         },
     )
 
@@ -85,5 +90,7 @@ def test_valid_reference_shapes_still_wait_for_remote_readback_and_approval() ->
     assert report["static_errors"] == []
     assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["format_valid"] is True
     assert report["references"]["OPENHANDS_MCP_SETTINGS_KEY"]["format_valid"] is True
-    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["server_readback"] == "not_checked_without_operator_agent_server"
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["server_readback"] == "not_checked_without_certification_agent_server"
+    assert report["references"]["OPENHANDS_AGENT_PROFILE_ID"]["source"] == "workflow_run_output"
+    assert report["portability"]["profile_id_portable"] is False
     assert report["interface_report"]["approved"] is False

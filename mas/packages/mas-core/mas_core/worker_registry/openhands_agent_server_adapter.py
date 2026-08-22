@@ -362,6 +362,33 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if request.run_id in self._mcp_by_run:
             return
         settings_key = self._mcp_settings_key()
+        if self.context.metadata.get("openhands_mcp_preconfigured") is True:
+            # The workflow provisioning step owns creation of the entry when
+            # the Agent Server is disposable.  The adapter must only consume
+            # a redacted readback here; posting again would either overwrite
+            # the run grant or fail with a conflict.
+            settings = await self._json("GET", "/api/settings")
+            config = settings.get("mcp_config") if isinstance(settings, dict) else None
+            if not isinstance(config, dict):
+                config = settings.get("mcp_servers") if isinstance(settings, dict) else None
+            entry = config.get(settings_key) if isinstance(config, dict) else None
+            if not isinstance(entry, dict):
+                raise RuntimeError("preconfigured OpenHands MCP settings entry is absent")
+            if entry.get("url") != OPENHANDS_MCP_BRIDGE_URL:
+                raise RuntimeError("preconfigured OpenHands MCP settings URL is not the fixed AIAT bridge")
+            if entry.get("transport") != "streamable-http" or entry.get("enabled") is not True:
+                raise RuntimeError("preconfigured OpenHands MCP settings transport or enabled state is invalid")
+            headers = entry.get("headers")
+            if not isinstance(headers, dict) or "X-AIAT-OpenHands-Grant" not in headers:
+                raise RuntimeError("preconfigured OpenHands MCP settings does not contain the AIAT grant header")
+            self._mcp_by_run[request.run_id] = settings_key
+            self._mcp_grant_expires_at[request.run_id] = float(time.time() + _OPENHANDS_MCP_GRANT_TTL_SECONDS)
+            await self.emit_audit(
+                request.run_id,
+                "openhands.mcp_bridge_consumed",
+                details={"settings_key": settings_key, "bridge": "aiat.openhands.mcp.v1", "run_scoped": True},
+            )
+            return
         issued_at = int(time.time())
         signing_secret = str(self.context.secrets.get("tool_secret") or "")
         grant = issue_openhands_tool_grant(

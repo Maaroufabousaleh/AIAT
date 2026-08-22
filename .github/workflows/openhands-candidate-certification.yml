@@ -74,11 +74,86 @@ jobs:
             echo "$entry" >> "$GITHUB_PATH"
           done < "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-paths.txt"
 
+      - name: Run non-secret OpenHands portability preflight
+        id: preflight
+        continue-on-error: true
+        env:
+          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
+          OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/preflight"
+          uv run python scripts/check_openhands_candidate_preflight.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
       - name: Pull the pinned Agent Server image
         run: |
           set -euo pipefail
           docker pull "$OPENHANDS_IMAGE"
           docker image inspect "$OPENHANDS_IMAGE" >/dev/null
+
+      - name: Start disposable AIAT tool-service bridge
+        id: bridge
+        continue-on-error: true
+        env:
+          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-workspace" "$RUNNER_TEMP/aiat-openhands-evidence/bridge"
+          network="aiat-openhands-cert-network-${GITHUB_RUN_ID}"
+          tool_name="aiat-openhands-tool-service-${GITHUB_RUN_ID}"
+          image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
+          docker network create "$network"
+          docker build --file infra/docker/Dockerfile.tool-service --tag "$image" .
+          docker run --detach --name "$tool_name" \
+            --network "$network" --network-alias tool-service \
+            --publish 18002:8002 \
+            --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace:rw" \
+            --env TOOL_SECRET="$AIAT_TOOL_SECRET" \
+            --env TOOL_WORKSPACE_ROOT=/workspace \
+            --env LOG_LEVEL=INFO \
+            "$image"
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+          echo "tool_container=$tool_name" >> "$GITHUB_OUTPUT"
+          echo "network=$network" >> "$GITHUB_ENV"
+          echo "tool_container=$tool_name" >> "$GITHUB_ENV"
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:18002/health >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          docker inspect --format '{{json .State}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-state.json"
+          docker inspect --format '{{json .HostConfig.Runtime}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-runtime.json"
+          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/bridge/startup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-tool-service-startup.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "bridge_url": "http://tool-service:8002/openhands/mcp",
+                      "payloads_retained": False,
+                      "container_logs_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$healthy" = 1
 
       - name: Start Agent Server under runsc
         id: server
@@ -94,6 +169,7 @@ jobs:
           printf '%s' "$key" > "$key_file"
           echo "container=$name" >> "$GITHUB_OUTPUT"
           docker run --detach --name "$name" --runtime=runsc \
+            --network "$network" --network-alias agent-server \
             --publish 18000:8000 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
@@ -138,14 +214,37 @@ jobs:
             exit 1
           fi
 
+      - name: Materialize run-scoped OpenHands profile and MCP entry
+        id: runtime
+        continue-on-error: true
+        env:
+          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
+          OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/runtime"
+          test -s "$RUNNER_TEMP/aiat-openhands-session-key"
+          export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
+          uv run python scripts/provision_openhands_candidate_runtime.py \
+            --base-url http://127.0.0.1:18000 \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/runtime/runtime-provisioning.json" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
       - name: Run governed OpenHands live adapter wave
         id: live
         continue-on-error: true
         env:
           AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
-          OPENHANDS_AGENT_PROFILE_ID: ${{ vars.OPENHANDS_AGENT_PROFILE_ID }}
-          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+          OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_CERT_RUN_ID: ${{ steps.runtime.outputs.run_id }}
+          OPENHANDS_PROJECT_ID: ${{ steps.runtime.outputs.project_id }}
+          OPENHANDS_MCP_PRECONFIGURED: "1"
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
@@ -179,11 +278,64 @@ jobs:
 
       - name: Verify disposable cleanup
         if: always()
+        env:
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
         run: |
           set -euo pipefail
           name="aiat-openhands-cert-${GITHUB_RUN_ID}"
+          tool_name="${tool_container:-aiat-openhands-tool-service-${GITHUB_RUN_ID}}"
+          network_name="${network:-aiat-openhands-cert-network-${GITHUB_RUN_ID}}"
+          if [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
+            session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
+            delete_code=$(curl --silent --show-error --output /dev/null \
+              --request DELETE \
+              --header "X-Session-API-Key: $session_key" \
+              --write-out '%{http_code}' \
+              "http://127.0.0.1:18000/api/settings/mcp/${OPENHANDS_MCP_SETTINGS_KEY}" || true)
+            settings_response=$(curl --silent --show-error --write-out '\n%{http_code}' \
+              --header "X-Session-API-Key: $session_key" \
+              "http://127.0.0.1:18000/api/settings" || true)
+            settings_code="${settings_response##*$'\n'}"
+            settings_json="${settings_response%$'\n'*}"
+            DELETE_CODE="$delete_code" SETTINGS_CODE="$settings_code" SETTINGS_JSON="$settings_json" MCP_KEY="$OPENHANDS_MCP_SETTINGS_KEY" \
+              python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          try:
+              settings = json.loads(os.environ.get("SETTINGS_JSON", "{}"))
+          except json.JSONDecodeError:
+              settings = {}
+          config = settings.get("mcp_config") if isinstance(settings, dict) else None
+          if not isinstance(config, dict):
+              config = settings.get("mcp_servers") if isinstance(settings, dict) else None
+          readback_ok = os.environ.get("SETTINGS_CODE", "") == "200"
+          present = isinstance(config, dict) and os.environ.get("MCP_KEY", "") in config
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "delete_http_status": os.environ.get("DELETE_CODE", ""),
+                      "settings_readback_http_status": os.environ.get("SETTINGS_CODE", ""),
+                      "verified_absent": readback_ok and not present,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          fi
           docker rm --force "$name" >/dev/null 2>&1 || true
+          docker rm --force "$tool_name" >/dev/null 2>&1 || true
           test -z "$(docker ps -aq --filter "name=^/${name}$")"
+          test -z "$(docker ps -aq --filter "name=^/${tool_name}$")"
+          docker network rm "$network_name" >/dev/null 2>&1 || true
+          test -z "$(docker network ls -q --filter "name=^${network_name}$")"
           rm -f "$RUNNER_TEMP/aiat-openhands-session-key"
 
       - name: Upload sanitized OpenHands evidence

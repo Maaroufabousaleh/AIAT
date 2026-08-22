@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -34,11 +35,13 @@ EXPECTED_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 EXPECTED_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 EXPECTED_MCP_URL = "http://tool-service:8002/openhands/mcp"
 MCP_KEY_PREFIX = "aiat-openhands-"
+MCP_KEY_PATTERN = re.compile(r"aiat-openhands-[a-z0-9][a-z0-9._-]*\Z")
 REQUIRED_ENV = (
     "AIAT_TOOL_SECRET",
-    "OPENHANDS_AGENT_PROFILE_ID",
     "OPENHANDS_MCP_SETTINGS_KEY",
     "OPENHANDS_MODEL_ID",
+    "OPENHANDS_MODEL_GATEWAY_URL",
+    "OPENHANDS_MODEL_GATEWAY_API_KEY",
 )
 REQUIRED_DISABLED_CONTROLS = (
     "public_skills_disabled",
@@ -82,8 +85,8 @@ def _mcp_key_status(value: str) -> tuple[bool, str | None]:
         return False, "missing"
     if any(char.isspace() for char in value):
         return False, "contains_whitespace"
-    if not value.startswith(MCP_KEY_PREFIX) or len(value) <= len(MCP_KEY_PREFIX):
-        return False, "must_use_nonempty_aiat_openhands_prefix"
+    if not MCP_KEY_PATTERN.fullmatch(value):
+        return False, "must_use_lowercase_aiat_openhands_key_chars"
     return True, None
 
 
@@ -173,8 +176,15 @@ def evaluate(
         static_errors.append("manifest_model_profile_binding_mismatch")
     if adapter_config.get("model_profile_ref") != EXPECTED_PROFILE_ID:
         static_errors.append("adapter_model_profile_binding_mismatch")
+    agent_profile_ref = str(adapter_config.get("agent_profile_ref") or "")
+    if "workflow-run-scoped" not in agent_profile_ref.lower():
+        static_errors.append("agent_profile_binding_must_be_workflow_run_scoped")
     if adapter_config.get("aiat_mcp_bridge_url") != EXPECTED_MCP_URL:
         static_errors.append("manifest_mcp_bridge_url_mismatch")
+    if not str(adapter_config.get("model_gateway_url_ref") or "").startswith("OPENHANDS_MODEL_GATEWAY_URL"):
+        static_errors.append("manifest_model_gateway_url_binding_mismatch")
+    if adapter_config.get("model_gateway_api_key_ref") != "OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway secret boundary)":
+        static_errors.append("manifest_model_gateway_secret_binding_mismatch")
     if bridge.get("url") != EXPECTED_MCP_URL:
         static_errors.append("governed_mcp_bridge_url_mismatch")
     if bridge.get("allowlist") != ["aiat_tool"]:
@@ -185,14 +195,17 @@ def evaluate(
         static_errors.append("sandbox_or_network_policy_mismatch")
     if any(controls.get(name) is not True for name in REQUIRED_DISABLED_CONTROLS):
         static_errors.append("required_profile_control_is_not_explicitly_disabled")
-    if profile_spec.get("status") != "operator_provision_required":
-        static_errors.append("profile_spec_status_must_remain_operator_provision_required")
+    if profile_spec.get("status") != "run_scoped_provision_required":
+        static_errors.append("profile_spec_status_must_remain_run_scoped_provision_required")
     spec_candidate = profile_spec.get("candidate") if isinstance(profile_spec.get("candidate"), Mapping) else {}
     if spec_candidate.get("source_commit") != EXPECTED_COMMIT or spec_candidate.get("image_digest") != EXPECTED_IMAGE_DIGEST:
         static_errors.append("profile_spec_candidate_pin_mismatch")
     spec_model = profile_spec.get("aiat_bindings") if isinstance(profile_spec.get("aiat_bindings"), Mapping) else {}
     if spec_model.get("model_profile_id") != EXPECTED_PROFILE_ID or spec_model.get("exact_model_id") != EXPECTED_MODEL_ID:
         static_errors.append("profile_spec_model_binding_mismatch")
+    agent_profile_spec = profile_spec.get("agent_server_profile") if isinstance(profile_spec.get("agent_server_profile"), Mapping) else {}
+    if agent_profile_spec.get("id") is not None:
+        static_errors.append("profile_spec_must_not_pin_a_server_generated_agent_profile_uuid")
 
     model_ok, model_errors, model_details = _model_evidence_status(model_evidence)
     static_errors.extend(model_errors)
@@ -206,16 +219,14 @@ def evaluate(
         operator_actions.append("configure_GitHub_Actions_secret_AIAT_TOOL_SECRET_from_the_governed_tool_service_secret")
 
     profile_value = str(values.get("OPENHANDS_AGENT_PROFILE_ID") or "").strip()
-    profile_format_valid = _is_uuid(profile_value) if profile_value else False
-    if not profile_value:
-        operator_actions.append("provision_and_read_back_OpenHands_agent_profile_UUID")
-    elif not profile_format_valid:
+    profile_format_valid = _is_uuid(profile_value) if profile_value else None
+    if profile_value and not profile_format_valid:
         static_errors.append("OPENHANDS_AGENT_PROFILE_ID_is_not_a_UUID")
 
     mcp_value = str(values.get("OPENHANDS_MCP_SETTINGS_KEY") or "").strip()
     mcp_format_valid, mcp_error = _mcp_key_status(mcp_value)
     if not mcp_value:
-        operator_actions.append("provision_one_disposable_OPENHANDS_MCP_SETTINGS_KEY")
+        operator_actions.append("set_GitHub_Actions_variable_OPENHANDS_MCP_SETTINGS_KEY_to_the_governed_logical_aiat_openhands_name")
     elif not mcp_format_valid:
         static_errors.append(f"OPENHANDS_MCP_SETTINGS_KEY_{mcp_error}")
 
@@ -226,26 +237,35 @@ def evaluate(
     elif not model_env_matches:
         static_errors.append("OPENHANDS_MODEL_ID_does_not_match_approved_catalogue_alias")
 
+    gateway_url = str(values.get("OPENHANDS_MODEL_GATEWAY_URL") or "").strip()
+    if not gateway_url:
+        operator_actions.append("set_GitHub_Actions_variable_OPENHANDS_MODEL_GATEWAY_URL_to_the_AIAT_gateway_endpoint")
+    elif not gateway_url.startswith(("http://", "https://")):
+        static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_be_an_http_url")
+    gateway_key_present = bool(str(values.get("OPENHANDS_MODEL_GATEWAY_API_KEY") or "").strip())
+    if not gateway_key_present:
+        operator_actions.append("configure_GitHub_Actions_secret_OPENHANDS_MODEL_GATEWAY_API_KEY_for_the_AIAT_gateway")
+
     # A UUID/key in environment variables is only a syntactic reference until
     # the operator reads it back from the actual Agent Server/profile store.
     # This check intentionally does not claim remote resolution.
     profile_reference = {
         "configured": bool(profile_value),
         "format_valid": profile_format_valid,
-        "server_readback": "not_checked_without_operator_agent_server",
+        "source": "workflow_run_output",
+        "portable": False,
+        "server_generated": True,
+        "server_readback": "not_checked_without_certification_agent_server",
         "value_retained": False,
     }
     mcp_reference = {
         "configured": bool(mcp_value),
         "format_valid": mcp_format_valid,
-        "server_readback": "not_checked_without_operator_agent_server",
+        "source": "static_logical_key; remote entry is run-scoped",
+        "portable": True,
+        "server_readback": "not_checked_without_certification_agent_server",
         "value_retained": False,
     }
-
-    if profile_value and profile_format_valid:
-        operator_actions.append("read_back_profile_controls_and_materialize_profile_before_certification")
-    if mcp_value and mcp_format_valid:
-        operator_actions.append("read_back_MCP_settings_and_verify_only_fixed_AIAT_bridge_before_certification")
 
     if static_errors:
         status = "BLOCKED_STATIC_CONFIGURATION"
@@ -275,13 +295,32 @@ def evaluate(
                 "matches_approved_model": model_env_matches,
                 "value_retained": False,
             },
+            "OPENHANDS_MODEL_GATEWAY_URL": {
+                "configured": bool(gateway_url),
+                "format_valid": bool(gateway_url.startswith(("http://", "https://"))),
+                "value_retained": False,
+            },
         },
         "secret_boundary": {
             "AIAT_TOOL_SECRET": {
                 "configured": secret_present,
                 "value_retained": False,
                 "value_printed": False,
-            }
+            },
+            "OPENHANDS_MODEL_GATEWAY_API_KEY": {
+                "configured": gateway_key_present,
+                "value_retained": False,
+                "value_printed": False,
+            },
+        },
+        "portability": {
+            "profile_store": "disposable OpenHands Agent Server persistence",
+            "certification_store": "fresh Agent Server instance for this workflow run",
+            "same_authoritative_store": False,
+            "profile_id_portable": False,
+            "profile_materialization_supported": True,
+            "profile_id_source": "server_generated_uuid",
+            "mcp_entry_lifecycle": "create_after_start_delete_always_verify_absent",
         },
         "interface_report": {
             "report_id": interface_report.get("report_id"),
@@ -293,8 +332,9 @@ def evaluate(
         "fail_closed_contract": {
             "missing_required_env_is_rejected": True,
             "mismatched_model_is_rejected": True,
-            "invalid_profile_uuid_is_rejected": True,
+            "invalid_run_scoped_profile_uuid_is_rejected_when_supplied": True,
             "invalid_mcp_key_is_rejected": True,
+            "missing_model_gateway_binding_is_rejected": True,
             "unapproved_interface_report_is_rejected": True,
             "secret_values_are_not_retained": True,
         },
