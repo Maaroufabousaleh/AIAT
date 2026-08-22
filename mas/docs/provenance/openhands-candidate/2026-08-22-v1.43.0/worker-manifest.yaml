@@ -21,7 +21,7 @@ runtime:
     image_ref: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
     image_platform_digest: sha256:c826bcfa6455267d8f99fe277d97d00806bc0f90bf263b94268cab29fa7be529
     session_api_key_ref: AIAT secret boundary (not persisted)
-    agent_profile_ref: operator-provisioned OpenHands profile UUID
+    agent_profile_ref: 0f964e63-2e3b-46cb-88de-922f199d89cf
     aiat_mcp_profile_ref: dedicated disposable aiat-openhands-* MCP settings key referenced by the profile
     aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
     governed_profile_spec_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/agent-profile-spec.yaml

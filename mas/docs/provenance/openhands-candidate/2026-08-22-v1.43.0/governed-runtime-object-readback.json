@@ -1,0 +1,90 @@
+{
+  "schema_version": "aiat.openhands-governed-runtime-object-readback.v1",
+  "recorded_at": "2026-08-22T22:00:00Z",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "source_of_truth": {
+    "store": "OpenHands Agent Server authenticated API",
+    "profile_readback": "GET /api/agent-profiles/aiat-openhands-v1-43-0-coding",
+    "settings_readback": "GET /api/settings",
+    "materialize_readback": "POST /api/agent-profiles/aiat-openhands-v1-43-0-coding/materialize",
+    "secrets_retained": false
+  },
+  "agent_server_profile": {
+    "name": "aiat-openhands-v1-43-0-coding",
+    "id": "0f964e63-2e3b-46cb-88de-922f199d89cf",
+    "revision": 0,
+    "agent_kind": "openhands",
+    "agent": "CodeActAgent",
+    "llm_profile_ref": "aiat-openhands-omniroute-coding",
+    "mcp_server_refs": ["aiat-openhands-v1-43-0-coding"],
+    "tools": ["TerminalTool", "FileEditorTool"],
+    "enable_sub_agents": false,
+    "enable_switch_llm_tool": false,
+    "disabled_skills": [],
+    "tool_concurrency_limit": 1
+  },
+  "llm_profile": {
+    "name": "aiat-openhands-omniroute-coding",
+    "model": "omniroute-coding",
+    "provider_connection_configured": true,
+    "api_key_set": true,
+    "credential_values_retained": false
+  },
+  "mcp_settings": {
+    "key": "aiat-openhands-v1-43-0-coding",
+    "url": "http://tool-service:8002/openhands/mcp",
+    "transport": "streamable-http",
+    "enabled": true,
+    "grant_header": "X-AIAT-OpenHands-Grant",
+    "grant_value_retained": false,
+    "arbitrary_external_servers": false
+  },
+  "materialize": {
+    "valid": true,
+    "llm_profile_resolved": true,
+    "llm_model": "omniroute-coding",
+    "llm_base_url": "http://litellm:4000",
+    "mcp_refs_resolved": true,
+    "dangling_mcp_server_refs": [],
+    "errors": [],
+    "resolved_tools": ["TerminalTool", "FileEditorTool"],
+    "load_public_skills": false,
+    "load_user_skills": false,
+    "load_project_skills": true,
+    "resolved_skills_count": 0
+  },
+  "bridge_probe": {
+    "mcp_tools_listed": ["aiat_tool"],
+    "allowlisted_call": {
+      "requested_grant_label": "aiat.repository.read",
+      "status": "PASS",
+      "audit_status": "success"
+    },
+    "denied_call": {
+      "requested_tool": "approval.override_cso",
+      "status": "FORBIDDEN"
+    },
+    "worker_identity_source": "signed AIAT grant",
+    "project_context_recorded": true,
+    "secret_value_returned": false,
+    "probe_workspace_cleanup": "PASS"
+  },
+  "runtime_bindings": {
+    "model_authority": "AIAT approved model profile",
+    "sandbox_profile": "gvisor declared in AIAT profile; live runsc not proven in WSL Docker Desktop",
+    "network_policy": "AIAT egress allowlist",
+    "workspace_policy": "AIAT assigned isolated workspace",
+    "audit_policy": "scalar durable audit; payloads and credentials excluded"
+  },
+  "pending_gates": [
+    "steward approval of interface-verification.json",
+    "native Linux/runsc live certification",
+    "operator wiring of CI references and AIAT_TOOL_SECRET",
+    "run-scoped MCP entry must be deleted or recreated by the adapter before the next certification run"
+  ]
+}

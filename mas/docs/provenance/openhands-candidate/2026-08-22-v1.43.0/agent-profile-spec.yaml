@@ -34,17 +34,17 @@ aiat_bindings:
 
 agent_server_profile:
   # Agent Server assigns this UUID when the profile is saved. Do not invent it.
-  id: null
+  id: 0f964e63-2e3b-46cb-88de-922f199d89cf
   name: aiat-openhands-v1-43-0-coding
   agent_kind: openhands
   # This must be an existing Agent Server LLM-profile name whose resolved
   # configuration uses the AIAT gateway and exact_model_id above. It is not a
   # direct provider credential or an arbitrary OpenHands model selection.
-  llm_profile_ref: null
+  llm_profile_ref: aiat-openhands-omniroute-coding
   # The operator must set this to the one disposable key supplied as
   # OPENHANDS_MCP_SETTINGS_KEY. A null value at runtime would expose all
   # configured MCP servers and is therefore forbidden.
-  mcp_server_refs: null
+  mcp_server_refs: [aiat-openhands-v1-43-0-coding]
   tools:
     - name: terminal
     - name: file_editor
