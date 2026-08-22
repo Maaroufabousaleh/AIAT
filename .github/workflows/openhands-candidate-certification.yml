@@ -92,6 +92,7 @@ jobs:
           echo "session_key=$key" >> "$GITHUB_OUTPUT"
           docker run --detach --name "$name" --runtime=runsc \
             --publish 18000:8000 \
+            --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
             "$OPENHANDS_IMAGE"
           for _ in $(seq 1 60); do
@@ -102,6 +103,25 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Run governed OpenHands live adapter wave
+        id: live
+        continue-on-error: true
+        env:
+          OPENHANDS_SESSION_API_KEY: ${{ steps.server.outputs.session_key }}
+          AIAT_TOOL_SECRET: ${{ secrets.AIAT_TOOL_SECRET }}
+          OPENHANDS_AGENT_PROFILE_ID: ${{ vars.OPENHANDS_AGENT_PROFILE_ID }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
+          uv run python scripts/openhands_live_certify.py \
+            --base-url http://127.0.0.1:18000 \
+            --interface-report docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json \
+            --workspace /workspace/project \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/live/live-certification.json"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenHands supply-chain and runtime evidence
         id: certification
