@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import prometheus_client
 import redis.asyncio as aioredis
@@ -45,6 +45,7 @@ from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_T
 from .cache import ToolCache
 from .config import Settings, get_settings
 from .opencode_mcp import create_opencode_mcp_app
+from .openhands_mcp import create_openhands_mcp_app
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
 from .routes import router
@@ -220,11 +221,20 @@ async def lifespan(app: FastAPI):
             name="project-usage-recovery",
         )
 
-    bridge_lifespan = getattr(app.state, "opencode_mcp_lifespan", None)
-    if bridge_lifespan is None:
+    bridge_lifespans = [
+        bridge
+        for bridge in (
+            getattr(app.state, "opencode_mcp_lifespan", None),
+            getattr(app.state, "openhands_mcp_lifespan", None),
+        )
+        if bridge is not None
+    ]
+    if not bridge_lifespans:
         yield
     else:
-        async with bridge_lifespan():
+        async with AsyncExitStack() as bridge_stack:
+            for bridge_lifespan in bridge_lifespans:
+                await bridge_stack.enter_async_context(bridge_lifespan())
             yield
 
     cache_recovery_task.cancel()
@@ -281,6 +291,10 @@ app.include_router(router)
 _opencode_mcp_app = create_opencode_mcp_app(app)
 app.state.opencode_mcp_lifespan = _opencode_mcp_app.aiat_lifespan
 app.mount("/opencode", _opencode_mcp_app)
+
+_openhands_mcp_app = create_openhands_mcp_app(app)
+app.state.openhands_mcp_lifespan = _openhands_mcp_app.aiat_lifespan
+app.mount("/openhands", _openhands_mcp_app)
 
 _prom_app = prometheus_client.make_asgi_app()
 

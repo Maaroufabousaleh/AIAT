@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ from mas_core.worker_contract import (
     WorkerRunRequest,
 )
 from mas_core.worker_registry.openhands_agent_server_adapter import (
+    OPENHANDS_MCP_BRIDGE_URL,
     OpenHandsAgentServerAdapter,
     OpenHandsInterfaceVerification,
 )
@@ -54,6 +56,7 @@ def verification(*, approved: bool = True) -> OpenHandsInterfaceVerification:
             "agent_final_response": "/api/conversations/{conversation_id}/agent_final_response",
             "git_changes": "/api/git/changes",
             "file_download": "/api/file/download",
+            "settings_mcp": "/api/settings/mcp/{settings_key}",
             "events_socket": "/sockets/events/{conversation_id}",
         },
         approved=approved,
@@ -74,6 +77,7 @@ def request(*, workspace: Path, run_id: UUID | None = None) -> WorkerRunRequest:
         ),
         timeout_seconds=30,
         budget={"max_iterations": 4},
+        tool_grants=["aiat.repository.read", "aiat.repository.write", "aiat.tests.execute"],
         extensions={"workspace_for_test_only": str(workspace)},
     )
 
@@ -92,11 +96,18 @@ def make_adapter(
     )
     context = AdapterContext(
         workspace_path=str(workspace),
-        secrets={"openhands_session_api_key": "session-secret-test"},
+        secrets={"openhands_session_api_key": "session-secret-test", "tool_secret": "tool-secret-test"},
         metadata={
             "openhands_agent_profile_id": PROFILE_ID,
             "openhands_mcp_profile_ref": "aiat-mcp-profile-test",
+            "openhands_mcp_settings_key": "aiat-openhands-test-run",
+            "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
             "openhands_image_digest": IMAGE_DIGEST,
+            "openhands_public_skills_disabled": True,
+            "openhands_plugins_disabled": True,
+            "openhands_subagents_disabled": True,
+            "openhands_browser_disabled": True,
+            "openhands_direct_credentials_disabled": True,
         },
         artifact_registrar=registrar,
     )
@@ -167,6 +178,8 @@ async def test_readiness_checks_server_and_governed_profile(tmp_path: Path) -> N
     assert result.ready is True
     assert result.checks["authenticated_health"] is True
     assert result.checks["aiat_tool_bridge_bound"] is True
+    assert result.checks["aiat_tool_bridge_url_pinned"] is True
+    assert result.checks["openhands_public_skills_disabled"] is True
     await adapter.close()
 
 
@@ -242,6 +255,13 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal status_reads
+        if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            payload = json.loads(request.content)
+            assert payload["url"] == OPENHANDS_MCP_BRIDGE_URL
+            assert "X-AIAT-OpenHands-Grant" in payload["headers"]
+            return httpx.Response(201, json={})
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(200, json={})
         if request.method == "POST" and request.url.path == "/api/conversations":
             return httpx.Response(201, json={"id": conversation_id})
         if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}":

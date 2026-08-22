@@ -43,6 +43,7 @@ from mas_core.worker_contract import (
     WorkerRunRequest,
     WorkerUsage,
 )
+from mas_core.worker_contract.openhands_bridge import issue_openhands_tool_grant
 
 DEFAULT_ENDPOINTS: dict[str, str] = {
     "health": "/health",
@@ -59,7 +60,12 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     "git_changes": "/api/git/changes",
     "file_download": "/api/file/download",
     "events_socket": "/sockets/events/{conversation_id}",
+    "settings_mcp": "/api/settings/mcp/{settings_key}",
 }
+
+OPENHANDS_MCP_BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
+_OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
+_OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 
@@ -202,6 +208,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._event_tasks: dict[UUID, asyncio.Task[Any]] = {}
         self._stop_events: set[UUID] = set()
         self._cancelled: set[UUID] = set()
+        self._mcp_by_run: dict[UUID, str] = {}
+        self._mcp_grant_expires_at: dict[UUID, float] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is not None:
@@ -271,6 +279,27 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             blockers.append("the OpenHands profile must reference the approved AIAT MCP bridge")
         else:
             checks["aiat_tool_bridge_bound"] = True
+        bridge_url = str(self.context.metadata.get("openhands_mcp_bridge_url") or "")
+        checks["aiat_tool_bridge_url_pinned"] = bridge_url == OPENHANDS_MCP_BRIDGE_URL
+        if not checks["aiat_tool_bridge_url_pinned"]:
+            blockers.append("OpenHands must use the fixed internal AIAT MCP bridge URL")
+        settings_key = str(self.context.metadata.get("openhands_mcp_settings_key") or "")
+        checks["aiat_tool_bridge_settings_key_pinned"] = settings_key.startswith(_OPENHANDS_MCP_SERVER_KEY_PREFIX)
+        if not checks["aiat_tool_bridge_settings_key_pinned"]:
+            blockers.append("OpenHands requires a disposable aiat-openhands-* MCP settings key")
+        checks["aiat_tool_bridge_signing_secret"] = bool(self.context.secrets.get("tool_secret"))
+        if not checks["aiat_tool_bridge_signing_secret"]:
+            blockers.append("OpenHands requires an AIAT bridge signing secret from the secret boundary")
+        for metadata_key in (
+            "openhands_public_skills_disabled",
+            "openhands_plugins_disabled",
+            "openhands_subagents_disabled",
+            "openhands_browser_disabled",
+            "openhands_direct_credentials_disabled",
+        ):
+            checks[metadata_key] = self.context.metadata.get(metadata_key) is True
+            if not checks[metadata_key]:
+                blockers.append(f"{metadata_key} must be explicitly true in the governed profile")
         configured_image_digest = str(self.context.metadata.get("openhands_image_digest") or "")
         checks["image_digest_bound"] = configured_image_digest == self.verification.image_digest
         if not checks["image_digest_bound"]:
@@ -314,6 +343,72 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             else:
                 checks["exact_model_bound"] = True
         return WorkerReadiness(worker_id=self.worker_id, ready=not blockers, checks=checks, blockers=blockers)
+
+    def _mcp_settings_key(self) -> str:
+        value = str(self.context.metadata.get("openhands_mcp_settings_key") or "")
+        if not value.startswith(_OPENHANDS_MCP_SERVER_KEY_PREFIX):
+            raise RuntimeError("OpenHands MCP settings key is not a disposable AIAT key")
+        return value
+
+    async def _configure_tool_bridge(self, request: WorkerRunRequest) -> None:
+        """Create one fixed, run-scoped remote MCP entry in Agent Server settings.
+
+        The dedicated settings key must be absent before the run.  A conflict
+        is a hard failure rather than an overwrite: this prevents a candidate
+        run from clobbering an operator's other MCP configuration.  The key is
+        deleted in the execution cleanup path.
+        """
+
+        if request.run_id in self._mcp_by_run:
+            return
+        settings_key = self._mcp_settings_key()
+        issued_at = int(time.time())
+        signing_secret = str(self.context.secrets.get("tool_secret") or "")
+        grant = issue_openhands_tool_grant(
+            signing_secret,
+            worker_id=self.worker_id,
+            run_id=request.run_id,
+            project_id=request.project_id,
+            tool_names=request.tool_grants,
+            ttl_seconds=_OPENHANDS_MCP_GRANT_TTL_SECONDS,
+            now=issued_at,
+        )
+        response = await (await self._get_client()).post(
+            self.verification.endpoint("settings_mcp", settings_key=settings_key),
+            json={
+                "url": OPENHANDS_MCP_BRIDGE_URL,
+                "transport": "streamable-http",
+                "headers": {"X-AIAT-OpenHands-Grant": grant},
+                "enabled": True,
+                "timeout": 60.0,
+            },
+        )
+        if response.status_code == 409:
+            raise RuntimeError("OpenHands MCP settings key already exists; refusing to overwrite it")
+        response.raise_for_status()
+        self._mcp_by_run[request.run_id] = settings_key
+        self._mcp_grant_expires_at[request.run_id] = float(issued_at + _OPENHANDS_MCP_GRANT_TTL_SECONDS)
+        await self.emit_audit(
+            request.run_id,
+            "openhands.mcp_bridge_configured",
+            details={"settings_key": settings_key, "bridge": "aiat.openhands.mcp.v1"},
+        )
+
+    async def _cleanup_tool_bridge(self, run_id: UUID) -> None:
+        settings_key = self._mcp_by_run.pop(run_id, None)
+        self._mcp_grant_expires_at.pop(run_id, None)
+        if settings_key is None:
+            return
+        response = await (await self._get_client()).delete(
+            self.verification.endpoint("settings_mcp", settings_key=settings_key)
+        )
+        if response.status_code not in {200, 404}:
+            response.raise_for_status()
+        await self.emit_audit(
+            run_id,
+            "openhands.mcp_bridge_cleaned",
+            details={"settings_key": settings_key, "outcome": "deleted" if response.status_code == 200 else "already_absent"},
+        )
 
     def _workspace_path(self) -> Path:
         if not self.context.workspace_path:
@@ -363,6 +458,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         return data if isinstance(data, dict) else {}
 
     async def _create_conversation(self, request: WorkerRunRequest) -> str:
+        await self._configure_tool_bridge(request)
         existing = self._conversation_by_key.get(request.idempotency_key)
         if existing:
             self._conversation_by_run[request.run_id] = existing
@@ -502,58 +598,62 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         return artifacts
 
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult:
-        conversation_id = self._conversation_by_run.get(request.run_id) or await self._create_conversation(request)
-        self._stop_events.discard(request.run_id)
-        event_task = asyncio.create_task(self._consume_events(request, conversation_id), name=f"openhands-events-{request.run_id}")
-        self._event_tasks[request.run_id] = event_task
-        started = time.monotonic()
+        conversation_id: str | None = None
         try:
-            await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
-            while True:
-                if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
-                    return WorkerResult(
-                        run_id=request.run_id,
-                        worker_id=self.worker_id,
-                        success=False,
-                        error=WorkerError(code="CANCELLED", message="OpenHands conversation interrupted by AIAT", terminal=True, category="cancellation"),
-                        replay_metadata={"openhands_conversation_id": conversation_id},
-                    )
-                info = await self._conversation(conversation_id)
-                status = str(info.get("execution_status") or "").lower()
-                if status in TERMINAL_STATUSES:
-                    if status != "finished":
+            conversation_id = self._conversation_by_run.get(request.run_id) or await self._create_conversation(request)
+            self._stop_events.discard(request.run_id)
+            event_task = asyncio.create_task(self._consume_events(request, conversation_id), name=f"openhands-events-{request.run_id}")
+            self._event_tasks[request.run_id] = event_task
+            started = time.monotonic()
+            try:
+                await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
+                while True:
+                    if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                         return WorkerResult(
                             run_id=request.run_id,
                             worker_id=self.worker_id,
                             success=False,
-                            error=WorkerError(code="OPENHANDS_CONVERSATION_ERROR", message=f"OpenHands conversation ended in {status}", retryable=status == "error", category="runtime"),
-                            replay_metadata={"openhands_conversation_id": conversation_id, "execution_status": status},
+                            error=WorkerError(code="CANCELLED", message="OpenHands conversation interrupted by AIAT", terminal=True, category="cancellation"),
+                            replay_metadata={"openhands_conversation_id": conversation_id},
                         )
-                    return WorkerResult(
-                        run_id=request.run_id,
-                        worker_id=self.worker_id,
-                        success=True,
-                        output=await self._final_response(conversation_id),
-                        artifacts=await self._artifacts(conversation_id),
-                        usage=self._usage(info, request, (time.monotonic() - started) * 1000),
-                        replay_metadata={
-                            "openhands_conversation_id": conversation_id,
-                            "openhands_release": self.verification.release,
-                            "openhands_commit_sha": self.verification.commit_sha,
-                            "image_digest": self.verification.image_digest,
-                            "execution_status": status,
-                        },
-                    )
-                if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
-                    raise TimeoutError("OpenHands conversation exceeded the AIAT adapter timeout")
-                await asyncio.sleep(0.25)
+                    info = await self._conversation(conversation_id)
+                    status = str(info.get("execution_status") or "").lower()
+                    if status in TERMINAL_STATUSES:
+                        if status != "finished":
+                            return WorkerResult(
+                                run_id=request.run_id,
+                                worker_id=self.worker_id,
+                                success=False,
+                                error=WorkerError(code="OPENHANDS_CONVERSATION_ERROR", message=f"OpenHands conversation ended in {status}", retryable=status == "error", category="runtime"),
+                                replay_metadata={"openhands_conversation_id": conversation_id, "execution_status": status},
+                            )
+                        return WorkerResult(
+                            run_id=request.run_id,
+                            worker_id=self.worker_id,
+                            success=True,
+                            output=await self._final_response(conversation_id),
+                            artifacts=await self._artifacts(conversation_id),
+                            usage=self._usage(info, request, (time.monotonic() - started) * 1000),
+                            replay_metadata={
+                                "openhands_conversation_id": conversation_id,
+                                "openhands_release": self.verification.release,
+                                "openhands_commit_sha": self.verification.commit_sha,
+                                "image_digest": self.verification.image_digest,
+                                "execution_status": status,
+                            },
+                        )
+                    if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
+                        raise TimeoutError("OpenHands conversation exceeded the AIAT adapter timeout")
+                    await asyncio.sleep(0.25)
+            finally:
+                self._stop_events.add(request.run_id)
+                task = self._event_tasks.pop(request.run_id, None)
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                await self._cleanup_conversation(conversation_id)
         finally:
-            self._stop_events.add(request.run_id)
-            task = self._event_tasks.pop(request.run_id, None)
-            if task is not None:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            await self._cleanup_conversation(conversation_id)
+            await self._cleanup_tool_bridge(request.run_id)
 
     async def _cleanup_conversation(self, conversation_id: str) -> None:
         if not self.context.metadata.get("openhands_cleanup_conversations"):

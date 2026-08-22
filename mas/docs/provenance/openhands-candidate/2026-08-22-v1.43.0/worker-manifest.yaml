@@ -20,7 +20,15 @@ runtime:
     image_platform_digest: sha256:c826bcfa6455267d8f99fe277d97d00806bc0f90bf263b94268cab29fa7be529
     session_api_key_ref: AIAT secret boundary (not persisted)
     agent_profile_ref: operator-provisioned OpenHands profile UUID
-    aiat_mcp_profile_ref: operator-provisioned AIAT MCP bridge profile
+    aiat_mcp_profile_ref: dedicated disposable aiat-openhands-* MCP settings key referenced by the profile
+    aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
+    profile_controls:
+      public_skills_disabled: true
+      plugins_disabled: true
+      browser_disabled: true
+      subagents_disabled: true
+      direct_credentials_disabled: true
+      model_switching_disabled: true
     cleanup: AIAT-controlled disposable conversation cleanup
 integration:
   adapter_entrypoint: OpenHandsAgentServerAdapter

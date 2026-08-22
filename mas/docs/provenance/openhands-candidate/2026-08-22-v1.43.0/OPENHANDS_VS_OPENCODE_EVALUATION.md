@@ -67,14 +67,18 @@ The candidate selects an operator-provisioned `agent_profile_id`; it does not
 send an `agent` object, API key, model key, plugin list, or task-supplied path.
 The profile must reference the approved AIAT MCP bridge. OpenHands built-ins
 are limited to sandbox-local terminal/file editing/test capabilities. Browser,
-subagent, plugin, and arbitrary external MCP capabilities are not implicitly
-enabled.
+subagent, plugin, public-skill, model-switching, direct-credential, and
+arbitrary external MCP capabilities are not implicitly enabled; the operator
+profile must explicitly report each of those controls disabled.
 
 The official `ClientToolSpec` path is not used for privileged tools: its
 documented executor acknowledges a client action rather than providing a
 synchronous server-side authority path. Privileged operations therefore need a
 separately certified AIAT MCP/custom-tool bridge with run-scoped grants. The
-bridge is required before readiness can pass.
+candidate uses only the documented Agent Server settings MCP route to add one
+disposable `aiat-openhands-*` entry pointing at the fixed internal `/openhands`
+bridge; an existing key is never overwritten and the entry is deleted during
+cleanup. The bridge is required before readiness can pass.
 
 AIAT `BudgetTracker` remains authoritative. OpenHands metrics are scalar
 evidence only. The adapter emits normalized progress/audit events and excludes

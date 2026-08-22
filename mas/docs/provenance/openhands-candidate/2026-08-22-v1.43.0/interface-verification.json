@@ -44,6 +44,7 @@
     "events_search": {"method": "GET", "path": "/api/conversations/{conversation_id}/events/search"},
     "git_changes": {"method": "GET", "path": "/api/git/changes"},
     "file_download": {"method": "GET", "path": "/api/file/download"},
+    "settings_mcp": {"method": "POST|DELETE", "path": "/api/settings/mcp/{settings_key}"},
     "events_socket": {"protocol": "WebSocket", "path": "/sockets/events/{conversation_id}"}
   },
   "aiat_mapping": {
@@ -57,6 +58,7 @@
     "event_stream": "WebSocket /sockets/events/{conversation_id}; normalize scalar event identity only",
     "workspace": "LocalWorkspace.working_dir set only by AIAT AdapterContext",
     "artifacts": "GET /api/git/changes and streamed /api/file/download, hash/register without retaining payload",
+    "mcp_bridge": "POST and DELETE one disposable /api/settings/mcp/{settings_key} entry; fixed AIAT URL only",
     "health": "GET /health",
     "readiness": "GET /ready and GET /server_info"
   },
@@ -64,7 +66,8 @@
     "authority_owner": "AIAT control plane",
     "activation": "AIAT steward and certification only",
     "model": "server-side OpenHands profile must resolve to AIAT exact model snapshot",
-    "tools": "sandbox-local terminal/file editing/tests only; privileged tools through approved AIAT MCP bridge",
+    "tools": "sandbox-local terminal/file editing/tests only; one fixed AIAT MCP bridge; no arbitrary external MCP registration",
+    "profile_controls": "public skills, plugins, browser, subagents, direct credentials, and model switching disabled by operator profile",
     "client_tools": "not used as privileged bridge because the official executor acknowledges without server-side execution",
     "credentials": "AIAT secret boundary; no task-supplied credentials or profile data",
     "budgets": "AIAT BudgetTracker is authoritative; OpenHands metrics are evidence only",
@@ -74,6 +77,7 @@
   "evidence_refs": [
     "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0",
     "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/conversation_router.py",
+    "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/settings_router.py",
     "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py",
     "https://github.com/OpenHands/software-agent-sdk/releases/tag/v1.43.0"
   ],
