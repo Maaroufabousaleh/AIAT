@@ -21,6 +21,7 @@ runtime:
     image_ref: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
     image_platform_digest: sha256:c826bcfa6455267d8f99fe277d97d00806bc0f90bf263b94268cab29fa7be529
     session_api_key_ref: AIAT secret boundary (not persisted)
+    aiat_tool_secret_ref: workflow-run-generated AIAT_TOOL_SECRET (not a persistent GitHub Actions secret)
     agent_profile_ref: workflow-run-scoped Agent Server UUID (OPENHANDS_AGENT_PROFILE_ID output)
     aiat_mcp_profile_ref: OPENHANDS_MCP_SETTINGS_KEY logical name; settings entry is created and deleted per run
     model_gateway_url_ref: OPENHANDS_MODEL_GATEWAY_URL (static governed variable)
@@ -107,4 +108,8 @@ capabilities:
 sandbox:
   profile: gvisor
   network_mode: egress-allowlist
-  egress_allowlist: [llm-gateway:4000, tool-service:8002]
+  # The disposable certification network must provide these canonical
+  # service identities.  The current workflow provides tool-service only;
+  # LiteLLM/OmniRoute must be added or an operator-owned reachable gateway
+  # must be configured before certification can run.
+  egress_allowlist: [litellm:4000, tool-service:8002]
