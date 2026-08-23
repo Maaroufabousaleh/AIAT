@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
+
+import yaml
 
 
 def _workflow() -> str:
@@ -28,6 +31,20 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert "GITHUB_STEP_SUMMARY" in _workflow()
     assert "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" in _workflow()
     assert "docker logs" not in _workflow()
+
+
+def test_all_workflow_run_blocks_have_valid_shell_syntax() -> None:
+    document = yaml.safe_load(_workflow())
+    assert isinstance(document, dict)
+    jobs = document.get("jobs") or {}
+    assert isinstance(jobs, dict)
+    for job in jobs.values():
+        for step in (job.get("steps") or []):
+            run = step.get("run") if isinstance(step, dict) else None
+            if not isinstance(run, str):
+                continue
+            result = subprocess.run(["bash", "-n"], input=run, text=True, capture_output=True, check=False)
+            assert result.returncode == 0, f"{step.get('name')}: {result.stderr}"
 
 
 def test_automatic_trigger_and_static_profile_are_rejected() -> None:
@@ -150,6 +167,14 @@ def test_network_creation_is_evidenced_and_gates_downstream_stages() -> None:
     assert "network_readiness_gate_missing" not in module.validate(text)["errors"]
     weakened = text.replace("network-startup.json", "network-startup-omitted.json", 1)
     assert "network_readiness_gate_missing" in module.validate(weakened)["errors"]
+
+
+def test_service_startup_failures_have_scalar_failure_classes() -> None:
+    module = _module()
+    text = _workflow()
+    assert "startup_failure_classification_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("TOOL_SERVICE_STARTUP_FAILURE", "TOOL_SERVICE_STARTUP_OMITTED", 1)
+    assert "startup_failure_classification_missing" in module.validate(weakened)["errors"]
 
 
 def test_gateway_network_topology_must_be_explicitly_asserted() -> None:

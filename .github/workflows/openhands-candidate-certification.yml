@@ -380,6 +380,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute"
           name="aiat-openhands-omniroute-${GITHUB_RUN_ID}"
+          run_exit_code=0
           docker run --detach --name "$name" \
             --network "$network" --network-alias omniroute \
             --publish 127.0.0.1:20128:20128 \
@@ -389,30 +390,37 @@ jobs:
             --env API_HOST=0.0.0.0 \
             --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             --env GROQ_API_KEY="$GROQ_API_KEY" \
-            "$OMNIROUTE_IMAGE"
+            "$OMNIROUTE_IMAGE" || run_exit_code=$?
           echo "omniroute_container=$name" >> "$GITHUB_ENV"
           echo "container=$name" >> "$GITHUB_OUTPUT"
           healthy=0
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:20128/api/health/ping >/dev/null; then
-              healthy=1
-              break
-            fi
-            sleep 2
-          done
-          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
-          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-runtime.json"
-          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error http://127.0.0.1:20128/api/health/ping >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-runtime.json"
+          fi
+          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
           healthy, output = sys.argv[1:]
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = run_exit_code != "0"
           Path(output).write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-certification-omniroute-health.v1",
                       "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "OMNIROUTE_STARTUP_FAILURE" if startup_failed else "OMNIROUTE_HEALTH_FAILURE",
+                      "run_exit_code": int(run_exit_code),
                       "endpoint": "http://omniroute:20128/api/health/ping",
                       "provider_count_expected": 1,
                       "raw_response_retained": False,
@@ -424,6 +432,11 @@ jobs:
               encoding="utf-8",
           )
           PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_RUNTIME_STARTUP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           test "$healthy" = 1
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "status=PASS" >> "$GITHUB_OUTPUT"
@@ -472,6 +485,7 @@ jobs:
           name="aiat-openhands-litellm-${GITHUB_RUN_ID}"
           config="$GITHUB_WORKSPACE/mas/infra/compose/litellm_openhands_certification.yaml"
           test -s "$config"
+          run_exit_code=0
           docker run --detach --name "$name" \
             --network "$network" --network-alias litellm \
             --publish 127.0.0.1:4000:4000 \
@@ -479,30 +493,37 @@ jobs:
             --env LITELLM_MASTER_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             "$LITELLM_IMAGE" \
-            --config /app/config.yaml --host 0.0.0.0 --port 4000
+            --config /app/config.yaml --host 0.0.0.0 --port 4000 || run_exit_code=$?
           echo "litellm_container=$name" >> "$GITHUB_ENV"
           echo "container=$name" >> "$GITHUB_OUTPUT"
           healthy=0
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:4000/health/readiness >/dev/null; then
-              healthy=1
-              break
-            fi
-            sleep 2
-          done
-          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-state.json"
-          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-runtime.json"
-          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/health.json" <<'PY'
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error http://127.0.0.1:4000/health/readiness >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-runtime.json"
+          fi
+          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/health.json" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
           healthy, output = sys.argv[1:]
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = run_exit_code != "0"
           Path(output).write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-certification-litellm-health.v1",
                       "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "LITELLM_STARTUP_FAILURE" if startup_failed else "LITELLM_HEALTH_FAILURE",
+                      "run_exit_code": int(run_exit_code),
                       "endpoint": "http://litellm:4000/health/readiness",
                       "model_id": "omniroute-coding",
                       "raw_response_retained": False,
@@ -514,6 +535,11 @@ jobs:
               encoding="utf-8",
           )
           PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_RUNTIME_STARTUP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           test "$healthy" = 1
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "status=PASS" >> "$GITHUB_OUTPUT"
@@ -550,40 +576,56 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-openhands-workspace" "$RUNNER_TEMP/aiat-openhands-evidence/bridge"
           tool_name="aiat-openhands-tool-service-${GITHUB_RUN_ID}"
           image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
-          docker build --file infra/docker/Dockerfile.tool-service --tag "$image" .
-          docker run --detach --name "$tool_name" \
+          build_exit_code=0
+          docker build --file infra/docker/Dockerfile.tool-service --tag "$image" . || build_exit_code=$?
+          run_exit_code=0
+          if [ "$build_exit_code" -eq 0 ]; then
+            docker run --detach --name "$tool_name" \
             --network "$network" --network-alias tool-service \
             --publish 127.0.0.1:18002:8002 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace:rw" \
             --env TOOL_SECRET="$AIAT_TOOL_SECRET" \
             --env TOOL_WORKSPACE_ROOT=/workspace \
             --env LOG_LEVEL=INFO \
-            "$image"
+            "$image" || run_exit_code=$?
+          else
+            run_exit_code=125
+          fi
           echo "network=$network" >> "$GITHUB_OUTPUT"
           echo "tool_container=$tool_name" >> "$GITHUB_OUTPUT"
           echo "network=$network" >> "$GITHUB_ENV"
           echo "tool_container=$tool_name" >> "$GITHUB_ENV"
           healthy=0
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:18002/health >/dev/null; then
-              healthy=1
-              break
-            fi
-            sleep 2
-          done
-          docker inspect --format '{{json .State}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-state.json"
-          docker inspect --format '{{json .HostConfig.Runtime}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-runtime.json"
-          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/bridge/startup.json" <<'PY'
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error http://127.0.0.1:18002/health >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-runtime.json"
+          fi
+          BUILD_EXIT_CODE="$build_exit_code" RUN_EXIT_CODE="$run_exit_code" \
+            python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/bridge/startup.json" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
           healthy, output = sys.argv[1:]
+          build_exit_code = os.environ.get("BUILD_EXIT_CODE", "1")
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = build_exit_code != "0" or run_exit_code != "0"
           Path(output).write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-tool-service-startup.v1",
                       "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "TOOL_SERVICE_STARTUP_FAILURE" if startup_failed else "TOOL_SERVICE_HEALTH_FAILURE",
+                      "build_exit_code": int(build_exit_code),
+                      "run_exit_code": int(run_exit_code),
                       "bridge_url": "http://tool-service:8002/openhands/mcp",
                       "payloads_retained": False,
                       "container_logs_retained": False,
@@ -595,6 +637,11 @@ jobs:
               encoding="utf-8",
           )
           PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_TOOL_BRIDGE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           test "$healthy" = 1
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "status=PASS" >> "$GITHUB_OUTPUT"
@@ -614,35 +661,43 @@ jobs:
           printf '%s' "$key" > "$key_file"
           echo "container=$name" >> "$GITHUB_OUTPUT"
           echo "agent_container=$name" >> "$GITHUB_ENV"
+          run_exit_code=0
           docker run --detach --name "$name" --runtime=runsc \
             --network "$network" --network-alias agent-server \
             --publish 127.0.0.1:18000:8000 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
-            "$OPENHANDS_IMAGE"
+            "$OPENHANDS_IMAGE" || run_exit_code=$?
           healthy=0
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error \
-              -H "X-Session-API-Key: $key" \
-              http://127.0.0.1:18000/health >/dev/null; then
-              healthy=1
-              break
-            fi
-            sleep 2
-          done
-          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-state.json"
-          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-runtime.json"
-          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/startup/startup.json" <<'PY'
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error \
+                -H "X-Session-API-Key: $key" \
+                http://127.0.0.1:18000/health >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-runtime.json"
+          fi
+          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/startup/startup.json" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
           healthy, output = sys.argv[1:]
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = run_exit_code != "0"
           Path(output).write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-startup.v1",
                       "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "OPENHANDS_AGENT_SERVER_STARTUP_FAILURE" if startup_failed else "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE",
+                      "run_exit_code": int(run_exit_code),
                       "runtime_expected": "runsc",
                       "payloads_retained": False,
                       "container_logs_retained": False,
@@ -654,6 +709,11 @@ jobs:
               encoding="utf-8",
           )
           PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_GVISOR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$healthy" != 1 ]; then
             echo "OpenHands Agent Server did not become healthy under runsc" >&2
             exit 1
@@ -782,6 +842,7 @@ jobs:
               + "\n",
               encoding="utf-8",
           )
+          PY
           exit_code=$?
           rm -f "$topology_input"
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"

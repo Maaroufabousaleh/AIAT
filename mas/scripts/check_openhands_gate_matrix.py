@@ -72,6 +72,10 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
             "OMNIROUTE_HEALTH_FAILURE",
         }:
             return "BLOCKED_RUNTIME_STARTUP"
+        if failure_class in {"OPENHANDS_AGENT_SERVER_STARTUP_FAILURE", "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE"}:
+            return "BLOCKED_GVISOR"
+        if failure_class in {"TOOL_SERVICE_STARTUP_FAILURE", "TOOL_SERVICE_HEALTH_FAILURE"}:
+            return "BLOCKED_TOOL_BRIDGE"
         if failure_class.startswith("PROVIDER_") or failure_class == "MISSING_PROVIDER_SECRET":
             return "BLOCKED_PROVIDER"
         if name.startswith("runtime/") and value.get("status") == "BLOCKED":

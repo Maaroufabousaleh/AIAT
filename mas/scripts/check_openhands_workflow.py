@@ -89,6 +89,16 @@ def validate(text: str) -> dict[str, Any]:
         or "steps.network.outputs.ready == 'true'" not in text
     ):
         errors.append("network_readiness_gate_missing")
+    if not all(
+        marker in text
+        for marker in (
+            "OMNIROUTE_STARTUP_FAILURE",
+            "LITELLM_STARTUP_FAILURE",
+            "TOOL_SERVICE_STARTUP_FAILURE",
+            "OPENHANDS_AGENT_SERVER_STARTUP_FAILURE",
+        )
+    ):
+        errors.append("startup_failure_classification_missing")
     if "steps.gateway.outputs.ready == 'true'" not in text:
         errors.append("gateway_route_gate_missing_before_worker_stages")
     if "runtime-provisioning.json" not in text or "runtime_status" not in text or 'echo "ready=true" >> "$GITHUB_OUTPUT"' not in text:

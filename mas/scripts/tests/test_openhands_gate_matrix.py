@@ -182,6 +182,26 @@ def test_network_creation_failure_is_infrastructure_failure(tmp_path: Path) -> N
     assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"
 
 
+def test_agent_and_tool_startup_failures_keep_narrow_blockers(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "startup").mkdir()
+    startup_path = tmp_path / "startup" / "startup.json"
+    startup_path.write_text(
+        json.dumps({"health_status": "BLOCKED", "failure_class": "OPENHANDS_AGENT_SERVER_STARTUP_FAILURE"}),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_GVISOR"
+    startup_path.unlink()
+    (tmp_path / "bridge").mkdir()
+    (tmp_path / "bridge" / "startup.json").write_text(
+        json.dumps({"health_status": "BLOCKED", "failure_class": "TOOL_SERVICE_STARTUP_FAILURE"}),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_TOOL_BRIDGE"
+
+
 def test_runsc_gateway_probe_failure_gets_model_gateway_blocker(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()
