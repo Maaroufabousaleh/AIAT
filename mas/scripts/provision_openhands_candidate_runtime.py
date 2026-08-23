@@ -208,7 +208,12 @@ def provision(
         # through the authenticated Agent Server API, then prove it is absent
         # before creating the fresh grant-bearing configuration.
         preclean_response = client.delete(f"/api/settings/mcp/{mcp_key}")
-        if preclean_response.status_code not in {200, 404}:
+        # Agent Server versions may use either an empty successful response
+        # (204), an explicit success response (200), or idempotent absence
+        # (404) for this run-scoped delete. All three preserve the required
+        # pre-clean invariant; any other response is a real provisioning
+        # failure.
+        if preclean_response.status_code not in {200, 204, 404}:
             raise ProvisioningError("run_scoped_mcp_preclean_delete_failed")
         preclean_settings = _json_body(client.get("/api/settings"))
         preclean_config = _mcp_config(preclean_settings)

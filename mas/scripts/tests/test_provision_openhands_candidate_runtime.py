@@ -39,7 +39,9 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
             return httpx.Response(201, json={})
         if request.method == "DELETE" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = False
-            return httpx.Response(404, json={})
+            # Agent Server may use an empty successful response for an
+            # idempotent delete; provisioning must accept that contract.
+            return httpx.Response(204)
         if request.method == "GET" and request.url.path == "/api/settings":
             config = {
                 mcp_key: {

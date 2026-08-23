@@ -147,7 +147,9 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
                 },
             )
         if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
-            return httpx.Response(200, json={})
+            # A valid Agent Server implementation may return an empty
+            # successful response for run-scoped MCP deletion.
+            return httpx.Response(204)
         raise AssertionError(request)
 
     adapter = make_adapter(tmp_path, handler, preconfigured=True)

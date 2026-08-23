@@ -668,12 +668,18 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         response = await (await self._get_client()).delete(
             self.verification.endpoint("settings_mcp", settings_key=settings_key)
         )
-        if response.status_code not in {200, 404}:
+        # Treat a successful empty delete (204) the same as an explicit 200
+        # or an already-absent 404. The Agent Server API is allowed to use
+        # either success shape for this idempotent run-scoped cleanup.
+        if response.status_code not in {200, 204, 404}:
             response.raise_for_status()
         await self.emit_audit(
             run_id,
             "openhands.mcp_bridge_cleaned",
-            details={"settings_key": settings_key, "outcome": "deleted" if response.status_code == 200 else "already_absent"},
+            details={
+                "settings_key": settings_key,
+                "outcome": "deleted" if response.status_code in {200, 204} else "already_absent",
+            },
         )
 
     def _workspace_path(self) -> Path:
