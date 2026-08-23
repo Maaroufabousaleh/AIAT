@@ -701,7 +701,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         llm = agent.get("llm") if isinstance(agent, dict) else None
         expected = str(self.context.metadata.get("openhands_model_id") or _OPENHANDS_MODEL_ID)
         actual = llm.get("model") if isinstance(llm, dict) else None
-        if expected and actual and str(actual) != expected:
+        if not actual or str(actual) != expected:
             raise RuntimeError("OpenHands agent profile resolved a model different from AIAT's model snapshot")
         self._conversation_by_key[request.idempotency_key] = conversation_id
         self._conversation_by_run[request.run_id] = conversation_id
