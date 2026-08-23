@@ -403,7 +403,9 @@ jobs:
           echo "::add-mask::$OPENHANDS_MODEL_GATEWAY_API_KEY"
           uv run python scripts/check_openhands_omniroute_auth.py \
             --url http://127.0.0.1:20129/v1/models \
-            --output "$output"
+            --output "$output" \
+            --attempts 30 \
+            --interval-seconds 1
           auth_exit_code=$?
           if [ "$auth_exit_code" -eq 0 ]; then
             echo "status=PASS" >> "$GITHUB_OUTPUT"

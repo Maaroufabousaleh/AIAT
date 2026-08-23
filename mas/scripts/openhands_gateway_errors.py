@@ -36,6 +36,7 @@ OMNIROUTE_HEALTH_TIMEOUT = "OMNIROUTE_HEALTH_TIMEOUT"
 LITELLM_TO_OMNIROUTE_ROUTE_FAILURE = "LITELLM_TO_OMNIROUTE_ROUTE_FAILURE"
 OPENHANDS_TO_GATEWAY_NETWORK_FAILURE = "OPENHANDS_TO_GATEWAY_NETWORK_FAILURE"
 MODEL_GATEWAY_AUTH_FAILURE = "MODEL_GATEWAY_AUTH_FAILURE"
+MODEL_GATEWAY_TRANSPORT_FAILURE = "MODEL_GATEWAY_TRANSPORT_FAILURE"
 MODEL_GATEWAY_RESPONSE_INVALID = "MODEL_GATEWAY_RESPONSE_INVALID"
 MODEL_EXECUTION_FAILURE = "MODEL_EXECUTION_FAILURE"
 
@@ -119,6 +120,8 @@ def classify_failure(
     # Authentication at the disposable AIAT gateway is distinct from a
     # provider credential rejection returned after a route is selected.
     if normalized_stage in {"gateway_auth", "model_gateway_auth"}:
+        if exception in {"readtimeout", "connecttimeout", "connecterror", "connectionerror", "networkerror", "dnserror"}:
+            return GatewayFailure(MODEL_GATEWAY_TRANSPORT_FAILURE, normalized_stage, retryable=True)
         if http_status in {401, 403}:
             return GatewayFailure(MODEL_GATEWAY_AUTH_FAILURE, normalized_stage, http_status)
         if http_status is not None and http_status >= 400:

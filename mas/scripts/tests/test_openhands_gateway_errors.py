@@ -40,6 +40,7 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "route": module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE,
         "openhands_network": module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE,
         "gateway_auth": module.MODEL_GATEWAY_AUTH_FAILURE,
+        "gateway_transport": module.MODEL_GATEWAY_TRANSPORT_FAILURE,
         "invalid_response": module.MODEL_GATEWAY_RESPONSE_INVALID,
         "execution": module.MODEL_EXECUTION_FAILURE,
     }
@@ -64,6 +65,7 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "route": module.classify_failure(stage="litellm_to_omniroute"),
         "openhands_network": module.classify_failure(stage="openhands_to_gateway"),
         "gateway_auth": module.classify_failure(stage="gateway_auth"),
+        "gateway_transport": module.classify_failure(stage="gateway_auth", exception_type="ConnectError"),
         "invalid_response": module.classify_failure(stage="gateway_response"),
         "execution": module.classify_failure(stage="model_execution"),
     }
@@ -87,6 +89,13 @@ def test_gateway_authentication_is_not_reported_as_provider_credential_failure()
     assert gateway.failure_class == module.MODEL_GATEWAY_AUTH_FAILURE
     provider = module.classify_failure(stage="provider", http_status=401)
     assert provider.failure_class == module.INVALID_PROVIDER_CREDENTIAL
+
+
+def test_gateway_transport_is_not_reported_as_auth_or_provider_failure() -> None:
+    module = _load("openhands_gateway_errors")
+    failure = module.classify_failure(stage="gateway_auth", exception_type="ConnectError")
+    assert failure.failure_class == module.MODEL_GATEWAY_TRANSPORT_FAILURE
+    assert failure.retryable is True
 
 
 def test_internal_gateway_stages_precede_provider_http_heuristics() -> None:

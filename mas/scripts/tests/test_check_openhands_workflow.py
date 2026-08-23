@@ -150,6 +150,14 @@ def test_omniroute_readiness_and_api_port_contract_are_explicit() -> None:
     assert "model: openai/auto/coding" in config.read_text(encoding="utf-8")
 
 
+def test_omniroute_auth_probe_requires_bounded_transport_retry() -> None:
+    module = _module()
+    text = _workflow()
+    assert "omniroute_auth_transport_retry_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("            --attempts 30 \\\n", "", 1).replace("            --interval-seconds 1\n", "", 1)
+    assert "omniroute_auth_transport_retry_missing" in module.validate(weakened)["errors"]
+
+
 def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     module = _module()
     text = _workflow()

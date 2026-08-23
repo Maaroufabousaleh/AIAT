@@ -174,6 +174,8 @@ def _omniroute_auth_helper_issues() -> list[str]:
         '"wrong_gateway_key_denied"',
         '"correct_gateway_key_accepted"',
         '"credentials_retained": False',
+        "def _status_with_retry(",
+        '"MODEL_GATEWAY_TRANSPORT_FAILURE"',
     )
     return ["omniroute_auth_helper_contract_missing"] if any(item not in helper for item in required) else []
 
@@ -230,6 +232,8 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_gateway_provenance_helper_issues())
     errors.extend(_omniroute_readiness_helper_issues())
     errors.extend(_omniroute_auth_helper_issues())
+    if "--attempts 30" not in text or "--interval-seconds 1" not in text:
+        errors.append("omniroute_auth_transport_retry_missing")
     errors.extend(_litellm_omniroute_port_issues())
     for image in EXPECTED_IMAGES:
         if image not in text:

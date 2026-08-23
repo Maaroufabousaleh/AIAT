@@ -74,3 +74,61 @@ def test_live_helper_sends_only_bearer_auth_and_keeps_responses_out():
     assert seen[1][1] == "Bearer aiat-openhands-invalid-gateway-key"
     assert seen[2][1] == "Bearer correct"
     assert "redacted" not in json.dumps(report)
+
+
+def test_live_helper_retries_cold_api_bridge_before_evaluating_auth():
+    module = _load()
+    calls: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("authorization")
+        calls.append(auth)
+        if len(calls) == 1:
+            raise httpx.ConnectError("API bridge still starting", request=request)
+        if auth is None or auth == "Bearer aiat-openhands-invalid-gateway-key":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"data": [{"id": "redacted"}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = module.check(
+        url="http://omniroute.test/v1/models",
+        gateway_key="correct",
+        client=client,
+        attempts=3,
+        interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+    client.close()
+    assert report["status"] == "PASS"
+    assert report["probe_attempts"]["unauthenticated"] == 2
+    assert report["probe_attempts"]["wrong_key"] == 1
+    assert report["probe_attempts"]["correct_key"] == 1
+    assert report["transport_retry_window_seconds"] == 0
+    assert "API bridge" not in json.dumps(report)
+
+
+def test_live_helper_keeps_auth_blocked_when_transport_never_becomes_ready():
+    module = _load()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("still starting", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = module.check(
+        url="http://omniroute.test/v1/models",
+        gateway_key="correct",
+        client=client,
+        attempts=2,
+        interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+    client.close()
+    assert report["status"] == "BLOCKED"
+    assert report["failure_class"] == "MODEL_GATEWAY_TRANSPORT_FAILURE"
+    assert report["probe_attempts"] == {
+        "unauthenticated": 2,
+        "wrong_key": 2,
+        "correct_key": 2,
+    }
+    assert report["unauthenticated_http_status"] is None
+    assert report["raw_response_retained"] is False
