@@ -22,6 +22,18 @@ MANIFEST = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-ma
 INTERFACE_REPORT = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json"
 GATEWAY_PROVENANCE = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/gateway-provenance.json"
 SCHEMA = "aiat.openhands-dispatch-preflight.v1"
+LOCAL_TEST_COMMAND = (
+    "uv",
+    "run",
+    "--isolated",
+    "pytest",
+    "scripts/tests/test_openhands_gateway_errors.py",
+    "scripts/tests/test_openhands_gate_matrix.py",
+    "scripts/tests/test_openhands_coding_task_fixture.py",
+    "scripts/tests/test_openhands_offline_harness.py",
+    "scripts/tests/test_check_openhands_workflow.py",
+    "-q",
+)
 
 
 def _run(command: list[str], *, cwd: Path) -> tuple[int, str]:
@@ -144,23 +156,23 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         code, output = _run(["gh", "variable", "list", "--repo", repo_slug, "--json", "name,value"], cwd=repo)
         if code == 0:
             variable_values = _variables_from_gh(output)
-    local_tests_passed = True
-    if not skip_tests:
-        code, _ = _run(
-            [
-                "python3",
-                "-m",
-                "pytest",
-                "scripts/tests/test_openhands_gateway_errors.py",
-                "scripts/tests/test_openhands_gate_matrix.py",
-                "scripts/tests/test_openhands_coding_task_fixture.py",
-                "scripts/tests/test_openhands_offline_harness.py",
-                "scripts/tests/test_check_openhands_workflow.py",
-                "-q",
-            ],
-            cwd=repo / "mas",
-        )
+    if skip_tests:
+        local_tests_passed = False
+        local_validation = {
+            "status": "SKIPPED",
+            "runner": "uv run --isolated pytest",
+            "exit_code": None,
+            "output_retained": False,
+        }
+    else:
+        code, _ = _run(list(LOCAL_TEST_COMMAND), cwd=repo / "mas")
         local_tests_passed = code == 0
+        local_validation = {
+            "status": "PASS" if local_tests_passed else "BLOCKED",
+            "runner": "uv run --isolated pytest",
+            "exit_code": code,
+            "output_retained": False,
+        }
     report = evaluate_static(
         workflow_text=workflow_text,
         manifest_text=manifest_text,
@@ -172,6 +184,7 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         variable_values=variable_values,
         local_tests_passed=local_tests_passed,
     )
+    report["local_validation"] = local_validation
     code, branch = _run(["git", "branch", "--show-current"], cwd=repo)
     report["branch"] = branch.strip() if code == 0 else None
     code, status = _run(["git", "status", "--porcelain"], cwd=repo)
