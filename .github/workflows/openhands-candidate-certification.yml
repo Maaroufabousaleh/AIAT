@@ -1138,16 +1138,38 @@ jobs:
           fi
           unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
           unset session_key settings_response settings_json delete_code || true
+          secret_environment_entries_absent=true
+          if [ -n "${GITHUB_ENV:-}" ]; then
+            if [ -f "$GITHUB_ENV" ]; then
+              if ! sed -i \
+                -e '/^AIAT_TOOL_SECRET=/d' \
+                -e '/^AIAT_TOOL_SECRET_SCOPE=/d' \
+                -e '/^OPENHANDS_MODEL_GATEWAY_API_KEY=/d' \
+                -e '/^OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE=/d' \
+                -e '/^MODEL_GATEWAY_SECRET_SCOPE=/d' \
+                "$GITHUB_ENV"; then
+                secret_environment_entries_absent=false
+                cleanup_ok=0
+              fi
+              if grep -Eq '^(AIAT_TOOL_SECRET|AIAT_TOOL_SECRET_SCOPE|OPENHANDS_MODEL_GATEWAY_API_KEY|OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE|MODEL_GATEWAY_SECRET_SCOPE)=' "$GITHUB_ENV"; then
+                secret_environment_entries_absent=false
+                cleanup_ok=0
+              fi
+            else
+              secret_environment_entries_absent=false
+              cleanup_ok=0
+            fi
+          fi
           python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
             "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" \
-            "$mcp_status" "$mcp_verified_absent" "$profile_status" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$cleanup_ok" "$docker_available" <<'PY'
+            "$mcp_status" "$mcp_verified_absent" "$profile_status" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$secret_environment_entries_absent" "$cleanup_ok" "$docker_available" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           output, *values = sys.argv[1:]
           names = values[:5]
-          mcp_status, mcp_verified_absent, profile_status, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, cleanup_ok, docker_available = values[5:]
+          mcp_status, mcp_verified_absent, profile_status, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, secret_environment_entries_absent, cleanup_ok, docker_available = values[5:]
           Path(output).parent.mkdir(parents=True, exist_ok=True)
           Path(output).write_text(
               json.dumps(
@@ -1159,6 +1181,7 @@ jobs:
                   },
                   "network": {"name": names[-1], "status": "absent"},
                   "run_scoped_secret_files": "absent",
+                  "run_scoped_secret_environment_entries_absent": secret_environment_entries_absent == "true",
                   "mcp": {
                       "status": mcp_status,
                       "verified_absent": mcp_verified_absent == "true",

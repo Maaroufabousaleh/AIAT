@@ -318,6 +318,13 @@ def validate(text: str) -> dict[str, Any]:
     ):
         errors.append("workspace_profile_or_tool_image_cleanup_missing")
     if (
+        "secret_environment_entries_absent" not in text
+        or "^AIAT_TOOL_SECRET=/d" not in text
+        or "^OPENHANDS_MODEL_GATEWAY_API_KEY=/d" not in text
+        or '"run_scoped_secret_environment_entries_absent"' not in text
+    ):
+        errors.append("run_scoped_secret_environment_cleanup_missing")
+    if (
         "GITHUB_STEP_SUMMARY" not in text
         or "Summarize fail-closed certification result" not in text
         or "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" not in text

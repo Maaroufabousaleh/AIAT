@@ -187,6 +187,14 @@ def test_live_task_requires_a_disposable_git_baseline_for_real_diff() -> None:
     assert "coding_task_git_baseline_missing" in module.validate(weakened)["errors"]
 
 
+def test_cleanup_removes_generated_secret_environment_entries() -> None:
+    module = _module()
+    text = _workflow()
+    assert "run_scoped_secret_environment_cleanup_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("-e '/^AIAT_TOOL_SECRET=/d' \\", "-e '/^AIAT_TOOL_SECRET=/x' \\", 1)
+    assert "run_scoped_secret_environment_cleanup_missing" in module.validate(weakened)["errors"]
+
+
 def test_live_certification_invokes_the_lifecycle_wave() -> None:
     module = _module()
     text = _workflow()
