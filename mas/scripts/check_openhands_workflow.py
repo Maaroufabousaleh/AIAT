@@ -59,6 +59,10 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("always_cleanup_or_artifact_upload_missing")
     if "steps.provider_preflight.outputs.ready == 'true'" not in text:
         errors.append("provider_gate_missing_before_expensive_stages")
+    if "id: provider\n" not in text or "steps.provider.outputs.ready == 'true'" not in text:
+        errors.append("provider_route_gate_missing_before_model_stages")
+    if "steps.gateway.outputs.ready == 'true'" not in text:
+        errors.append("gateway_route_gate_missing_before_worker_stages")
     if "steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'" not in text or re.search(
         r"(?m)^\s*if:\s*steps\.provider_preflight\.outputs\.ready\s*==\s*'true'\s*$",
         text,

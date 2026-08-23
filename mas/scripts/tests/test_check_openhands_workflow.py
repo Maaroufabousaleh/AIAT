@@ -95,6 +95,19 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     assert "raw_container_logs_retained" in report["errors"]
 
 
+def test_provider_and_gateway_failures_gate_worker_startup() -> None:
+    module = _module()
+    text = _workflow()
+    assert "provider_route_gate_missing_before_model_stages" not in module.validate(text)["errors"]
+    assert "gateway_route_gate_missing_before_worker_stages" not in module.validate(text)["errors"]
+
+    without_provider_gate = text.replace(" && steps.provider.outputs.ready == 'true'", "")
+    assert "provider_route_gate_missing_before_model_stages" in module.validate(without_provider_gate)["errors"]
+
+    without_gateway_gate = text.replace(" && steps.gateway.outputs.ready == 'true'", "")
+    assert "gateway_route_gate_missing_before_worker_stages" in module.validate(without_gateway_gate)["errors"]
+
+
 def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     module = _module()
     text = _workflow()

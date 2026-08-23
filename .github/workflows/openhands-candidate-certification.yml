@@ -371,10 +371,12 @@ jobs:
           )
           PY
           test "$healthy" = 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
 
       - name: Configure exactly one disposable OmniRoute provider route
         id: provider
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -385,11 +387,30 @@ jobs:
             OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             uv run python scripts/provision_openhands_certification_gateway.py \
               --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-provisioning.json"
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit_code=$?
+          provider_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-provisioning.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print("PASS" if isinstance(report, dict) and report.get("status") == "PASS" else "BLOCKED")
+          PY
+          )
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "status=$provider_status" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ] && [ "$provider_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Start disposable LiteLLM model gateway
         id: litellm
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -440,10 +461,12 @@ jobs:
           )
           PY
           test "$healthy" = 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
 
       - name: Verify deterministic provider route through LiteLLM
         id: gateway
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -454,11 +477,19 @@ jobs:
               --litellm-url http://127.0.0.1:4000 \
               --omniroute-url http://127.0.0.1:20128 \
               --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/route-probe.json"
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Start disposable AIAT tool-service bridge
         id: bridge
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.gateway.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -511,10 +542,12 @@ jobs:
           )
           PY
           test "$healthy" = 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
 
       - name: Start Agent Server under runsc
         id: server
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.bridge.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -571,10 +604,12 @@ jobs:
             echo "OpenHands Agent Server did not become healthy under runsc" >&2
             exit 1
           fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
 
       - name: Prove runsc Agent Server can reach the internal LiteLLM target
         id: runsc_gateway
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.server.outputs.ready == 'true' && steps.gateway.outputs.ready == 'true'
         continue-on-error: true
         env:
           AGENT_CONTAINER: ${{ steps.server.outputs.container }}
@@ -607,11 +642,18 @@ jobs:
           )
           PY
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
           test "$exit_code" = 0
 
       - name: Record disposable gateway network topology
         id: network_topology
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true' && steps.bridge.outputs.ready == 'true' && steps.server.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -701,10 +743,12 @@ jobs:
           PY
           )
           test "$topology_status" = PASS
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
 
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network_topology.outputs.ready == 'true' && steps.runsc_gateway.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
@@ -722,7 +766,7 @@ jobs:
 
       - name: Run governed OpenHands live adapter wave
         id: live
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.runtime.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
@@ -761,7 +805,7 @@ jobs:
 
       - name: Run OpenHands supply-chain and runtime evidence
         id: certification
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.runtime.outputs.ready == 'true'
         continue-on-error: true
         env:
           CONTAINER_NAME: ${{ steps.server.outputs.container }}
