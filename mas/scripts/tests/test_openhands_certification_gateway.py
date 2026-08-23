@@ -84,6 +84,7 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     )
     serialized = json.dumps(report, sort_keys=True)
     assert report["status"] == "PASS"
+    assert report["provider_count"] == 1
     assert report["resolved_provider_model"] == "groq/llama-3.3-70b-versatile"
     assert provider_key not in serialized
     assert management_key not in serialized
