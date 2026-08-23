@@ -117,3 +117,19 @@ def test_provisioning_fails_closed_for_unapproved_model() -> None:
             mcp_key="aiat-openhands-test-run",
             client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))),
         )
+
+
+def test_mcp_readback_rejects_unapproved_entries() -> None:
+    with pytest.raises(MODULE.ProvisioningError, match="unapproved_entries"):
+        MODULE._validate_mcp_entry(
+            {
+                "aiat-openhands-test-run": {
+                    "url": MODULE.BRIDGE_URL,
+                    "transport": "streamable-http",
+                    "enabled": True,
+                    "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                },
+                "unexpected-external-server": {"url": "https://example.invalid/mcp"},
+            },
+            "aiat-openhands-test-run",
+        )

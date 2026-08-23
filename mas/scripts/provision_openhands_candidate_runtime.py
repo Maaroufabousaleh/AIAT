@@ -85,6 +85,8 @@ def _write_github_output(path: Path | None, values: dict[str, str]) -> None:
 
 
 def _validate_mcp_entry(config: dict[str, Any], key: str) -> None:
+    if set(config) != {key}:
+        raise ProvisioningError("run_scoped_mcp_configuration_contains_unapproved_entries")
     entry = config.get(key)
     if not isinstance(entry, dict):
         raise ProvisioningError("run_scoped_mcp_entry_missing_after_create")

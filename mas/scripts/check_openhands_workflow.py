@@ -57,7 +57,14 @@ def validate(text: str) -> dict[str, Any]:
         text,
     ):
         errors.append("candidate_preflight_gate_missing_before_expensive_stages")
-    if "mcp-cleanup.json" not in text or '"verified_absent"' not in text or 'test "$cleanup_ok" = 1' not in text:
+    if (
+        "mcp-cleanup.json" not in text
+        or '"verified_absent"' not in text
+        or 'delete_ok=false' not in text
+        or 'case "$delete_code"' not in text
+        or 'if [ "$delete_ok" != true ]' not in text
+        or 'test "$cleanup_ok" = 1' not in text
+    ):
         errors.append("cleanup_absence_readback_missing")
     if (
         "network-topology.json" not in text

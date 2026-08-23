@@ -70,3 +70,12 @@ def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     assert "network_topology_assertion_missing" not in module.validate(text)["errors"]
     weakened = text.replace('test "$topology_status" = PASS', 'echo "$topology_status"')
     assert "network_topology_assertion_missing" in module.validate(weakened)["errors"]
+
+
+def test_cleanup_requires_delete_status_and_absence_readback() -> None:
+    module = _module()
+    text = _workflow()
+    assert "cleanup_absence_readback_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('delete_ok=false', 'delete_status_unchecked=false', 1)
+    report = module.validate(weakened)
+    assert "cleanup_absence_readback_missing" in report["errors"]
