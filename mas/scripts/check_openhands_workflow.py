@@ -44,6 +44,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_missing_secret_class_missing")
     if "if: always()" not in text or "actions/upload-artifact@v4" not in text:
         errors.append("always_cleanup_or_artifact_upload_missing")
+    if "GITHUB_STEP_SUMMARY" not in text or "Summarize fail-closed certification result" not in text:
+        errors.append("fail_closed_summary_missing")
     if "docker network rm" not in text or "aiat-openhands-cert-network-${GITHUB_RUN_ID}" not in text:
         errors.append("network_cleanup_missing")
     if "vars.OPENHANDS_AGENT_PROFILE_ID" in text:

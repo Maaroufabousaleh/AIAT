@@ -739,6 +739,33 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Summarize fail-closed certification result
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json"
+          {
+            echo "## OpenHands candidate certification"
+            echo
+            if [ -f "$report" ]; then
+              python3 - "$report" <<'PY'
+          import json
+          import sys
+
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          evaluation = report.get("evaluation") or {}
+          print(f"- Candidate SHA: `{report.get('candidate_sha') or 'unknown'}`")
+          print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
+          print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
+          print(f"- Mandatory gates: `{evaluation.get('passed_gate_count', 0)}/{evaluation.get('mandatory_gate_count', 0)} PASS`")
+          print(f"- Final result: `{report.get('status') or 'FAILED_CERTIFICATION_IMPLEMENTATION'}`")
+          print("- Worker activation: `INACTIVE`")
+          PY
+            else
+              echo '- Final result: `FAILED_CERTIFICATION_IMPLEMENTATION` (gate-evaluation.json missing)'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the workflow red when certification is blocked or unresolved
         if: always()
         run: |

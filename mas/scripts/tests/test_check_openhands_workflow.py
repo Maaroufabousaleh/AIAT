@@ -25,6 +25,7 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert report["manual_only"] is True
     assert report["candidate_sha_bound"] is True
     assert report["exact_image_pins"] is True
+    assert "GITHUB_STEP_SUMMARY" in _workflow()
 
 
 def test_automatic_trigger_and_static_profile_are_rejected() -> None:
