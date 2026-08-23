@@ -57,6 +57,26 @@ def _status_map(status: str) -> dict[str, str]:
     }
 
 
+def _final_status(statuses: dict[str, str], blockers: list[str]) -> str:
+    """Return a narrow wrapper status without promoting NOT_RUN to PASS."""
+
+    if any(item.startswith("operator_configuration_missing:") for item in blockers):
+        return "BLOCKED_OPERATOR_CONFIGURATION"
+    if any(item.startswith("readiness:") for item in blockers):
+        return "BLOCKED_RUNTIME_STARTUP"
+    if any(item.startswith("certification_authorization:") for item in blockers):
+        return "BLOCKED_CERTIFICATION_AUTHORIZATION"
+    if any(item.startswith("runtime:") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if statuses.get("coding_task") == "FAILED_MODEL_EXECUTION":
+        return "FAILED_MODEL_EXECUTION"
+    if statuses.get("zero_residue") == "FAILED_CLEANUP":
+        return "BLOCKED_CLEANUP"
+    if all(value == "PASS" for value in statuses.values()) and not blockers:
+        return "PASS"
+    return "BLOCKED_INCOMPLETE_MANDATORY_GATES"
+
+
 async def certify(
     *,
     base_url: str,
@@ -68,7 +88,7 @@ async def certify(
     blockers: list[str] = []
     report_payload = json.loads(interface_report.read_text(encoding="utf-8"))
     verification = OpenHandsInterfaceVerification.from_report(report_payload)
-    statuses = _status_map("BLOCKED")
+    statuses = _status_map("NOT_RUN")
     task_definition: dict[str, Any] = {}
     if task_spec is not None:
         try:
@@ -109,7 +129,7 @@ async def certify(
     if blockers:
         return {
             "schema_version": SCHEMA,
-            "status": "BLOCKED",
+            "status": _final_status(statuses, blockers),
             "candidate": {
                 "release": verification.release,
                 "commit_sha": verification.commit_sha,
@@ -177,7 +197,7 @@ async def certify(
             blockers.append(f"certification_authorization:{exc}")
             return {
                 "schema_version": SCHEMA,
-                "status": "BLOCKED",
+                "status": _final_status(statuses, blockers),
                 "candidate": {
                     "release": verification.release,
                     "commit_sha": verification.commit_sha,
@@ -233,10 +253,10 @@ async def certify(
         readiness = await adapter.readiness(request)
         if not readiness.ready:
             blockers.extend([f"readiness:{item}" for item in readiness.blockers])
-            statuses = _status_map("BLOCKED")
+            statuses = _status_map("NOT_RUN")
             return {
                 "schema_version": SCHEMA,
-                "status": "BLOCKED",
+                "status": _final_status(statuses, blockers),
                 "candidate": {"release": verification.release, "commit_sha": verification.commit_sha, "image_digest": verification.image_digest},
                 "worker_activation": "INACTIVE",
                 "certification_authorization": {
@@ -263,22 +283,26 @@ async def certify(
             event_count += 1
             if event.result is not None or event.error is not None:
                 result_event = event
-        statuses["coding_task"] = "PASS" if result_event and result_event.result and result_event.result.success else "FAIL"
+        statuses["coding_task"] = (
+            "PASS"
+            if result_event and result_event.result and result_event.result.success
+            else "FAILED_MODEL_EXECUTION"
+        )
         if statuses["coding_task"] != "PASS":
             blockers.append("live_coding_task_failed")
         if exercise_lifecycle:
             blockers.append("lifecycle_exercise_requires_dedicated_long_running_task_profile")
     except Exception as exc:  # runtime errors remain evidence, never activation
-        statuses["coding_task"] = "FAIL"
+        statuses["coding_task"] = "FAILED_CERTIFICATION_IMPLEMENTATION"
         blockers.append(f"runtime:{type(exc).__name__}")
     finally:
         await adapter.close()
-    statuses["zero_residue"] = "PASS" if not adapter._mcp_by_run else "FAIL"
+    statuses["zero_residue"] = "PASS" if not adapter._mcp_by_run else "FAILED_CLEANUP"
     if statuses["zero_residue"] != "PASS":
         blockers.append("run_scoped_mcp_grant_residue")
     return {
         "schema_version": SCHEMA,
-        "status": "PASS" if not blockers and statuses["coding_task"] == "PASS" else "BLOCKED",
+        "status": _final_status(statuses, blockers),
         "candidate": {"release": verification.release, "commit_sha": verification.commit_sha, "image_digest": verification.image_digest},
         "worker_activation": "INACTIVE",
         "certification_authorization": {
@@ -337,7 +361,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-spec", type=Path)
     args = parser.parse_args(argv)
     if not args.base_url:
-        report = {"schema_version": SCHEMA, "status": "BLOCKED", "blockers": ["agent_server_url_missing"], "worker_activation": "INACTIVE"}
+        report = {
+            "schema_version": SCHEMA,
+            "status": "BLOCKED_OPERATOR_CONFIGURATION",
+            "blockers": ["agent_server_url_missing"],
+            "worker_activation": "INACTIVE",
+        }
     else:
         report = asyncio.run(
             certify(
