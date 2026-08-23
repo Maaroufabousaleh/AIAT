@@ -75,6 +75,13 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("network_topology_assertion_missing")
     if '"zero_residue": cleanup_ok == "1"' not in text:
         errors.append("cleanup_zero_residue_not_fail_closed")
+    if (
+        'docker image rm "$tool_image"' not in text
+        or 'rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
+        or '"tool_image_absent": image_absent == "true"' not in text
+        or '"workspace_absent": workspace_absent == "true"' not in text
+    ):
+        errors.append("workspace_or_tool_image_cleanup_missing")
     if "GITHUB_STEP_SUMMARY" not in text or "Summarize fail-closed certification result" not in text:
         errors.append("fail_closed_summary_missing")
     if "docker network rm" not in text or "aiat-openhands-cert-network-${GITHUB_RUN_ID}" not in text:

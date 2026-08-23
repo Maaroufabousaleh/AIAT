@@ -869,7 +869,10 @@ jobs:
           docker rm --force "$tool_name" >/dev/null 2>&1 || true
           docker rm --force "$litellm_name" >/dev/null 2>&1 || true
           docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
+          tool_image="aiat-openhands-tool-service-cert-${GITHUB_RUN_ID}"
+          docker image rm "$tool_image" >/dev/null 2>&1 || true
           containers_absent=true
+          image_absent=true
           network_absent=true
           if [ "$docker_available" = true ]; then
             for container in "$name" "$tool_name" "$litellm_name" "$omniroute_name"; do
@@ -878,6 +881,10 @@ jobs:
                 cleanup_ok=0
               fi
             done
+            if docker image inspect "$tool_image" >/dev/null 2>&1; then
+              image_absent=false
+              cleanup_ok=0
+            fi
             docker network rm "$network_name" >/dev/null 2>&1 || true
           else
             containers_absent=false
@@ -893,18 +900,24 @@ jobs:
             secret_files_absent=false
             cleanup_ok=0
           fi
+          rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"
+          workspace_absent=true
+          if [ -e "$RUNNER_TEMP/aiat-openhands-workspace" ]; then
+            workspace_absent=false
+            cleanup_ok=0
+          fi
           unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
           unset session_key settings_response settings_json delete_code || true
           python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
             "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" \
-            "$mcp_status" "$mcp_verified_absent" "$containers_absent" "$network_absent" "$secret_files_absent" "$cleanup_ok" "$docker_available" <<'PY'
+            "$mcp_status" "$mcp_verified_absent" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$cleanup_ok" "$docker_available" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           output, *values = sys.argv[1:]
           names = values[:5]
-          mcp_status, mcp_verified_absent, containers_absent, network_absent, secret_files_absent, cleanup_ok, docker_available = values[5:]
+          mcp_status, mcp_verified_absent, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, cleanup_ok, docker_available = values[5:]
           Path(output).parent.mkdir(parents=True, exist_ok=True)
           Path(output).write_text(
               json.dumps(
@@ -921,8 +934,10 @@ jobs:
                       "verified_absent": mcp_verified_absent == "true",
                   },
                   "containers_absent": containers_absent == "true",
+                  "tool_image_absent": image_absent == "true",
                   "network_absent": network_absent == "true",
                   "secret_files_absent": secret_files_absent == "true",
+                  "workspace_absent": workspace_absent == "true",
                   "provider_payloads_retained": False,
                   "zero_residue": cleanup_ok == "1",
               },

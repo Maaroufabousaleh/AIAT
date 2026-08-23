@@ -79,3 +79,12 @@ def test_cleanup_requires_delete_status_and_absence_readback() -> None:
     weakened = text.replace('delete_ok=false', 'delete_status_unchecked=false', 1)
     report = module.validate(weakened)
     assert "cleanup_absence_readback_missing" in report["errors"]
+
+
+def test_cleanup_requires_workspace_and_tool_image_absence() -> None:
+    module = _module()
+    text = _workflow()
+    assert "workspace_or_tool_image_cleanup_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"', "true", 1)
+    report = module.validate(weakened)
+    assert "workspace_or_tool_image_cleanup_missing" in report["errors"]
