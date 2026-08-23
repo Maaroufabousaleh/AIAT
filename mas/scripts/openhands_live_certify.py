@@ -166,6 +166,7 @@ async def certify(
         try:
             authorization = issue_openhands_certification_authorization(
                 verification,
+                controller=controller,
                 controller_run_id=controller_run_id,
                 sandbox_profile=sandbox_profile,
                 sandbox_runtime=sandbox_runtime,

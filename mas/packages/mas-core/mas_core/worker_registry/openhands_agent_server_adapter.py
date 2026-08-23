@@ -78,6 +78,7 @@ _CERTIFICATION_AUTHORITY = object()
 _CERTIFICATION_FACTORY_TOKEN = object()
 _CONSUMED_CERTIFICATION_AUTHORIZATIONS: set[object] = set()
 _CERTIFICATION_AUTHORIZATION_TTL_SECONDS = 900
+_CERTIFICATION_CONTROLLER = "aiat-github-actions"
 _CERTIFICATION_SANDBOX_PROFILE = "gvisor"
 _CERTIFICATION_SANDBOX_RUNTIME = "runsc"
 
@@ -96,6 +97,7 @@ class OpenHandsCertificationAuthorization:
     image_digest: str
     sandbox_profile: str
     sandbox_runtime: str
+    controller: str
     controller_run_id: str
     _authority: object = field(repr=False, compare=False)
     issued_at: float = 0.0
@@ -109,6 +111,7 @@ class OpenHandsCertificationAuthorization:
 def issue_openhands_certification_authorization(
     verification: OpenHandsInterfaceVerification,
     *,
+    controller: str,
     controller_run_id: str,
     sandbox_profile: str,
     sandbox_runtime: str,
@@ -120,11 +123,14 @@ def issue_openhands_certification_authorization(
     flag and never creates an activation approval.
     """
 
+    issuer = str(controller or "").strip()
     run_id = str(controller_run_id or "").strip()
     profile = str(sandbox_profile or "").strip().lower()
     runtime = str(sandbox_runtime or "").strip().lower()
-    if not run_id:
-        raise ValueError("certification controller run ID is required")
+    if issuer != _CERTIFICATION_CONTROLLER:
+        raise ValueError("OpenHands certification authorization requires the trusted controller")
+    if not re.fullmatch(r"[0-9]{1,32}", run_id):
+        raise ValueError("certification controller run ID must be a bounded numeric GitHub run ID")
     if profile != _CERTIFICATION_SANDBOX_PROFILE:
         raise ValueError("OpenHands certification requires the gVisor sandbox profile")
     if runtime != _CERTIFICATION_SANDBOX_RUNTIME:
@@ -138,6 +144,7 @@ def issue_openhands_certification_authorization(
         image_digest=verification.image_digest,
         sandbox_profile=profile,
         sandbox_runtime=runtime,
+        controller=issuer,
         controller_run_id=run_id,
         _authority=_CERTIFICATION_AUTHORITY,
         issued_at=time.time(),
@@ -157,6 +164,7 @@ def _valid_certification_authorization(
         and authorization.image_digest == verification.image_digest
         and authorization.sandbox_profile == _CERTIFICATION_SANDBOX_PROFILE
         and authorization.sandbox_runtime == _CERTIFICATION_SANDBOX_RUNTIME
+        and authorization.controller == _CERTIFICATION_CONTROLLER
         and authorization.issued_at > 0
         and authorization.expires_at > authorization.issued_at
         and authorization.issued_at <= time.time() < authorization.expires_at
@@ -289,6 +297,14 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             raise ValueError("OpenHands certification mode is available only through the trusted certification factory")
         if certification_mode and not _valid_certification_authorization(certification_authorization, verification):
             raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
+        if certification_mode:
+            controller = str(context.metadata.get("openhands_certification_controller") or "")
+            controller_run_id = str(context.metadata.get("openhands_certification_controller_run_id") or "")
+            if (
+                controller != certification_authorization.controller
+                or controller_run_id != certification_authorization.controller_run_id
+            ):
+                raise ValueError("OpenHands certification controller attestation does not match the authorization")
         if metadata_certification_mode and not certification_mode:
             raise ValueError("OpenHands certification mode requires AIAT certification authorization")
         if not verification.approved and not certification_mode:
