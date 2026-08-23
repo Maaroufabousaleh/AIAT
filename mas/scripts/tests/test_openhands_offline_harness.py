@@ -67,4 +67,9 @@ def test_complete_offline_harness_is_fixture_only() -> None:
     assert report["secret_isolation"] == "PASS"
     assert report["zero_residue"]["status"] == "PASS"
     assert report["details"]["partial_startup_cleanup"]["status"] == "PASS"
+    assert report["details"]["workspace_attacks"]["attempt_count"] == 6
+    assert report["details"]["workspace_attacks"]["denied_count"] == 6
+    assert report["details"]["workspace_attacks"]["symlink_traversal_tested"] is True
+    assert report["details"]["lifecycle_races"]["status"] == "PASS"
+    assert report["details"]["recovery_idempotency"] == "PASS"
     assert report["details"]["partial_startup_cleanup"]["scenarios"]["mcp_after_failed_task"]["started_resources"]

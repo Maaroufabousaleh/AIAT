@@ -11,6 +11,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -170,6 +171,81 @@ def cleanup_residue(residue: Iterable[str]) -> dict[str, Any]:
     return {"status": "PASS" if not remaining else "BLOCKED_CLEANUP", "remaining": remaining, "payloads_retained": False}
 
 
+def workspace_isolation_attacks() -> dict[str, Any]:
+    """Exercise path, symlink, terminal, download, and git boundary checks."""
+
+    with TemporaryDirectory(prefix="aiat-openhands-workspaces-") as root:
+        root_path = Path(root)
+        workspace_a = root_path / "workspace-A"
+        workspace_b = root_path / "workspace-B"
+        workspace_a.mkdir()
+        workspace_b.mkdir()
+        (workspace_b / "secret.txt").write_text("fixture-only", encoding="utf-8")
+        (workspace_a / "escape").symlink_to(workspace_b, target_is_directory=True)
+        attempts = (
+            ("terminal", workspace_b / "secret.txt"),
+            ("file.read", workspace_a / ".." / "workspace-B" / "secret.txt"),
+            ("file.write", workspace_b / "new.txt"),
+            ("file.list", workspace_a / "escape"),
+            ("file.download", workspace_a / "escape" / "secret.txt"),
+            ("git.inspect", workspace_b / ".git"),
+        )
+        results = [
+            {"operation": operation, "denied": not workspace_access(str(path), str(workspace_a))}
+            for operation, path in attempts
+        ]
+    denied = sum(1 for item in results if item["denied"])
+    return {
+        "status": "PASS" if denied == len(results) else "BLOCKED_WORKSPACE_ISOLATION",
+        "attempt_count": len(results),
+        "denied_count": denied,
+        "operations": results,
+        "symlink_traversal_tested": True,
+        "raw_paths_retained": False,
+    }
+
+
+def lifecycle_race_matrix() -> dict[str, Any]:
+    """Resolve deterministic completion/pause/tool-timeout ordering races."""
+
+    completion_wins = FakeConversation()
+    completion_wins.start()
+    completion_wins.complete()
+    try:
+        completion_wins.timeout()
+    except ValueError as exc:
+        completion_race = str(exc) == "timeout_not_eligible" and completion_wins.state == "SUCCEEDED"
+    else:  # pragma: no cover - defensive state-machine check
+        completion_race = False
+
+    pause_wins = FakeConversation()
+    pause_wins.start()
+    pause_wins.pause()
+    try:
+        pause_wins.timeout()
+    except ValueError as exc:
+        pause_race = str(exc) == "timeout_not_eligible" and pause_wins.state == "PAUSED"
+    else:  # pragma: no cover - defensive state-machine check
+        pause_race = pause_wins.state == "TIMED_OUT"
+
+    timeout_wins = FakeConversation()
+    timeout_wins.start()
+    timeout_wins.timeout()
+    try:
+        timeout_wins.consume(1)
+    except ValueError as exc:
+        tool_race = str(exc) == "consume_not_running" and timeout_wins.state == "TIMED_OUT"
+    else:  # pragma: no cover - defensive state-machine check
+        tool_race = False
+    return {
+        "status": "PASS" if completion_race and pause_race and tool_race else "BLOCKED_LIFECYCLE",
+        "completion_wins": completion_race,
+        "pause_timeout_reconciled": pause_race,
+        "timeout_wins_over_pending_tool": tool_race,
+        "payloads_retained": False,
+    }
+
+
 def partial_startup_cleanup() -> dict[str, Any]:
     """Exercise cleanup bookkeeping for every partial-startup boundary."""
 
@@ -213,11 +289,7 @@ def run_offline_harness() -> dict[str, Any]:
     budget_exhausted = not budget.consume(1)
     secret_values = ("tool-sentinel", "session-sentinel", "gateway-sentinel", "provider-sentinel")
     secret_scan = scan_secret_disclosure(secret_values, ("sanitized event", "diff without credentials"))
-    workspace_root = "/certification/workspace-A"
-    isolation = all(
-        not workspace_access(path, workspace_root)
-        for path in ("/certification/workspace-B/file.txt", "/certification/workspace-A/../workspace-B", "/etc/passwd")
-    )
+    isolation = workspace_isolation_attacks()
     forbidden = [forbidden_tool_attempt(tool) for tool in FORBIDDEN_ATTEMPTS]
     model_denial = model_override_denial(
         {
@@ -242,6 +314,16 @@ def run_offline_harness() -> dict[str, Any]:
         completed.resume()
     except ValueError as exc:
         ordinary_completion_not_resumable = str(exc) == "resume_not_eligible"
+    recovered_twice = FakeConversation()
+    recovered_twice.start()
+    recovered_twice.crash()
+    recovered_twice.recover()
+    recovery_idempotent = False
+    try:
+        recovered_twice.recover()
+    except ValueError as exc:
+        recovery_idempotent = str(exc) == "recover_not_eligible"
+    race_matrix = lifecycle_race_matrix()
     return {
         "schema_version": "aiat.openhands-offline-harness.v1",
         "mode": "offline_fixture_only",
@@ -255,7 +337,7 @@ def run_offline_harness() -> dict[str, Any]:
         "timeout": "PASS" if timeout_before_completion == "TIMED_OUT" else "FAIL",
         "budget": "PASS" if budget_ok and budget_exhausted and budget.state == "EXHAUSTED" else "FAIL",
         "forbidden_tool": "PASS" if all(item["denied"] for item in forbidden) else "FAIL",
-        "workspace_isolation": "PASS" if isolation else "FAIL",
+        "workspace_isolation": isolation["status"],
         "secret_isolation": secret_scan["status"],
         "model_override_denial": "PASS" if model_denial["denied"] else "FAIL",
         "mcp_override_denial": "PASS" if forbidden_tool_attempt("external_mcp.register")["denied"] else "FAIL",
@@ -266,6 +348,9 @@ def run_offline_harness() -> dict[str, Any]:
             "model_override": model_denial,
             "secret_scan": secret_scan,
             "partial_startup_cleanup": partial_startup_cleanup(),
+            "workspace_attacks": isolation,
+            "lifecycle_races": race_matrix,
+            "recovery_idempotency": "PASS" if recovery_idempotent else "FAIL",
             "conversation_history": conversation.history,
             "payloads_retained": False,
         },
