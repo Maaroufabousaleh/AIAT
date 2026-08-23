@@ -35,3 +35,12 @@ def test_automatic_trigger_and_static_profile_are_rejected() -> None:
     assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
     assert any(item.startswith("automatic_trigger_present:push") for item in report["errors"])
     assert "static_profile_uuid_input_present" in report["errors"]
+
+
+def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
+    text = _workflow()
+    report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))
+    assert "provider_gate_missing_before_expensive_stages" in report["errors"]
+
+    report = _module().validate(text.replace('"verified_absent"', '"removed"'))
+    assert "cleanup_absence_readback_missing" in report["errors"]

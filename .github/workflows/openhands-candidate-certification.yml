@@ -621,12 +621,25 @@ jobs:
         env:
           OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key || vars.OPENHANDS_MCP_SETTINGS_KEY }}
         run: |
-          set -euo pipefail
+          set +e
           name="aiat-openhands-cert-${GITHUB_RUN_ID}"
           tool_name="${tool_container:-aiat-openhands-tool-service-${GITHUB_RUN_ID}}"
           litellm_name="${litellm_container:-aiat-openhands-litellm-${GITHUB_RUN_ID}}"
           omniroute_name="${omniroute_container:-aiat-openhands-omniroute-${GITHUB_RUN_ID}}"
           network_name="${network:-aiat-openhands-cert-network-${GITHUB_RUN_ID}}"
+          cleanup_ok=1
+          docker_available=false
+          if docker info >/dev/null 2>&1; then
+            docker_available=true
+          else
+            cleanup_ok=0
+          fi
+          mcp_status="NOT_CREATED"
+          mcp_verified_absent=true
+          agent_existed=0
+          if [ "$docker_available" = true ] && [ -n "$(docker ps -aq --filter "name=^/${name}$" 2>/dev/null)" ]; then
+            agent_existed=1
+          fi
           if [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
             session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
             delete_code=$(curl --silent --show-error --output /dev/null \
@@ -671,38 +684,39 @@ jobs:
               encoding="utf-8",
           )
           PY
-          fi
-          docker rm --force "$name" >/dev/null 2>&1 || true
-          docker rm --force "$tool_name" >/dev/null 2>&1 || true
-          docker rm --force "$litellm_name" >/dev/null 2>&1 || true
-          docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
-          test -z "$(docker ps -aq --filter "name=^/${name}$")"
-          test -z "$(docker ps -aq --filter "name=^/${tool_name}$")"
-          test -z "$(docker ps -aq --filter "name=^/${litellm_name}$")"
-          test -z "$(docker ps -aq --filter "name=^/${omniroute_name}$")"
-          docker network rm "$network_name" >/dev/null 2>&1 || true
-          test -z "$(docker network ls -q --filter "name=^${network_name}$")"
-          rm -f "$RUNNER_TEMP/aiat-openhands-session-key"
-          unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
-          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
-            "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" <<'PY'
+            mcp_verified_absent=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              report = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              report = {}
+          print("true" if report.get("verified_absent") is True else "false")
+          PY
+            )
+            mcp_status="PASS"
+            if [ "$mcp_verified_absent" != true ]; then
+              mcp_status="BLOCKED"
+              cleanup_ok=0
+            fi
+          elif [ "$agent_existed" = 1 ]; then
+            mcp_status="BLOCKED"
+            mcp_verified_absent=false
+            cleanup_ok=0
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          output, *names = sys.argv[1:]
-          Path(output).parent.mkdir(parents=True, exist_ok=True)
-          Path(output).write_text(
+          Path(sys.argv[1]).write_text(
               json.dumps(
                   {
-                      "schema_version": "aiat.openhands-certification-gateway-cleanup.v1",
-                      "containers": {
-                          name: "absent" for name in names[:-1]
-                      },
-                      "network": {"name": names[-1], "status": "absent"},
-                      "run_scoped_secret_files": "absent",
-                      "provider_payloads_retained": False,
-                      "zero_residue": True,
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "BLOCKED",
+                      "reason": "agent_server_existed_without_session_key_or_mcp_key",
+                      "verified_absent": False,
+                      "payloads_retained": False,
                   },
                   sort_keys=True,
                   indent=2,
@@ -711,6 +725,99 @@ jobs:
               encoding="utf-8",
           )
           PY
+          else
+            mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence"
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "NOT_CREATED",
+                      "verified_absent": True,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          fi
+          docker rm --force "$name" >/dev/null 2>&1 || true
+          docker rm --force "$tool_name" >/dev/null 2>&1 || true
+          docker rm --force "$litellm_name" >/dev/null 2>&1 || true
+          docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
+          containers_absent=true
+          network_absent=true
+          containers_absent=true
+          if [ "$docker_available" = true ]; then
+            for container in "$name" "$tool_name" "$litellm_name" "$omniroute_name"; do
+              if [ -n "$(docker ps -aq --filter "name=^/${container}$" 2>/dev/null)" ]; then
+                containers_absent=false
+                cleanup_ok=0
+              fi
+            done
+            docker network rm "$network_name" >/dev/null 2>&1 || true
+          else
+            containers_absent=false
+            network_absent=false
+          fi
+          if [ "$docker_available" = true ] && [ -n "$(docker network ls -q --filter "name=^${network_name}$" 2>/dev/null)" ]; then
+            network_absent=false
+            cleanup_ok=0
+          fi
+          rm -f "$RUNNER_TEMP/aiat-openhands-session-key"
+          secret_files_absent=true
+          if [ -e "$RUNNER_TEMP/aiat-openhands-session-key" ]; then
+            secret_files_absent=false
+            cleanup_ok=0
+          fi
+          unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
+          unset session_key settings_response settings_json delete_code || true
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
+            "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" \
+            "$mcp_status" "$mcp_verified_absent" "$containers_absent" "$network_absent" "$secret_files_absent" "$cleanup_ok" "$docker_available" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, *values = sys.argv[1:]
+          names = values[:5]
+          mcp_status, mcp_verified_absent, containers_absent, network_absent, secret_files_absent, cleanup_ok, docker_available = values[5:]
+          Path(output).parent.mkdir(parents=True, exist_ok=True)
+          Path(output).write_text(
+              json.dumps(
+                  {
+                  "schema_version": "aiat.openhands-certification-gateway-cleanup.v1",
+                  "docker_available": docker_available == "true",
+                  "containers": {
+                      name: "absent" for name in names[:-1]
+                  },
+                  "network": {"name": names[-1], "status": "absent"},
+                  "run_scoped_secret_files": "absent",
+                  "mcp": {
+                      "status": mcp_status,
+                      "verified_absent": mcp_verified_absent == "true",
+                  },
+                  "containers_absent": containers_absent == "true",
+                  "network_absent": network_absent == "true",
+                  "secret_files_absent": secret_files_absent == "true",
+                  "provider_payloads_retained": False,
+                  "zero_residue": cleanup_ok == "1",
+              },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$cleanup_ok" = 1
 
       - name: Evaluate mandatory OpenHands gate matrix
         if: always()

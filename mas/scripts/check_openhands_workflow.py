@@ -44,6 +44,12 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_missing_secret_class_missing")
     if "if: always()" not in text or "actions/upload-artifact@v4" not in text:
         errors.append("always_cleanup_or_artifact_upload_missing")
+    if "steps.provider_preflight.outputs.ready == 'true'" not in text:
+        errors.append("provider_gate_missing_before_expensive_stages")
+    if "mcp-cleanup.json" not in text or '"verified_absent"' not in text or 'test "$cleanup_ok" = 1' not in text:
+        errors.append("cleanup_absence_readback_missing")
+    if '"zero_residue": cleanup_ok == "1"' not in text:
+        errors.append("cleanup_zero_residue_not_fail_closed")
     if "GITHUB_STEP_SUMMARY" not in text or "Summarize fail-closed certification result" not in text:
         errors.append("fail_closed_summary_missing")
     if "docker network rm" not in text or "aiat-openhands-cert-network-${GITHUB_RUN_ID}" not in text:
