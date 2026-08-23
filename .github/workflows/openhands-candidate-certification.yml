@@ -1096,6 +1096,23 @@ jobs:
             --image-digest sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
           exit 0
 
+      - name: Validate sanitized OpenHands evidence schema
+        if: always()
+        id: evidence_schema
+        continue-on-error: true
+        run: |
+          set +e
+          uv run python scripts/check_openhands_evidence_schema.py \
+            --root "$RUNNER_TEMP/aiat-openhands-evidence" \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/certification/evidence-schema-validation.json"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=FAILED_CERTIFICATION_IMPLEMENTATION" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload sanitized OpenHands evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -1137,6 +1154,7 @@ jobs:
           print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
           print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")
           print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
+          print(f"- Evidence schema: `{read_status('certification/evidence-schema-validation.json', 'status')}`")
           print(f"- Mandatory gates: `{evaluation.get('passed_gate_count', 0)}/{evaluation.get('mandatory_gate_count', 0)} PASS`")
           print(f"- Final result: `{final_status}`")
           if final_status != "PASSED":
@@ -1156,3 +1174,7 @@ jobs:
           test -f "$report"
           status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report")
           test "$status" = PASSED
+          schema_report="$RUNNER_TEMP/aiat-openhands-evidence/certification/evidence-schema-validation.json"
+          test -f "$schema_report"
+          schema_status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$schema_report")
+          test "$schema_status" = PASS

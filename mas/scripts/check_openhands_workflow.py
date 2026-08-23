@@ -67,6 +67,12 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_preflight_execution_failure_class_missing")
     if "if: always()" not in text or "actions/upload-artifact@v4" not in text:
         errors.append("always_cleanup_or_artifact_upload_missing")
+    if (
+        "check_openhands_evidence_schema.py" not in text
+        or "evidence-schema-validation.json" not in text
+        or 'test "$schema_status" = PASS' not in text
+    ):
+        errors.append("evidence_schema_validation_missing")
     if "steps.provider_preflight.outputs.ready == 'true'" not in text:
         errors.append("provider_gate_missing_before_expensive_stages")
     if "id: provider\n" not in text or "steps.provider.outputs.ready == 'true'" not in text:
