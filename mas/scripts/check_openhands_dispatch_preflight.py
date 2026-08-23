@@ -19,6 +19,8 @@ EXPECTED_SOURCE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 EXPECTED_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 WORKFLOW = ".github/workflows/openhands-candidate-certification.yml"
 MANIFEST = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml"
+INTERFACE_REPORT = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json"
+GATEWAY_PROVENANCE = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/gateway-provenance.json"
 SCHEMA = "aiat.openhands-dispatch-preflight.v1"
 
 
@@ -54,6 +56,8 @@ def evaluate_static(
     *,
     workflow_text: str,
     manifest_text: str,
+    interface_text: str = "",
+    gateway_provenance_text: str = "",
     actual_sha: str,
     requested_sha: str | None,
     secret_names: set[str] | None,
@@ -72,9 +76,17 @@ def evaluate_static(
     ) if variables_known else None
     pins_match = (
         EXPECTED_SOURCE_COMMIT in workflow_text
+        and EXPECTED_SOURCE_COMMIT in manifest_text
+        and (not interface_text or EXPECTED_SOURCE_COMMIT in interface_text)
+        and (not gateway_provenance_text or EXPECTED_SOURCE_COMMIT in gateway_provenance_text)
         and EXPECTED_IMAGE_DIGEST in workflow_text
+        and EXPECTED_IMAGE_DIGEST in manifest_text
+        and (not interface_text or EXPECTED_IMAGE_DIGEST in interface_text)
+        and (not gateway_provenance_text or EXPECTED_IMAGE_DIGEST in gateway_provenance_text)
         and "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95" in workflow_text
+        and (not gateway_provenance_text or "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95" in gateway_provenance_text)
         and "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in workflow_text
+        and (not gateway_provenance_text or "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in gateway_provenance_text)
     )
     inactive = "activation_status: inactive" in manifest_text.lower() or "certification_status: pending" in manifest_text.lower()
     checks = {
@@ -121,6 +133,8 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     actual_sha = actual_sha_output.strip()
     workflow_text = (repo / WORKFLOW).read_text(encoding="utf-8")
     manifest_text = (repo / MANIFEST).read_text(encoding="utf-8")
+    interface_text = (repo / INTERFACE_REPORT).read_text(encoding="utf-8")
+    gateway_provenance_text = (repo / GATEWAY_PROVENANCE).read_text(encoding="utf-8")
     secret_names: set[str] | None = None
     variable_values: dict[str, str] | None = None
     if repo_slug:
@@ -150,6 +164,8 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     report = evaluate_static(
         workflow_text=workflow_text,
         manifest_text=manifest_text,
+        interface_text=interface_text,
+        gateway_provenance_text=gateway_provenance_text,
         actual_sha=actual_sha,
         requested_sha=requested_sha,
         secret_names=secret_names,
