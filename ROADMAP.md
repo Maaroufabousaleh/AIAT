@@ -57,7 +57,8 @@ gateway routing, run-scoped secrets/profile/MCP lifecycle, explicit provider
 absence and execution-failure classification, controller-attested single-use
 certification authorization with a bounded TTL, MCP pre-clean/readback,
 cleanup fail-closed handling, a fail-closed 20-gate matrix, deterministic
-coding-task fixture, and offline lifecycle/security/cleanup evidence. The
+coding-task fixture, fail-closed post-run test/diff/artifact verification, and
+offline lifecycle/security/cleanup evidence. The
 workflow hardening commits `d012ab9` and `1154a5f` also require immutable
 native smoke-image inputs, bind the checked-out candidate SHA, and keep
 certification failure evidence scalar-only without retaining container logs;

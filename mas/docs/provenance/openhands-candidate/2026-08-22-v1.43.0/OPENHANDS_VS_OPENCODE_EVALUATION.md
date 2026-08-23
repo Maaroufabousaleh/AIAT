@@ -101,6 +101,16 @@ Agent Server startup/readiness under runsc. The complete candidate 20-gate
 live wave, including model execution and lifecycle behavior, remains unrun;
 the retained sandbox evidence is not activation approval.
 
+The live coding wave now requires post-run scalar verification in the runner's
+disposable workspace: the fixed `python -m pytest -q` command must pass, the
+workspace diff must exactly match the task's expected/forbidden path contract,
+and the adapter must return hashed artifacts for the changed files. A successful
+model response alone cannot advance the test, file-modification, artifact, or
+workspace gates. Normalized events are scanned transiently for run-scoped
+secret disclosure; only counts and short fingerprints are retained. The
+offline lifecycle/security harness publishes a complete 20-gate fixture map,
+but its `NOT_RUN` live gates remain non-certifying evidence.
+
 Graceful pause, immediate interrupt, and `/run` resume are interface-compatible
 with a semantic caveat: OpenHands leaves an interrupted conversation paused,
 while AIAT may make the worker run terminal. Recovery is therefore conditional
@@ -121,8 +131,10 @@ following are required before activation:
 5. Isolated workspace binding.
 6. A real coding task.
 7. Verified file modifications.
-8. Test execution inside the governed workspace.
-9. Artifact capture and hash/registration semantics.
+8. Test execution inside the governed workspace, with the fixed task command
+   re-run and scalar exit evidence checked after the model completes.
+9. Artifact capture and hash/registration semantics, with expected changed
+   paths present in the returned artifact set.
 10. Graceful pause.
 11. Immediate interrupt.
 12. Resume.
