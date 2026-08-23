@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from typing import Any
 SCHEMA = "aiat.native-gvisor-certification.v1"
 MAS_ROOT = Path(__file__).resolve().parents[1]
 MAX_CAPTURED_TEXT = 256
+DIGEST_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 
 
 def _bounded_text(value: str | None) -> str:
@@ -96,25 +98,8 @@ def _docker_json(format_string: str) -> tuple[dict[str, Any] | list[Any] | None,
 
 
 def _repo_digest(image: str) -> str | None:
-    if "@sha256:" in image:
-        return image
-    try:
-        result = _run(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image], timeout=20.0)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    try:
-        values = json.loads(result.stdout.strip())
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(values, list):
-        return None
-    for value in values:
-        text = str(value)
-        if "@sha256:" in text:
-            return text
-    return None
+    normalized = image.strip()
+    return normalized if DIGEST_IMAGE_RE.fullmatch(normalized) else None
 
 
 def _remaining_named_containers(name: str) -> int | None:
@@ -162,11 +147,12 @@ def _run_sandbox_suite(smoke_image: str) -> dict[str, Any]:
     }
 
 
-def certify(*, smoke_image: str, hello_image: str = "hello-world:latest") -> dict[str, Any]:
+def certify(*, smoke_image: str, hello_image: str | None = None) -> dict[str, Any]:
     """Collect native host, runtime, smoke, suite, and cleanup evidence."""
 
     blockers: list[str] = []
     failures: list[str] = []
+    hello_image = hello_image or smoke_image
     system = platform.system()
     kernel = platform.release()
     native_linux = system == "Linux" and not any(marker in kernel.lower() for marker in ("microsoft", "wsl"))
@@ -192,32 +178,41 @@ def certify(*, smoke_image: str, hello_image: str = "hello-world:latest") -> dic
 
     smoke_digest = _repo_digest(smoke_image)
     if smoke_digest is None:
-        blockers.append("smoke image is not available as an immutable digest")
+        blockers.append("smoke image must be an immutable digest reference")
 
     hello_digest = _repo_digest(hello_image)
-    hello_command_image = hello_digest or hello_image
-    hello = _command_result(
-        ["docker", "run", "--rm", "--runtime=runsc", hello_command_image],
-        timeout=120.0,
-    )
-    if hello.get("status") != "pass":
-        failures.append("hello-world runsc smoke failed")
+    if hello_digest is None:
+        blockers.append("hello image must be an immutable digest reference")
+    if smoke_digest is None or hello_digest is None:
+        # Never execute a mutable image merely because another prerequisite
+        # already blocked the run.  This keeps the failure fail-closed and
+        # prevents a floating tag from entering certification evidence.
+        hello = {"status": "blocked", "reason": "immutable image input required"}
+        dmesg = {"status": "blocked", "reason": "immutable image input required"}
+        suite = {"status": "blocked", "reason": "immutable image input required"}
+    else:
+        hello = _command_result(
+            ["docker", "run", "--rm", "--runtime=runsc", hello_digest],
+            timeout=120.0,
+        )
+        if hello.get("status") != "pass":
+            failures.append("hello-world runsc smoke failed")
 
-    dmesg = _command_result(
-        ["docker", "run", "--rm", "--runtime=runsc", smoke_digest or smoke_image, "dmesg"],
-        timeout=120.0,
-        record_output=True,
-    )
-    if dmesg.get("status") != "pass":
-        failures.append("gVisor dmesg identification command failed")
-    elif "Starting gVisor" not in str(dmesg.get("bounded_output") or ""):
-        failures.append("gVisor dmesg identification marker was absent")
+        dmesg = _command_result(
+            ["docker", "run", "--rm", "--runtime=runsc", smoke_digest, "dmesg"],
+            timeout=120.0,
+            record_output=True,
+        )
+        if dmesg.get("status") != "pass":
+            failures.append("gVisor dmesg identification command failed")
+        elif "Starting gVisor" not in str(dmesg.get("bounded_output") or ""):
+            failures.append("gVisor dmesg identification marker was absent")
 
-    suite = _run_sandbox_suite(smoke_digest or smoke_image)
-    if suite["status"] == "blocked":
-        blockers.append(str(suite.get("reason") or "sandbox suite blocked"))
-    elif suite["status"] != "pass":
-        failures.append(str(suite.get("reason") or "sandbox suite failed"))
+        suite = _run_sandbox_suite(smoke_digest)
+        if suite["status"] == "blocked":
+            blockers.append(str(suite.get("reason") or "sandbox suite blocked"))
+        elif suite["status"] != "pass":
+            failures.append(str(suite.get("reason") or "sandbox suite failed"))
 
     cleanup_name = f"aiat-gvisor-cert-{os.getenv('GITHUB_RUN_ID', 'local')}"
     cleanup_count = _remaining_named_containers(cleanup_name)
@@ -271,7 +266,10 @@ def certify(*, smoke_image: str, hello_image: str = "hello-world:latest") -> dic
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke-image", required=True, help="image reference; must resolve to an OCI digest")
-    parser.add_argument("--hello-image", default="hello-world:latest")
+    parser.add_argument(
+        "--hello-image",
+        help="optional second immutable OCI image; defaults to the smoke-image digest",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
