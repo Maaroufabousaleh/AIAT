@@ -31,3 +31,26 @@ def test_pm_gateway_build_keeps_pip_tls_verification_enabled() -> None:
 
     assert "PIP_TRUSTED_HOST" not in dockerfile
     assert "ca-certificates" in dockerfile
+
+
+def test_omniroute_api_bridge_is_split_from_dashboard_and_litellm_uses_it() -> None:
+    compose = yaml.safe_load((COMPOSE_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    dev_compose = yaml.safe_load((COMPOSE_ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8"))
+    omniroute = compose["services"]["omniroute"]
+    assert omniroute["environment"]["PORT"] == "20128"
+    assert omniroute["environment"]["DASHBOARD_PORT"] == "20128"
+    assert omniroute["environment"]["API_PORT"] == "20129"
+    assert omniroute["environment"]["API_HOST"] == "0.0.0.0"
+    assert dev_compose["services"]["omniroute"]["ports"] == ["20128:20128", "20129:20129"]
+
+    litellm = yaml.safe_load((COMPOSE_ROOT / "litellm_config.yaml").read_text(encoding="utf-8"))
+    routes = litellm["model_list"]
+    assert routes
+    assert all(route["litellm_params"]["api_base"] == "http://omniroute:20129/v1" for route in routes)
+    legacy = next(route for route in routes if route["model_name"] == "llama-3.3-70b-versatile")
+    assert legacy["litellm_params"]["model"] == "openai/auto/coding"
+
+
+def test_omniroute_bootstrap_uses_current_governed_groq_baseline() -> None:
+    script = (COMPOSE_ROOT / "configure_omniroute.py").read_text(encoding="utf-8")
+    assert 'ProviderSpec("GROQ_API_KEY", "groq", "AIAT Groq", "openai/gpt-oss-120b")' in script

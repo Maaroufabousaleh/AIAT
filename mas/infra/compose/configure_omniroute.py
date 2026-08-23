@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 BASE_URL = os.environ.get("OMNIROUTE_BOOTSTRAP_URL", "http://localhost:20128").rstrip("/")
 MANAGEMENT_KEY = os.environ.get("OMNIROUTE_MANAGEMENT_KEY", "").strip()
 
@@ -32,7 +31,7 @@ PROVIDERS = (
     ProviderSpec("OPENAI_API_KEY", "openai", "AIAT OpenAI", "gpt-4o-mini"),
     ProviderSpec("GEMINI_API_KEY", "gemini", "AIAT Gemini", "gemini-2.5-flash"),
     ProviderSpec("OPENROUTER_API_KEY", "openrouter", "AIAT OpenRouter", "openrouter/free"),
-    ProviderSpec("GROQ_API_KEY", "groq", "AIAT Groq", "llama-3.3-70b-versatile"),
+    ProviderSpec("GROQ_API_KEY", "groq", "AIAT Groq", "openai/gpt-oss-120b"),
     ProviderSpec("CEREBRAS_API_KEY", "cerebras", "AIAT Cerebras", "zai-glm-4.7"),
     ProviderSpec("MISTRAL_API_KEY", "mistral", "AIAT Mistral", "devstral-latest"),
     ProviderSpec(
@@ -231,4 +230,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         print(f"[OmniRoute] configuration failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

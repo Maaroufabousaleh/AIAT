@@ -86,6 +86,7 @@ services:
   omniroute:
     ports:
       - "20128:20128"
+      - "20129:20129"
 
   dashboard:
     depends_on:
