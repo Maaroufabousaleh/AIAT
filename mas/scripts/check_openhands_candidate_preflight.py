@@ -174,6 +174,8 @@ def evaluate(
         static_errors.append("candidate_version_pin_mismatch")
     if integration.get("adapter_entrypoint") != "OpenHandsAgentServerAdapter":
         static_errors.append("openhands_adapter_entrypoint_mismatch")
+    if runtime.get("transport") != "openhands_agent_server":
+        static_errors.append("openhands_transport_binding_mismatch")
     if manifest.get("model_mode") != "aiat_gateway":
         static_errors.append("model_mode_must_be_aiat_gateway")
     if manifest.get("model_profile_id") != EXPECTED_PROFILE_ID:

@@ -10,7 +10,7 @@ metadata:
   update_policy: manual
   evaluation_status: pending
 runtime:
-  transport: http
+  transport: openhands_agent_server
   timeout_seconds: 300
   stop_grace_seconds: 60
   adapter_config:

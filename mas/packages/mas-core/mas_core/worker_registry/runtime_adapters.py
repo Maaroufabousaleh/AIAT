@@ -1798,6 +1798,26 @@ def adapter_for_transport(
             context=context,
             runtime_version=config.get("runtime_version"),
         )
+    if normalized in {"openhands", "openhands_agent_server"}:
+        from mas_core.worker_registry.openhands_agent_server_adapter import (
+            OpenHandsAgentServerAdapter,
+            OpenHandsInterfaceVerification,
+        )
+
+        report = config.get("interface_verification")
+        report_ref = config.get("interface_verification_ref")
+        if report is None and report_ref:
+            report = Path(str(report_ref))
+        if report is None:
+            raise ValueError("OpenHands transport requires pinned interface verification evidence")
+        verification = OpenHandsInterfaceVerification.from_report(report)
+        return OpenHandsAgentServerAdapter(
+            verification,
+            base_url=str(config.get("base_url") or ""),
+            worker_id=worker_id,
+            context=context,
+            timeout_seconds=float(config.get("timeout_seconds", 60.0)),
+        )
     if normalized in {"native", "langgraph", "crewai"}:
         reference = str(config.get("implementation_ref") or config.get("entrypoint") or "")
         worker = _framework_runner(

@@ -164,3 +164,17 @@ def test_gateway_loopback_is_rejected_as_a_nonportable_ci_endpoint() -> None:
 
     assert "OPENHANDS_MODEL_GATEWAY_URL_must_equal_http://litellm:4000" in report["static_errors"]
     assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
+
+
+def test_generic_http_transport_is_rejected_for_openhands_candidate() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    manifest["runtime"]["transport"] = "http"
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={},
+    )
+    assert "openhands_transport_binding_mismatch" in report["static_errors"]
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
