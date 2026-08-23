@@ -21,7 +21,8 @@
         "disposable Agent Server/profile/workspace",
         "gvisor sandbox policy",
         "runsc runtime",
-        "dedicated controller run ID"
+        "dedicated controller run ID",
+        "candidate worker identity coding-worker-openhands-candidate"
       ],
       "permits": ["isolated candidate execution", "certification evidence collection"],
       "does_not_permit": ["worker activation", "rollout", "production credentials", "activation approval"]

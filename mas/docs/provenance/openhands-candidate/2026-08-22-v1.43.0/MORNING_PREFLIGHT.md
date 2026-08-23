@@ -77,4 +77,25 @@ The only expected persistent secret for this candidate workflow is
 `OPENHANDS_MODEL_GATEWAY_API_KEY` are generated, masked, and cleaned up inside
 the run. The profile UUID and MCP registration are also run-scoped. A passing
 certification does not activate the worker; evidence registration and steward
-activation approval remain independent.
+activation approval remain independent. The current local candidate baseline
+includes exact disposable-network topology assertions, candidate-worker-bound
+certification authorization, a bounded 20-iteration/300-second adapter budget,
+strict MCP allowlist/delete read-back, and repository-relative interface-report
+resolution. None of these local checks is live provider evidence.
+
+After a future run is genuinely `PASSED`, validate the downloaded gate
+artifact before any steward submission (this is read-only and does not approve
+or activate the worker):
+
+```bash
+cd mas
+uv run python scripts/check_openhands_steward_registration.py \
+  --evidence "$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json" \
+  --candidate-sha "$CANDIDATE_SHA" \
+  --output "$RUNNER_TEMP/openhands-steward-registration-preflight.json"
+```
+
+The validator requires all 20 mandatory gates to be `PASS`, exact candidate,
+source, and image pins, and `payloads_retained=false`. It only returns
+`READY_FOR_STEWARD_REGISTRATION`; the candidate remains `CERTIFYING`/inactive
+and activation approval remains a separate operator decision.

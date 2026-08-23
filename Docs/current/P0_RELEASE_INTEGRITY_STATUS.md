@@ -43,7 +43,17 @@ configuration. Follow-up `9184d56` gates expensive stages on both preflight
 results and records candidate configuration separately from provider status;
 `3e57123` preserves gateway health/route failure classes; `593475b` keeps
 partial live waves blocked; and `6718d9b` statically requires the native Ubuntu
-runner and exact source commit. OpenHands
+runner and exact source commit. The subsequent hardening commits `9f38be3`,
+`6d30e54`, `4fa9d89`, `eefa78f`, `d4eeba8`, `ace19a2`, and `d21b4d7` assert
+exact gateway-network membership, normalize timeout/cleanup semantics, bind
+certification authorization to the candidate worker identity, wire the
+governed transport factory, enforce the bounded adapter budget, reject
+unapproved MCP entries with strict delete/absence read-back, and resolve
+repository-relative interface evidence from any service working directory.
+`2d44d10` broadens the offline dispatch suite and adds a read-only
+steward-registration preflight that requires all mandatory gates and exact
+candidate/source/image pins before registration.
+OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence

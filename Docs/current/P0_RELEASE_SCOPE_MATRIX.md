@@ -72,9 +72,18 @@ gates fail-closed. Workflow hardening `1154a5f` keeps failure evidence
 scalar-only without retaining container logs; `9184d56` records candidate
 preflight blockers separately from provider blockers; `3e57123` preserves
 gateway health/route failure stages; `593475b` prevents a partial live wave
-from reporting PASS; and `6718d9b` enforces the native Ubuntu runner and
-source-commit pin statically. Offline fixture evidence is not live
-certification evidence.
+from reporting PASS; `6718d9b` enforces the native Ubuntu runner and
+source-commit pin statically; `9f38be3` records and asserts exact disposable
+network membership; `6d30e54` normalizes timeout interruption and cleanup
+classes; `4fa9d89` binds certification authorization to the candidate worker
+identity; `eefa78f` wires the governed OpenHands transport factory; `d4eeba8`
+keeps the adapter budget bounded; `ace19a2` rejects unexpected MCP entries and
+requires an allowed delete status plus absence read-back; and `d21b4d7` makes
+repository-relative interface evidence resolve independently of the process
+working directory. `2d44d10` broadens the offline dispatch suite; a later
+steward-registration preflight will reject incomplete or mismatched gate
+artifacts before any certification record is submitted. Offline fixture
+evidence is not live certification evidence.
 OpenHands remains
 inactive until a deliberate run, complete evidence, and independent steward
 activation approval.

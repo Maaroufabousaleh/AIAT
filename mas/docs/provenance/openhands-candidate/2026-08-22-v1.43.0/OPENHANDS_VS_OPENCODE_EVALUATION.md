@@ -63,9 +63,11 @@ OpenHands remains below the AIAT control plane. AIAT retains authority over:
 - sandbox profile, workspace path, network policy, cleanup, and artifact
   retention.
 
-The candidate selects an operator-provisioned `agent_profile_id`; it does not
-send an `agent` object, API key, model key, plugin list, or task-supplied path.
-The profile must reference the approved AIAT MCP bridge. OpenHands built-ins
+The candidate selects an AIAT-provisioned `agent_profile_id`; during disposable
+certification this is a server-generated, run-scoped UUID materialized from the
+governed profile specification. It does not send an `agent` object, API key,
+model key, plugin list, or task-supplied path. The profile must reference the
+approved AIAT MCP bridge. OpenHands built-ins
 are limited to sandbox-local terminal/file editing/test capabilities. Browser,
 subagent, plugin, public-skill, model-switching, direct-credential, and
 arbitrary external MCP capabilities are not implicitly enabled; the operator

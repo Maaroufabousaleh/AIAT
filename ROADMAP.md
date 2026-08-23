@@ -67,7 +67,14 @@ both provider and candidate preflight readiness and records configuration
 blockers independently; `3e57123` preserves gateway health/route failure
 classes; `593475b` prevents a partial live wave from reporting PASS; and
 `6718d9b` statically enforces the native Ubuntu runner and exact OpenHands
-source commit.
+source commit. Follow-up commits `9f38be3`, `6d30e54`, `4fa9d89`, `eefa78f`,
+`d4eeba8`, `ace19a2`, and `d21b4d7` add exact disposable-network topology
+assertions, timeout/cleanup normalization, candidate-worker authorization
+binding, the governed transport factory, bounded candidate budgets, strict
+MCP cleanup/read-back, and working-directory-independent interface evidence
+resolution. `2d44d10` broadens the offline dispatch suite; future steward
+registration uses a separate read-only artifact preflight so a mismatched or
+incomplete GitHub result cannot be attached to this candidate.
 This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a

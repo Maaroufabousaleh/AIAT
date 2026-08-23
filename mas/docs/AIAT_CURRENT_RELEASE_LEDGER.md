@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `6718d9b` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `2d44d10` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -42,7 +42,17 @@ harden the inactive OpenHands path: candidate preflight now gates every
 expensive workflow stage and is recorded independently from provider status;
 gateway health/route failures retain their internal stage; partial live waves
 cannot report PASS; and the manual workflow statically requires the native
-Ubuntu runner and exact OpenHands source commit. These changes add no live
+Ubuntu runner and exact OpenHands source commit. The subsequent reviewed
+hardening commits `9f38be3`, `6d30e54`, `4fa9d89`, `eefa78f`, `d4eeba8`,
+`ace19a2`, and `d21b4d7` assert exact gateway-network membership, normalize
+timeout/cleanup semantics, bind certification authorization to the candidate
+worker identity, wire the governed transport factory, enforce the bounded
+candidate budget, reject unapproved MCP entries with strict delete/absence
+read-back, and resolve repository-relative interface evidence independently of
+the service working directory. `2d44d10` also broadens the offline dispatch
+suite, and the registration preflight now requires a complete 20-gate artifact
+bound to the exact candidate/source/image pins before any steward submission.
+These changes add no live
 provider evidence and do not alter the global `NO-RELEASE` decision.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63

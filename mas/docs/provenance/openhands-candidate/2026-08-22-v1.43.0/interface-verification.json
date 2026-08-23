@@ -93,7 +93,9 @@
         "exact OCI image digest",
         "disposable workspace",
         "gvisor sandbox",
-        "runsc runtime"
+        "runsc runtime",
+        "aiat-github-actions controller run ID",
+        "candidate worker identity coding-worker-openhands-candidate"
       ],
       "does_not_grant": [
         "activation approval",

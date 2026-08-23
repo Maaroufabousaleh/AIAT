@@ -5,6 +5,11 @@ certification artifact from GitHub Actions run `32594885180`. It does not
 alter the raw artifact, activate the worker, accept a finding, or dispatch a
 new certification run.
 
+This is an immutable historical triage snapshot. Subsequent repository-local
+hardening commits materialized the bridge/gateway and run-scoped profile path;
+the current readiness state is maintained in `MORNING_PREFLIGHT.md` and the
+release ledger. The historical counts and dispositions below remain unchanged.
+
 | Field | Value |
 | --- | --- |
 | Run | `32594885180` |
@@ -211,10 +216,15 @@ not a claim that source-only matches are intrinsically safe.
 
 No fake identifiers or credentials were created.
 
+The following table is retained as the offline triage record. Its historical
+profile row is superseded for disposable certification by the current
+run-scoped materialization documented in `agent-profile-spec.yaml` and
+`MORNING_PREFLIGHT.md`; no portable profile UUID is required.
+
 | Name | Secret? | Who creates it | Storage | Expected format | AIAT object/reference | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
 | `AIAT_TOOL_SECRET` | Yes | Operator through the AIAT secret boundary | Governed secret manager / GitHub Actions secret; never evidence | Opaque high-entropy token | Tool-service/OpenHands MCP bridge shared secret; never caller-supplied | Secret-boundary and bridge authentication test; never print the value |
-| `OPENHANDS_AGENT_PROFILE_ID` | No | Operator provisions an OpenHands Agent Server profile | Governed repository/environment variable and worker manifest reference | Existing profile UUID | Profile referenced by `agent_profile_ref`; must disable public skills, plugins, browser, subagents, direct credentials, and model switching | Agent Server profile/readiness and exact-control check |
+| `OPENHANDS_AGENT_PROFILE_ID` | No | AIAT certification workflow materializes an OpenHands Agent Server profile | Run-scoped workflow output; never a persistent variable | Server-generated profile UUID | Governed profile name/pins resolve to the exact model, bridge, workspace, and disabled controls | Agent Server profile/readiness and exact-control check |
 | `OPENHANDS_MCP_SETTINGS_KEY` | No | AIAT adapter/control plane creates one disposable entry after authorization | Run-scoped adapter metadata / environment variable; delete on close | `aiat-openhands-<run-scoped>` (must use the adapter-required prefix; no spaces) | Manifest `aiat_mcp_profile_ref`, pointing to fixed `http://tool-service:8002/openhands/mcp` | MCP settings POST/DELETE, collision refusal, and zero-residue test |
 | `OPENHANDS_MODEL_ID` | No | AIAT model catalogue/steward | Governed model profile/version reference or environment variable | Exact registered model ID; not `auto`, `default`, `latest`, or a raw unmanaged provider choice | Approved AIAT model profile/snapshot resolved server-side | Catalogue readiness plus Agent Server profile/server-info exact-model check |
 
@@ -231,11 +241,15 @@ the upstream commit, packages, and image digest. Its current state is
 `approval_status=PENDING`, `approved=false`.
 
 The legitimate transition is `PENDING -> APPROVED` with `approved=true`,
-using the steward/human decision record. This approval is a prerequisite for
-candidate certification; it is not activation. The enforcing gates are
-`OpenHandsAgentServerAdapter._load_verification`, the live certification
-check (`interface_verification_not_steward_approved`), and the AIAT steward /
-candidate activation lifecycle.
+using the steward/human decision record. The pending report still blocks
+normal production construction, but it no longer blocks the isolated
+certification path: the trusted certification controller issues a separate,
+run-scoped authorization bound to the exact candidate pins, worker identity,
+controller run, and gVisor/runsc claims. A passed certification remains
+`CERTIFYING`/inactive; the pending interface report and independent steward
+approval are reviewed before activation. The enforcing gates are
+`OpenHandsAgentServerAdapter`'s production approval check, its trusted
+`for_certification` factory, and the steward candidate/activation lifecycle.
 
 The available governed API operations are the worker steward/candidate
 read, generate, certify, approve, and stage endpoints in the orchestrator
