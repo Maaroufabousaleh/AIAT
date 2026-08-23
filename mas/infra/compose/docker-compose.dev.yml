@@ -28,7 +28,7 @@ services:
 
   # pgAdmin — Postgres GUI
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:latest@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     restart: unless-stopped
     networks:
       - internal
@@ -42,7 +42,7 @@ services:
 
   # RedisInsight — Redis GUI
   redis-insight:
-    image: redislabs/redisinsight:latest
+    image: redislabs/redisinsight:latest@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84
     restart: unless-stopped
     networks:
       - internal
