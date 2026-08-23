@@ -63,6 +63,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_route_gate_missing_before_model_stages")
     if "steps.gateway.outputs.ready == 'true'" not in text:
         errors.append("gateway_route_gate_missing_before_worker_stages")
+    if "runtime-provisioning.json" not in text or "runtime_status" not in text or 'echo "ready=true" >> "$GITHUB_OUTPUT"' not in text:
+        errors.append("runtime_materialization_gate_output_missing")
     if "steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'" not in text or re.search(
         r"(?m)^\s*if:\s*steps\.provider_preflight\.outputs\.ready\s*==\s*'true'\s*$",
         text,

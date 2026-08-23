@@ -762,7 +762,26 @@ jobs:
             --base-url http://127.0.0.1:18000 \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/runtime/runtime-provisioning.json" \
             --github-output "$GITHUB_OUTPUT"
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit_code=$?
+          runtime_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/runtime/runtime-provisioning.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print("PASS" if isinstance(report, dict) and report.get("status") == "PASS" else "BLOCKED")
+          PY
+          )
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "status=$runtime_status" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ] && [ "$runtime_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run governed OpenHands live adapter wave
         id: live
