@@ -32,6 +32,12 @@ def _observation_class(status: int | None, error_type: str | None) -> str:
         return "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE"
     if status is not None and 500 <= status <= 599:
         return "OMNIROUTE_APPLICATION_HEALTH_FAILURE"
+    if status is not None and 400 <= status <= 499:
+        # An unexpected client error from the exact pinned readiness endpoint
+        # is an application/route contract failure, not evidence that the
+        # process is still warming up.  Preserve 401/403 as the narrower
+        # authentication-contract class above.
+        return "OMNIROUTE_APPLICATION_HEALTH_FAILURE"
     if error_type in {"HTTPError", "RemoteDisconnected", "ConnectionRefusedError", "TimeoutError"}:
         return "STARTING"
     if error_type:

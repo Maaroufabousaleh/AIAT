@@ -85,6 +85,19 @@ def test_persistent_5xx_is_application_health_failure():
     assert report["application_health_status"] == "APPLICATION_FAILURE"
 
 
+def test_unexpected_4xx_is_application_health_failure_not_timeout():
+    module = _load()
+    report, exit_code = module.probe(
+        url="http://127.0.0.1:20128/api/monitoring/health",
+        attempts=2,
+        opener=_opener_for([404, 404]),
+        sleep=_sleep,
+    )
+    assert exit_code != 0
+    assert report["failure_class"] == "OMNIROUTE_APPLICATION_HEALTH_FAILURE"
+    assert report["application_health_status"] == "APPLICATION_FAILURE"
+
+
 def test_cold_connection_exhaustion_remains_starting_and_times_out():
     module = _load()
     report, exit_code = module.probe(
