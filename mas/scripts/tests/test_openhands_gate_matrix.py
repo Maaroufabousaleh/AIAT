@@ -122,6 +122,24 @@ def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> N
     assert report["evaluation"]["all_required_gates_passed"] is False
 
 
+def test_gateway_provenance_failure_gets_a_distinct_blocker_class(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "version-verification.json").write_text(
+        json.dumps(
+            {
+                "status": "FAILED_CERTIFICATION_IMPLEMENTATION",
+                "failure_class": "LITELLM_RELEASE_TAG_RESOLUTION_FAILED",
+                "source_or_payload_retained": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_GATEWAY_PROVENANCE"
+    assert report["evidence_blocker_status"] == "BLOCKED_GATEWAY_PROVENANCE"
+
+
 def test_omniroute_startup_failure_gets_runtime_blocker_class(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()

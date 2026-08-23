@@ -55,6 +55,14 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
     def report(name: str) -> dict[str, Any]:
         return _json(evidence_root / name)
 
+    gateway_provenance = report("gateway/version-verification.json")
+    if gateway_provenance and gateway_provenance.get("status") != "PASS":
+        # Image pulls and the immutable pin verifier can pass while a later
+        # version/tag/archive subcheck fails.  Keep that implementation
+        # boundary distinct from provider, runtime, and model execution
+        # failures; the diagnostic report contains the exact scalar class.
+        return "BLOCKED_GATEWAY_PROVENANCE"
+
     for name in (
         "gateway/route-probe.json",
         "gateway/provider-provisioning.json",

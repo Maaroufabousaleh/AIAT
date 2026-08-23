@@ -145,15 +145,12 @@ def validate(text: str) -> dict[str, Any]:
     if "4c1237f391fe394e9f67505fe3a0bd2d81f84188" not in text:
         errors.append("openhands_source_commit_binding_missing")
     if (
-        "refs/tags/v1.90.0^{}" not in text
-        or "litellm_release_tag_commit" not in text
-        or "6e8282d40655d47ed1557f030e53d6819e464e79" not in text
-        or "litellm_source_archive_sha256" not in text
-        or "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede" not in text
-        or "omniroute_source_archive_sha256" not in text
-        or "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6" not in text
+        "scripts/verify_openhands_gateway_provenance.py" not in text
+        or "--litellm-image \"$LITELLM_IMAGE\"" not in text
+        or "--omniroute-image \"$OMNIROUTE_IMAGE\"" not in text
+        or "gateway/version-verification.json" not in text
     ):
-        errors.append("gateway_source_archive_verification_missing")
+        errors.append("gateway_provenance_diagnostic_helper_missing")
     for image in EXPECTED_IMAGES:
         if image not in text:
             errors.append(f"exact_image_pin_missing:{image.split('@', 1)[0]}")

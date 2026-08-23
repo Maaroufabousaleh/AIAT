@@ -72,7 +72,7 @@ def test_broken_heredoc_is_rejected_even_when_bash_n_returns_zero() -> None:
     )
     parsed = subprocess.run(["bash", "-n"], input=run, text=True, capture_output=True, check=False)
     assert parsed.returncode == 0
-    assert parsed.stderr == ""
+    assert "here-document" in parsed.stderr
     warning_issues = module._run_block_shell_issues("cat <<'PY'\necho hi\n")
     assert "bash_unclosed_heredoc_warning" in warning_issues
 
@@ -94,20 +94,26 @@ def test_non_native_or_unpinned_candidate_inputs_are_rejected() -> None:
     assert "openhands_source_commit_binding_missing" in report["errors"]
 
 
-def test_gateway_source_tags_are_dereferenced_and_recorded() -> None:
+def test_gateway_source_provenance_is_delegated_to_diagnostic_helper() -> None:
     module = _module()
     text = _workflow()
-    assert "gateway_source_archive_verification_missing" not in module.validate(text)["errors"]
-    weakened = text.replace("refs/tags/v1.90.0^{}", "refs/tags/v1.90.0", 1)
-    assert "gateway_source_archive_verification_missing" in module.validate(weakened)["errors"]
+    assert "gateway_provenance_diagnostic_helper_missing" not in module.validate(text)["errors"]
+    helper = (Path(__file__).resolve().parents[1] / "verify_openhands_gateway_provenance.py").read_text(encoding="utf-8")
+    assert 'f"refs/tags/{tag}^{{}}"' in helper
+    assert 'tag_type = "LIGHTWEIGHT"' in helper
+    weakened = text.replace("scripts/verify_openhands_gateway_provenance.py", "scripts/missing_gateway_provenance.py", 1)
+    assert "gateway_provenance_diagnostic_helper_missing" in module.validate(weakened)["errors"]
 
 
 def test_gateway_source_archives_are_checksum_pinned() -> None:
     module = _module()
     text = _workflow()
-    assert "gateway_source_archive_verification_missing" not in module.validate(text)["errors"]
-    weakened = text.replace("3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede", "0" * 64, 1)
-    assert "gateway_source_archive_verification_missing" in module.validate(weakened)["errors"]
+    assert "gateway_provenance_diagnostic_helper_missing" not in module.validate(text)["errors"]
+    helper = (Path(__file__).resolve().parents[1] / "verify_openhands_gateway_provenance.py").read_text(encoding="utf-8")
+    assert "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede" in helper
+    assert "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6" in helper
+    weakened = text.replace("scripts/verify_openhands_gateway_provenance.py", "scripts/missing_gateway_provenance.py", 1)
+    assert "gateway_provenance_diagnostic_helper_missing" in module.validate(weakened)["errors"]
 
 
 def test_candidate_images_require_linux_amd64_platform_readback() -> None:

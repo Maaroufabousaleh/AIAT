@@ -53,6 +53,12 @@ def test_expected_provider_block_is_valid_evidence() -> None:
     assert report["final_certification_status"] == "BLOCKED_MISSING_OPERATOR_SECRET"
 
 
+def test_gateway_provenance_block_is_an_explicit_allowed_status() -> None:
+    report = MODULE.validate(_write_tree(Path(tempfile.mkdtemp()), _gate_report("BLOCKED_GATEWAY_PROVENANCE")))
+    assert report["status"] == "PASS", report["errors"]
+    assert report["final_certification_status"] == "BLOCKED_GATEWAY_PROVENANCE"
+
+
 def test_true_sensitive_retention_flag_fails_closed(tmp_path: Path) -> None:
     root = _write_tree(tmp_path, _gate_report())
     (root / "provider" / "unsafe.json").write_text(json.dumps({"raw_response_retained": True}), encoding="utf-8")
@@ -102,3 +108,20 @@ def test_historical_workflow_failure_record_is_scalar_and_fail_closed() -> None:
     assert record["artifact"]["raw_logs_retained"] is False
     assert record["artifact"]["credentials_retained"] is False
     assert record["artifact"]["payloads_retained"] is False
+
+
+def test_second_historical_gateway_provenance_failure_is_scalar_and_precise() -> None:
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32648660093-failure.json"
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["workflow"]["classification"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+    assert record["workflow"]["failure_reason"] == "LITELLM_RELEASE_TAG_RESOLUTION_FAILED"
+    assert record["workflow"]["live_gate_wave"] == "NOT_RUN"
+    assert record["provider"]["configuration_status"] == "PASS"
+    assert record["image_platform_verification"]["status"] == "PASS"
+    assert record["gateway_pin_verifier"]["status"] == "PASS"
+    assert record["artifact"]["payloads_retained"] is False
+    assert record["evidence_boundary"]["provider_failure"] is False
+    assert record["evidence_boundary"]["zero_residue"] is True

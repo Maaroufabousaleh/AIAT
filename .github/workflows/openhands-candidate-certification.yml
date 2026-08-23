@@ -273,52 +273,10 @@ jobs:
           PY
           uv run python scripts/verify_openhands_gateway_pins.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/pins.json"
-          litellm_version="$(docker run --rm --network none --entrypoint python "$LITELLM_IMAGE" \
-            -c 'import importlib.metadata; print(importlib.metadata.version("litellm"))')"
-          test "$litellm_version" = "1.90.0"
-          omniroute_version="$(docker run --rm --network none --entrypoint node "$OMNIROUTE_IMAGE" \
-            -e 'console.log(require("/app/package.json").version)')"
-          test "$omniroute_version" = "3.8.38"
-          litellm_tag_commit="$(git ls-remote https://github.com/BerriAI/litellm.git 'refs/tags/v1.90.0^{}' | awk '{print $1}')"
-          test "$litellm_tag_commit" = "6e8282d40655d47ed1557f030e53d6819e464e79"
-          tag_commit="$(git ls-remote https://github.com/diegosouzapw/OmniRoute.git 'refs/tags/v3.8.38^{}' | awk '{print $1}')"
-          test "$tag_commit" = "7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8"
-          litellm_archive_sha256="$(curl -fsSL --retry 3 --max-time 120 https://github.com/BerriAI/litellm/archive/refs/tags/v1.90.0.tar.gz | sha256sum | awk '{print $1}')"
-          test "$litellm_archive_sha256" = "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede"
-          omniroute_archive_sha256="$(curl -fsSL --retry 3 --max-time 120 https://github.com/diegosouzapw/OmniRoute/archive/refs/tags/v3.8.38.tar.gz | sha256sum | awk '{print $1}')"
-          test "$omniroute_archive_sha256" = "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6"
-          LITELLM_VERSION="$litellm_version" LITELLM_TAG_COMMIT="$litellm_tag_commit" \
-            LITELLM_ARCHIVE_SHA256="$litellm_archive_sha256" \
-            OMNIROUTE_VERSION="$omniroute_version" \
-            OMNIROUTE_TAG_COMMIT="$tag_commit" \
-            OMNIROUTE_ARCHIVE_SHA256="$omniroute_archive_sha256" \
-            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/version-verification.json" <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          Path(sys.argv[1]).write_text(
-              json.dumps(
-                  {
-                      "schema_version": "aiat.openhands-certification-gateway-version-verification.v1",
-                      "litellm_version": os.environ["LITELLM_VERSION"],
-                      "litellm_release_tag_commit": os.environ["LITELLM_TAG_COMMIT"],
-                      "litellm_source_archive_sha256": os.environ["LITELLM_ARCHIVE_SHA256"],
-                      "omniroute_version": os.environ["OMNIROUTE_VERSION"],
-                      "omniroute_release_tag_commit": os.environ["OMNIROUTE_TAG_COMMIT"],
-                      "omniroute_source_archive_sha256": os.environ["OMNIROUTE_ARCHIVE_SHA256"],
-                      "floating_tags_used": False,
-                      "source_or_payload_retained": False,
-                  },
-                  sort_keys=True,
-                  indent=2,
-              )
-              + "\n",
-              encoding="utf-8",
-          )
-
-          PY
+          uv run python scripts/verify_openhands_gateway_provenance.py \
+            --litellm-image "$LITELLM_IMAGE" \
+            --omniroute-image "$OMNIROUTE_IMAGE" \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/version-verification.json"
 
       - name: Create disposable model-gateway network
         id: network
