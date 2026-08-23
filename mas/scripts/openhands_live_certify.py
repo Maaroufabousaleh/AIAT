@@ -150,6 +150,7 @@ async def certify(
             "openhands_mcp_preconfigured": os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1",
             "openhands_mcp_bridge_url": "http://tool-service:8002/openhands/mcp",
             "openhands_image_digest": verification.image_digest,
+            "openhands_model_id": os.environ["OPENHANDS_MODEL_ID"],
             "openhands_cleanup_conversations": True,
             "openhands_public_skills_disabled": True,
             "openhands_plugins_disabled": True,

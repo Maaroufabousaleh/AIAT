@@ -77,7 +77,7 @@ def request(*, workspace: Path, run_id: UUID | None = None) -> WorkerRunRequest:
         task_input={"prompt": "Add the smallest possible test."},
         resolved_model_profile=ModelProfileReference(
             profile_id="gateway-test",
-            exact_model_id="openai/gpt-test",
+            exact_model_id="omniroute-coding",
         ),
         timeout_seconds=30,
         budget={"max_iterations": 4},
@@ -109,6 +109,7 @@ def make_adapter(
             "openhands_mcp_preconfigured": preconfigured,
             "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
             "openhands_image_digest": IMAGE_DIGEST,
+            "openhands_model_id": "omniroute-coding",
             "openhands_certification_controller": "aiat-github-actions",
             "openhands_certification_controller_run_id": "32594885180",
             "openhands_public_skills_disabled": True,
@@ -184,6 +185,7 @@ def _certification_context(tmp_path: Path) -> AdapterContext:
             "openhands_mcp_settings_key": "aiat-openhands-test-run",
             "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
             "openhands_image_digest": IMAGE_DIGEST,
+            "openhands_model_id": "omniroute-coding",
             "openhands_certification_controller": "aiat-github-actions",
             "openhands_certification_controller_run_id": "32594885180",
             "openhands_public_skills_disabled": True,
@@ -460,6 +462,34 @@ async def test_readiness_checks_server_and_governed_profile(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_readiness_rejects_caller_selected_model(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        if request.url.path == "/server_info":
+            return httpx.Response(200, json={"versions": {"openhands-agent-server": "1.43.0"}, "build_sha": COMMIT})
+        raise AssertionError(request.url)
+
+    adapter = make_adapter(tmp_path, handler)
+    malicious = request(workspace=tmp_path / "workspace").model_copy(
+        update={
+            "resolved_model_profile": ModelProfileReference(
+                profile_id="attacker-profile",
+                exact_model_id="attacker-model",
+            )
+        }
+    )
+    result = await adapter.readiness(request=malicious)
+    assert result.ready is False
+    assert result.checks["governed_model_id_pinned"] is True
+    assert result.checks["exact_model_bound"] is False
+    assert any("governed model snapshot" in blocker for blocker in result.blockers)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_start_payload_contains_only_controlled_profile_workspace_and_prompt(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
@@ -581,7 +611,7 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
             if status_reads == 1:
                 return httpx.Response(
                     200,
-                    json={"execution_status": "idle", "agent": {"llm": {"model": "openai/gpt-test"}}},
+                    json={"execution_status": "idle", "agent": {"llm": {"model": "omniroute-coding"}}},
                 )
             return httpx.Response(
                 200,

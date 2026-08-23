@@ -65,6 +65,7 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
 }
 
 OPENHANDS_MCP_BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
+_OPENHANDS_MODEL_ID = "omniroute-coding"
 _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 
@@ -481,6 +482,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         checks["aiat_tool_bridge_signing_secret"] = bool(self.context.secrets.get("tool_secret"))
         if not checks["aiat_tool_bridge_signing_secret"]:
             blockers.append("OpenHands requires an AIAT bridge signing secret from the secret boundary")
+        configured_model = str(self.context.metadata.get("openhands_model_id") or "")
+        checks["governed_model_id_pinned"] = configured_model == _OPENHANDS_MODEL_ID
+        if not checks["governed_model_id_pinned"]:
+            blockers.append("OpenHands must use the governed omniroute-coding model ID")
         for metadata_key in (
             "openhands_public_skills_disabled",
             "openhands_plugins_disabled",
@@ -528,11 +533,11 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             blockers.append(f"OpenHands readiness failed: {type(exc).__name__}")
         if request is not None:
             model = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else None
+            checks["exact_model_bound"] = model == configured_model == _OPENHANDS_MODEL_ID
             if not model:
                 blockers.append("OpenHands requires an AIAT-resolved exact model ID")
-                checks["exact_model_bound"] = False
-            else:
-                checks["exact_model_bound"] = True
+            elif model != configured_model or model != _OPENHANDS_MODEL_ID:
+                blockers.append("OpenHands request model does not match the governed model snapshot")
         return WorkerReadiness(worker_id=self.worker_id, ready=not blockers, checks=checks, blockers=blockers)
 
     def _mcp_settings_key(self) -> str:
@@ -694,7 +699,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         info = await self._conversation(conversation_id)
         agent = info.get("agent") if isinstance(info, dict) else None
         llm = agent.get("llm") if isinstance(agent, dict) else None
-        expected = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else None
+        expected = str(self.context.metadata.get("openhands_model_id") or _OPENHANDS_MODEL_ID)
         actual = llm.get("model") if isinstance(llm, dict) else None
         if expected and actual and str(actual) != expected:
             raise RuntimeError("OpenHands agent profile resolved a model different from AIAT's model snapshot")
