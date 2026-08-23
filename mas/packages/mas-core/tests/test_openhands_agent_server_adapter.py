@@ -210,7 +210,7 @@ def test_pending_candidate_can_run_only_with_exact_gvisor_certification_authoriz
         pending,
         authorization=authorization,
         base_url="http://openhands.test",
-        worker_id="candidate",
+        worker_id="coding-worker-openhands-candidate",
         context=_certification_context(tmp_path),
     )
     assert adapter.certification_mode is True
@@ -234,6 +234,25 @@ def test_certification_authorization_cannot_be_spoofed_or_rebound_to_other_pins(
             authorization=rebound,
             base_url="http://openhands.test",
             worker_id="candidate",
+            context=_certification_context(tmp_path),
+        )
+
+
+def test_certification_authorization_is_bound_to_candidate_worker_identity(tmp_path: Path) -> None:
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller="aiat-github-actions",
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    with pytest.raises(ValueError, match="invalid or does not match"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=authorization,
+            base_url="http://openhands.test",
+            worker_id="another-worker",
             context=_certification_context(tmp_path),
         )
 
@@ -278,7 +297,7 @@ def test_certification_authorization_is_factory_only_single_use_and_time_bounded
         pending,
         authorization=authorization,
         base_url="http://openhands.test",
-        worker_id="candidate",
+        worker_id="coding-worker-openhands-candidate",
         context=_certification_context(tmp_path),
     )
     assert adapter.certification_mode is True
@@ -370,7 +389,7 @@ def test_certification_authorization_requires_controller_attestation(tmp_path: P
             pending,
             authorization=authorization,
             base_url="http://openhands.test",
-            worker_id="candidate-wrong-controller",
+            worker_id="coding-worker-openhands-candidate",
             context=context,
         )
 
@@ -391,7 +410,7 @@ def test_certification_authorization_requires_matching_controller_run_id(tmp_pat
             pending,
             authorization=authorization,
             base_url="http://openhands.test",
-            worker_id="candidate-wrong-run",
+            worker_id="coding-worker-openhands-candidate",
             context=context,
         )
 

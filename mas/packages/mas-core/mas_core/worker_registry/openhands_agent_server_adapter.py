@@ -82,6 +82,7 @@ _CERTIFICATION_AUTHORIZATION_TTL_SECONDS = 900
 _CERTIFICATION_CONTROLLER = "aiat-github-actions"
 _CERTIFICATION_SANDBOX_PROFILE = "gvisor"
 _CERTIFICATION_SANDBOX_RUNTIME = "runsc"
+_CERTIFICATION_WORKER_ID = "coding-worker-openhands-candidate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +101,8 @@ class OpenHandsCertificationAuthorization:
     sandbox_runtime: str
     controller: str
     controller_run_id: str
-    _authority: object = field(repr=False, compare=False)
+    worker_id: str = _CERTIFICATION_WORKER_ID
+    _authority: object = field(default=None, repr=False, compare=False)
     issued_at: float = 0.0
     expires_at: float = 0.0
 
@@ -116,6 +118,7 @@ def issue_openhands_certification_authorization(
     controller_run_id: str,
     sandbox_profile: str,
     sandbox_runtime: str,
+    candidate_identity: str = _CERTIFICATION_WORKER_ID,
 ) -> OpenHandsCertificationAuthorization:
     """Issue a run-scoped authorization for the trusted certification controller.
 
@@ -132,6 +135,8 @@ def issue_openhands_certification_authorization(
         raise ValueError("OpenHands certification authorization requires the trusted controller")
     if not re.fullmatch(r"[0-9]{1,32}", run_id):
         raise ValueError("certification controller run ID must be a bounded numeric GitHub run ID")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", candidate_identity):
+        raise ValueError("OpenHands certification requires a bounded candidate worker identity")
     if profile != _CERTIFICATION_SANDBOX_PROFILE:
         raise ValueError("OpenHands certification requires the gVisor sandbox profile")
     if runtime != _CERTIFICATION_SANDBOX_RUNTIME:
@@ -147,6 +152,7 @@ def issue_openhands_certification_authorization(
         sandbox_runtime=runtime,
         controller=issuer,
         controller_run_id=run_id,
+        worker_id=candidate_identity,
         _authority=_CERTIFICATION_AUTHORITY,
         issued_at=time.time(),
         expires_at=time.time() + _CERTIFICATION_AUTHORIZATION_TTL_SECONDS,
@@ -156,6 +162,8 @@ def issue_openhands_certification_authorization(
 def _valid_certification_authorization(
     authorization: OpenHandsCertificationAuthorization | None,
     verification: OpenHandsInterfaceVerification,
+    *,
+    expected_worker_id: str | None = None,
 ) -> bool:
     return bool(
         isinstance(authorization, OpenHandsCertificationAuthorization)
@@ -166,6 +174,7 @@ def _valid_certification_authorization(
         and authorization.sandbox_profile == _CERTIFICATION_SANDBOX_PROFILE
         and authorization.sandbox_runtime == _CERTIFICATION_SANDBOX_RUNTIME
         and authorization.controller == _CERTIFICATION_CONTROLLER
+        and (expected_worker_id is None or authorization.worker_id == expected_worker_id)
         and authorization.issued_at > 0
         and authorization.expires_at > authorization.issued_at
         and authorization.issued_at <= time.time() < authorization.expires_at
@@ -296,7 +305,11 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         certification_mode = certification_authorization is not None
         if certification_mode and _certification_factory_token is not _CERTIFICATION_FACTORY_TOKEN:
             raise ValueError("OpenHands certification mode is available only through the trusted certification factory")
-        if certification_mode and not _valid_certification_authorization(certification_authorization, verification):
+        if certification_mode and not _valid_certification_authorization(
+            certification_authorization,
+            verification,
+            expected_worker_id=worker_id,
+        ):
             raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
         if certification_mode:
             controller = str(context.metadata.get("openhands_certification_controller") or "")
@@ -369,7 +382,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
 
         if authorization in _CONSUMED_CERTIFICATION_AUTHORIZATIONS:
             raise ValueError("OpenHands certification authorization has already been used")
-        if not _valid_certification_authorization(authorization, verification):
+        if not _valid_certification_authorization(authorization, verification, expected_worker_id=worker_id):
             raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
         _CONSUMED_CERTIFICATION_AUTHORIZATIONS.add(authorization)
         return cls(
