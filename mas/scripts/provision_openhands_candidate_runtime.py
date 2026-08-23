@@ -202,6 +202,17 @@ def provision(
             tool_names=TOOL_GRANTS,
             ttl_seconds=300,
         )
+        # Certification MCP settings are disposable and must never silently
+        # overwrite an existing operator entry.  Delete the run-scoped key
+        # through the authenticated Agent Server API, then prove it is absent
+        # before creating the fresh grant-bearing configuration.
+        preclean_response = client.delete(f"/api/settings/mcp/{mcp_key}")
+        if preclean_response.status_code not in {200, 404}:
+            raise ProvisioningError("run_scoped_mcp_preclean_delete_failed")
+        preclean_settings = _json_body(client.get("/api/settings"))
+        preclean_config = _mcp_config(preclean_settings)
+        if mcp_key in preclean_config:
+            raise ProvisioningError("run_scoped_mcp_entry_present_after_preclean")
         mcp_response = client.post(
             f"/api/settings/mcp/{mcp_key}",
             json={
@@ -290,6 +301,7 @@ def provision(
             },
             "mcp": {
                 "logical_key": mcp_key,
+                "preclean": "PASS",
                 "created": True,
                 "url": BRIDGE_URL,
                 "transport": "streamable-http",

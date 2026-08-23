@@ -20,8 +20,10 @@ SPEC.loader.exec_module(MODULE)
 def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained() -> None:
     profile_id = "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31"
     calls: list[tuple[str, str]] = []
+    mcp_present = False
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal mcp_present
         calls.append((request.method, request.url.path))
         if request.method == "GET" and request.url.path == "/api/llm/provider-connections":
             return httpx.Response(200, json=[])
@@ -32,20 +34,23 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
         if request.method == "GET" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
             return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "llm": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
         if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            mcp_present = True
             return httpx.Response(201, json={})
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            mcp_present = False
+            return httpx.Response(404, json={})
         if request.method == "GET" and request.url.path == "/api/settings":
+            config = {
+                "aiat-openhands-test-run": {
+                    "url": MODULE.BRIDGE_URL,
+                    "transport": "streamable-http",
+                    "enabled": True,
+                    "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                }
+            } if mcp_present else {}
             return httpx.Response(
                 200,
-                json={
-                    "mcp_config": {
-                        "aiat-openhands-test-run": {
-                            "url": MODULE.BRIDGE_URL,
-                            "transport": "streamable-http",
-                            "enabled": True,
-                            "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
-                        }
-                    }
-                },
+                json={"mcp_config": config},
             )
         if request.method == "POST" and request.url.path == "/api/agent-profiles/aiat-openhands-v1-43-0-coding":
             return httpx.Response(201, json={"name": "aiat-openhands-v1-43-0-coding", "message": "saved"})
@@ -93,6 +98,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert report["mcp"]["grant_value_retained"] is False
     assert "tool-secret-that-is-not-retained" not in json.dumps(report)
     assert "gateway-secret-that-is-not-retained" not in json.dumps(report)
+    assert report["mcp"]["preclean"] == "PASS"
+    assert ("DELETE", "/api/settings/mcp/aiat-openhands-test-run") in calls
     assert ("POST", "/api/settings/mcp/aiat-openhands-test-run") in calls
     assert ("POST", "/api/agent-profiles/aiat-openhands-v1-43-0-coding") in calls
     client.close()
