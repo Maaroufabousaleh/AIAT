@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 
 def _load(name: str):
@@ -22,6 +23,7 @@ def _load(name: str):
 PROVISION = _load("provision_openhands_certification_gateway")
 PROBE = _load("check_openhands_certification_gateway")
 PINS = _load("verify_openhands_gateway_pins")
+CONFIG = Path(__file__).resolve().parents[2] / "infra" / "compose" / "litellm_openhands_certification.yaml"
 
 
 def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
@@ -170,3 +172,31 @@ def test_pin_verification_requires_the_exact_repo_digest() -> None:
     assert report["status"] == "PASS"
     assert report["floating_tags_used"] is False
     assert all(item["repo_digest_verified"] for item in report["components"])
+
+
+def test_disposable_litellm_config_has_one_governed_omniroute_route() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    assert isinstance(config, dict)
+    models = config.get("model_list")
+    assert isinstance(models, list)
+    assert len(models) == 1
+    route = models[0]
+    assert route["model_name"] == "omniroute-coding"
+    params = route["litellm_params"]
+    assert params == {
+        "model": "openai/groq/llama-3.3-70b-versatile",
+        "api_base": "http://omniroute:20128/v1",
+        "api_key": "os.environ/OMNIROUTE_API_KEY",
+    }
+    assert config["general_settings"] == {"master_key": "os.environ/LITELLM_MASTER_KEY"}
+    serialized = CONFIG.read_text(encoding="utf-8").lower()
+    assert "localhost" not in serialized
+    assert "host.docker.internal" not in serialized
+    assert "latest" not in serialized
+
+
+def test_disposable_route_cannot_add_fallback_provider_or_model() -> None:
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    models = config["model_list"]
+    assert [item["model_name"] for item in models] == ["omniroute-coding"]
+    assert all(item["litellm_params"]["api_base"] == "http://omniroute:20128/v1" for item in models)
