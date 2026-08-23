@@ -640,3 +640,45 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
     assert result.replay_metadata["openhands_conversation_id"] == conversation_id
     assert not adapter._event_tasks
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tmp_path: Path) -> None:
+    conversation_id = str(uuid4())
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(201, json={})
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(200, json={})
+        if request.method == "POST" and request.url.path == "/api/conversations":
+            return httpx.Response(201, json={"id": conversation_id})
+        if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}":
+            if calls.count(f"GET /api/conversations/{conversation_id}") == 1:
+                return httpx.Response(
+                    200,
+                    json={"execution_status": "idle", "agent": {"llm": {"model": "omniroute-coding"}}},
+                )
+            return httpx.Response(200, json={"execution_status": "running"})
+        if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/run":
+            return httpx.Response(200, json={"success": True})
+        if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/interrupt":
+            return httpx.Response(200, json={"success": True})
+        if request.method == "DELETE" and request.url.path == f"/api/conversations/{conversation_id}":
+            return httpx.Response(200, json={})
+        raise AssertionError(request.url)
+
+    adapter = make_adapter(tmp_path, handler)
+    adapter.context.metadata["openhands_cleanup_conversations"] = True
+    run_request = request(workspace=tmp_path / "workspace").model_copy(update={"timeout_seconds": 0.01})
+    result = await adapter._execute(run_request)
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "TIMEOUT"
+    assert result.error.category == "timeout"
+    assert result.error.terminal is True
+    assert f"POST /api/conversations/{conversation_id}/interrupt" in calls
+    assert f"DELETE /api/conversations/{conversation_id}" in calls
+    await adapter.close()

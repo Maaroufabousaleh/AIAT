@@ -335,17 +335,17 @@ async def _cleanup_preconfigured_mcp(*, base_url: str, settings_key: str, sessio
     ) as client:
         response = await client.delete(f"/api/settings/mcp/{settings_key}")
         if response.status_code not in {200, 404}:
-            return {"status": "FAIL", "reason": f"delete_http_{response.status_code}"}
+            return {"status": "BLOCKED_CLEANUP", "reason": f"delete_http_{response.status_code}"}
         readback = await client.get("/api/settings")
         if readback.status_code >= 400:
-            return {"status": "FAIL", "reason": f"readback_http_{readback.status_code}"}
+            return {"status": "BLOCKED_CLEANUP", "reason": f"readback_http_{readback.status_code}"}
         payload = readback.json() if readback.content else {}
         config = payload.get("mcp_config") if isinstance(payload, dict) else None
         if not isinstance(config, dict):
             config = payload.get("mcp_servers") if isinstance(payload, dict) else None
         present = isinstance(config, dict) and settings_key in config
         return {
-            "status": "FAIL" if present else "PASS",
+            "status": "BLOCKED_CLEANUP" if present else "PASS",
             "delete": "deleted" if response.status_code == 200 else "already_absent",
             "verified_absent": not present,
         }
@@ -388,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         report.setdefault("cleanup", {})["preconfigured_mcp"] = cleanup
         if cleanup.get("status") != "PASS":
             report.setdefault("blockers", []).append("run_scoped_mcp_cleanup_failed")
-            report["status"] = "BLOCKED"
+            report["status"] = "BLOCKED_CLEANUP"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"status": report.get("status"), "blockers": report.get("blockers", [])}, sort_keys=True))

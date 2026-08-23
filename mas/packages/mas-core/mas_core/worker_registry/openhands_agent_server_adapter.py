@@ -869,7 +869,19 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                             },
                         )
                     if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
-                        raise TimeoutError("OpenHands conversation exceeded the AIAT adapter timeout")
+                        await self._interrupt_for_timeout(request, conversation_id)
+                        return WorkerResult(
+                            run_id=request.run_id,
+                            worker_id=self.worker_id,
+                            success=False,
+                            error=WorkerError(
+                                code="TIMEOUT",
+                                message="OpenHands conversation exceeded the AIAT adapter timeout",
+                                terminal=True,
+                                category="timeout",
+                            ),
+                            replay_metadata={"openhands_conversation_id": conversation_id},
+                        )
                     await asyncio.sleep(0.25)
             finally:
                 self._stop_events.add(request.run_id)
@@ -888,6 +900,32 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         response = await client.delete(self.verification.endpoint("conversation_delete", conversation_id=conversation_id))
         if response.status_code not in {200, 404}:
             response.raise_for_status()
+
+    async def _interrupt_for_timeout(self, request: WorkerRunRequest, conversation_id: str) -> None:
+        """Ask Agent Server to stop before deleting a timed-out conversation.
+
+        AIAT's timeout is authoritative. The remote interrupt is a best-effort
+        reconciliation step; the normalized result remains a terminal timeout
+        even when the disposable server has already stopped or disappeared.
+        """
+
+        try:
+            response = await (await self._get_client()).post(
+                self.verification.endpoint("conversation_interrupt", conversation_id=conversation_id)
+            )
+            if response.status_code not in {200, 404, 409}:
+                response.raise_for_status()
+            await self.emit_audit(
+                request.run_id,
+                "openhands.timeout_interrupt",
+                details={"outcome": "requested", "http_status": response.status_code},
+            )
+        except Exception as exc:  # cleanup remains authoritative and fail-closed
+            await self.emit_audit(
+                request.run_id,
+                "openhands.timeout_interrupt",
+                details={"outcome": "unavailable", "error": type(exc).__name__},
+            )
 
     async def pause(self, request: WorkerPause) -> None:
         conversation_id = self._conversation_by_run.get(request.run_id)
