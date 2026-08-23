@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `69face5fc697a7c0777b6d25fd2d8524467fec44`; the branch also
+hardening at `29d66e6f00c2951102a1e3b985758f9676379e1d`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -18,7 +18,11 @@ The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
 Cleanup additionally removes generated AIAT/tool/gateway secret entries from
-the runner's `GITHUB_ENV` file and records that scalar absence assertion.
+the runner's `GITHUB_ENV` file and records that scalar absence assertion. The
+normal OpenHands transport factory now refuses inline approval mappings and
+loads only the committed canonical interface-verification report; its MCP
+grant issuer also rejects tool names outside the bounded repository/test
+coding surface before creating a run grant.
 
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
@@ -203,8 +207,10 @@ live-discovered Groq baseline from the governed `auto/coding` route) and
 provenance). `9df2779` additionally hardens cleanup of run-scoped internal
 secret environment entries and adds a static regression check; `69face5`
 classifies unexpected readiness 4xx responses as application-health contract
-failures rather than cold-start timeouts. These changes do not dispatch a
-workflow or activate OpenHands.
+failures rather than cold-start timeouts. `29d66e6` additionally keeps
+production activation tied to the committed report and bounds the OpenHands
+AIAT bridge grant surface. These changes do not dispatch a workflow or
+activate OpenHands.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve

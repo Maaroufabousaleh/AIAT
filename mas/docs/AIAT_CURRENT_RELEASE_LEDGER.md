@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `69face5` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `29d66e6` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -119,7 +119,10 @@ records their absence without retaining secret values. `69face5` narrows
 unexpected OmniRoute readiness 4xx classification to application-health
 contract failure rather than a startup timeout. These remain repository-local
 evidence hardening only; they do not add live provider evidence or alter the
-global `NO-RELEASE` decision.
+global `NO-RELEASE` decision. `29d66e6` additionally requires the normal
+OpenHands transport factory to consume only the committed canonical
+interface-verification report and rejects AIAT bridge grants outside the
+bounded repository/test coding surface before issuing a run grant.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained
