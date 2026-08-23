@@ -1,14 +1,15 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `176055e` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `45f30a9` (latest reviewed OpenHands certification-path hardening plus development-image pinning; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `cbad706`, `6da661f`, `d8ab39b`, `a6fa383`, `5724979`, `b1c5d8e`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
-`b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, and `334c321`)
+`b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
+`3161ad1`, and `4f51dac`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -19,7 +20,10 @@ repository-local evidence only. A future manual run still requires the
 operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
-OpenCode remains the current default.
+OpenCode remains the current default. The currently prepared, not-yet-run
+candidate is `45f30a98e2658cdd52c4002e478df626df16b826`; it requires one new
+deliberate provider-backed certification run and does not itself constitute
+live evidence.
 
 The later OpenHands path hardening `488a593` makes the OmniRoute API-auth
 probe compatible with older frozen candidate helper interfaces through a
