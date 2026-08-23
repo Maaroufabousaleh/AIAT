@@ -70,6 +70,13 @@ def test_live_task_requires_a_disposable_git_baseline_for_real_diff() -> None:
     assert "coding_task_git_baseline_missing" in module.validate(weakened)["errors"]
 
 
+def test_live_certification_invokes_the_lifecycle_wave() -> None:
+    module = _module()
+    text = _workflow()
+    assert "live_lifecycle_wave_missing" not in module.validate(text)["errors"]
+    assert "live_lifecycle_wave_missing" in module.validate(text.replace("            --exercise-lifecycle \\\n", "", 1))["errors"]
+
+
 def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     text = _workflow()
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))

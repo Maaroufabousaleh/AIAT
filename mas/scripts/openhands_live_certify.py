@@ -24,6 +24,9 @@ import httpx
 from mas_core.worker_contract import (
     AdapterContext,
     ModelProfileReference,
+    WorkerCancellation,
+    WorkerPause,
+    WorkerResume,
     WorkerRunRequest,
 )
 from mas_core.worker_registry.openhands_agent_server_adapter import (
@@ -207,6 +210,182 @@ def _scan_event_for_secrets(event: Any, secret_values: list[str]) -> dict[str, A
     }
 
 
+async def _wait_for_conversation(adapter: OpenHandsAgentServerAdapter, run_id: UUID, *, timeout: float = 30.0) -> str:
+    """Wait for the adapter to bind a server conversation ID."""
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        conversation_id = adapter._conversation_by_run.get(run_id)
+        if conversation_id:
+            return conversation_id
+        await asyncio.sleep(0.05)
+    raise TimeoutError("OpenHands conversation was not created within the lifecycle probe window")
+
+
+async def _wait_for_running(adapter: OpenHandsAgentServerAdapter, conversation_id: str, *, timeout: float = 30.0) -> str:
+    """Wait until the server has actually begun execution before pausing."""
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        status = str((await adapter._conversation(conversation_id)).get("execution_status") or "").lower()
+        if status == "running":
+            return status
+        if status in {"finished", "error", "stuck"}:
+            raise RuntimeError("lifecycle_probe_reached_terminal_state_before_control")
+        await asyncio.sleep(0.1)
+    raise TimeoutError("OpenHands conversation did not enter running state before lifecycle control")
+
+
+async def _wait_for_not_running(adapter: OpenHandsAgentServerAdapter, conversation_id: str, *, timeout: float = 30.0) -> str:
+    """Confirm a pause changed the remote execution state before resuming."""
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        status = str((await adapter._conversation(conversation_id)).get("execution_status") or "").lower()
+        if status != "running":
+            if status in {"finished", "error", "stuck"}:
+                raise RuntimeError("pause_probe_reached_terminal_state")
+            return status
+        await asyncio.sleep(0.1)
+    raise TimeoutError("OpenHands conversation remained running after pause request")
+
+
+async def _drain_terminal_events(adapter: OpenHandsAgentServerAdapter, run_id: UUID, *, timeout: float = 180.0) -> list[Any]:
+    """Drain one normalized run stream, retaining only in-memory event objects."""
+
+    async def drain() -> list[Any]:
+        values: list[Any] = []
+        async for event in adapter.events(run_id):
+            values.append(event)
+        return values
+
+    return await asyncio.wait_for(drain(), timeout=timeout)
+
+
+def _lifecycle_prompt(kind: str) -> str:
+    """Use a bounded local delay so lifecycle requests have a control window."""
+
+    return (
+        f"This is the disposable OpenHands {kind} lifecycle probe. "
+        "Work only inside the assigned workspace. First run exactly "
+        "`python -c 'import time; time.sleep(15)'`, then make no further changes "
+        "and wait for AIAT lifecycle control. Do not access credentials, network "
+        "services, or external tools."
+    )
+
+
+async def _exercise_live_lifecycle(
+    adapter: OpenHandsAgentServerAdapter,
+    base_request: WorkerRunRequest,
+    secret_values: list[str],
+) -> tuple[dict[str, str], dict[str, Any], list[str]]:
+    """Run bounded pause/interrupt/resume/timeout probes against the live server.
+
+    The probe is intentionally conservative: a race where the model completes
+    before a control request is observed is a failed/blocked gate, never an
+    inferred pass. Forced process failure, cross-workspace attacks, and
+    provider-backed secret canaries remain separate gates.
+    """
+
+    statuses = {"pause": "NOT_RUN", "interrupt": "NOT_RUN", "resume": "NOT_RUN", "timeout": "NOT_RUN"}
+    details: dict[str, Any] = {"probes": {}, "raw_payloads_retained": False}
+    blockers: list[str] = []
+    secret_fingerprints: set[str] = set()
+
+    def observe_secrets(events: list[Any]) -> None:
+        for event in events:
+            observation = _scan_event_for_secrets(event, secret_values)
+            secret_fingerprints.update(observation["matched_fingerprints"])
+
+    pause_request = base_request.model_copy(
+        update={
+            "run_id": uuid4(),
+            "idempotency_key": f"openhands-live-pause-{uuid4().hex}",
+            "task_input": {"prompt": _lifecycle_prompt("pause/resume")},
+            "timeout_seconds": 90,
+        }
+    )
+    try:
+        await adapter.start(pause_request)
+        pause_conversation = await _wait_for_conversation(adapter, pause_request.run_id)
+        running_status = await _wait_for_running(adapter, pause_conversation)
+        await adapter.pause(WorkerPause(run_id=pause_request.run_id, reason="certification pause", requested_by="certification"))
+        paused_status = await _wait_for_not_running(adapter, pause_conversation)
+        statuses["pause"] = "PASS"
+        await adapter.resume(WorkerResume(run_id=pause_request.run_id, requested_by="certification"))
+        events = await _drain_terminal_events(adapter, pause_request.run_id)
+        observe_secrets(events)
+        terminal = next((event for event in reversed(events) if event.result is not None or event.error is not None), None)
+        statuses["resume"] = "PASS" if terminal is not None and terminal.result is not None and terminal.result.success else "FAILED_RESUME"
+        details["probes"]["pause_resume"] = {
+            "conversation_id_present": bool(pause_conversation),
+            "status_before_pause": running_status,
+            "status_after_pause": paused_status,
+            "event_count": len(events),
+            "terminal_success": bool(terminal and terminal.result and terminal.result.success),
+        }
+    except Exception as exc:
+        blockers.append(f"lifecycle_pause_resume:{type(exc).__name__}")
+        details["probes"]["pause_resume"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+
+    interrupt_request = base_request.model_copy(
+        update={
+            "run_id": uuid4(),
+            "idempotency_key": f"openhands-live-interrupt-{uuid4().hex}",
+            "task_input": {"prompt": _lifecycle_prompt("interrupt")},
+            "timeout_seconds": 90,
+        }
+    )
+    try:
+        await adapter.start(interrupt_request)
+        interrupt_conversation = await _wait_for_conversation(adapter, interrupt_request.run_id)
+        await adapter.cancel(
+            WorkerCancellation(run_id=interrupt_request.run_id, reason="certification interrupt", requested_by="certification", force=True)
+        )
+        events = await _drain_terminal_events(adapter, interrupt_request.run_id, timeout=30.0)
+        observe_secrets(events)
+        cancelled = any(event.error is not None and event.error.code == "CANCELLED" for event in events)
+        statuses["interrupt"] = "PASS" if cancelled else "FAILED_INTERRUPT"
+        details["probes"]["interrupt"] = {
+            "conversation_id_present": bool(interrupt_conversation),
+            "event_count": len(events),
+            "cancelled_event": cancelled,
+        }
+    except Exception as exc:
+        blockers.append(f"lifecycle_interrupt:{type(exc).__name__}")
+        details["probes"]["interrupt"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+
+    timeout_request = base_request.model_copy(
+        update={
+            "run_id": uuid4(),
+            "idempotency_key": f"openhands-live-timeout-{uuid4().hex}",
+            "task_input": {"prompt": _lifecycle_prompt("timeout")},
+            "timeout_seconds": 1,
+        }
+    )
+    try:
+        await adapter.start(timeout_request)
+        await _wait_for_conversation(adapter, timeout_request.run_id)
+        events = await _drain_terminal_events(adapter, timeout_request.run_id, timeout=30.0)
+        observe_secrets(events)
+        terminal = next((event for event in reversed(events) if event.error is not None or event.result is not None), None)
+        timeout_error = bool(terminal and terminal.error and terminal.error.code == "TIMEOUT")
+        statuses["timeout"] = "PASS" if timeout_error else "FAILED_TIMEOUT"
+        details["probes"]["timeout"] = {"event_count": len(events), "timeout_error": timeout_error}
+    except Exception as exc:
+        blockers.append(f"lifecycle_timeout:{type(exc).__name__}")
+        details["probes"]["timeout"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+    details["secret_scan"] = {
+        "status": "PASS" if not secret_fingerprints else "BLOCKED_SECRET_NON_DISCLOSURE",
+        "matches": len(secret_fingerprints),
+        "matched_fingerprints": sorted(secret_fingerprints),
+        "raw_values_retained": False,
+    }
+    if secret_fingerprints:
+        blockers.append("secret_disclosure_detected")
+    return statuses, details, blockers
+
+
 def _status_map(status: str) -> dict[str, str]:
     return {
         "coding_task": status,
@@ -350,6 +529,7 @@ async def certify(
             "openhands_certification_controller_run_id": controller_run_id,
             "openhands_certification_sandbox_profile": sandbox_profile.lower(),
             "openhands_certification_sandbox_runtime": sandbox_runtime.lower(),
+            "openhands_defer_mcp_cleanup": bool(exercise_lifecycle),
         },
     )
     authorization = None
@@ -497,11 +677,34 @@ async def certify(
         task_definition["postrun"] = postrun
         blockers.extend(postrun_blockers)
         if exercise_lifecycle:
-            blockers.append("lifecycle_exercise_requires_dedicated_long_running_task_profile")
+            lifecycle_statuses, lifecycle_details, lifecycle_blockers = await _exercise_live_lifecycle(
+                adapter,
+                request,
+                secret_values,
+            )
+            statuses.update(lifecycle_statuses)
+            task_definition["lifecycle"] = lifecycle_details
+            lifecycle_scan = lifecycle_details.get("secret_scan")
+            if isinstance(lifecycle_scan, dict):
+                secret_matches.update(str(item) for item in lifecycle_scan.get("matched_fingerprints", []))
+                task_definition["secret_scan"]["matches"] = len(secret_matches)
+                task_definition["secret_scan"]["matched_fingerprints"] = sorted(secret_matches)
+                if secret_matches:
+                    statuses["secret_isolation"] = "BLOCKED_SECRET_NON_DISCLOSURE"
+            blockers.extend(lifecycle_blockers)
     except Exception as exc:  # runtime errors remain evidence, never activation
         statuses["coding_task"] = "FAILED_CERTIFICATION_IMPLEMENTATION"
         blockers.append(f"runtime:{type(exc).__name__}")
     finally:
+        if exercise_lifecycle:
+            # One profile-bound MCP registration is shared by the lifecycle
+            # wave. Delete it only after all probe conversations have ended.
+            adapter.context.metadata["openhands_defer_mcp_cleanup"] = False
+            for run_id in list(adapter._mcp_by_run):
+                try:
+                    await adapter._cleanup_tool_bridge(run_id)
+                except Exception as exc:
+                    blockers.append(f"lifecycle_mcp_cleanup:{type(exc).__name__}")
         await adapter.close()
     statuses["zero_residue"] = "PASS" if not adapter._mcp_by_run else "FAILED_CLEANUP"
     if statuses["zero_residue"] != "PASS":

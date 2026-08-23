@@ -7,7 +7,6 @@ import json
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import httpx
@@ -158,6 +157,51 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
     assert not any(call.startswith("POST /api/settings/mcp/") for call in calls)
     await adapter._cleanup_tool_bridge(run.run_id)
     assert "DELETE /api/settings/mcp/aiat-openhands-test-run" in calls
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_wave_defers_bridge_delete_until_trusted_final_cleanup(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(200, json={})
+        raise AssertionError(request)
+
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller="aiat-github-actions",
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    client = httpx.AsyncClient(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="coding-worker-openhands-candidate",
+        context=_certification_context(tmp_path),
+        client=client,
+    )
+    run_id = uuid4()
+    adapter._mcp_by_run[run_id] = "aiat-openhands-test-run"
+    adapter.context.metadata["openhands_defer_mcp_cleanup"] = True
+
+    await adapter._cleanup_tool_bridge(run_id)
+    assert calls == []
+    assert adapter._mcp_by_run[run_id] == "aiat-openhands-test-run"
+
+    adapter.context.metadata["openhands_defer_mcp_cleanup"] = False
+    await adapter._cleanup_tool_bridge(run_id)
+    assert calls == ["DELETE /api/settings/mcp/aiat-openhands-test-run"]
+    assert run_id not in adapter._mcp_by_run
     await adapter.close()
 
 

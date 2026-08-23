@@ -5,6 +5,12 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from mas_core.worker_contract import ModelProfileReference, WorkerRunRequest
 
 
 def _module():
@@ -116,3 +122,68 @@ def test_event_secret_scan_retains_only_fingerprints() -> None:
     leaked = module._scan_event_for_secrets(Event(), ["sentinel"])
     assert leaked["matches"] == 1
     assert "sentinel" not in json.dumps(leaked)
+
+
+@pytest.mark.asyncio
+async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
+    module = _module()
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self._conversation_by_run = {}
+            self._statuses = {}
+            self._events = {}
+
+        async def start(self, request: WorkerRunRequest) -> None:
+            prompt = str(request.task_input["prompt"])
+            if "pause/resume" in prompt:
+                kind = "pause"
+                self._statuses[kind] = iter(("running", "paused"))
+                event = SimpleNamespace(result=SimpleNamespace(success=True), error=None)
+            elif "interrupt" in prompt:
+                kind = "interrupt"
+                self._statuses[kind] = iter(())
+                event = SimpleNamespace(result=None, error=SimpleNamespace(code="CANCELLED"))
+            else:
+                kind = "timeout"
+                self._statuses[kind] = iter(())
+                event = SimpleNamespace(result=None, error=SimpleNamespace(code="TIMEOUT"))
+            self._conversation_by_run[request.run_id] = kind
+            self._events[request.run_id] = [event]
+
+        async def _conversation(self, conversation_id: str) -> dict[str, str]:
+            sequence = self._statuses[conversation_id]
+            try:
+                status = next(sequence)
+            except StopIteration:
+                status = "paused"
+            return {"execution_status": status}
+
+        async def pause(self, request: object) -> None:
+            return None
+
+        async def resume(self, request: object) -> None:
+            return None
+
+        async def cancel(self, request: object) -> None:
+            return None
+
+        async def events(self, run_id):
+            for event in self._events.pop(run_id, []):
+                yield event
+
+    base_request = WorkerRunRequest(
+        run_id=uuid4(),
+        idempotency_key="lifecycle-test",
+        worker_id="coding-worker-openhands-candidate",
+        task_type="coding",
+        task_input={"prompt": "bounded lifecycle test"},
+        resolved_model_profile=ModelProfileReference(profile_id="test", exact_model_id="omniroute-coding"),
+    )
+    statuses, details, blockers = await module._exercise_live_lifecycle(FakeAdapter(), base_request, ["sentinel"])
+
+    assert statuses == {"pause": "PASS", "interrupt": "PASS", "resume": "PASS", "timeout": "PASS"}
+    assert details["probes"]["pause_resume"]["status_before_pause"] == "running"
+    assert details["probes"]["pause_resume"]["status_after_pause"] == "paused"
+    assert details["secret_scan"]["status"] == "PASS"
+    assert blockers == []

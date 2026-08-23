@@ -746,6 +746,7 @@ jobs:
             --workspace /workspace/project \
             --host-workspace "$RUNNER_TEMP/aiat-openhands-workspace" \
             --fixture-root "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task" \
+            --exercise-lifecycle \
             --task-spec docs/provenance/openhands-candidate/2026-08-22-v1.43.0/coding-task-spec.json \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/live/live-certification.json"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"

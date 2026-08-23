@@ -106,6 +106,8 @@ def validate(text: str) -> dict[str, Any]:
         or 'git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"' not in text
     ):
         errors.append("coding_task_git_baseline_missing")
+    if "--exercise-lifecycle" not in text:
+        errors.append("live_lifecycle_wave_missing")
     if re.search(r"(?m)^\s*docker\s+logs\b", text):
         errors.append("raw_container_logs_retained")
     return {

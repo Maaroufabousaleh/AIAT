@@ -637,6 +637,13 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._mcp_grant_expires_at.pop(run_id, None)
         if settings_key is None:
             return
+        if self.certification_mode and self.context.metadata.get("openhands_defer_mcp_cleanup") is True:
+            # A governed lifecycle wave may run several conversations against
+            # one profile-bound MCP registration.  The trusted certification
+            # controller performs one final delete/read-back after the wave;
+            # ordinary adapter runs retain the existing per-run cleanup.
+            self._mcp_by_run[run_id] = settings_key
+            return
         response = await (await self._get_client()).delete(
             self.verification.endpoint("settings_mcp", settings_key=settings_key)
         )
