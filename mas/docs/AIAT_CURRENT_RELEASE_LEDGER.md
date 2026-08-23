@@ -50,7 +50,9 @@ worker identity, wire the governed transport factory, enforce the bounded
 candidate budget, reject unapproved MCP entries with strict delete/absence
 read-back, and resolve repository-relative interface evidence independently of
 the service working directory. `2d44d10` also broadens the offline dispatch
-suite, and the registration preflight now requires a complete 20-gate artifact
+suite, `29df0d3` adds a read-only exact-pin steward-registration preflight, and
+`7b2e60d` extends zero-residue cleanup to the disposable workspace and tool
+image. The registration preflight now requires a complete 20-gate artifact
 bound to the exact candidate/source/image pins before any steward submission.
 These changes add no live
 provider evidence and do not alter the global `NO-RELEASE` decision.

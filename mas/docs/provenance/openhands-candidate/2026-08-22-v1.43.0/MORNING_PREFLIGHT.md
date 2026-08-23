@@ -81,7 +81,8 @@ activation approval remain independent. The current local candidate baseline
 includes exact disposable-network topology assertions, candidate-worker-bound
 certification authorization, a bounded 20-iteration/300-second adapter budget,
 strict MCP allowlist/delete read-back, and repository-relative interface-report
-resolution. None of these local checks is live provider evidence.
+resolution, and zero-residue verification for the workspace and tool image.
+None of these local checks is live provider evidence.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve

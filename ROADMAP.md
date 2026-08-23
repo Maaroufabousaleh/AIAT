@@ -74,7 +74,8 @@ binding, the governed transport factory, bounded candidate budgets, strict
 MCP cleanup/read-back, and working-directory-independent interface evidence
 resolution. `2d44d10` broadens the offline dispatch suite; future steward
 registration uses a separate read-only artifact preflight so a mismatched or
-incomplete GitHub result cannot be attached to this candidate.
+incomplete GitHub result cannot be attached to this candidate. `7b2e60d`
+extends the cleanup assertion to the disposable workspace and tool image.
 This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a

@@ -52,7 +52,8 @@ unapproved MCP entries with strict delete/absence read-back, and resolve
 repository-relative interface evidence from any service working directory.
 `2d44d10` broadens the offline dispatch suite and adds a read-only
 steward-registration preflight that requires all mandatory gates and exact
-candidate/source/image pins before registration.
+candidate/source/image pins before registration. `7b2e60d` additionally
+requires disposable workspace and tool-image absence in the cleanup evidence.
 OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
