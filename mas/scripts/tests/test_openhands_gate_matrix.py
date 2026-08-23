@@ -98,3 +98,15 @@ def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> N
     assert report["status"] == "BLOCKED_MODEL_GATEWAY"
     assert report["evidence_blocker_status"] == "BLOCKED_MODEL_GATEWAY"
     assert report["evaluation"]["all_required_gates_passed"] is False
+
+
+def test_candidate_preflight_failure_is_not_reported_as_provider_failure(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    report = module.evaluate(
+        evidence_root=tmp_path,
+        provider_status="PASS",
+        configuration_status="BLOCKED_STATIC_CONFIGURATION",
+    )
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
+    assert report["provider_configuration_status"] == "PASS"
+    assert report["configuration_status"] == "BLOCKED_STATIC_CONFIGURATION"

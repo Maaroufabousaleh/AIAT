@@ -43,6 +43,9 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))
     assert "provider_gate_missing_before_expensive_stages" in report["errors"]
 
+    report = _module().validate(text.replace("steps.preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))
+    assert "candidate_preflight_gate_missing_before_expensive_stages" in report["errors"]
+
     report = _module().validate(text.replace('"verified_absent"', '"removed"'))
     assert "cleanup_absence_readback_missing" in report["errors"]
 

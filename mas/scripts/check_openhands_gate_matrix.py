@@ -146,6 +146,7 @@ def evaluate(
     *,
     gate_status_path: Path | None = None,
     provider_status: str | None = None,
+    configuration_status: str | None = None,
     candidate_sha: str | None = None,
     source_commit: str | None = None,
     image_digest: str | None = None,
@@ -153,6 +154,11 @@ def evaluate(
 ) -> dict[str, Any]:
     gates = _load_gate_rows(gate_status_path) if gate_status_path else derive_gate_rows(evidence_root) if evidence_root else initial_gate_map()
     effective_blocker = provider_status if provider_status and provider_status != "PASS" else None
+    if effective_blocker is None and configuration_status and configuration_status not in {
+        "PASS",
+        "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    }:
+        effective_blocker = configuration_status
     if effective_blocker is None and evidence_root is not None:
         effective_blocker = _evidence_blocker_status(evidence_root)
     result = evaluate_gate_map(gates, blocker_status=effective_blocker)
@@ -165,6 +171,7 @@ def evaluate(
         "gates": gates,
         "evaluation": result,
         "provider_configuration_status": provider_status,
+        "configuration_status": configuration_status,
         "evidence_blocker_status": effective_blocker,
         "evidence_root_used": bool(evidence_root),
         "payloads_retained": False,
@@ -176,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gate-status", type=Path)
     parser.add_argument("--provider-status")
+    parser.add_argument("--configuration-status")
     parser.add_argument("--candidate-sha")
     parser.add_argument("--source-commit")
     parser.add_argument("--image-digest")
@@ -184,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     report = evaluate(
         gate_status_path=args.gate_status,
         provider_status=args.provider_status,
+        configuration_status=args.configuration_status,
         candidate_sha=args.candidate_sha,
         source_commit=args.source_commit,
         image_digest=args.image_digest,

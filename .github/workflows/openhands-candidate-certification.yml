@@ -195,10 +195,39 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/preflight"
           uv run python scripts/check_openhands_candidate_preflight.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json"
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit_code=$?
+          preflight_status=$(python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json" \
+            "$exit_code" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          status = report.get("status") if isinstance(report, dict) else None
+          if exit_code == 0 and status == "READY_FOR_CERTIFICATION_AUTHORIZATION":
+              print(status)
+          elif status in {"BLOCKED_OPERATOR_CONFIGURATION", "BLOCKED_STATIC_CONFIGURATION"}:
+              print(status)
+          else:
+              print("FAILED_CERTIFICATION_IMPLEMENTATION")
+          PY
+          )
+          if [ "$preflight_status" = "READY_FOR_CERTIFICATION_AUTHORIZATION" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "status=$preflight_status" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Pull pinned certification images and verify gateway provenance
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         run: |
           set -euo pipefail
           docker pull "$OPENHANDS_IMAGE"
@@ -245,7 +274,7 @@ jobs:
 
       - name: Create disposable model-gateway network
         id: network
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -256,7 +285,7 @@ jobs:
 
       - name: Start disposable OmniRoute provider gateway
         id: omniroute
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -312,7 +341,7 @@ jobs:
 
       - name: Configure exactly one disposable OmniRoute provider route
         id: provider
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -327,7 +356,7 @@ jobs:
 
       - name: Start disposable LiteLLM model gateway
         id: litellm
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -381,7 +410,7 @@ jobs:
 
       - name: Verify deterministic provider route through LiteLLM
         id: gateway
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -396,7 +425,7 @@ jobs:
 
       - name: Start disposable AIAT tool-service bridge
         id: bridge
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -452,7 +481,7 @@ jobs:
 
       - name: Start Agent Server under runsc
         id: server
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -512,7 +541,7 @@ jobs:
 
       - name: Prove runsc Agent Server can reach the internal LiteLLM target
         id: runsc_gateway
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           AGENT_CONTAINER: ${{ steps.server.outputs.container }}
@@ -549,7 +578,7 @@ jobs:
 
       - name: Record disposable gateway network topology
         id: network_topology
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -599,7 +628,7 @@ jobs:
 
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
@@ -617,7 +646,7 @@ jobs:
 
       - name: Run governed OpenHands live adapter wave
         id: live
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
@@ -647,7 +676,7 @@ jobs:
 
       - name: Run OpenHands supply-chain and runtime evidence
         id: certification
-        if: steps.provider_preflight.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           CONTAINER_NAME: ${{ steps.server.outputs.container }}
@@ -872,14 +901,17 @@ jobs:
         if: always()
         env:
           PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}
+          CONFIGURATION_STATUS: ${{ steps.preflight.outputs.status }}
           CANDIDATE_SHA: ${{ env.AIAT_CANDIDATE_SHA }}
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/certification"
           provider_status="${PROVIDER_STATUS:-BLOCKED_MISSING_OPERATOR_SECRET}"
+          configuration_status="${CONFIGURATION_STATUS:-FAILED_CERTIFICATION_IMPLEMENTATION}"
           uv run python scripts/check_openhands_gate_matrix.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json" \
             --provider-status "$provider_status" \
+            --configuration-status "$configuration_status" \
             --evidence-root "$RUNNER_TEMP/aiat-openhands-evidence" \
             --candidate-sha "$CANDIDATE_SHA" \
             --source-commit 4c1237f391fe394e9f67505fe3a0bd2d81f84188 \
@@ -912,6 +944,7 @@ jobs:
           evaluation = report.get("evaluation") or {}
           print(f"- Candidate SHA: `{report.get('candidate_sha') or 'unknown'}`")
           print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
+          print(f"- Candidate preflight: `{report.get('configuration_status') or 'unknown'}`")
           print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
           print(f"- Mandatory gates: `{evaluation.get('passed_gate_count', 0)}/{evaluation.get('mandatory_gate_count', 0)} PASS`")
           print(f"- Final result: `{report.get('status') or 'FAILED_CERTIFICATION_IMPLEMENTATION'}`")

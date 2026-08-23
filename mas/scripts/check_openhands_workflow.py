@@ -48,6 +48,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("always_cleanup_or_artifact_upload_missing")
     if "steps.provider_preflight.outputs.ready == 'true'" not in text:
         errors.append("provider_gate_missing_before_expensive_stages")
+    if "steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'" not in text:
+        errors.append("candidate_preflight_gate_missing_before_expensive_stages")
     if "mcp-cleanup.json" not in text or '"verified_absent"' not in text or 'test "$cleanup_ok" = 1' not in text:
         errors.append("cleanup_absence_readback_missing")
     if '"zero_residue": cleanup_ok == "1"' not in text:
