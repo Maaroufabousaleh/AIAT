@@ -36,6 +36,7 @@ LOCAL_TEST_COMMAND = (
     "scripts/tests/test_openhands_offline_harness.py",
     "scripts/tests/test_check_openhands_candidate_preflight.py",
     "scripts/tests/test_check_openhands_dispatch_preflight.py",
+    "scripts/tests/test_check_openhands_steward_registration.py",
     "scripts/tests/test_check_openhands_workflow.py",
     "scripts/tests/test_provision_openhands_candidate_runtime.py",
     "packages/mas-core/tests/test_openhands_agent_server_adapter.py",
