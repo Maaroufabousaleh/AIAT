@@ -72,22 +72,22 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 ### Repository-local continuation refresh — 2026-08-23
 
 The certification implementation baseline is `agent/fix-review-p1` at
-`498aba091fa4a897a6c62745527b5f33c1869d4b`; the branch also contains the
-docs-only status reconciliations `dabaa44da69a7191fc86817d2e4219c211ba115a`
-and `7a4d354`. Runtime implementation remains the same pinned OpenHands
-candidate. The latest implementation hardening `8d46bc9` makes partial-startup
-cleanup fail closed on unknown residue, and `633e728` verifies the exact
-LiteLLM release-tag commit in the workflow before gateway startup. `498aba0`
-maps scanner coverage failures to `BLOCKED_SCANNER_COVERAGE` and review-only
-findings to `BLOCKED_SECURITY_TRIAGE` without changing fail-closed behavior.
-The grouped continuation after
-the prior overnight record validates exact gateway aliases and the governed
-MCP key, prevents LiteLLM/tool-service/Agent Server/model stages from running
-after a provider or gateway readiness failure, preserves narrow startup,
-health, and route failure classes, scans disposable workspace evidence for
-secret canaries using scalar counts/fingerprints only, and publishes runtime
-materialization readiness to downstream workflow steps. The workflow remains
-manual-only; no workflow was dispatched in this refresh.
+`c7b84609e458cea7947bc34c44f35cd0ed66d2f0`; runtime implementation remains
+the same pinned OpenHands candidate. The latest hardening verifies exact
+LiteLLM/OmniRoute release-tag commits and source archive SHA-256 values
+(`4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`), validates the complete
+sanitized evidence tree and retention boundary
+(`82f053e8e9858c9c70d2fad058ae154675ff9ba5`), rejects non-loopback or
+laptop/host-bound gateway targets (`3b264d485a3e82b8e25d040b8dda4b19d5da4667`),
+and records run-scoped profile disposal through Agent Server container absence
+(`c7b84609e458cea7947bc34c44f35cd0ed66d2f0`). The earlier hardening group
+continues to validate exact gateway aliases and the governed MCP key, prevent
+LiteLLM/tool-service/Agent Server/model stages from running after a provider or
+gateway readiness failure, preserve narrow startup/health/route failure
+classes, scan disposable workspace evidence for secret canaries using scalar
+counts/fingerprints only, and publish runtime materialization readiness to
+downstream workflow steps. The workflow remains manual-only; no workflow was
+dispatched in this refresh.
 
 Repository-local checks at this SHA report:
 
@@ -99,6 +99,8 @@ DOCUMENTATION_INDEX=PASS (13 features, 3 plans, 22 maintained documents)
 OPENHANDS_WORKFLOW_VALIDATION=PASS
 OPENHANDS_OFFLINE_HARNESS=PASS
 OPENHANDS_GATE_MATRIX=BLOCKED_INCOMPLETE_MANDATORY_GATES
+OPENHANDS_EVIDENCE_SCHEMA=PASS
+OPENHANDS_PROFILE_CLEANUP_ASSERTION=PASS
 ```
 
 The gate-matrix blocker is the intentional absence of live provider/task and

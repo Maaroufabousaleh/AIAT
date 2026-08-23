@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `0d821bd` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `c7b8460` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -68,7 +68,12 @@ secret disclosure, and restricts deferred MCP cleanup to the trusted
 certification-mode adapter. These probes remain live-provider evidence until
 the operator supplies `GROQ_API_KEY` and deliberately dispatches one run.
 These changes add no live
-provider evidence and do not alter the global `NO-RELEASE` decision.
+provider evidence and do not alter the global `NO-RELEASE` decision. The
+current repository-local hardening additionally verifies exact LiteLLM and
+OmniRoute source archive hashes (`4890aaa`), validates the complete sanitized
+evidence tree (`82f053e`), rejects host-bound gateway targets (`3b264d4`), and
+records run-scoped profile disposal through Agent Server container absence
+(`c7b8460`).
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained

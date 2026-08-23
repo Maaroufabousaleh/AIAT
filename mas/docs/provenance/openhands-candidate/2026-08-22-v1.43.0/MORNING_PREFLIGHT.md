@@ -1,9 +1,9 @@
 # OpenHands v1.43.0 morning certification preparation
 
-**Repository-local refresh:** 2026-08-23, certification implementation
-baseline at `498aba091fa4a897a6c62745527b5f33c1869d4b`; the branch also
-contains docs-only status reconciliations after that baseline. The next live
-run must freeze the exact SHA actually selected by the operator.
+**Repository-local refresh:** 2026-08-23, current certification-path
+hardening at `c7b84609e458cea7947bc34c44f35cd0ed66d2f0`; the branch also
+contains the earlier candidate/evidence history. The next live run must freeze
+the exact SHA actually selected by the operator.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
@@ -14,6 +14,9 @@ The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
 task and lifecycle evidence. No workflow was dispatched during this refresh.
+The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
+rejects host-bound gateway targets, validates the sanitized evidence tree, and
+records run-scoped profile disposal through Agent Server container absence.
 
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
@@ -119,6 +122,24 @@ stage on provider/gateway/runtime readiness, classifies control-plane failures,
 scans workspace evidence for secret canaries, emits an explicit fail-closed
 summary, and publishes runtime materialization readiness to downstream steps.
 None of these local checks is live provider evidence.
+
+The latest repository-local hardening commits are:
+
+- `4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`: verifies exact LiteLLM and
+  OmniRoute release-tag dereferences and source archive SHA-256 values in the
+  workflow;
+- `82f053e8e9858c9c70d2fad058ae154675ff9ba5`: validates the retained JSON
+  evidence tree and rejects sensitive-retention flags or an incomplete gate
+  set;
+- `3b264d485a3e82b8e25d040b8dda4b19d5da4667`: rejects non-loopback published
+  ports and laptop/host-bound gateway targets in static workflow validation;
+- `c7b84609e458cea7947bc34c44f35cd0ed66d2f0`: records run-scoped profile
+  disposal as a scalar cleanup assertion tied to Agent Server container
+  absence.
+
+These changes are implementation/evidence hardening only. They do not claim a
+provider call, live lifecycle result, steward approval, worker activation, or
+release decision.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
