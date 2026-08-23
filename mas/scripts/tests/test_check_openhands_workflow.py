@@ -62,3 +62,11 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
 
     report = _module().validate(text + "\n          docker logs --tail 1 container\n")
     assert "raw_container_logs_retained" in report["errors"]
+
+
+def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
+    module = _module()
+    text = _workflow()
+    assert "network_topology_assertion_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('test "$topology_status" = PASS', 'echo "$topology_status"')
+    assert "network_topology_assertion_missing" in module.validate(weakened)["errors"]

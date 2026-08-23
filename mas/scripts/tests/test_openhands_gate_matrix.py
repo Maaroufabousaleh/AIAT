@@ -110,3 +110,21 @@ def test_candidate_preflight_failure_is_not_reported_as_provider_failure(tmp_pat
     assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
     assert report["provider_configuration_status"] == "PASS"
     assert report["configuration_status"] == "BLOCKED_STATIC_CONFIGURATION"
+
+
+def test_incomplete_gateway_topology_is_infrastructure_failure(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "network-topology.json").write_text(
+        json.dumps(
+            {
+                "topology_status": "BLOCKED",
+                "expected_container_count": 4,
+                "observed_container_count": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "FAILED_INFRASTRUCTURE"
+    assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"

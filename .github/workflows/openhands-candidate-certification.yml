@@ -584,16 +584,24 @@ jobs:
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
           topology_input="$RUNNER_TEMP/aiat-openhands-network-inspect.json"
-          docker network inspect "$network" > "$topology_input"
+          inspect_exit_code=0
+          docker network inspect "$network" > "$topology_input" || inspect_exit_code=$?
           python3 - \
             "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" \
-            "$topology_input" <<'PY'
+            "$topology_input" \
+            "$GITHUB_RUN_ID" \
+            "$inspect_exit_code" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           output = Path(sys.argv[1])
-          raw = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          run_id = sys.argv[3]
+          inspect_exit_code = sys.argv[4]
+          try:
+              raw = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              raw = []
           network = raw[0] if isinstance(raw, list) and raw else {}
           containers = network.get("Containers") if isinstance(network, dict) else {}
           topology = []
@@ -607,12 +615,28 @@ jobs:
                           "ipv4": bool(value.get("IPv4Address")),
                       }
                   )
+          expected = {
+              f"aiat-openhands-cert-{run_id}",
+              f"aiat-openhands-tool-service-{run_id}",
+              f"aiat-openhands-litellm-{run_id}",
+              f"aiat-openhands-omniroute-{run_id}",
+          }
+          observed = {str(item.get("name")) for item in topology}
+          complete = (
+              inspect_exit_code == "0"
+              and observed == expected
+              and all(item.get("ipv4") for item in topology)
+          )
           output.write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-certification-network-topology.v1",
                       "network_aliases_expected": ["agent-server", "tool-service", "litellm", "omniroute"],
                       "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
+                      "expected_container_count": len(expected),
+                      "observed_container_count": len(observed),
+                      "docker_inspect_exit_code": int(inspect_exit_code),
+                      "topology_status": "PASS" if complete else "BLOCKED",
                       "credentials_or_payloads_retained": False,
                   },
                   sort_keys=True,
@@ -624,7 +648,18 @@ jobs:
           exit_code=$?
           rm -f "$topology_input"
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          exit "$exit_code"
+          topology_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              report = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              report = {}
+          print(report.get("topology_status", "BLOCKED"))
+          PY
+          )
+          test "$topology_status" = PASS
 
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime

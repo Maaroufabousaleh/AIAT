@@ -75,6 +75,9 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
     for name in ("gateway/litellm/health.json", "gateway/omniroute/health.json"):
         if report(name).get("health_status") == "BLOCKED":
             return "BLOCKED_RUNTIME_STARTUP"
+    topology = report("gateway/network-topology.json")
+    if topology.get("topology_status") == "BLOCKED":
+        return "FAILED_INFRASTRUCTURE"
     if report("startup/startup.json").get("health_status") == "BLOCKED":
         return "BLOCKED_GVISOR"
     if report("bridge/startup.json").get("health_status") == "BLOCKED":

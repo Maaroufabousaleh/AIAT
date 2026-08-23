@@ -59,6 +59,13 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("candidate_preflight_gate_missing_before_expensive_stages")
     if "mcp-cleanup.json" not in text or '"verified_absent"' not in text or 'test "$cleanup_ok" = 1' not in text:
         errors.append("cleanup_absence_readback_missing")
+    if (
+        "network-topology.json" not in text
+        or 'docker network inspect "$network"' not in text
+        or '"topology_status": "PASS" if complete else "BLOCKED"' not in text
+        or 'test "$topology_status" = PASS' not in text
+    ):
+        errors.append("network_topology_assertion_missing")
     if '"zero_residue": cleanup_ok == "1"' not in text:
         errors.append("cleanup_zero_residue_not_fail_closed")
     if "GITHUB_STEP_SUMMARY" not in text or "Summarize fail-closed certification result" not in text:
