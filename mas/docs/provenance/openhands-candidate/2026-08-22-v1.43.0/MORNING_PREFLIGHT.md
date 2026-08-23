@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `4bddd4b`; the branch also
+hardening at `a061ddb`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -79,6 +79,17 @@ visible to OpenHands and no additional provider secrets are required for the
 one-provider CI pool. The workflow retains separate scalar evidence for the
 baseline (`gateway/provider-baseline.json`) and auto-router route
 (`gateway/auto-routing.json` plus the compatibility `route-probe.json`).
+
+Run `32670107128` (job `97269525240`) is preserved as
+[`github-run-32670107128-failure.json`](./github-run-32670107128-failure.json).
+The exact pinned images, provenance, network, OmniRoute container, and public
+management health all passed. The API-auth boundary stopped at a bounded
+transport retry window because OmniRoute's OpenAI-compatible bridge binds
+after its dashboard listener; no provider route, LiteLLM, tool-service, or
+OpenHands gate ran. This is `BLOCKED_MODEL_GATEWAY` /
+`MODEL_GATEWAY_TRANSPORT_FAILURE`, not provider or credential evidence. The
+follow-up retry hardening is in `f941d70`; the gate evaluator and summary now
+retain and report this narrower blocker class.
 
 ## Operator sequence
 

@@ -1,0 +1,48 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32670107128",
+    "job_id": "97269525240",
+    "candidate_sha": "8d6102a7ca5bfee0399ead28cb4ef729de02fe0e",
+    "artifact_id": "9501170616",
+    "artifact_digest": "sha256:b6c35cc5a1ca3e7425b12bff9d78262a158935508aa12e49936d8d6ed7bcb436"
+  },
+  "classification": {
+    "final_status": "BLOCKED_MODEL_GATEWAY",
+    "failure_class": "MODEL_GATEWAY_TRANSPORT_FAILURE",
+    "root_cause_status": "ATTRIBUTED_GATEWAY_STARTUP_RACE",
+    "root_cause": "The OmniRoute dashboard became healthy before its OpenAI-compatible API bridge bound on port 20129. The bounded auth probe observed transport failures for all three requests and correctly stopped before provider configuration.",
+    "old_auth_endpoint": "http://127.0.0.1:20129/v1/models",
+    "transport_retry_window_seconds": 87,
+    "response_payload_retained": false,
+    "credentials_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_provenance": "PASS",
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_management_health": "PASS",
+    "omniroute_api_auth_boundary": "BLOCKED",
+    "unauthenticated_http_status": null,
+    "wrong_key_http_status": null,
+    "correct_key_http_status": null,
+    "provider_route_configuration": "NOT_RUN",
+    "litellm_start": "NOT_RUN",
+    "live_model_call": "NOT_RUN",
+    "openhands_live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS"
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

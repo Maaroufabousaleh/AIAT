@@ -63,6 +63,16 @@ the governed OmniRoute `auto/coding` route while keeping `omniroute-coding` as
 the worker-visible alias. This evidence remains provider-blocked and does not
 alter the global `NO-RELEASE` decision.
 
+Run `32670107128` (job `97269525240`) is retained as immutable gateway-startup
+evidence for candidate `8d6102a7ca5bfee0399ead28cb4ef729de02fe0e`. Exact image
+pulls/provenance, network creation, OmniRoute startup, and public management
+health passed. The API-auth probe observed only bounded transport failures
+while the pinned service's OpenAI-compatible bridge was still binding, so
+provider configuration and all later gates were not run. The result is
+`BLOCKED_MODEL_GATEWAY` / `MODEL_GATEWAY_TRANSPORT_FAILURE`, not Groq,
+provider, image, gVisor, or OpenHands runtime evidence. Follow-up hardening is
+committed in `f941d70`; the global `NO-RELEASE` decision is unchanged.
+
 The preflight hardening commit `188b747` additionally requires the isolated
 deterministic OpenHands test suite for dispatch readiness; diagnostic
 `--skip-tests` runs remain explicitly non-ready.
