@@ -32,6 +32,9 @@ digest-pinned smoke, sandbox, cleanup, and zero-residue checks. This closes the
 default gVisor runtime-evidence slice; the separate WSL/native release-host
 preflight, deployment image evidence, and other native release checks remain
 open and keep the global decision at `NO-RELEASE`.
+The native workflow hardening in `d012ab9` now rejects mutable smoke/hello
+image references and verifies the exact checked-out candidate SHA before any
+gVisor probe.
 
 The scalar MinIO/SeaweedFS resource profile is complete; any remaining
 "resource profiling" reference below means production resource budgets and

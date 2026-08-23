@@ -41,8 +41,10 @@ fail-closed. The manual
 workflow is eligible for the canonical native-Linux interpretation because the
 target programme does not require a persistent host; retained run `32541110299`
 proves native Linux, `runsc` registration, digest-pinned smoke, sandbox,
-cleanup, and zero residue. The separate WSL/native release-host preflight and
-broader native release checks remain open. The OCI adapter's deterministic contract
+cleanup, and zero residue. Hardening `d012ab9` now rejects mutable image inputs
+and binds the checked-out commit to the requested candidate SHA before probes.
+The separate WSL/native release-host preflight and broader native release
+checks remain open. The OCI adapter's deterministic contract
 passes through [`check_object_store_oci_sse_kms.py`](../../mas/scripts/check_object_store_oci_sse_kms.py)
 and the release ledger, but the live OCI target is still operator-owned. The
 historical OpenCode 1.17.13 scan is retained only as
