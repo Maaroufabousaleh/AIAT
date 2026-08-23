@@ -1,0 +1,51 @@
+{
+  "schema_version": "aiat.openhands-overnight-reconciliation.v1",
+  "recorded_at": "2026-08-23",
+  "starting_head": "0b712b0b78c6b2bb38bde8f87e3f23073c5b81d3",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "worker_activation": "INACTIVE"
+  },
+  "reconciled_history": {
+    "certification_authorization": "f980fe89b243051e1f553455239e98906ca23a7f",
+    "authorization_model_docs": "96b56920391016bcab4f2b0b89706444282a5a26",
+    "disposable_bridge_secret": "0eef3abb069385e6c2e2af3a4921b68b369aeca2",
+    "gateway_audit_docs": "6c3acfd8fe53534548eb9c83fc350d061843db2d",
+    "self_contained_gateway": "bad5a0bd55a164710da0590c60d34a45f3701f92",
+    "gateway_provenance_docs": "0114f0b518e4c855943605e4027603dd51269540",
+    "single_provider_route_test": "6ad2b3ef3feaed6b0873bef611c31e49db2c827b",
+    "gateway_topology_evidence": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2"
+  },
+  "dependency_map": [
+    "manual workflow -> exact candidate checkout and candidate preflight",
+    "candidate preflight -> trusted certification authorization",
+    "certification authorization -> runsc Agent Server and run-scoped profile",
+    "run-scoped profile -> fixed MCP logical key and AIAT tool-service",
+    "disposable network -> OpenHands/runsc, tool-service, LiteLLM, OmniRoute",
+    "LiteLLM -> exact omniroute-coding route -> OmniRoute -> Groq",
+    "live adapter -> post-run task/diff/artifact/secret checks and lifecycle probes",
+    "evidence -> 20-gate evaluation -> read-only steward registration preflight",
+    "steward approval -> independent activation approval; worker remains inactive"
+  ],
+  "current_external_boundary": {
+    "persistent_github_variables": [
+      "OPENHANDS_MODEL_ID=omniroute-coding",
+      "OPENHANDS_MCP_SETTINGS_KEY=aiat-openhands-v1-43-0-coding"
+    ],
+    "persistent_github_secrets": ["GROQ_API_KEY"],
+    "run_scoped_secrets": [
+      "AIAT_TOOL_SECRET",
+      "OPENHANDS_SESSION_API_KEY",
+      "OPENHANDS_MODEL_GATEWAY_API_KEY"
+    ],
+    "live_provider_evidence": "requires operator-supplied GROQ_API_KEY",
+    "workflow_dispatched_during_reconciliation": false
+  },
+  "evidence_policy": {
+    "raw_model_payloads_retained": false,
+    "credentials_retained": false,
+    "licence_metadata_is_gate": false
+  }
+}

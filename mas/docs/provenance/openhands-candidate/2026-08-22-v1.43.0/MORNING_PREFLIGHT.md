@@ -5,6 +5,10 @@ activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
+The overnight dependency and full local commit reconciliation is recorded in
+[`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
+only exact commit identifiers, scalar wiring, and secret-free boundary state.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,
