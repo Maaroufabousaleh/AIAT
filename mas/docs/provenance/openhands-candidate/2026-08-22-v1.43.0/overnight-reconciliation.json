@@ -74,6 +74,7 @@
     "candidate_sha": "61f7d49b905a109a154f961e147f783016792218",
     "certificate": "../../../release_ledger_clean_candidate_static.json",
     "validator": "scripts/check_clean_candidate_release.py",
+    "validator_args": "--candidate-sha 61f7d49b905a109a154f961e147f783016792218 --json",
     "status": "PASS",
     "worktree_clean": true,
     "changed_path_count": 0,

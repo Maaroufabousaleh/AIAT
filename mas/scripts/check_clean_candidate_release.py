@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ MAS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EVIDENCE = MAS_ROOT / "docs" / "provenance" / "release_ledger_clean_candidate_static.json"
 SCHEMA = "aiat.release-ledger-clean-candidate-check.v1"
 EVIDENCE_SCHEMA = "aiat.release-ledger-clean-candidate.v1"
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _run(repo: Path, *args: str) -> tuple[int, str]:
@@ -36,7 +38,12 @@ def _worktree_clean(repo: Path) -> bool:
     return code == 0 and not status
 
 
-def validate(*, repo: Path = MAS_ROOT, evidence_path: Path = DEFAULT_EVIDENCE) -> dict[str, Any]:
+def validate(
+    *,
+    repo: Path = MAS_ROOT,
+    evidence_path: Path = DEFAULT_EVIDENCE,
+    candidate_sha: str | None = None,
+) -> dict[str, Any]:
     errors: list[str] = []
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -51,10 +58,17 @@ def validate(*, repo: Path = MAS_ROOT, evidence_path: Path = DEFAULT_EVIDENCE) -
     if not isinstance(evidence, dict) or evidence.get("schema_version") != EVIDENCE_SCHEMA:
         errors.append("clean-candidate evidence schema is invalid")
 
-    code, candidate_revision = _run(repo, "rev-parse", "HEAD")
-    if code != 0 or not candidate_revision:
-        errors.append("candidate revision is unavailable")
+    code, current_revision = _run(repo, "rev-parse", "HEAD")
+    if code != 0 or not current_revision:
+        errors.append("current checkout revision is unavailable")
+        current_revision = None
+
+    candidate_revision = candidate_sha.strip() if candidate_sha else current_revision
+    if not candidate_revision or not SHA_RE.fullmatch(candidate_revision):
+        errors.append("candidate revision is invalid")
         candidate_revision = None
+    elif _run(repo, "cat-file", "-e", f"{candidate_revision}^{{commit}}",)[0] != 0:
+        errors.append("candidate revision is not present in the checkout")
 
     evidence_revision = evidence.get("candidate_sha") if isinstance(evidence, dict) else None
     if evidence_revision != candidate_revision:
@@ -81,8 +95,10 @@ def validate(*, repo: Path = MAS_ROOT, evidence_path: Path = DEFAULT_EVIDENCE) -
         "schema_version": SCHEMA,
         "status": "PASS" if not errors else "BLOCKED",
         "candidate_revision": candidate_revision,
+        "current_checkout_revision": current_revision,
         "evidence_revision": evidence_revision,
         "candidate_revision_matches": evidence_revision == candidate_revision,
+        "candidate_is_current_checkout": candidate_revision == current_revision,
         "clean_clone": evidence.get("worktree_clean") is True and evidence.get("changed_path_count") == 0,
         "current_checkout_clean": _worktree_clean(repo),
         "static_ledger": {
@@ -101,9 +117,10 @@ def validate(*, repo: Path = MAS_ROOT, evidence_path: Path = DEFAULT_EVIDENCE) -
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE)
+    parser.add_argument("--candidate-sha", help="explicit candidate commit represented by the evidence")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = validate(evidence_path=args.evidence.resolve())
+    report = validate(evidence_path=args.evidence.resolve(), candidate_sha=args.candidate_sha)
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
     else:

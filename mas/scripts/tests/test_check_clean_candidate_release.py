@@ -17,10 +17,12 @@ def _module():
 
 
 def test_current_clean_candidate_certificate_passes() -> None:
-    report = _module().validate()
+    module = _module()
+    report = module.validate(candidate_sha="61f7d49b905a109a154f961e147f783016792218")
     assert report["status"] == "PASS"
     assert report["candidate_revision_matches"] is True
     assert report["clean_clone"] is True
+    assert report["candidate_is_current_checkout"] is False
     assert report["static_ledger"]["checks_passed"] == 63
     assert report["static_ledger"]["release_decision"] == "NO-RELEASE"
     assert report["current_checkout_clean"] is False
@@ -38,6 +40,12 @@ def test_stale_candidate_certificate_is_blocked(tmp_path: pathlib.Path) -> None:
     assert report["status"] == "BLOCKED"
     assert report["candidate_revision_matches"] is False
     assert any("does not match" in error for error in report["errors"])
+
+
+def test_default_validation_requires_current_checkout_match() -> None:
+    report = _module().validate()
+    assert report["status"] == "BLOCKED"
+    assert report["candidate_revision_matches"] is False
 
 
 def test_payload_retention_is_blocked(tmp_path: pathlib.Path) -> None:

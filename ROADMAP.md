@@ -29,9 +29,9 @@ The exact candidate commit `61f7d49b905a109a154f961e147f783016792218` was
 also evaluated from a fresh Git clone: the clone was clean and its static
 ledger passed 63/63 with no failures. Scalar evidence is retained at
 [`release_ledger_clean_candidate_static.json`](mas/docs/provenance/release_ledger_clean_candidate_static.json).
-The read-only `check_clean_candidate_release.py --json` validator confirms the
-candidate SHA and retention boundary; it reports the development checkout's
-dirty state separately.
+The read-only `check_clean_candidate_release.py --candidate-sha <sha> --json`
+validator confirms an explicitly pinned candidate SHA and retention boundary;
+it reports the development checkout's dirty state separately.
 This isolates protected/operator-owned dirty files from candidate evidence but
 does not close the native, live-provider, pending-evidence, or activation gates.
 

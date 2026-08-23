@@ -1091,8 +1091,8 @@ The exact candidate commit `61f7d49b905a109a154f961e147f783016792218` was
 also evaluated from a fresh local Git clone. The clean clone had zero changed
 paths and passed the static ledger 63/63 with no failures; the scalar result is
 retained at [`release_ledger_clean_candidate_static.json`](../../mas/docs/provenance/release_ledger_clean_candidate_static.json).
-The read-only validator `uv run --isolated python scripts/check_clean_candidate_release.py --json`
-reconciles the retained candidate SHA, clean-clone boundary, 63/63 summary,
+The read-only validator `uv run --isolated python scripts/check_clean_candidate_release.py --candidate-sha 61f7d49b905a109a154f961e147f783016792218 --json`
+reconciles the explicitly pinned candidate SHA, clean-clone boundary, 63/63 summary,
 and payload/credential retention flags; it reports the development checkout's
 protected dirty state separately.
 This separates the protected/operator-owned dirty files in the development
