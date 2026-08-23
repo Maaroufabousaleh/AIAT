@@ -72,7 +72,7 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 ### Repository-local continuation refresh — 2026-08-23
 
 The certification implementation baseline is `agent/fix-review-p1` at
-`c7b84609e458cea7947bc34c44f35cd0ed66d2f0`; runtime implementation remains
+`4b9ae29042a0655d74103fa2da25017ed11b6de6`; runtime implementation remains
 the same pinned OpenHands candidate. The latest hardening verifies exact
 LiteLLM/OmniRoute release-tag commits and source archive SHA-256 values
 (`4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`), validates the complete
@@ -80,7 +80,10 @@ sanitized evidence tree and retention boundary
 (`82f053e8e9858c9c70d2fad058ae154675ff9ba5`), rejects non-loopback or
 laptop/host-bound gateway targets (`3b264d485a3e82b8e25d040b8dda4b19d5da4667`),
 and records run-scoped profile disposal through Agent Server container absence
-(`c7b84609e458cea7947bc34c44f35cd0ed66d2f0`). The earlier hardening group
+(`c7b84609e458cea7947bc34c44f35cd0ed66d2f0`). `4b9ae29` additionally records
+network-creation evidence, gates all dependent stages on successful disposable
+network creation, and classifies a failed Docker network create as
+`FAILED_INFRASTRUCTURE`. The earlier hardening group
 continues to validate exact gateway aliases and the governed MCP key, prevent
 LiteLLM/tool-service/Agent Server/model stages from running after a provider or
 gateway readiness failure, preserve narrow startup/health/route failure

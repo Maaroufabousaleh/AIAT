@@ -118,7 +118,7 @@ decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a
 frozen candidate SHA.
 
-The latest repository-local continuation is now `c7b8460`. `4890aaa` verifies
+The latest repository-local continuation is now `4b9ae29`. `4890aaa` verifies
 the exact LiteLLM/OmniRoute release-tag dereferences and source archive hashes;
 `82f053e` validates the retained JSON evidence tree and refuses sensitive
 retention flags or incomplete gate sets; `3b264d4` rejects non-loopback or
@@ -126,6 +126,9 @@ laptop/host-bound gateway targets; and `c7b8460` records run-scoped profile
 disposal through Agent Server container absence. These are static/fixture
 hardening changes only. No provider call or live lifecycle result is claimed,
 OpenHands remains inactive, and the global `NO-RELEASE` decision is unchanged.
+`4b9ae29` additionally records disposable-network startup status, gates
+dependent stages on network readiness, and classifies a failed Docker network
+create as `FAILED_INFRASTRUCTURE`.
 
 The latest bounded P1 implementation slice (`60839f4`) stabilizes the
 Governance and Projects dashboard refresh callbacks and last-known-state refs.

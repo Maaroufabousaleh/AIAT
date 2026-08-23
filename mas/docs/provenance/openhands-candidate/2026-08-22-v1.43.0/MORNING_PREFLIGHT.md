@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `c7b84609e458cea7947bc34c44f35cd0ed66d2f0`; the branch also
+hardening at `4b9ae29042a0655d74103fa2da25017ed11b6de6`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -136,6 +136,9 @@ The latest repository-local hardening commits are:
 - `c7b84609e458cea7947bc34c44f35cd0ed66d2f0`: records run-scoped profile
   disposal as a scalar cleanup assertion tied to Agent Server container
   absence.
+- `4b9ae29042a0655d74103fa2da25017ed11b6de6`: records disposable-network
+  startup status, gates dependent stages on network readiness, and maps a
+  failed Docker network create to `FAILED_INFRASTRUCTURE`.
 
 These changes are implementation/evidence hardening only. They do not claim a
 provider call, live lifecycle result, steward approval, worker activation, or
