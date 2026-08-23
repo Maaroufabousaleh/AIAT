@@ -38,6 +38,14 @@ def test_automatic_trigger_and_static_profile_are_rejected() -> None:
     assert "static_profile_uuid_input_present" in report["errors"]
 
 
+def test_non_native_or_unpinned_candidate_inputs_are_rejected() -> None:
+    text = _workflow()
+    report = _module().validate(text.replace("runs-on: ubuntu-latest", "runs-on: ubuntu-slim", 1))
+    assert "native_ubuntu_runner_requirement_missing" in report["errors"]
+    report = _module().validate(text.replace("4c1237f391fe394e9f67505fe3a0bd2d81f84188", "0" * 40, 1))
+    assert "openhands_source_commit_binding_missing" in report["errors"]
+
+
 def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     text = _workflow()
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))

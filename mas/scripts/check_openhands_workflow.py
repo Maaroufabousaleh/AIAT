@@ -23,6 +23,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("workflow_on_key_missing")
     if not re.search(r"(?m)^\s+workflow_dispatch:\s*$", text):
         errors.append("workflow_dispatch_missing")
+    if "runs-on: ubuntu-latest" not in text or re.search(r"(?m)^\s*runs-on:\s*ubuntu-slim\s*$", text):
+        errors.append("native_ubuntu_runner_requirement_missing")
     for trigger in ("push:", "pull_request:", "schedule:", "repository_dispatch:"):
         if re.search(rf"(?m)^\s+{re.escape(trigger)}", text):
             errors.append(f"automatic_trigger_present:{trigger[:-1]}")
@@ -30,6 +32,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("exact_candidate_checkout_missing")
     if "actual=$(git rev-parse HEAD)" not in text or 'test "$actual" = "$EXPECTED_SHA"' not in text:
         errors.append("candidate_sha_binding_missing")
+    if "4c1237f391fe394e9f67505fe3a0bd2d81f84188" not in text:
+        errors.append("openhands_source_commit_binding_missing")
     for image in EXPECTED_IMAGES:
         if image not in text:
             errors.append(f"exact_image_pin_missing:{image.split('@', 1)[0]}")
