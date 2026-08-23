@@ -139,7 +139,12 @@ def probe(
                         {"role": "user", "content": "Reply with one short confirmation token."}
                     ],
                     "temperature": 0,
-                    "max_tokens": 8,
+                    # Keep the auto/coding smoke request compatible with the
+                    # governed Groq GPT-OSS baseline: use the current token
+                    # spelling and leave room for hidden reasoning tokens.
+                    "max_completion_tokens": 64,
+                    "reasoning_effort": "low",
+                    "include_reasoning": False,
                     "stream": False,
                 },
             )

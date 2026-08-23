@@ -121,6 +121,12 @@ def test_route_probe_retains_only_scalar_usage() -> None:
             return httpx.Response(200, json={"status": "ok"})
         if request.method == "POST" and request.url.path == "/v1/chat/completions":
             assert request.headers["authorization"] == f"Bearer {gateway_key}"
+            payload = json.loads(request.content)
+            assert payload["model"] == PROBE.AIAT_MODEL
+            assert payload["max_completion_tokens"] == 64
+            assert payload["reasoning_effort"] == "low"
+            assert payload["include_reasoning"] is False
+            assert "max_tokens" not in payload
             return httpx.Response(
                 200,
                 headers={"x-omniroute-selected-connection-id": "connection-1"},
