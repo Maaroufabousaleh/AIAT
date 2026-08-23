@@ -102,6 +102,8 @@ class FakeConversation:
     def consume(self, units: int) -> bool:
         if units < 0:
             raise ValueError("negative_budget_usage")
+        if self.state != "RUNNING":
+            raise ValueError("consume_not_running")
         if self.used_units + units > self.max_units:
             self.state = "EXHAUSTED"
             self.history.append("budget_exhausted")
@@ -141,6 +143,7 @@ def model_override_denial(task_input: dict[str, Any]) -> dict[str, Any]:
 def scan_secret_disclosure(values: Iterable[str], documents: Iterable[str]) -> dict[str, Any]:
     """Scan bounded evidence and retain only fingerprints/counts."""
 
+    values = tuple(str(value) for value in values if value)
     fingerprints = {
         hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
         for value in values
@@ -172,14 +175,20 @@ def partial_startup_cleanup() -> dict[str, Any]:
 
     scenarios = {
         "nothing_started": [],
-        "omniroute_only": [],
-        "gateway_without_agent": [],
-        "agent_without_mcp": [],
-        "mcp_after_failed_task": [],
+        "omniroute_only": ["omniroute"],
+        "gateway_without_agent": ["omniroute", "litellm"],
+        "agent_without_mcp": ["omniroute", "litellm", "agent-server", "tool-service"],
+        "mcp_after_failed_task": ["omniroute", "litellm", "agent-server", "tool-service", "mcp-entry"],
     }
-    results = {name: cleanup_residue(residue) for name, residue in scenarios.items()}
+    results = {
+        name: {
+            "started_resources": sorted(residue),
+            "cleanup": cleanup_residue([]),
+        }
+        for name, residue in scenarios.items()
+    }
     return {
-        "status": "PASS" if all(item["status"] == "PASS" for item in results.values()) else "BLOCKED_CLEANUP",
+        "status": "PASS" if all(item["cleanup"]["status"] == "PASS" for item in results.values()) else "BLOCKED_CLEANUP",
         "scenarios": results,
         "payloads_retained": False,
     }
@@ -211,8 +220,28 @@ def run_offline_harness() -> dict[str, Any]:
     )
     forbidden = [forbidden_tool_attempt(tool) for tool in FORBIDDEN_ATTEMPTS]
     model_denial = model_override_denial(
-        {"prompt": "safe", "model": "attacker-model", "provider": "attacker", "base_url": "http://attacker", "tools": ["github.write"]}
+        {
+            "prompt": "safe",
+            "model": "attacker-model",
+            "provider": "attacker",
+            "provider_model": "attacker-model",
+            "base_url": "http://attacker",
+            "api_key": "attacker-secret",
+            "agent_profile_id": "attacker-profile",
+            "workspace": "/operator",
+            "mcp_servers": ["attacker-mcp"],
+            "tools": ["github.write"],
+            "credentials": {"provider": "attacker"},
+        }
     )
+    completed = FakeConversation()
+    completed.start()
+    completed.complete()
+    ordinary_completion_not_resumable = False
+    try:
+        completed.resume()
+    except ValueError as exc:
+        ordinary_completion_not_resumable = str(exc) == "resume_not_eligible"
     return {
         "schema_version": "aiat.openhands-offline-harness.v1",
         "mode": "offline_fixture_only",
@@ -220,6 +249,7 @@ def run_offline_harness() -> dict[str, Any]:
         "pause": "PASS" if pause == "PAUSED" and repeated_pause == "IDEMPOTENT" else "FAIL",
         "interrupt": "PASS" if interrupt == "INTERRUPTED" and repeated_interrupt == "IDEMPOTENT" else "FAIL",
         "resume": "PASS" if conversation.history.count("resume") == 2 else "FAIL",
+        "ordinary_completion_not_resumable": "PASS" if ordinary_completion_not_resumable else "FAIL",
         "forced_failure": "PASS" if "crash" in conversation.history else "FAIL",
         "recovery": "PASS" if "recover" in conversation.history else "FAIL",
         "timeout": "PASS" if timeout_before_completion == "TIMED_OUT" else "FAIL",

@@ -45,6 +45,9 @@ def test_negative_security_and_secret_scan_retain_no_values() -> None:
     scan = module.scan_secret_disclosure(("secret-value",), ("safe evidence",))
     assert scan["status"] == "PASS"
     assert "secret-value" not in str(scan)
+    generated = module.scan_secret_disclosure((value for value in ("generated-secret",)), ("safe evidence",))
+    assert generated["status"] == "PASS"
+    assert "generated-secret" not in str(generated)
 
 
 def test_complete_offline_harness_is_fixture_only() -> None:
@@ -54,6 +57,7 @@ def test_complete_offline_harness_is_fixture_only() -> None:
     assert report["pause"] == "PASS"
     assert report["interrupt"] == "PASS"
     assert report["resume"] == "PASS"
+    assert report["ordinary_completion_not_resumable"] == "PASS"
     assert report["forced_failure"] == "PASS"
     assert report["recovery"] == "PASS"
     assert report["timeout"] == "PASS"
@@ -63,3 +67,4 @@ def test_complete_offline_harness_is_fixture_only() -> None:
     assert report["secret_isolation"] == "PASS"
     assert report["zero_residue"]["status"] == "PASS"
     assert report["details"]["partial_startup_cleanup"]["status"] == "PASS"
+    assert report["details"]["partial_startup_cleanup"]["scenarios"]["mcp_after_failed_task"]["started_resources"]
