@@ -101,6 +101,17 @@ OpenHands gate ran. The historical artifact ended
 credential evidence. The follow-up bounded-retry hardening is in `f941d70`;
 the gate evaluator and summary now retain and report this narrower class.
 
+Run `32673150585` (job `97276954958`) is preserved as
+[`github-run-32673150585-failure.json`](./github-run-32673150585-failure.json).
+The exact candidate checkout, native gVisor, pinned image/provenance checks,
+OmniRoute management health/API authentication, exactly-one Groq route, and
+zero-residue cleanup passed. The first live deterministic
+`groq/openai/gpt-oss-120b` request returned HTTP 502 and was recorded as a
+retryable `PROVIDER_SERVER_ERROR`; LiteLLM, tool-service, OpenHands, and the
+live gate wave were not run. This is not evidence of image, gVisor, or
+OpenHands failure, and it is not a reason to rerun without a material provider
+state change.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,

@@ -59,6 +59,18 @@ native gVisor evidence, immutable smoke-image inputs, scalar-only failure
 evidence, and release-scope classifications. They do not alter the global
 decision or activate either coding worker.
 
+Run `32673150585` (job `97276954958`) is retained as immutable provider-boundary
+evidence for candidate `3a3140e9bd9529d57a58b32371d8c11297101179`. The exact
+candidate checkout, native gVisor, image pulls/provenance, network, OmniRoute
+management health and API authentication boundary, exactly-one Groq route, and
+zero-residue cleanup all passed. The first live deterministic
+`groq/openai/gpt-oss-120b` request returned HTTP 502 through OmniRoute and was
+classified as retryable `PROVIDER_SERVER_ERROR`; LiteLLM, tool-service,
+OpenHands, and the 20-gate live wave were not run. This is provider-boundary
+evidence only, does not assert a provider outage or an implementation defect,
+and does not alter the global `NO-RELEASE` decision. The immutable scalar
+record is [`provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32673150585-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32673150585-failure.json).
+
 Run `32662156390` (job `97249868393`) is retained as immutable provider-boundary
 evidence for candidate `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`. OmniRoute
 readiness/authentication, exactly-one Groq route provisioning, LiteLLM startup,

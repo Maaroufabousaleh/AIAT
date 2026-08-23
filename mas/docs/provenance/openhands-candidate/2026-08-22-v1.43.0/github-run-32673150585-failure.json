@@ -1,0 +1,49 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32673150585",
+    "job_id": "97276954958",
+    "candidate_sha": "3a3140e9bd9529d57a58b32371d8c11297101179",
+    "artifact_id": "9501966655",
+    "artifact_digest": "sha256:9bd5f7f8bc51ae0f38c65836937f88a5988746b4e3b757b35a79414c1bc3860b"
+  },
+  "classification": {
+    "final_status": "BLOCKED_PROVIDER",
+    "failure_class": "PROVIDER_SERVER_ERROR",
+    "root_cause_status": "UNRESOLVED_RETRYABLE_PROVIDER_5XX",
+    "root_cause": "The exact discovered Groq baseline route returned HTTP 502 through the pinned OmniRoute provider path. The response was classified as retryable provider server error; no provider payload was retained, so this record does not assert a Groq outage or an implementation defect.",
+    "failure_stage": "provider",
+    "failure_http_status": 502,
+    "failure_retryable": true,
+    "response_payload_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_provenance": "PASS",
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_management_health": "PASS",
+    "omniroute_api_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "provider_baseline_model": "groq/openai/gpt-oss-120b",
+    "provider_baseline_request": "BLOCKED_PROVIDER_SERVER_ERROR",
+    "litellm_start": "NOT_RUN",
+    "litellm_provider_route": "NOT_RUN",
+    "tool_service": "NOT_RUN",
+    "openhands": "NOT_RUN",
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS"
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}
