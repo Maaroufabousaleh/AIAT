@@ -64,8 +64,10 @@ OmniRoute v3.8.38 route is digest-pinned to `omniroute-coding` → Groq
 `llama-3.3-70b-versatile`; the internal gateway URL is fixed to
 `http://litellm:4000`. The manual workflow now preflights the single
 operator-owned `GROQ_API_KEY`, creates all internal credentials/profile/MCP
-objects run-scoped, and evaluates all 20 mandatory gates fail-closed. Offline
-fixture evidence is not live certification evidence. OpenHands remains
+objects run-scoped, and evaluates all 20 mandatory gates fail-closed. Workflow
+hardening `1154a5f` keeps failure evidence scalar-only without retaining
+container logs. Offline fixture evidence is not live certification evidence.
+OpenHands remains
 inactive until a deliberate run, complete evidence, and independent steward
 activation approval.
 

@@ -56,8 +56,11 @@ gateway routing, run-scoped secrets/profile/MCP lifecycle, explicit provider
 absence and execution-failure classification, controller-attested single-use
 certification authorization with a bounded TTL, MCP pre-clean/readback,
 cleanup fail-closed handling, a fail-closed 20-gate matrix, deterministic
-coding-task fixture, and offline lifecycle/security/cleanup evidence. This
-does not replace OpenCode, activate OpenHands, or advance the global release
+coding-task fixture, and offline lifecycle/security/cleanup evidence. The
+workflow hardening commits `d012ab9` and `1154a5f` also require immutable
+native smoke-image inputs, bind the checked-out candidate SHA, and keep
+certification failure evidence scalar-only without retaining container logs.
+This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a
 frozen candidate SHA.
