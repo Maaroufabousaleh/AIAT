@@ -49,6 +49,42 @@ def _set_gate(gates: dict[str, dict[str, Any]], gate_id: str, status: str, evide
     gates[gate_id]["evidence_refs"] = [evidence]
 
 
+def _evidence_blocker_status(evidence_root: Path) -> str | None:
+    """Map scalar run evidence to a narrow fail-closed blocker class."""
+
+    def report(name: str) -> dict[str, Any]:
+        return _json(evidence_root / name)
+
+    for name in (
+        "gateway/route-probe.json",
+        "gateway/provider-provisioning.json",
+        "runtime/runtime-provisioning.json",
+        "live/live-certification.json",
+    ):
+        value = report(name)
+        failure_class = str(value.get("failure_class") or "")
+        if failure_class.startswith(("MODEL_GATEWAY", "OPENHANDS_TO_GATEWAY", "LITELLM_TO_OMNIROUTE")):
+            return "BLOCKED_MODEL_GATEWAY"
+        if failure_class.startswith("PROVIDER_") or failure_class == "MISSING_PROVIDER_SECRET":
+            return "BLOCKED_PROVIDER"
+        if name.startswith("runtime/") and value.get("status") == "BLOCKED":
+            return "BLOCKED_TOOL_BRIDGE"
+        if name.startswith("live/") and value.get("status") == "BLOCKED":
+            return "BLOCKED_LIFECYCLE"
+
+    for name in ("gateway/litellm/health.json", "gateway/omniroute/health.json"):
+        if report(name).get("health_status") == "BLOCKED":
+            return "BLOCKED_RUNTIME_STARTUP"
+    if report("startup/startup.json").get("health_status") == "BLOCKED":
+        return "BLOCKED_GVISOR"
+    if report("bridge/startup.json").get("health_status") == "BLOCKED":
+        return "BLOCKED_TOOL_BRIDGE"
+    cleanup = report("gateway/cleanup.json")
+    if cleanup and cleanup.get("zero_residue") is False:
+        return "BLOCKED_CLEANUP"
+    return None
+
+
 def derive_gate_rows(evidence_root: Path) -> dict[str, dict[str, Any]]:
     """Derive only explicitly evidenced gate statuses from a run directory."""
 
@@ -115,7 +151,10 @@ def evaluate(
     evidence_root: Path | None = None,
 ) -> dict[str, Any]:
     gates = _load_gate_rows(gate_status_path) if gate_status_path else derive_gate_rows(evidence_root) if evidence_root else initial_gate_map()
-    result = evaluate_gate_map(gates, blocker_status=provider_status)
+    effective_blocker = provider_status if provider_status and provider_status != "PASS" else None
+    if effective_blocker is None and evidence_root is not None:
+        effective_blocker = _evidence_blocker_status(evidence_root)
+    result = evaluate_gate_map(gates, blocker_status=effective_blocker)
     return {
         "schema_version": SCHEMA,
         "status": result["status"],
@@ -125,6 +164,7 @@ def evaluate(
         "gates": gates,
         "evaluation": result,
         "provider_configuration_status": provider_status,
+        "evidence_blocker_status": effective_blocker,
         "evidence_root_used": bool(evidence_root),
         "payloads_retained": False,
     }

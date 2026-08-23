@@ -67,3 +67,16 @@ def test_evidence_derivation_only_promotes_explicit_live_statuses(tmp_path: Path
     assert gates["file_modifications"]["status"] == "PASS"
     assert gates["graceful_pause"]["status"] == "NOT_RUN"
     assert gates["resume"]["status"] == "NOT_RUN"
+
+
+def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "route-probe.json").write_text(
+        json.dumps({"status": "BLOCKED", "failure_class": "MODEL_GATEWAY_AUTH_FAILURE"}),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_MODEL_GATEWAY"
+    assert report["evidence_blocker_status"] == "BLOCKED_MODEL_GATEWAY"
+    assert report["evaluation"]["all_required_gates_passed"] is False
