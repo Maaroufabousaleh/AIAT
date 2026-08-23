@@ -35,7 +35,7 @@ explicit frozen commit after the preflight passes.
    never retrieves a secret value, and runs the bounded deterministic tests.
 
    ```bash
-   python mas/scripts/check_openhands_dispatch_preflight.py \
+   python3 mas/scripts/check_openhands_dispatch_preflight.py \
      --candidate-sha "$CANDIDATE_SHA" \
      --github-repo OWNER/REPOSITORY \
      --output /tmp/aiat-openhands-dispatch-preflight.json

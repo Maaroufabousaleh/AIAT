@@ -134,7 +134,7 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     if not skip_tests:
         code, _ = _run(
             [
-                "python",
+                "python3",
                 "-m",
                 "pytest",
                 "scripts/tests/test_openhands_gateway_errors.py",
