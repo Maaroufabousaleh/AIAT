@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `9df27794db27ac57b206bb638c38083b91e19b55`; the branch also
+hardening at `69face5fc697a7c0777b6d25fd2d8524467fec44`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -201,8 +201,10 @@ The latest provider-boundary commits are `a16d8e3` (separate the exact
 live-discovered Groq baseline from the governed `auto/coding` route) and
 `04717ce` (register the corresponding immutable run evidence and route
 provenance). `9df2779` additionally hardens cleanup of run-scoped internal
-secret environment entries and adds a static regression check. These changes
-do not dispatch a workflow or activate OpenHands.
+secret environment entries and adds a static regression check; `69face5`
+classifies unexpected readiness 4xx responses as application-health contract
+failures rather than cold-start timeouts. These changes do not dispatch a
+workflow or activate OpenHands.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
