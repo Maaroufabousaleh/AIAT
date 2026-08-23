@@ -46,7 +46,9 @@ and binds the checked-out commit to the requested candidate SHA before probes.
 The separate WSL/native release-host preflight and broader native release
 checks remain open. The OCI adapter's deterministic contract
 passes through [`check_object_store_oci_sse_kms.py`](../../mas/scripts/check_object_store_oci_sse_kms.py)
-and the release ledger, but the live OCI target is still operator-owned. The
+and the release ledger; live configuration now fails closed unless
+`OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS` is explicit. The live OCI target is
+still operator-owned. The
 historical OpenCode 1.17.13 scan is retained only as
 `FAILED_UNREPRODUCIBLE`; the fresh v1.18.21 candidate has immutable source and
 image provenance plus a passing AIAT boundary regression, but its local run is

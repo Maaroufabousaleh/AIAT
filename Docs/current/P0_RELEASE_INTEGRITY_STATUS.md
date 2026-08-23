@@ -36,7 +36,9 @@ does not retain raw container logs; the status reconciliation is recorded in
 `c1c6700`; `64c85c3` aligns the roadmap, P0 plan, and release ledger with the
 scope matrix's KMS-required, email-conditional, and self-improvement-deferred
 classifications; `188b747` makes the isolated deterministic preflight suite
-mandatory for dispatch readiness and keeps `--skip-tests` fail-closed. OpenHands
+mandatory for dispatch readiness and keeps `--skip-tests` fail-closed;
+`4a8d11c` requires explicit `OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS` for live OCI
+configuration. OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
