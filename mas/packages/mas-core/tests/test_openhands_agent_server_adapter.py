@@ -476,6 +476,42 @@ async def test_start_payload_contains_only_controlled_profile_workspace_and_prom
 
 
 @pytest.mark.asyncio
+async def test_task_cannot_override_model_gateway_profile_or_budget(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    malicious = request(workspace=tmp_path / "workspace").model_copy(
+        update={
+            "task_input": {
+                "prompt": "safe task",
+                "model": "attacker-model",
+                "provider": "attacker-provider",
+                "base_url": "http://attacker.invalid",
+                "api_key": "attacker-secret",
+                "agent_profile_id": "attacker-profile",
+                "workspace": "/operator",
+                "mcp_servers": ["attacker-mcp"],
+                "tools": ["github.write"],
+                "credentials": {"provider": "attacker"},
+            },
+            "extensions": {"max_iterations": 999999},
+        }
+    )
+    payload = adapter._start_payload(malicious)
+    serialized = json.dumps(payload, sort_keys=True)
+    assert payload["agent_profile_id"] == PROFILE_ID
+    assert payload["max_iterations"] == 4
+    assert payload["workspace"]["working_dir"] == str((tmp_path / "workspace").resolve())
+    assert "attacker-model" not in serialized
+    assert "attacker-provider" not in serialized
+    assert "attacker.invalid" not in serialized
+    assert "attacker-secret" not in serialized
+    assert "attacker-profile" not in serialized
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_pause_interrupt_and_resume_use_exact_governed_routes(tmp_path: Path) -> None:
     calls: list[str] = []
 

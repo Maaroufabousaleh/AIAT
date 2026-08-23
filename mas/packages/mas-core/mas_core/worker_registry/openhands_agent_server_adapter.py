@@ -650,7 +650,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         except (TypeError, ValueError) as exc:
             raise ValueError("OpenHands agent_profile_id must be a UUID") from exc
         workspace = self._workspace_path()
-        max_iterations = int(request.budget.get("max_iterations", request.extensions.get("max_iterations", 500)))
+        # ``extensions`` are task metadata and never a budget authority.  The
+        # AIAT controller supplies the governed budget snapshot explicitly;
+        # absent that snapshot, use the bounded adapter default.
+        max_iterations = int(request.budget.get("max_iterations", 500))
         if max_iterations < 1:
             raise ValueError("OpenHands max_iterations must be positive")
         return {
