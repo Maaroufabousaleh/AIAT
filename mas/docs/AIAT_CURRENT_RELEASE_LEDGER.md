@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `cedcee2` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `9df2779` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -113,6 +113,11 @@ status, gates all dependent stages on network readiness, and classifies a
 failed Docker network create as `FAILED_INFRASTRUCTURE`.
 The `cedcee2` follow-up retains scalar startup failure classes for each
 disposable service and validates shell syntax for every workflow run block.
+The subsequent OpenHands cleanup hardening `9df2779` removes generated
+run-scoped internal secret entries from the runner `GITHUB_ENV` file and
+records their absence without retaining secret values. This remains
+repository-local evidence hardening only; it does not add live provider
+evidence or alter the global `NO-RELEASE` decision.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained

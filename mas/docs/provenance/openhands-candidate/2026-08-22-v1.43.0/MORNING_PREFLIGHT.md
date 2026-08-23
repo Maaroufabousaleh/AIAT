@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `04717ce9e185d3dcd639da69c87e87851cbde4be`; the branch also
+hardening at `9df27794db27ac57b206bb638c38083b91e19b55`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -17,6 +17,8 @@ task and lifecycle evidence. No workflow was dispatched during this refresh.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
+Cleanup additionally removes generated AIAT/tool/gateway secret entries from
+the runner's `GITHUB_ENV` file and records that scalar absence assertion.
 
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
@@ -198,7 +200,9 @@ release decision.
 The latest provider-boundary commits are `a16d8e3` (separate the exact
 live-discovered Groq baseline from the governed `auto/coding` route) and
 `04717ce` (register the corresponding immutable run evidence and route
-provenance). They do not dispatch a workflow or activate OpenHands.
+provenance). `9df2779` additionally hardens cleanup of run-scoped internal
+secret environment entries and adds a static regression check. These changes
+do not dispatch a workflow or activate OpenHands.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
