@@ -14,7 +14,9 @@ lifecycle/security/cleanup harness evidence. The workflow remains
 absent; cleanup and sanitized evidence still run. The only planned persistent
 GitHub secret is `GROQ_API_KEY`; AIAT tool, session, and internal gateway keys
 remain run-scoped. Existing native gVisor evidence from run `32594885180` is
-retained; no new workflow was dispatched in this continuation. OpenHands is
+retained; no new workflow was dispatched in this continuation. Commits
+`4234d07`, `1db5b72`, and `cf80dd1` are the grouped provider-preflight,
+offline-harness, and evidence-wiring changes. OpenHands is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
 under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).

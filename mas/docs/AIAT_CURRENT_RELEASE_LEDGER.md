@@ -5,8 +5,8 @@
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
-The overnight OpenHands continuation (`4234d07` plus the grouped offline
-harness work recorded below) does not alter the release decision. OpenHands
+The overnight OpenHands continuation (`4234d07`, `1db5b72`, and `cf80dd1`)
+does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, provider preflight, fail-closed
 20-gate evaluator, coding-task fixture, and offline lifecycle/security harness

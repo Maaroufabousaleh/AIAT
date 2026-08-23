@@ -1,5 +1,5 @@
 {
-  "candidate_sha": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2",
+  "candidate_sha": "cf80dd19df68a74b33e841629d738edc19795e4a",
   "evaluation": {
     "all_required_gates_passed": false,
     "blocked_gate_count": 0,
@@ -37,6 +37,7 @@
     "status": "BLOCKED_MISSING_OPERATOR_SECRET",
     "unknown_gates": []
   },
+  "evidence_root_used": true,
   "gates": {
     "aiat_local_boundary": {
       "evidence_refs": [],
