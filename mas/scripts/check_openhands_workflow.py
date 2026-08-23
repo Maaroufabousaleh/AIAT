@@ -118,6 +118,29 @@ def _workflow_run_block_issues(text: str) -> list[str]:
     return issues
 
 
+def _gateway_provenance_helper_issues() -> list[str]:
+    """Ensure the delegated helper still carries the exact candidate pins."""
+
+    helper_path = Path(__file__).with_name("verify_openhands_gateway_provenance.py")
+    try:
+        helper = helper_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["gateway_provenance_helper_missing"]
+    required = (
+        '"version": "1.90.0"',
+        '"version": "3.8.38"',
+        '"source_commit": "6e8282d40655d47ed1557f030e53d6819e464e79"',
+        '"source_commit": "7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8"',
+        '"source_archive_sha256": "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede"',
+        '"source_archive_sha256": "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6"',
+        'f"refs/tags/{tag}"',
+        'f"refs/tags/{tag}^{{}}"',
+        'tag_type = "ANNOTATED"',
+        'tag_type = "LIGHTWEIGHT"',
+    )
+    return ["gateway_provenance_helper_pin_or_tag_logic_missing"] if any(item not in helper for item in required) else []
+
+
 def validate(text: str) -> dict[str, Any]:
     errors: list[str] = []
     run_block_issues = _workflow_run_block_issues(text)
@@ -151,6 +174,7 @@ def validate(text: str) -> dict[str, Any]:
         or "gateway/version-verification.json" not in text
     ):
         errors.append("gateway_provenance_diagnostic_helper_missing")
+    errors.extend(_gateway_provenance_helper_issues())
     for image in EXPECTED_IMAGES:
         if image not in text:
             errors.append(f"exact_image_pin_missing:{image.split('@', 1)[0]}")
