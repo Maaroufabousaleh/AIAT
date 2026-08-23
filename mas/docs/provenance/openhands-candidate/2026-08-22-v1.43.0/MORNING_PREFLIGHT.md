@@ -83,13 +83,13 @@ baseline (`gateway/provider-baseline.json`) and auto-router route
 Run `32670107128` (job `97269525240`) is preserved as
 [`github-run-32670107128-failure.json`](./github-run-32670107128-failure.json).
 The exact pinned images, provenance, network, OmniRoute container, and public
-management health all passed. The API-auth boundary stopped at a bounded
-transport retry window because OmniRoute's OpenAI-compatible bridge binds
+management health all passed. The pre-fix single-attempt API-auth probe
+observed transport failures because OmniRoute's OpenAI-compatible bridge binds
 after its dashboard listener; no provider route, LiteLLM, tool-service, or
 OpenHands gate ran. This is `BLOCKED_MODEL_GATEWAY` /
 `MODEL_GATEWAY_TRANSPORT_FAILURE`, not provider or credential evidence. The
-follow-up retry hardening is in `f941d70`; the gate evaluator and summary now
-retain and report this narrower blocker class.
+follow-up bounded-retry hardening is in `f941d70`; the gate evaluator and
+summary now retain and report this narrower blocker class.
 
 ## Operator sequence
 

@@ -14,7 +14,7 @@
     "root_cause_status": "ATTRIBUTED_GATEWAY_STARTUP_RACE",
     "root_cause": "The OmniRoute dashboard became healthy before its OpenAI-compatible API bridge bound on port 20129. The bounded auth probe observed transport failures for all three requests and correctly stopped before provider configuration.",
     "old_auth_endpoint": "http://127.0.0.1:20129/v1/models",
-    "transport_retry_window_seconds": 87,
+    "auth_probe_mode": "single_attempt_without_transport_retry",
     "response_payload_retained": false,
     "credentials_retained": false
   },
