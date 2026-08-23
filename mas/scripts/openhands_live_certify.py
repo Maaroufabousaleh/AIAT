@@ -785,18 +785,29 @@ async def certify(
     }
 
 
-async def _cleanup_preconfigured_mcp(*, base_url: str, settings_key: str, session_key: str) -> dict[str, Any]:
+async def _cleanup_preconfigured_mcp(
+    *,
+    base_url: str,
+    settings_key: str,
+    session_key: str,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
     """Delete and verify a workflow-created MCP entry without retaining its grant."""
 
     if not base_url or not settings_key or not session_key:
         return {"status": "NOT_RUN", "reason": "cleanup_inputs_missing"}
-    async with httpx.AsyncClient(
+    created_client = client is None
+    client = client or httpx.AsyncClient(
         base_url=base_url.rstrip("/"),
         headers={"X-Session-API-Key": session_key, "Accept": "application/json"},
         timeout=httpx.Timeout(30.0, connect=10.0),
-    ) as client:
+    )
+    try:
         response = await client.delete(f"/api/settings/mcp/{settings_key}")
-        if response.status_code not in {200, 404}:
+        # Agent Server may represent an idempotent successful delete as an
+        # explicit JSON response (200), an empty response (204), or absence
+        # (404). All three preserve the run-scoped cleanup contract.
+        if response.status_code not in {200, 204, 404}:
             return {"status": "BLOCKED_CLEANUP", "reason": f"delete_http_{response.status_code}"}
         readback = await client.get("/api/settings")
         if readback.status_code >= 400:
@@ -808,9 +819,12 @@ async def _cleanup_preconfigured_mcp(*, base_url: str, settings_key: str, sessio
         present = isinstance(config, dict) and settings_key in config
         return {
             "status": "BLOCKED_CLEANUP" if present else "PASS",
-            "delete": "deleted" if response.status_code == 200 else "already_absent",
+            "delete": "deleted" if response.status_code in {200, 204} else "already_absent",
             "verified_absent": not present,
         }
+    finally:
+        if created_client:
+            await client.aclose()
 
 
 def main(argv: list[str] | None = None) -> int:

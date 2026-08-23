@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from mas_core.worker_contract import ModelProfileReference, WorkerRunRequest
@@ -151,6 +152,39 @@ def test_event_secret_scan_retains_only_fingerprints() -> None:
     leaked = module._scan_event_for_secrets(Event(), ["sentinel"])
     assert leaked["matches"] == 1
     assert "sentinel" not in json.dumps(leaked)
+
+
+@pytest.mark.asyncio
+async def test_preconfigured_mcp_cleanup_accepts_empty_204_and_verifies_absence() -> None:
+    module = _module()
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(200, json={"mcp_config": {}})
+        raise AssertionError(request)
+
+    client = httpx.AsyncClient(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+        headers={"X-Session-API-Key": "session-secret"},
+    )
+    report = await module._cleanup_preconfigured_mcp(
+        base_url="http://openhands.test",
+        settings_key="aiat-openhands-test-run",
+        session_key="session-secret",
+        client=client,
+    )
+    await client.aclose()
+
+    assert report == {"status": "PASS", "delete": "deleted", "verified_absent": True}
+    assert calls == [
+        "DELETE /api/settings/mcp/aiat-openhands-test-run",
+        "GET /api/settings",
+    ]
 
 
 @pytest.mark.asyncio
