@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, candidate preparation at
-`4223507e225669100415e877b166795847a94f60`.
+`d5ad256f5d4931ce92b25cb67b81fec3ff61420c`.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The

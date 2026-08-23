@@ -2,7 +2,7 @@
   "schema_version": "aiat.openhands-overnight-reconciliation.v1",
   "recorded_at": "2026-08-23",
   "starting_head": "0b712b0b78c6b2bb38bde8f87e3f23073c5b81d3",
-  "ending_head": "4223507e225669100415e877b166795847a94f60",
+  "ending_head": "d5ad256f5d4931ce92b25cb67b81fec3ff61420c",
   "candidate": {
     "release": "v1.43.0",
     "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
@@ -38,7 +38,7 @@
   ],
   "repository_local_validation": {
     "checked_at": "2026-08-23T08:17:31.217049+00:00",
-    "candidate_sha": "4223507e225669100415e877b166795847a94f60",
+    "candidate_sha": "d5ad256f5d4931ce92b25cb67b81fec3ff61420c",
     "static_release_ledger": {
       "status": "PASS",
       "checks_passed": 63,

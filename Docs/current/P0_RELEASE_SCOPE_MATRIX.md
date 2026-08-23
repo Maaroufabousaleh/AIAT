@@ -95,7 +95,7 @@ inactive until a deliberate run, complete evidence, and independent steward
 activation approval.
 
 The repository-local refresh at candidate SHA
-`4223507e225669100415e877b166795847a94f60` is recorded in the candidate
+`d5ad256f5d4931ce92b25cb67b81fec3ff61420c` is recorded in the candidate
 [`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json):
 the static ledger is 63/63, workflow validation and the offline harness pass,
 and the 20-gate matrix remains blocked only because live provider/task and
