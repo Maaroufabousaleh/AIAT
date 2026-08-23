@@ -51,6 +51,10 @@ COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
 COPY workers/ /app/workers/
 COPY companies/ /app/companies/
+# Keep the committed external-worker approval evidence available to the
+# fail-closed runtime factory. The API image does not include the repository
+# checkout, so source-relative worker manifest refs are normalized to /app/docs.
+COPY docs/provenance/openhands-candidate/ /app/docs/provenance/openhands-candidate/
 COPY scripts/check_runtime_adapter_conformance.py /app/scripts/check_runtime_adapter_conformance.py
 COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 

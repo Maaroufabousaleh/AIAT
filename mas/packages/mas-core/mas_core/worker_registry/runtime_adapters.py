@@ -14,6 +14,7 @@ import importlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -49,6 +50,53 @@ from mas_core.worker_contract import (
 from mas_core.worker_registry.firecracker import FirecrackerLaunchSpec
 
 logger = logging.getLogger(__name__)
+
+_OPENHANDS_CANONICAL_REPORT_DIR = Path("docs/provenance/openhands-candidate")
+
+
+def _resolve_openhands_interface_report(report_ref: str | Path) -> Path:
+    """Resolve a committed OpenHands report in source or the API image.
+
+    Source manifests use ``mas/docs/...`` while the orchestrator image copies
+    the canonical candidate evidence under ``/app/docs/...``. Both forms are
+    accepted only inside that exact provenance directory; arbitrary paths and
+    inline approval claims remain invalid.
+    """
+
+    raw = Path(str(report_ref))
+    if any(part == ".." for part in raw.parts):
+        raise ValueError("OpenHands interface verification ref must not contain parent traversal")
+    roots: list[Path] = []
+    configured_root = os.getenv("AIAT_REPOSITORY_ROOT", "").strip()
+    if configured_root:
+        roots.append(Path(configured_root))
+    roots.extend((Path(__file__).resolve().parents[5], Path("/app")))
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+        relative_options = [raw]
+        if not raw.is_absolute() and raw.parts[:2] == ("mas", "docs"):
+            relative_options.append(Path(*raw.parts[1:]))
+        for relative in relative_options:
+            candidate = relative if relative.is_absolute() else root / relative
+            canonical_root = (
+                root / "mas/docs/provenance/openhands-candidate"
+                if relative.parts[:2] == ("mas", "docs")
+                else root / _OPENHANDS_CANONICAL_REPORT_DIR
+            ).resolve()
+            try:
+                resolved = candidate.resolve()
+                resolved.relative_to(canonical_root)
+            except (OSError, ValueError):
+                continue
+            if resolved.name == "interface-verification.json" and resolved.is_file():
+                return resolved
+    raise ValueError(
+        "OpenHands interface verification must use the canonical candidate provenance directory"
+    )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -1819,23 +1867,7 @@ def adapter_for_transport(
             )
         if not report_ref:
             raise ValueError("OpenHands transport requires pinned interface verification evidence")
-        repo_root = Path(__file__).resolve().parents[5].resolve()
-        report_path = Path(str(report_ref))
-        if not report_path.is_absolute():
-            report_path = repo_root / report_path
-        try:
-            resolved_report = report_path.resolve()
-            resolved_report.relative_to(repo_root)
-        except (OSError, ValueError) as exc:
-            raise ValueError("OpenHands interface verification must resolve inside the AIAT repository") from exc
-        canonical_root = (repo_root / "mas/docs/provenance/openhands-candidate").resolve()
-        try:
-            resolved_report.relative_to(canonical_root)
-        except ValueError as exc:
-            raise ValueError("OpenHands interface verification must use the canonical candidate provenance directory") from exc
-        if resolved_report.name != "interface-verification.json" or not resolved_report.is_file():
-            raise ValueError("OpenHands interface verification report is not a committed canonical file")
-        report = resolved_report
+        report = _resolve_openhands_interface_report(report_ref)
         verification = OpenHandsInterfaceVerification.from_report(report)
         return OpenHandsAgentServerAdapter(
             verification,

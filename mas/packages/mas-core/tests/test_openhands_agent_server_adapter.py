@@ -590,6 +590,37 @@ async def test_transport_factory_resolves_repository_relative_interface_report(t
 
 
 @pytest.mark.asyncio
+async def test_transport_factory_resolves_source_ref_from_api_image_evidence_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_path = tmp_path / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("AIAT_REPOSITORY_ROOT", str(tmp_path))
+    captured: dict[str, object] = {}
+
+    def load_report(report: object) -> OpenHandsInterfaceVerification:
+        captured["report"] = report
+        return verification(approved=True)
+
+    monkeypatch.setattr(OpenHandsInterfaceVerification, "from_report", staticmethod(load_report))
+    adapter = adapter_for_transport(
+        "openhands_agent_server",
+        worker_id="coding-worker-openhands-candidate",
+        config={
+            "base_url": "http://openhands.test",
+            "interface_verification_ref": "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json",
+        },
+        context=AdapterContext(
+            workspace_path=str(tmp_path),
+            secrets={"openhands_session_api_key": "session-secret-test"},
+        ),
+    )
+    assert Path(str(captured["report"])) == report_path
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_readiness_checks_server_and_governed_profile(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
