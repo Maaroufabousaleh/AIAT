@@ -60,6 +60,9 @@ governed coding-task prompt for the live request without retaining payloads,
 and validates the neutral OpenHands/OpenCode comparison record. `732ab3d`
 adds fail-closed post-run test/diff/artifact/secret checks, while `2c1b976`
 and `2cf8591` align the maintained status and disposable git-baseline workflow.
+`7bc9f63` adds bounded live lifecycle probes with observed remote pause state,
+transient lifecycle-event secret scanning, and certification-mode-only deferred
+MCP cleanup. These changes remain preparation, not live provider evidence.
 OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global

@@ -62,6 +62,11 @@ returned-artifact, and transient secret-disclosure checks; `2c1b976` and
 workflow semantics. The registration preflight now requires a complete
 20-gate artifact
 bound to the exact candidate/source/image pins before any steward submission.
+`7bc9f63` adds bounded live pause/resume, interrupt, and timeout probes,
+requires an observed remote pause transition, scans lifecycle events for
+secret disclosure, and restricts deferred MCP cleanup to the trusted
+certification-mode adapter. These probes remain live-provider evidence until
+the operator supplies `GROQ_API_KEY` and deliberately dispatches one run.
 These changes add no live
 provider evidence and do not alter the global `NO-RELEASE` decision.
 

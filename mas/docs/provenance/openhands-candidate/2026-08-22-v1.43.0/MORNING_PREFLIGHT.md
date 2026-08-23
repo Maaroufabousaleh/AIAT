@@ -85,7 +85,10 @@ resolution, and zero-residue verification for the workspace and tool image.
 The current candidate hardening (`732ab3d`, `2cf8591`) also re-runs the fixed
 task test after model execution, compares the exact workspace diff to the
 task contract, requires returned artifact hashes, and scans transient events
-for secret disclosure. A model response alone cannot advance those gates.
+for secret disclosure. `7bc9f63` additionally exercises bounded pause/resume,
+interrupt, and timeout controls, requires an observed remote pause transition,
+and scans lifecycle events without retaining payloads. A model response alone
+cannot advance those gates.
 None of these local checks is live provider evidence.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate

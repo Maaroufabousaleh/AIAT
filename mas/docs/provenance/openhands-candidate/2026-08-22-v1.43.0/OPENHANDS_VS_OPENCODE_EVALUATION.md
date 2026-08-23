@@ -165,7 +165,7 @@ credentials, and workspace payloads are not comparison evidence.
 | Integration complexity | REST + WebSocket + workspace/file/git normalization; profile-based server setup | Existing session/event/permission/MCP adapter | OpenHands is a new adapter, not a drop-in |
 | Code reuse | AIAT base adapter, controller, event normalization, artifact/audit/budget contracts remain reusable | Existing OpenCode-specific code is not reused for runtime calls | Approx. 65% of adapter architecture, not a measured LOC claim |
 | Tool boundary | Requires AIAT MCP bridge in server profile; ClientTool is insufficient for authority | Existing run-scoped OpenCode MCP bridge | Both require a certified bridge |
-| Cancellation | Pause and interrupt are explicit and resumable | OpenCode abort/session semantics already implemented | OpenHands mapping is promising but needs live timing tests |
+| Cancellation | Pause and interrupt are explicit and resumable | OpenCode abort/session semantics already implemented | OpenHands probe harness requires a remote pause transition; live timing evidence is still pending |
 | Recovery | Persisted conversation can be rerun after pause/error | Existing OpenCode session reconciliation | OpenHands recovery is unverified |
 | Artifacts | Git changes plus streamed file download; easy to hash without retaining contents | Session diff plus local workspace reads | Different implementation, same AIAT artifact contract |
 | Events | Typed WebSocket stream with unknown-event tolerance | OpenCode SSE event stream | Both normalize into AIAT events; raw payloads remain excluded |
