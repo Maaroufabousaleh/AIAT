@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `29d66e6f00c2951102a1e3b985758f9676379e1d`; the branch also
+hardening at `eced0cf99641d63988bd9e67176051a07f9c7043`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -22,7 +22,8 @@ the runner's `GITHUB_ENV` file and records that scalar absence assertion. The
 normal OpenHands transport factory now refuses inline approval mappings and
 loads only the committed canonical interface-verification report; its MCP
 grant issuer also rejects tool names outside the bounded repository/test
-coding surface before creating a run grant.
+coding surface before creating a run grant. Approved reports additionally
+require an explicit approval-record identifier.
 
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
@@ -210,7 +211,8 @@ classifies unexpected readiness 4xx responses as application-health contract
 failures rather than cold-start timeouts. `29d66e6` additionally keeps
 production activation tied to the committed report and bounds the OpenHands
 AIAT bridge grant surface. These changes do not dispatch a workflow or
-activate OpenHands.
+activate OpenHands. `eced0cf` requires the committed approval-record
+identifier whenever a report claims approved status.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
