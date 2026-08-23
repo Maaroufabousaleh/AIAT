@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `64c85c3` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `188b747` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -27,6 +27,10 @@ The subsequent reviewed continuation commits `6a5b79a`, `72a0313`,
 native gVisor evidence, immutable smoke-image inputs, scalar-only failure
 evidence, and release-scope classifications. They do not alter the global
 decision or activate either coding worker.
+
+The preflight hardening commit `188b747` additionally requires the isolated
+deterministic OpenHands test suite for dispatch readiness; diagnostic
+`--skip-tests` runs remain explicitly non-ready.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained
