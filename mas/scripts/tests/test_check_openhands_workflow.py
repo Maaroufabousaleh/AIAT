@@ -50,9 +50,17 @@ def test_non_native_or_unpinned_candidate_inputs_are_rejected() -> None:
 def test_gateway_source_tags_are_dereferenced_and_recorded() -> None:
     module = _module()
     text = _workflow()
-    assert "litellm_source_tag_commit_verification_missing" not in module.validate(text)["errors"]
+    assert "gateway_source_archive_verification_missing" not in module.validate(text)["errors"]
     weakened = text.replace("refs/tags/v1.90.0^{}", "refs/tags/v1.90.0", 1)
-    assert "litellm_source_tag_commit_verification_missing" in module.validate(weakened)["errors"]
+    assert "gateway_source_archive_verification_missing" in module.validate(weakened)["errors"]
+
+
+def test_gateway_source_archives_are_checksum_pinned() -> None:
+    module = _module()
+    text = _workflow()
+    assert "gateway_source_archive_verification_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede", "0" * 64, 1)
+    assert "gateway_source_archive_verification_missing" in module.validate(weakened)["errors"]
 
 
 def test_candidate_images_require_linux_amd64_platform_readback() -> None:

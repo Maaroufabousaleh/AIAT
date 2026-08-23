@@ -14,6 +14,8 @@ LITELLM = {
     "version": "1.90.0",
     "source": "https://github.com/BerriAI/litellm",
     "source_commit": "6e8282d40655d47ed1557f030e53d6819e464e79",
+    "source_archive": "https://github.com/BerriAI/litellm/archive/refs/tags/v1.90.0.tar.gz",
+    "source_archive_sha256": "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede",
     "image": "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
     "image_digest": "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
 }
@@ -22,6 +24,8 @@ OMNIROUTE = {
     "version": "3.8.38",
     "source": "https://github.com/diegosouzapw/OmniRoute",
     "source_commit": "7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8",
+    "source_archive": "https://github.com/diegosouzapw/OmniRoute/archive/refs/tags/v3.8.38.tar.gz",
+    "source_archive_sha256": "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6",
     "image": "diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
     "image_digest": "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
 }
@@ -65,6 +69,8 @@ def verify(*, runner: Any = subprocess.run) -> dict[str, Any]:
                 "image_architecture": image_architecture,
                 "image_platform": f"{image_os}/{image_architecture}",
                 "image_platform_verified": True,
+                "source_archive": expected["source_archive"],
+                "source_archive_sha256": expected["source_archive_sha256"],
                 "image_revision_label": revision_label,
                 "source_revision_label_matches": revision_label == expected["source_commit"],
                 "source_revision_attestation": (

@@ -218,6 +218,10 @@ def test_pin_verification_requires_the_exact_repo_digest() -> None:
     assert report["status"] == "PASS"
     assert report["floating_tags_used"] is False
     assert all(item["repo_digest_verified"] for item in report["components"])
+    assert {item["source_archive_sha256"] for item in report["components"]} == {
+        "3e6474f2d7f507b124158291e327f995886756573d90dc641c04d73afea45ede",
+        "e81fc85f47204ffe09cd283a56cfce92f109a6f13de7d3bef3f4057f7f43d2e6",
+    }
 
 
 def test_disposable_litellm_config_has_one_governed_omniroute_route() -> None:
