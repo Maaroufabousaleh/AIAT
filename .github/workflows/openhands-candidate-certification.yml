@@ -1082,19 +1082,34 @@ jobs:
           {
             echo "## OpenHands candidate certification"
             echo
-            if [ -f "$report" ]; then
+          if [ -f "$report" ]; then
               python3 - "$report" <<'PY'
           import json
           import sys
+          from pathlib import Path
 
           report = json.load(open(sys.argv[1], encoding="utf-8"))
           evaluation = report.get("evaluation") or {}
+          root = Path(sys.argv[1]).parent.parent
+
+          def read_status(relative: str, field: str) -> str:
+              try:
+                  value = json.loads((root / relative).read_text(encoding="utf-8"))
+              except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                  return "NOT_RECORDED"
+              return str(value.get(field) or "NOT_RECORDED") if isinstance(value, dict) else "NOT_RECORDED"
+
+          final_status = str(report.get("status") or "FAILED_CERTIFICATION_IMPLEMENTATION")
           print(f"- Candidate SHA: `{report.get('candidate_sha') or 'unknown'}`")
           print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
           print(f"- Candidate preflight: `{report.get('configuration_status') or 'unknown'}`")
+          print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
+          print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")
           print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
           print(f"- Mandatory gates: `{evaluation.get('passed_gate_count', 0)}/{evaluation.get('mandatory_gate_count', 0)} PASS`")
-          print(f"- Final result: `{report.get('status') or 'FAILED_CERTIFICATION_IMPLEMENTATION'}`")
+          print(f"- Final result: `{final_status}`")
+          if final_status != "PASSED":
+              print("- Workflow outcome: `EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK`")
           print("- Worker activation: `INACTIVE`")
           PY
             else

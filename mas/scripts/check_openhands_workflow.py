@@ -95,7 +95,13 @@ def validate(text: str) -> dict[str, Any]:
         or '"workspace_absent": workspace_absent == "true"' not in text
     ):
         errors.append("workspace_or_tool_image_cleanup_missing")
-    if "GITHUB_STEP_SUMMARY" not in text or "Summarize fail-closed certification result" not in text:
+    if (
+        "GITHUB_STEP_SUMMARY" not in text
+        or "Summarize fail-closed certification result" not in text
+        or "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" not in text
+        or "gVisor startup" not in text
+        or "Model gateway route" not in text
+    ):
         errors.append("fail_closed_summary_missing")
     if "docker network rm" not in text or "aiat-openhands-cert-network-${GITHUB_RUN_ID}" not in text:
         errors.append("network_cleanup_missing")

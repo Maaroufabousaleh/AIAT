@@ -26,6 +26,7 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert report["candidate_sha_bound"] is True
     assert report["exact_image_pins"] is True
     assert "GITHUB_STEP_SUMMARY" in _workflow()
+    assert "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" in _workflow()
     assert "docker logs" not in _workflow()
 
 
