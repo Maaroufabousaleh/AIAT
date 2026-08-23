@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 
 def _load(name: str):
@@ -125,6 +126,29 @@ def test_route_probe_retains_only_scalar_usage() -> None:
     assert gateway_key not in serialized
     assert "secret raw response" not in serialized
     client.close()
+
+
+def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/health/ping":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "GET" and request.url.path == "/health/readiness":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "POST" and request.url.path == "/v1/chat/completions":
+            return httpx.Response(401, json={"error": "redacted"})
+        raise AssertionError(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(
+            litellm_url="http://litellm.test",
+            omniroute_url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.stage == "gateway_auth"
+    assert error.value.http_status == 401
 
 
 def test_pin_verification_requires_the_exact_repo_digest() -> None:

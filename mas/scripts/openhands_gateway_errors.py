@@ -109,6 +109,14 @@ def classify_failure(
     if normalized_stage in stage_defaults and http_status is None and not exception and not code:
         return GatewayFailure(stage_defaults[normalized_stage], normalized_stage)
 
+    # Authentication at the disposable AIAT gateway is distinct from a
+    # provider credential rejection returned after a route is selected.
+    if normalized_stage in {"gateway_auth", "model_gateway_auth"}:
+        if http_status in {401, 403}:
+            return GatewayFailure(MODEL_GATEWAY_AUTH_FAILURE, normalized_stage, http_status)
+        if http_status is not None and http_status >= 400:
+            return GatewayFailure(MODEL_GATEWAY_RESPONSE_INVALID, normalized_stage, http_status)
+
     if "timeout" in exception or exception in {"readtimeout", "connecttimeout"}:
         return GatewayFailure(PROVIDER_TIMEOUT, normalized_stage, retryable=True)
     if exception in {"connecterror", "connectionerror", "networkerror", "dnserror"}:

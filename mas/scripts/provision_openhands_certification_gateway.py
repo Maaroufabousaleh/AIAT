@@ -31,12 +31,30 @@ EXPECTED_ROUTE = f"{PROVIDER}/{PROVIDER_MODEL}"
 class GatewayProvisioningError(RuntimeError):
     """A disposable provider route could not be created or verified."""
 
+    def __init__(self, reason: str, *, stage: str = "omniroute_health", http_status: int | None = None) -> None:
+        super().__init__(reason)
+        self.stage = stage
+        self.http_status = http_status
 
-def _json(response: httpx.Response, *, expected: set[int] | None = None) -> Any:
+
+def _json(
+    response: httpx.Response,
+    *,
+    expected: set[int] | None = None,
+    stage: str = "omniroute_health",
+) -> Any:
     if expected is not None and response.status_code not in expected:
-        raise GatewayProvisioningError(f"omniroute_http_{response.status_code}")
+        raise GatewayProvisioningError(
+            f"omniroute_http_{response.status_code}",
+            stage=stage,
+            http_status=response.status_code,
+        )
     if response.status_code >= 400:
-        raise GatewayProvisioningError(f"omniroute_http_{response.status_code}")
+        raise GatewayProvisioningError(
+            f"omniroute_http_{response.status_code}",
+            stage=stage,
+            http_status=response.status_code,
+        )
     if not response.content:
         return {}
     try:
@@ -77,9 +95,9 @@ def provision(
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     if not management_key:
-        raise GatewayProvisioningError("omniroute_management_key_missing")
+        raise GatewayProvisioningError("omniroute_management_key_missing", stage="gateway_auth")
     if not provider_key:
-        raise GatewayProvisioningError("selected_provider_credential_missing")
+        raise GatewayProvisioningError("selected_provider_credential_missing", stage="provider_preflight")
     if not base_url.startswith(("http://", "https://")):
         raise GatewayProvisioningError("omniroute_base_url_must_be_http")
 
@@ -91,7 +109,7 @@ def provision(
         follow_redirects=False,
     )
     try:
-        current = _connections(_json(client.get("/api/providers")))
+        current = _connections(_json(client.get("/api/providers"), stage="gateway_auth"))
         existing = next(
             (
                 item
@@ -109,7 +127,7 @@ def provision(
         }
         if existing is None:
             connection = _connection(
-                _json(client.post("/api/providers", json=payload), expected={200, 201})
+                _json(client.post("/api/providers", json=payload), expected={200, 201}, stage="gateway_auth")
             )
             action = "created"
         else:
@@ -120,6 +138,7 @@ def provision(
                         json={key: value for key, value in payload.items() if key != "provider"},
                     ),
                     expected={200, 201},
+                    stage="gateway_auth",
                 )
             )
             action = "updated"
@@ -129,11 +148,12 @@ def provision(
         tested = _json(
             client.post(f"/api/providers/{connection_id}/test", json={}),
             expected={200},
+            stage="provider",
         )
         if not isinstance(tested, dict) or tested.get("valid") is not True:
             raise GatewayProvisioningError("selected_provider_validation_failed")
 
-        readback = _connections(_json(client.get("/api/providers")))
+        readback = _connections(_json(client.get("/api/providers"), stage="gateway_auth"))
         if len(readback) != 1:
             raise GatewayProvisioningError("omniroute_provider_count_is_not_exactly_one")
         selected = next((item for item in readback if str(item.get("id")) == connection_id), None)
@@ -174,7 +194,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (GatewayProvisioningError, httpx.HTTPError) as exc:
         reason = str(exc) if isinstance(exc, GatewayProvisioningError) else "omniroute_transport_error"
-        if "credential_missing" in reason:
+        if isinstance(exc, GatewayProvisioningError):
+            failure = classify_failure(
+                stage=exc.stage,
+                http_status=exc.http_status,
+                error_code=reason,
+                provider_secret_present=exc.stage != "provider_preflight",
+            )
+        elif "credential_missing" in reason:
             failure = classify_failure(stage="provider_preflight", provider_secret_present=False)
         elif "http_401" in reason:
             failure = classify_failure(stage="provider", http_status=401)

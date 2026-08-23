@@ -73,3 +73,11 @@ def test_provider_configuration_never_persists_secret() -> None:
     blocked = module.check_provider_configuration("")
     assert blocked["status"] == "BLOCKED_MISSING_OPERATOR_SECRET"
     assert blocked["failure"]["failure_class"] == "MISSING_PROVIDER_SECRET"
+
+
+def test_gateway_authentication_is_not_reported_as_provider_credential_failure() -> None:
+    module = _load("openhands_gateway_errors")
+    gateway = module.classify_failure(stage="gateway_auth", http_status=401)
+    assert gateway.failure_class == module.MODEL_GATEWAY_AUTH_FAILURE
+    provider = module.classify_failure(stage="provider", http_status=401)
+    assert provider.failure_class == module.INVALID_PROVIDER_CREDENTIAL

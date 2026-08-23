@@ -24,6 +24,11 @@ PROVIDER_MODEL = "llama-3.3-70b-versatile"
 class GatewayProbeError(RuntimeError):
     """A required gateway health or deterministic route probe failed."""
 
+    def __init__(self, reason: str, *, stage: str = "gateway_response", http_status: int | None = None) -> None:
+        super().__init__(reason)
+        self.stage = stage
+        self.http_status = http_status
+
 
 def _usage(value: Any) -> dict[str, int]:
     if not isinstance(value, dict):
@@ -74,7 +79,21 @@ def probe(
             },
         )
         if response.status_code != 200:
-            raise GatewayProbeError("litellm_route_probe_failed")
+            if response.status_code in {401, 403}:
+                raise GatewayProbeError(
+                    "model_gateway_auth_failed",
+                    stage="gateway_auth",
+                    http_status=response.status_code,
+                )
+            if response.status_code == 429:
+                raise GatewayProbeError("provider_rate_limit", stage="provider", http_status=429)
+            if response.status_code == 404:
+                raise GatewayProbeError("provider_model_not_found", stage="provider", http_status=404)
+            raise GatewayProbeError(
+                "litellm_route_probe_failed",
+                stage="litellm_to_omniroute",
+                http_status=response.status_code,
+            )
         try:
             body = response.json()
         except ValueError as exc:
@@ -124,7 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     except (GatewayProbeError, httpx.HTTPError) as exc:
         reason = str(exc) if isinstance(exc, GatewayProbeError) else "gateway_transport_error"
         stage = "gateway_response"
-        if "omniroute_health" in reason:
+        http_status = None
+        if isinstance(exc, GatewayProbeError):
+            stage = exc.stage
+            http_status = exc.http_status
+        elif "omniroute_health" in reason:
             stage = "omniroute_health"
         elif "litellm_health" in reason:
             stage = "litellm_health"
@@ -135,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(exc, httpx.TransportError):
             failure = classify_failure(stage="provider", exception_type="ConnectError")
         else:
-            failure = classify_failure(stage=stage, error_code=reason)
+            failure = classify_failure(stage=stage, http_status=http_status, error_code=reason)
         report = {
             "schema_version": SCHEMA,
             "status": "BLOCKED",
