@@ -36,6 +36,7 @@ EXPECTED_MODEL_ID = "omniroute-coding"
 EXPECTED_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 EXPECTED_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 EXPECTED_MCP_URL = "http://tool-service:8002/openhands/mcp"
+EXPECTED_MCP_KEY = "aiat-openhands-v1-43-0-coding"
 MCP_KEY_PREFIX = "aiat-openhands-"
 MCP_KEY_PATTERN = re.compile(r"aiat-openhands-[a-z0-9][a-z0-9._-]*\Z")
 REQUIRED_ENV = (
@@ -90,6 +91,8 @@ def _mcp_key_status(value: str) -> tuple[bool, str | None]:
         return False, "contains_whitespace"
     if not MCP_KEY_PATTERN.fullmatch(value):
         return False, "must_use_lowercase_aiat_openhands_key_chars"
+    if value != EXPECTED_MCP_KEY:
+        return False, "must_equal_the_governed_openhands_certification_key"
     return True, None
 
 

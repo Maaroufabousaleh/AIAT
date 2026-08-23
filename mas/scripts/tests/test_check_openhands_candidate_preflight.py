@@ -79,7 +79,7 @@ def test_valid_reference_shapes_are_ready_for_isolated_certification_but_not_act
         env={
             "AIAT_TOOL_SECRET": "operator-secret",
             "OPENHANDS_AGENT_PROFILE_ID": "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31",
-            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MCP_SETTINGS_KEY": MODULE.EXPECTED_MCP_KEY,
             "OPENHANDS_MODEL_ID": "omniroute-coding",
             "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
@@ -108,7 +108,7 @@ def test_run_scoped_profile_uuid_is_not_a_static_ci_prerequisite() -> None:
         model_evidence=model_evidence,
         env={
             "AIAT_TOOL_SECRET": "operator-secret",
-            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MCP_SETTINGS_KEY": MODULE.EXPECTED_MCP_KEY,
             "OPENHANDS_MODEL_ID": "omniroute-coding",
             "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
@@ -130,7 +130,7 @@ def test_workflow_generated_tool_secret_is_recorded_without_retaining_scope_valu
         env={
             "AIAT_TOOL_SECRET": "run-secret-must-never-appear-in-report",
             "AIAT_TOOL_SECRET_SCOPE": "github-run",
-            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MCP_SETTINGS_KEY": MODULE.EXPECTED_MCP_KEY,
             "OPENHANDS_MODEL_ID": "omniroute-coding",
             "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
@@ -155,7 +155,7 @@ def test_gateway_loopback_is_rejected_as_a_nonportable_ci_endpoint() -> None:
         model_evidence=model_evidence,
         env={
             "AIAT_TOOL_SECRET": "run-secret",
-            "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
+            "OPENHANDS_MCP_SETTINGS_KEY": MODULE.EXPECTED_MCP_KEY,
             "OPENHANDS_MODEL_ID": "omniroute-coding",
             "OPENHANDS_MODEL_GATEWAY_URL": "http://127.0.0.1:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
