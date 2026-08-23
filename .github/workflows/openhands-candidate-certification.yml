@@ -13,6 +13,9 @@ permissions:
 
 env:
   OPENHANDS_IMAGE: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+  LITELLM_IMAGE: ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
+  OMNIROUTE_IMAGE: diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
+  OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000
 
 jobs:
   certify:
@@ -85,13 +88,24 @@ jobs:
             echo "AIAT_TOOL_SECRET_SCOPE=github-run"
           } >> "$GITHUB_ENV"
 
+      - name: Generate disposable AIAT model-gateway secret
+        run: |
+          set -euo pipefail
+          gateway_key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          test "${#gateway_key}" -ge 32
+          echo "::add-mask::$gateway_key"
+          {
+            echo "OPENHANDS_MODEL_GATEWAY_API_KEY=$gateway_key"
+            echo "OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE=github-run"
+            echo "MODEL_GATEWAY_SECRET_SCOPE=github-run"
+            echo "OPENHANDS_MODEL_GATEWAY_URL=http://litellm:4000"
+          } >> "$GITHUB_ENV"
+
       - name: Run non-secret OpenHands portability preflight
         id: preflight
         continue-on-error: true
         env:
-          OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
-          OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
           OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
         run: |
           set +e
@@ -100,11 +114,196 @@ jobs:
             --output "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Pull the pinned Agent Server image
+      - name: Pull pinned certification images and verify gateway provenance
         run: |
           set -euo pipefail
           docker pull "$OPENHANDS_IMAGE"
+          docker pull "$LITELLM_IMAGE"
+          docker pull "$OMNIROUTE_IMAGE"
           docker image inspect "$OPENHANDS_IMAGE" >/dev/null
+          docker image inspect "$LITELLM_IMAGE" >/dev/null
+          docker image inspect "$OMNIROUTE_IMAGE" >/dev/null
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          uv run python scripts/verify_openhands_gateway_pins.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/pins.json"
+          litellm_version="$(docker run --rm --network none --entrypoint python "$LITELLM_IMAGE" \
+            -c 'import importlib.metadata; print(importlib.metadata.version("litellm"))')"
+          test "$litellm_version" = "1.90.0"
+          omniroute_version="$(docker run --rm --network none --entrypoint node "$OMNIROUTE_IMAGE" \
+            -e 'console.log(require("/app/package.json").version)')"
+          test "$omniroute_version" = "3.8.38"
+          tag_commit="$(git ls-remote https://github.com/diegosouzapw/OmniRoute.git 'refs/tags/v3.8.38^{}' | awk '{print $1}')"
+          test "$tag_commit" = "7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8"
+          LITELLM_VERSION="$litellm_version" OMNIROUTE_VERSION="$omniroute_version" \
+            OMNIROUTE_TAG_COMMIT="$tag_commit" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/version-verification.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-gateway-version-verification.v1",
+                      "litellm_version": os.environ["LITELLM_VERSION"],
+                      "omniroute_version": os.environ["OMNIROUTE_VERSION"],
+                      "omniroute_release_tag_commit": os.environ["OMNIROUTE_TAG_COMMIT"],
+                      "floating_tags_used": False,
+                      "source_or_payload_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+
+      - name: Create disposable model-gateway network
+        id: network
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          network="aiat-openhands-cert-network-${GITHUB_RUN_ID}"
+          docker network create "$network"
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+          echo "network=$network" >> "$GITHUB_ENV"
+
+      - name: Start disposable OmniRoute provider gateway
+        id: omniroute
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute"
+          name="aiat-openhands-omniroute-${GITHUB_RUN_ID}"
+          docker run --detach --name "$name" \
+            --network "$network" --network-alias omniroute \
+            --publish 127.0.0.1:20128:20128 \
+            --env PORT=20128 \
+            --env DASHBOARD_PORT=20128 \
+            --env API_PORT=20129 \
+            --env API_HOST=0.0.0.0 \
+            --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            --env GROQ_API_KEY="$GROQ_API_KEY" \
+            "$OMNIROUTE_IMAGE"
+          echo "omniroute_container=$name" >> "$GITHUB_ENV"
+          echo "container=$name" >> "$GITHUB_OUTPUT"
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:20128/api/health/ping >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
+          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-runtime.json"
+          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-omniroute-health.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "endpoint": "http://omniroute:20128/api/health/ping",
+                      "provider_count_expected": 1,
+                      "raw_response_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$healthy" = 1
+
+      - name: Configure exactly one disposable OmniRoute provider route
+        id: provider
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          OMNIROUTE_BASE_URL=http://127.0.0.1:20128 \
+            OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            uv run python scripts/provision_openhands_certification_gateway.py \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-provisioning.json"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Start disposable LiteLLM model gateway
+        id: litellm
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm"
+          name="aiat-openhands-litellm-${GITHUB_RUN_ID}"
+          config="$GITHUB_WORKSPACE/mas/infra/compose/litellm_openhands_certification.yaml"
+          test -s "$config"
+          docker run --detach --name "$name" \
+            --network "$network" --network-alias litellm \
+            --publish 127.0.0.1:4000:4000 \
+            --volume "$config:/app/config.yaml:ro" \
+            --env LITELLM_MASTER_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            "$LITELLM_IMAGE" \
+            --config /app/config.yaml --host 0.0.0.0 --port 4000
+          echo "litellm_container=$name" >> "$GITHUB_ENV"
+          echo "container=$name" >> "$GITHUB_OUTPUT"
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:4000/health/readiness >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-state.json"
+          docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-runtime.json"
+          python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/health.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-litellm-health.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "endpoint": "http://litellm:4000/health/readiness",
+                      "model_id": "omniroute-coding",
+                      "raw_response_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$healthy" = 1
+
+      - name: Verify deterministic provider route through LiteLLM
+        id: gateway
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          LITELLM_BASE_URL=http://127.0.0.1:4000 \
+            OMNIROUTE_BASE_URL=http://127.0.0.1:20128 \
+            uv run python scripts/check_openhands_certification_gateway.py \
+              --litellm-url http://127.0.0.1:4000 \
+              --omniroute-url http://127.0.0.1:20128 \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/route-probe.json"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Start disposable AIAT tool-service bridge
         id: bridge
@@ -112,14 +311,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/aiat-openhands-workspace" "$RUNNER_TEMP/aiat-openhands-evidence/bridge"
-          network="aiat-openhands-cert-network-${GITHUB_RUN_ID}"
           tool_name="aiat-openhands-tool-service-${GITHUB_RUN_ID}"
           image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
-          docker network create "$network"
           docker build --file infra/docker/Dockerfile.tool-service --tag "$image" .
           docker run --detach --name "$tool_name" \
             --network "$network" --network-alias tool-service \
-            --publish 18002:8002 \
+            --publish 127.0.0.1:18002:8002 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace:rw" \
             --env TOOL_SECRET="$AIAT_TOOL_SECRET" \
             --env TOOL_WORKSPACE_ROOT=/workspace \
@@ -176,9 +373,10 @@ jobs:
           umask 077
           printf '%s' "$key" > "$key_file"
           echo "container=$name" >> "$GITHUB_OUTPUT"
+          echo "agent_container=$name" >> "$GITHUB_ENV"
           docker run --detach --name "$name" --runtime=runsc \
             --network "$network" --network-alias agent-server \
-            --publish 18000:8000 \
+            --publish 127.0.0.1:18000:8000 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
             "$OPENHANDS_IMAGE"
@@ -222,13 +420,47 @@ jobs:
             exit 1
           fi
 
+      - name: Prove runsc Agent Server can reach the internal LiteLLM target
+        id: runsc_gateway
+        continue-on-error: true
+        env:
+          AGENT_CONTAINER: ${{ steps.server.outputs.container }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          docker exec "$AGENT_CONTAINER" python -c \
+            'import urllib.request; response = urllib.request.urlopen("http://litellm:4000/health/readiness", timeout=10); raise SystemExit(0 if response.status == 200 else 1)'
+          exit_code=$?
+          python3 - "$exit_code" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/runsc-to-litellm.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          exit_code, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-runsc-to-litellm.v1",
+                      "endpoint": "http://litellm:4000/health/readiness",
+                      "runtime": "runsc",
+                      "status": "PASS" if exit_code == "0" else "BLOCKED",
+                      "response_payload_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          test "$exit_code" = 0
+
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime
         continue-on-error: true
         env:
-          OPENHANDS_MODEL_GATEWAY_API_KEY: ${{ secrets.OPENHANDS_MODEL_GATEWAY_API_KEY }}
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
-          OPENHANDS_MODEL_GATEWAY_URL: ${{ vars.OPENHANDS_MODEL_GATEWAY_URL }}
           OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
         run: |
           set +e
@@ -289,11 +521,13 @@ jobs:
       - name: Verify disposable cleanup
         if: always()
         env:
-          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key || vars.OPENHANDS_MCP_SETTINGS_KEY }}
         run: |
           set -euo pipefail
           name="aiat-openhands-cert-${GITHUB_RUN_ID}"
           tool_name="${tool_container:-aiat-openhands-tool-service-${GITHUB_RUN_ID}}"
+          litellm_name="${litellm_container:-aiat-openhands-litellm-${GITHUB_RUN_ID}}"
+          omniroute_name="${omniroute_container:-aiat-openhands-omniroute-${GITHUB_RUN_ID}}"
           network_name="${network:-aiat-openhands-cert-network-${GITHUB_RUN_ID}}"
           if [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
             session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
@@ -342,11 +576,43 @@ jobs:
           fi
           docker rm --force "$name" >/dev/null 2>&1 || true
           docker rm --force "$tool_name" >/dev/null 2>&1 || true
+          docker rm --force "$litellm_name" >/dev/null 2>&1 || true
+          docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
           test -z "$(docker ps -aq --filter "name=^/${name}$")"
           test -z "$(docker ps -aq --filter "name=^/${tool_name}$")"
+          test -z "$(docker ps -aq --filter "name=^/${litellm_name}$")"
+          test -z "$(docker ps -aq --filter "name=^/${omniroute_name}$")"
           docker network rm "$network_name" >/dev/null 2>&1 || true
           test -z "$(docker network ls -q --filter "name=^${network_name}$")"
           rm -f "$RUNNER_TEMP/aiat-openhands-session-key"
+          unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
+            "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, *names = sys.argv[1:]
+          Path(output).parent.mkdir(parents=True, exist_ok=True)
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-gateway-cleanup.v1",
+                      "containers": {
+                          name: "absent" for name in names[:-1]
+                      },
+                      "network": {"name": names[-1], "status": "absent"},
+                      "run_scoped_secret_files": "absent",
+                      "provider_payloads_retained": False,
+                      "zero_residue": True,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Upload sanitized OpenHands evidence
         if: always()

@@ -1,0 +1,18 @@
+# Disposable, single-route LiteLLM configuration for the governed OpenHands
+# certification workflow.  The workflow mounts this file into the pinned
+# LiteLLM image; it is intentionally not the production multi-route config.
+model_list:
+  - model_name: omniroute-coding
+    litellm_params:
+      # LiteLLM's OpenAI-compatible adapter forwards this exact provider/model
+      # identity to the OmniRoute OpenAI-compatible endpoint.
+      model: openai/groq/llama-3.3-70b-versatile
+      api_base: http://omniroute:20128/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

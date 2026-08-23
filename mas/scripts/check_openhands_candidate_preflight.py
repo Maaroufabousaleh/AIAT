@@ -12,15 +12,12 @@ the report.
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import json
 import os
 import re
 from collections.abc import Mapping
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import yaml
@@ -61,7 +58,7 @@ REQUIRED_TOOL_GRANTS = (
     "aiat.repository.write",
     "aiat.tests.execute",
 )
-LOCAL_GATEWAY_HOSTS = frozenset({"localhost", "localhost.localdomain", "host.docker.internal"})
+EXPECTED_MODEL_GATEWAY_URL = "http://litellm:4000"
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -190,7 +187,7 @@ def evaluate(
         static_errors.append("manifest_mcp_bridge_url_mismatch")
     if not str(adapter_config.get("model_gateway_url_ref") or "").startswith("OPENHANDS_MODEL_GATEWAY_URL"):
         static_errors.append("manifest_model_gateway_url_binding_mismatch")
-    if adapter_config.get("model_gateway_api_key_ref") != "OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway secret boundary)":
+    if adapter_config.get("model_gateway_api_key_ref") != "OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway secret boundary)":
         static_errors.append("manifest_model_gateway_secret_binding_mismatch")
     if bridge.get("url") != EXPECTED_MCP_URL:
         static_errors.append("governed_mcp_bridge_url_mismatch")
@@ -252,21 +249,19 @@ def evaluate(
 
     gateway_url = str(values.get("OPENHANDS_MODEL_GATEWAY_URL") or "").strip()
     if not gateway_url:
-        operator_actions.append("set_GitHub_Actions_variable_OPENHANDS_MODEL_GATEWAY_URL_to_the_AIAT_gateway_endpoint")
-    elif not gateway_url.startswith(("http://", "https://")):
-        static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_be_an_http_url")
-    else:
-        parsed_gateway_url = urlsplit(gateway_url)
-        gateway_host = (parsed_gateway_url.hostname or "").lower()
-        local_host = gateway_host in LOCAL_GATEWAY_HOSTS or gateway_host.endswith(".localhost")
-        if not local_host and gateway_host:
-            with suppress(ValueError):
-                local_host = ipaddress.ip_address(gateway_host).is_loopback or ipaddress.ip_address(gateway_host).is_unspecified
-        if local_host:
-            static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_not_target_runner_or_operator_loopback")
+        operator_actions.append("workflow_must_materialize_OPENHANDS_MODEL_GATEWAY_URL_as_http://litellm:4000")
+    elif gateway_url != EXPECTED_MODEL_GATEWAY_URL:
+        static_errors.append("OPENHANDS_MODEL_GATEWAY_URL_must_equal_http://litellm:4000")
     gateway_key_present = bool(str(values.get("OPENHANDS_MODEL_GATEWAY_API_KEY") or "").strip())
+    gateway_key_scope = str(
+        values.get("OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE")
+        or values.get("MODEL_GATEWAY_SECRET_SCOPE")
+        or ""
+    ).strip()
     if not gateway_key_present:
-        operator_actions.append("configure_GitHub_Actions_secret_OPENHANDS_MODEL_GATEWAY_API_KEY_for_the_AIAT_gateway")
+        operator_actions.append("workflow_must_generate_disposable_OPENHANDS_MODEL_GATEWAY_API_KEY")
+    elif gateway_key_scope != "github-run":
+        operator_actions.append("OPENHANDS_MODEL_GATEWAY_API_KEY_must_be_scoped_to_this_workflow_run")
 
     # A UUID/key in environment variables is only a syntactic reference until
     # the operator reads it back from the actual Agent Server/profile store.
@@ -319,7 +314,9 @@ def evaluate(
             },
             "OPENHANDS_MODEL_GATEWAY_URL": {
                 "configured": bool(gateway_url),
-                "format_valid": bool(gateway_url.startswith(("http://", "https://"))),
+                "format_valid": gateway_url == EXPECTED_MODEL_GATEWAY_URL,
+                "expected_value": EXPECTED_MODEL_GATEWAY_URL,
+                "source": "workflow-run-fixed-disposable-network-target",
                 "value_retained": False,
             },
         },
@@ -333,6 +330,8 @@ def evaluate(
             },
             "OPENHANDS_MODEL_GATEWAY_API_KEY": {
                 "configured": gateway_key_present,
+                "scope": gateway_key_scope or "unspecified",
+                "source": "workflow_run_generated" if gateway_key_scope == "github-run" else "not_proven",
                 "value_retained": False,
                 "value_printed": False,
             },

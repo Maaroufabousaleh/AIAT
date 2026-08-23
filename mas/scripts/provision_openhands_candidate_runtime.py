@@ -26,6 +26,7 @@ CANDIDATE_RELEASE = "v1.43.0"
 CANDIDATE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 CANDIDATE_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 EXPECTED_MODEL_ID = "omniroute-coding"
+EXPECTED_GATEWAY_URL = "http://litellm:4000"
 LLM_PROFILE_NAME = "aiat-openhands-omniroute-coding"
 AGENT_PROFILE_NAME = "aiat-openhands-v1-43-0-coding"
 MCP_KEY_PREFIX = "aiat-openhands-"
@@ -117,8 +118,8 @@ def provision(
         raise ProvisioningError("session_api_key_missing")
     if model_id != EXPECTED_MODEL_ID:
         raise ProvisioningError("model_id_is_not_the_approved_omniroute_coding_alias")
-    if not gateway_url.startswith(("http://", "https://")):
-        raise ProvisioningError("model_gateway_url_must_be_an_http_url")
+    if gateway_url != EXPECTED_GATEWAY_URL:
+        raise ProvisioningError("model_gateway_url_must_equal_http://litellm:4000")
     if not gateway_api_key:
         raise ProvisioningError("model_gateway_credential_missing")
     if not aiat_tool_secret:

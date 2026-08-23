@@ -81,8 +81,9 @@ def test_valid_reference_shapes_are_ready_for_isolated_certification_but_not_act
             "OPENHANDS_AGENT_PROFILE_ID": "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31",
             "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
             "OPENHANDS_MODEL_ID": "omniroute-coding",
-            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE": "github-run",
         },
     )
 
@@ -109,8 +110,9 @@ def test_run_scoped_profile_uuid_is_not_a_static_ci_prerequisite() -> None:
             "AIAT_TOOL_SECRET": "operator-secret",
             "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
             "OPENHANDS_MODEL_ID": "omniroute-coding",
-            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE": "github-run",
         },
     )
     assert report["status"] == "READY_FOR_CERTIFICATION_AUTHORIZATION"
@@ -130,8 +132,9 @@ def test_workflow_generated_tool_secret_is_recorded_without_retaining_scope_valu
             "AIAT_TOOL_SECRET_SCOPE": "github-run",
             "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-test-run",
             "OPENHANDS_MODEL_ID": "omniroute-coding",
-            "OPENHANDS_MODEL_GATEWAY_URL": "http://gateway:4000",
+            "OPENHANDS_MODEL_GATEWAY_URL": "http://litellm:4000",
             "OPENHANDS_MODEL_GATEWAY_API_KEY": "gateway-secret",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE": "github-run",
         },
     )
 
@@ -159,5 +162,5 @@ def test_gateway_loopback_is_rejected_as_a_nonportable_ci_endpoint() -> None:
         },
     )
 
-    assert "OPENHANDS_MODEL_GATEWAY_URL_must_not_target_runner_or_operator_loopback" in report["static_errors"]
+    assert "OPENHANDS_MODEL_GATEWAY_URL_must_equal_http://litellm:4000" in report["static_errors"]
     assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
