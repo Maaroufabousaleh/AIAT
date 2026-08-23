@@ -24,8 +24,8 @@ runtime:
     aiat_tool_secret_ref: workflow-run-generated AIAT_TOOL_SECRET (not a persistent GitHub Actions secret)
     agent_profile_ref: workflow-run-scoped Agent Server UUID (OPENHANDS_AGENT_PROFILE_ID output)
     aiat_mcp_profile_ref: OPENHANDS_MCP_SETTINGS_KEY logical name; settings entry is created and deleted per run
-    model_gateway_url_ref: OPENHANDS_MODEL_GATEWAY_URL (static governed variable)
-    model_gateway_api_key_ref: OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway secret boundary)
+    model_gateway_url_ref: OPENHANDS_MODEL_GATEWAY_URL (workflow-run-fixed internal target http://litellm:4000)
+    model_gateway_api_key_ref: OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway secret boundary)
     aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
     governed_profile_spec_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/agent-profile-spec.yaml
     model_profile_ref: opencode-phase0b-coding
@@ -108,8 +108,6 @@ capabilities:
 sandbox:
   profile: gvisor
   network_mode: egress-allowlist
-  # The disposable certification network must provide these canonical
-  # service identities.  The current workflow provides tool-service only;
-  # LiteLLM/OmniRoute must be added or an operator-owned reachable gateway
-  # must be configured before certification can run.
+  # The disposable certification network provides these canonical service
+  # identities.  The gateway URL is never a laptop/WSL/host endpoint.
   egress_allowlist: [litellm:4000, tool-service:8002]

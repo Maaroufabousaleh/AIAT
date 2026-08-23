@@ -122,12 +122,15 @@ components:
   - id: litellm
     role: model-gateway-analytics
     license: MIT
-    version: null
+    version: 1.90.0
     source: https://github.com/BerriAI/litellm
     license_evidence: https://github.com/BerriAI/litellm/blob/main/LICENSE
     integration: external-service
-    status: unavailable-until-image-pinned
-    unavailable_reason: LITELLM_IMAGE_REF is deployment-supplied and no immutable ref is configured in this workspace.
+    source_revision: 6e8282d40655d47ed1557f030e53d6819e464e79
+    image_ref: ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
+    image_digest: sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
+    status: pinned-certification-candidate
+    operator_notice: Exact image identity is recorded for the disposable OpenHands certification route; licence metadata remains informational only.
   - id: omniroute
     role: routing-analytics
     license: MIT
@@ -135,8 +138,12 @@ components:
     source: https://github.com/diegosouzapw/OmniRoute
     license_evidence: https://github.com/diegosouzapw/OmniRoute/blob/main/LICENSE
     integration: external-service
-    status: unavailable-until-image-pinned
-    unavailable_reason: OMNIROUTE_IMAGE_REF is deployment-supplied and no immutable ref is configured in this workspace.
+    source_revision: 7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8
+    image_ref: diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
+    image_digest: sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
+    source_revision_attestation: exact-release-tag-dereference; image revision label is not present
+    status: pinned-certification-candidate
+    operator_notice: Exact image identity is recorded for the disposable OpenHands certification route; licence metadata remains informational only.
   - id: trufflehog
     role: secret-scanner
     license: AGPL-3.0

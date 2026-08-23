@@ -1,0 +1,76 @@
+{
+  "schema_version": "aiat.openhands-certification-gateway-provenance.v1",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "gateway": {
+    "network_scope": "one disposable Docker network per certification run",
+    "service_aliases": {
+      "tool_service": "tool-service",
+      "litellm": "litellm",
+      "omniroute": "omniroute"
+    },
+    "openhands_model_gateway_url": "http://litellm:4000",
+    "provider_route": {
+      "aiat_model_id": "omniroute-coding",
+      "provider": "groq",
+      "provider_model": "llama-3.3-70b-versatile",
+      "litellm_route": "openai/groq/llama-3.3-70b-versatile",
+      "omniroute_endpoint": "http://omniroute:20128/v1",
+      "fallbacks": false,
+      "provider_count": 1
+    },
+    "credentials": {
+      "aiat_model_gateway_key": "workflow-run-generated; masked; not retained",
+      "aiat_tool_secret": "workflow-run-generated; masked; not retained",
+      "provider_secret": "GROQ_API_KEY; operator-supplied GitHub secret; never retained"
+    },
+    "network_paths": {
+      "openhands_to_tool_service": "http://tool-service:8002",
+      "openhands_to_litellm": "http://litellm:4000",
+      "litellm_to_omniroute": "http://omniroute:20128/v1",
+      "omniroute_to_provider": "Groq HTTPS API selected by the configured provider route"
+    },
+    "public_port_exposure": "none for gateway services; runner-side health checks use loopback publishes"
+  },
+  "pins": {
+    "litellm": {
+      "version": "1.90.0",
+      "source": "https://github.com/BerriAI/litellm",
+      "source_commit": "6e8282d40655d47ed1557f030e53d6819e464e79",
+      "image": "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
+      "image_digest": "sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
+      "source_revision_attestation": "image label matches exact release tag commit"
+    },
+    "omniroute": {
+      "version": "3.8.38",
+      "source": "https://github.com/diegosouzapw/OmniRoute",
+      "source_commit": "7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8",
+      "image": "diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
+      "image_digest": "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
+      "source_revision_attestation": "exact v3.8.38 release-tag dereference; image revision label absent"
+    }
+  },
+  "evidence_policy": {
+    "retain": [
+      "image digests and scalar source provenance",
+      "health and HTTP status",
+      "resolved provider/model identity",
+      "usage counters when returned",
+      "cleanup and zero-residue assertions"
+    ],
+    "do_not_retain": [
+      "provider credentials",
+      "AIAT gateway keys",
+      "tool-service secrets",
+      "session keys",
+      "raw model response payloads",
+      "unnecessary container logs",
+      "disposable service storage"
+    ]
+  },
+  "live_status": "not_run_by_this_change"
+}

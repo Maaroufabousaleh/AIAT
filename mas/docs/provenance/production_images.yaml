@@ -74,17 +74,17 @@ images:
   - id: omniroute
     ref_env: OMNIROUTE_IMAGE_REF
     build_recipe: operator-selected immutable upstream image
-    source_revision: pending-release-ledger
+    source_revision: 7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8
     lock_hash: pending-release-ledger
-    oci_digest: pending-release-ledger
+    oci_digest: sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
     sbom: pending-release-ledger
     scan: pending-release-ledger
   - id: litellm
     ref_env: LITELLM_IMAGE_REF
     build_recipe: operator-selected immutable upstream image
-    source_revision: pending-release-ledger
+    source_revision: 6e8282d40655d47ed1557f030e53d6819e464e79
     lock_hash: pending-release-ledger
-    oci_digest: pending-release-ledger
+    oci_digest: sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
     sbom: pending-release-ledger
     scan: pending-release-ledger
 

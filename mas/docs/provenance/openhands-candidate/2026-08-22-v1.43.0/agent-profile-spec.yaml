@@ -17,6 +17,8 @@ aiat_bindings:
   model_profile_version: "1"
   exact_model_id: omniroute-coding
   model_route_authority: aiat_gateway
+  model_gateway_url: http://litellm:4000
+  model_gateway_auth_scope: workflow_run_generated
   workspace_policy: isolated_run_scoped
   sandbox_profile: gvisor
   network_policy:
@@ -106,4 +108,4 @@ provisioning:
       does_not_grant_activation: true
   secrets:
     - AIAT_TOOL_SECRET (workflow-run-generated disposable bridge secret; not a persistent GitHub Actions secret)
-    - OPENHANDS_MODEL_GATEWAY_API_KEY (AIAT gateway credential; never direct provider credential)
+    - OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway credential; never direct provider credential)
