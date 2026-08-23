@@ -333,6 +333,7 @@ def validate(text: str) -> dict[str, Any]:
         or "Summarize fail-closed certification result" not in text
         or "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" not in text
         or "gVisor startup" not in text
+        or "OmniRoute API auth boundary" not in text
         or "Model gateway route" not in text
     ):
         errors.append("fail_closed_summary_missing")

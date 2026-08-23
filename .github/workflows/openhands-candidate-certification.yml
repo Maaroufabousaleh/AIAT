@@ -1287,6 +1287,7 @@ jobs:
           print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
           print(f"- Candidate preflight: `{report.get('configuration_status') or 'unknown'}`")
           print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
+          print(f"- OmniRoute API auth boundary: `{read_status('gateway/omniroute/auth.json', 'status')}` ({read_status('gateway/omniroute/auth.json', 'failure_class')})")
           print(f"- Provider baseline: `{read_status('gateway/provider-baseline.json', 'status')}`")
           print(f"- Auto-router evidence: `{read_status('gateway/auto-routing.json', 'status')}`")
           print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")

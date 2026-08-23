@@ -122,6 +122,25 @@ def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> N
     assert report["evaluation"]["all_required_gates_passed"] is False
 
 
+def test_gateway_auth_boundary_failure_gets_model_gateway_blocker(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway" / "omniroute").mkdir(parents=True)
+    (tmp_path / "gateway" / "omniroute" / "auth.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED",
+                "failure_class": "MODEL_GATEWAY_TRANSPORT_FAILURE",
+                "raw_response_retained": False,
+                "credentials_retained": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_MODEL_GATEWAY"
+    assert report["evidence_blocker_status"] == "BLOCKED_MODEL_GATEWAY"
+
+
 def test_gateway_provenance_failure_gets_a_distinct_blocker_class(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()

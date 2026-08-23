@@ -64,6 +64,7 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         return "BLOCKED_GATEWAY_PROVENANCE"
 
     for name in (
+        "gateway/omniroute/auth.json",
         "gateway/provider-baseline.json",
         "gateway/auto-routing.json",
         "gateway/route-probe.json",
@@ -85,6 +86,11 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
             "OMNIROUTE_HEALTH_TIMEOUT",
         }:
             return "BLOCKED_RUNTIME_STARTUP"
+        if name == "gateway/omniroute/auth.json" and value.get("status") == "BLOCKED":
+            # The disposable API auth boundary is a model-gateway gate.  It
+            # runs before provider configuration, so do not collapse a
+            # transport/auth result into generic incomplete-gates status.
+            return "BLOCKED_MODEL_GATEWAY"
         if failure_class in {"OPENHANDS_AGENT_SERVER_STARTUP_FAILURE", "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE"}:
             return "BLOCKED_GVISOR"
         if failure_class in {"TOOL_SERVICE_STARTUP_FAILURE", "TOOL_SERVICE_HEALTH_FAILURE"}:

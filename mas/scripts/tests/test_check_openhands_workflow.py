@@ -32,6 +32,7 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert report["heredoc_audit"] == "PASS"
     assert "GITHUB_STEP_SUMMARY" in _workflow()
     assert "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" in _workflow()
+    assert "OmniRoute API auth boundary" in _workflow()
     assert "docker logs" not in _workflow()
 
 
