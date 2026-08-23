@@ -507,7 +507,6 @@ jobs:
           PY
           if [ "$healthy" != 1 ]; then
             echo "OpenHands Agent Server did not become healthy under runsc" >&2
-            docker logs --tail 40 "$name" >&2 || true
             exit 1
           fi
 

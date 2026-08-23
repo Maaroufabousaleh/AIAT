@@ -62,6 +62,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("internal_run_scoped_secret_required_as_github_secret")
     if "OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000" not in text:
         errors.append("canonical_gateway_url_missing")
+    if re.search(r"(?m)^\s*docker\s+logs\b", text):
+        errors.append("raw_container_logs_retained")
     return {
         "schema_version": SCHEMA,
         "status": "PASS" if not errors else "FAILED_CERTIFICATION_IMPLEMENTATION",

@@ -26,6 +26,7 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert report["candidate_sha_bound"] is True
     assert report["exact_image_pins"] is True
     assert "GITHUB_STEP_SUMMARY" in _workflow()
+    assert "docker logs" not in _workflow()
 
 
 def test_automatic_trigger_and_static_profile_are_rejected() -> None:
@@ -47,3 +48,6 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
 
     report = _module().validate(text.replace("preflight-wrapper.json", "preflight.json"))
     assert "provider_preflight_execution_failure_class_missing" in report["errors"]
+
+    report = _module().validate(text + "\n          docker logs --tail 1 container\n")
+    assert "raw_container_logs_retained" in report["errors"]
