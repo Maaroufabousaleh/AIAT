@@ -4,10 +4,13 @@
 **Outcome:** repository claims, machine-readable policy, deployed topology, and live evidence agree  
 **Authority:** [AIAT Target Programme](../../../AIAT_TARGET_PROGRAMME.md)
 
-**Current status (2026-08-21):** in progress. The static release ledger is
-61/61 pass; the latest unconfigured live aggregation at
+**Current status (2026-08-23):** in progress. The static release ledger is
+63/63 pass; the latest unconfigured live aggregation at
 `2026-08-19T04:47:35Z` is 71 pass, 0 fail, 14 blocked, and 4 pending across
-85 checks with `NO-RELEASE`. The licence metadata boundary,
+85 checks with `NO-RELEASE`. The retained native Ubuntu gVisor certificate
+from workflow run `32541110299` passes native Linux, `runsc` registration,
+digest-pinned smoke, sandbox, cleanup, and zero-residue checks; the separate
+WSL/native release-host preflight remains open. The licence metadata boundary,
 shared operational promotion checks, coding/tester scan-state reconciliation,
 bounded project-state metric label, CEO/service identity and persisted section
 ACL contract, immutable image-input contract, fail-closed local image identity
@@ -29,7 +32,7 @@ evidence remain open. The prior nonexistent object-store network-alias run is
 classified as harness/configuration invalid and excluded from provider
 evidence. The latest configured Compose release profile retained in evidence
 is 76 pass, 0 fail, 5 blocked, and 4 pending across 81 checks, with
-`NO-RELEASE`. Native release host/runsc and immutable image identity, gVisor,
+`NO-RELEASE`. Native release host/runsc and immutable image identity,
 Firecracker, trace/runtime configuration, outbound mail, self-improvement
 source selection, provider KMS, clean-host/disaster recovery, and the
 technical security review remain open. These are distinct technical/operator
