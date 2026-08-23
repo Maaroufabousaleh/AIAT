@@ -1,16 +1,19 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `57504a7` (latest reviewed implementation/evidence revision; static ledger 61/61; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `a6b6eae` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 61/61; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
-The overnight OpenHands continuation (`4234d07`, `1db5b72`, and `cf80dd1`)
+The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
+`cbad706`, `6da661f`, `d8ab39b`, `a6fa383`, `5724979`, `b1c5d8e`, and
+`a6b6eae`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
-pins, run-scoped gateway/profile/MCP design, provider preflight, fail-closed
-20-gate evaluator, coding-task fixture, and offline lifecycle/security harness
-are repository-local evidence only. A future manual run still requires the
+pins, run-scoped gateway/profile/MCP design, one-shot certification
+authorization, provider preflight, narrow gateway/provider failure classes,
+fail-closed 20-gate evaluator, coding-task fixture, and offline
+lifecycle/security harness are repository-local evidence only. A future manual run still requires the
 operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.

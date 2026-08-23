@@ -74,10 +74,16 @@
         "prompt"
       ],
       "attempted_governed_fields": [
+        "agent_profile_id",
+        "api_key",
         "base_url",
+        "credentials",
+        "mcp_servers",
         "model",
         "provider",
-        "tools"
+        "provider_model",
+        "tools",
+        "workspace"
       ],
       "denied": true,
       "task_payload_retained": false
@@ -86,29 +92,60 @@
       "payloads_retained": false,
       "scenarios": {
         "agent_without_mcp": {
-          "payloads_retained": false,
-          "remaining": [],
-          "status": "PASS"
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "status": "PASS"
+          },
+          "started_resources": [
+            "agent-server",
+            "litellm",
+            "omniroute",
+            "tool-service"
+          ]
         },
         "gateway_without_agent": {
-          "payloads_retained": false,
-          "remaining": [],
-          "status": "PASS"
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "status": "PASS"
+          },
+          "started_resources": [
+            "litellm",
+            "omniroute"
+          ]
         },
         "mcp_after_failed_task": {
-          "payloads_retained": false,
-          "remaining": [],
-          "status": "PASS"
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "status": "PASS"
+          },
+          "started_resources": [
+            "agent-server",
+            "litellm",
+            "mcp-entry",
+            "omniroute",
+            "tool-service"
+          ]
         },
         "nothing_started": {
-          "payloads_retained": false,
-          "remaining": [],
-          "status": "PASS"
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "status": "PASS"
+          },
+          "started_resources": []
         },
         "omniroute_only": {
-          "payloads_retained": false,
-          "remaining": [],
-          "status": "PASS"
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "status": "PASS"
+          },
+          "started_resources": [
+            "omniroute"
+          ]
         }
       },
       "status": "PASS"
@@ -129,6 +166,7 @@
   "mcp_override_denial": "PASS",
   "mode": "offline_fixture_only",
   "model_override_denial": "PASS",
+  "ordinary_completion_not_resumable": "PASS",
   "pause": "PASS",
   "recovery": "PASS",
   "resume": "PASS",
