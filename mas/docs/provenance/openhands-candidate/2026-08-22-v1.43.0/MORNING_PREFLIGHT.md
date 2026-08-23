@@ -86,10 +86,11 @@ The exact pinned images, provenance, network, OmniRoute container, and public
 management health all passed. The pre-fix single-attempt API-auth probe
 observed transport failures because OmniRoute's OpenAI-compatible bridge binds
 after its dashboard listener; no provider route, LiteLLM, tool-service, or
-OpenHands gate ran. This is `BLOCKED_MODEL_GATEWAY` /
-`MODEL_GATEWAY_TRANSPORT_FAILURE`, not provider or credential evidence. The
-follow-up bounded-retry hardening is in `f941d70`; the gate evaluator and
-summary now retain and report this narrower blocker class.
+OpenHands gate ran. The historical artifact ended
+`BLOCKED_INCOMPLETE_MANDATORY_GATES`; the normalized blocker is
+`BLOCKED_MODEL_GATEWAY` / `MODEL_GATEWAY_TRANSPORT_FAILURE`, not provider or
+credential evidence. The follow-up bounded-retry hardening is in `f941d70`;
+the gate evaluator and summary now retain and report this narrower class.
 
 ## Operator sequence
 

@@ -9,7 +9,8 @@
     "artifact_digest": "sha256:b6c35cc5a1ca3e7425b12bff9d78262a158935508aa12e49936d8d6ed7bcb436"
   },
   "classification": {
-    "final_status": "BLOCKED_MODEL_GATEWAY",
+    "final_status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",
+    "normalized_blocker_status": "BLOCKED_MODEL_GATEWAY",
     "failure_class": "MODEL_GATEWAY_TRANSPORT_FAILURE",
     "root_cause_status": "ATTRIBUTED_GATEWAY_STARTUP_RACE",
     "root_cause": "The OmniRoute dashboard became healthy before its OpenAI-compatible API bridge bound on port 20129. The bounded auth probe observed transport failures for all three requests and correctly stopped before provider configuration.",
