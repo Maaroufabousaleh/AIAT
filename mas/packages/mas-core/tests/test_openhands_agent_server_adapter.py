@@ -513,6 +513,12 @@ def test_report_loader_requires_full_provenance_and_pinned_digest() -> None:
     with pytest.raises(ValueError, match="image digest"):
         OpenHandsInterfaceVerification.from_report(report)
 
+    report["image"]["digest"] = IMAGE_DIGEST
+    report["approval_status"] = "APPROVED"
+    report["approved"] = True
+    with pytest.raises(ValueError, match="approval record ID"):
+        OpenHandsInterfaceVerification.from_report(report)
+
 
 def test_transport_factory_rejects_inline_openhands_approval_claim(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="inline approval claims are not trusted"):

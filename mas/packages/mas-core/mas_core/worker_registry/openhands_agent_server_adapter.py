@@ -243,6 +243,10 @@ class OpenHandsInterfaceVerification:
                 if isinstance(path, str) and path.startswith("/"):
                     endpoints[str(name)] = path
         approval_status = str(payload.get("approval_status") or "").upper()
+        approval_record_id = str(payload["approval_record_id"]) if payload.get("approval_record_id") else None
+        approved = bool(payload.get("approved")) and approval_status == "APPROVED"
+        if approved and not approval_record_id:
+            raise ValueError("approved OpenHands report must include an approval record ID")
         return cls(
             report_id=str(payload.get("report_id") or "openhands-interface-report"),
             release=release,
@@ -252,8 +256,8 @@ class OpenHandsInterfaceVerification:
             image_digest=image_digest,
             image_platform_digest=str(platform_digest) if platform_digest else None,
             endpoints=endpoints,
-            approved=bool(payload.get("approved")) and approval_status == "APPROVED",
-            approval_record_id=(str(payload["approval_record_id"]) if payload.get("approval_record_id") else None),
+            approved=approved,
+            approval_record_id=approval_record_id,
             evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {},
         )
 
