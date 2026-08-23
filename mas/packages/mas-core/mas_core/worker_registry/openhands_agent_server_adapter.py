@@ -68,6 +68,8 @@ OPENHANDS_MCP_BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 _OPENHANDS_MODEL_ID = "omniroute-coding"
 _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
+_OPENHANDS_MAX_ITERATIONS = 20
+_OPENHANDS_TIMEOUT_SECONDS = 300
 
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 
@@ -671,9 +673,13 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         # ``extensions`` are task metadata and never a budget authority.  The
         # AIAT controller supplies the governed budget snapshot explicitly;
         # absent that snapshot, use the bounded adapter default.
-        max_iterations = int(request.budget.get("max_iterations", 500))
+        max_iterations = int(request.budget.get("max_iterations", _OPENHANDS_MAX_ITERATIONS))
         if max_iterations < 1:
             raise ValueError("OpenHands max_iterations must be positive")
+        if max_iterations > _OPENHANDS_MAX_ITERATIONS:
+            raise ValueError("OpenHands max_iterations exceeds the governed candidate budget")
+        if request.timeout_seconds and request.timeout_seconds > _OPENHANDS_TIMEOUT_SECONDS:
+            raise ValueError("OpenHands timeout exceeds the governed candidate budget")
         return {
             "agent_profile_id": str(profile_id),
             "workspace": {"kind": "LocalWorkspace", "working_dir": str(workspace)},

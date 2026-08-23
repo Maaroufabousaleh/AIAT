@@ -28,6 +28,7 @@ from mas_core.worker_registry.openhands_agent_server_adapter import (
     OpenHandsInterfaceVerification,
     issue_openhands_certification_authorization,
 )
+from mas_core.worker_registry.runtime_adapters import adapter_for_transport
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -460,6 +461,34 @@ def test_report_loader_requires_full_provenance_and_pinned_digest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transport_factory_uses_the_governed_openhands_adapter(tmp_path: Path) -> None:
+    adapter = adapter_for_transport(
+        "openhands_agent_server",
+        worker_id="coding-worker-openhands-candidate",
+        config={
+            "base_url": "http://openhands.test",
+            "interface_verification": {
+                "approval_status": "APPROVED",
+                "approved": True,
+                "pin": {
+                    "repository": "https://github.com/OpenHands/software-agent-sdk.git",
+                    "release": "v1.43.0",
+                    "commit_sha": COMMIT,
+                },
+                "image": {"ref": "ghcr.io/openhands/agent-server:1.43.0-python", "digest": IMAGE_DIGEST},
+            },
+        },
+        context=AdapterContext(
+            workspace_path=str(tmp_path),
+            secrets={"openhands_session_api_key": "session-secret-test"},
+        ),
+    )
+    assert isinstance(adapter, OpenHandsAgentServerAdapter)
+    assert adapter.certification_mode is False
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_readiness_checks_server_and_governed_profile(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
@@ -557,6 +586,9 @@ async def test_task_cannot_override_model_gateway_profile_or_budget(tmp_path: Pa
     assert "attacker.invalid" not in serialized
     assert "attacker-secret" not in serialized
     assert "attacker-profile" not in serialized
+    over_budget = malicious.model_copy(update={"budget": {"max_iterations": 999999}})
+    with pytest.raises(ValueError, match="exceeds the governed candidate budget"):
+        adapter._start_payload(over_budget)
     await adapter.close()
 
 
