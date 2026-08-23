@@ -62,6 +62,14 @@ def test_live_task_requires_host_test_and_workspace_verification() -> None:
     assert "postrun_task_verification_missing" in module.validate(weakened)["errors"]
 
 
+def test_live_task_requires_a_disposable_git_baseline_for_real_diff() -> None:
+    module = _module()
+    text = _workflow()
+    assert "coding_task_git_baseline_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"', "true", 1)
+    assert "coding_task_git_baseline_missing" in module.validate(weakened)["errors"]
+
+
 def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     text = _workflow()
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))

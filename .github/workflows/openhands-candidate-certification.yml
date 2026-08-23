@@ -732,6 +732,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
           cp -R "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task/." \
             "$RUNNER_TEMP/aiat-openhands-workspace/"
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" init --quiet
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.email aiat-certification@localhost
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.name aiat-certification
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" add -- \
+            pyproject.toml README.md slugger tests
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"
           test -s "$RUNNER_TEMP/aiat-openhands-session-key"
           export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
           uv run python scripts/openhands_live_certify.py \
