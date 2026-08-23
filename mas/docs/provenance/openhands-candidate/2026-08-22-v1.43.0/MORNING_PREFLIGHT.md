@@ -44,7 +44,10 @@ explicit frozen commit after the preflight passes.
    Continue only when it reports `READY_TO_DISPATCH`/`ready_to_dispatch=true`.
    The preflight runs the bounded OpenHands suite through `uv run
    --isolated pytest`; its `--skip-tests` diagnostic mode always remains
-   non-ready and must not be used for dispatch preparation.
+   non-ready and must not be used for dispatch preparation. The workflow also
+   gates all model/runtime stages on its non-secret candidate preflight, so a
+   variable, pin, or binding mismatch is recorded as configuration evidence
+   and cannot reach the expensive stages.
    A dirty but understood local worktree does not change the exact SHA used by
    GitHub; do not stage or normalize the protected memory files.
 

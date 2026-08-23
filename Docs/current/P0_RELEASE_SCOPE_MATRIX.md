@@ -64,11 +64,17 @@ The inactive OpenHands v1.43.0 candidate is a parallel certification effort,
 not a replacement for OpenCode. Its self-contained LiteLLM v1.90.0 and
 OmniRoute v3.8.38 route is digest-pinned to `omniroute-coding` → Groq
 `llama-3.3-70b-versatile`; the internal gateway URL is fixed to
-`http://litellm:4000`. The manual workflow now preflights the single
-operator-owned `GROQ_API_KEY`, creates all internal credentials/profile/MCP
-objects run-scoped, and evaluates all 20 mandatory gates fail-closed. Workflow
-hardening `1154a5f` keeps failure evidence scalar-only without retaining
-container logs. Offline fixture evidence is not live certification evidence.
+`http://litellm:4000`. The manual workflow now preflights both the single
+operator-owned `GROQ_API_KEY` and the non-secret candidate bindings before
+starting any gateway/runtime stages, creates all internal
+credentials/profile/MCP objects run-scoped, and evaluates all 20 mandatory
+gates fail-closed. Workflow hardening `1154a5f` keeps failure evidence
+scalar-only without retaining container logs; `9184d56` records candidate
+preflight blockers separately from provider blockers; `3e57123` preserves
+gateway health/route failure stages; `593475b` prevents a partial live wave
+from reporting PASS; and `6718d9b` enforces the native Ubuntu runner and
+source-commit pin statically. Offline fixture evidence is not live
+certification evidence.
 OpenHands remains
 inactive until a deliberate run, complete evidence, and independent steward
 activation approval.

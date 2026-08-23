@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `4a8d11c` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `6718d9b` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -36,6 +36,14 @@ The OCI boundary hardening commit `4a8d11c` requires explicit
 `OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS` before a live provider target can be
 used; missing or alternate modes remain blocked and no live OCI evidence is
 claimed.
+
+The continuation commits `9184d56`, `3e57123`, `593475b`, and `6718d9b` further
+harden the inactive OpenHands path: candidate preflight now gates every
+expensive workflow stage and is recorded independently from provider status;
+gateway health/route failures retain their internal stage; partial live waves
+cannot report PASS; and the manual workflow statically requires the native
+Ubuntu runner and exact OpenHands source commit. These changes add no live
+provider evidence and do not alter the global `NO-RELEASE` decision.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained

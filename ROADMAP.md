@@ -62,7 +62,12 @@ workflow hardening commits `d012ab9` and `1154a5f` also require immutable
 native smoke-image inputs, bind the checked-out candidate SHA, and keep
 certification failure evidence scalar-only without retaining container logs;
 `188b747` makes the isolated deterministic preflight suite mandatory for
-dispatch readiness.
+dispatch readiness. `9184d56` now gates every expensive certification stage on
+both provider and candidate preflight readiness and records configuration
+blockers independently; `3e57123` preserves gateway health/route failure
+classes; `593475b` prevents a partial live wave from reporting PASS; and
+`6718d9b` statically enforces the native Ubuntu runner and exact OpenHands
+source commit.
 This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a

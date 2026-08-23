@@ -13,8 +13,9 @@ lifecycle/security/cleanup harness evidence. The run-scoped certification
 authorization is controller-attested (`aiat-github-actions`), single-use, and
 900 seconds TTL; it remains distinct from steward activation approval. The
 workflow remains
-`workflow_dispatch` only and skips model/runtime stages when `GROQ_API_KEY` is
-absent; cleanup and sanitized evidence still run. The only planned persistent
+`workflow_dispatch` only and skips model/runtime stages when either
+`GROQ_API_KEY` or the non-secret candidate preflight is not ready; cleanup and
+sanitized evidence still run. The only planned persistent
 GitHub secret is `GROQ_API_KEY`; AIAT tool, session, and internal gateway keys
 remain run-scoped. Existing OpenHands gVisor evidence from run `32594885180`
 and the retained native Ubuntu gVisor certificate from run `32541110299` are
@@ -38,7 +39,11 @@ scope matrix's KMS-required, email-conditional, and self-improvement-deferred
 classifications; `188b747` makes the isolated deterministic preflight suite
 mandatory for dispatch readiness and keeps `--skip-tests` fail-closed;
 `4a8d11c` requires explicit `OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS` for live OCI
-configuration. OpenHands
+configuration. Follow-up `9184d56` gates expensive stages on both preflight
+results and records candidate configuration separately from provider status;
+`3e57123` preserves gateway health/route failure classes; `593475b` keeps
+partial live waves blocked; and `6718d9b` statically requires the native Ubuntu
+runner and exact source commit. OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
