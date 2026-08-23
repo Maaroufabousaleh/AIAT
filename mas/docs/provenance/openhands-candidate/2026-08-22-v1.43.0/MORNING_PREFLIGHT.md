@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, certification implementation
-baseline at `633e7288f268f010b3b67704346913c2944d77bc`; the branch also
+baseline at `498aba091fa4a897a6c62745527b5f33c1869d4b`; the branch also
 contains docs-only status reconciliations after that baseline. The next live
 run must freeze the exact SHA actually selected by the operator.
 

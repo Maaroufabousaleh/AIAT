@@ -2,7 +2,7 @@
   "schema_version": "aiat.openhands-overnight-reconciliation.v1",
   "recorded_at": "2026-08-23",
   "starting_head": "0b712b0b78c6b2bb38bde8f87e3f23073c5b81d3",
-  "ending_head": "633e7288f268f010b3b67704346913c2944d77bc",
+  "ending_head": "498aba091fa4a897a6c62745527b5f33c1869d4b",
   "candidate": {
     "release": "v1.43.0",
     "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
@@ -27,7 +27,8 @@
     "clean_candidate_static_certificate": "a8ff763b75d7728d2517f52a3c04273fb9b49da3",
     "clean_candidate_validator_pin": "7dc416baf77b0282a010f5741213bd0dddea4395",
     "partial_startup_cleanup_hardening": "8d46bc901e4a1e17cd0a67f715dbd46d52dceee6",
-    "litellm_release_tag_verification": "633e7288f268f010b3b67704346913c2944d77bc"
+    "litellm_release_tag_verification": "633e7288f268f010b3b67704346913c2944d77bc",
+    "scan_blocker_taxonomy": "498aba091fa4a897a6c62745527b5f33c1869d4b"
   },
   "dependency_map": [
     "manual workflow -> exact candidate checkout and candidate preflight",
@@ -41,8 +42,8 @@
     "steward approval -> independent activation approval; worker remains inactive"
   ],
   "repository_local_validation": {
-    "checked_at": "2026-08-23T08:46:08.560503867Z",
-    "candidate_sha": "633e7288f268f010b3b67704346913c2944d77bc",
+    "checked_at": "2026-08-23T08:54:45.150874770Z",
+    "candidate_sha": "498aba091fa4a897a6c62745527b5f33c1869d4b",
     "static_release_ledger": {
       "status": "PASS",
       "checks_passed": 63,

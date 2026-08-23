@@ -72,15 +72,15 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 ### Repository-local continuation refresh — 2026-08-23
 
 The certification implementation baseline is `agent/fix-review-p1` at
-`633e7288f268f010b3b67704346913c2944d77bc`; the branch also contains the
+`498aba091fa4a897a6c62745527b5f33c1869d4b`; the branch also contains the
 docs-only status reconciliations `dabaa44da69a7191fc86817d2e4219c211ba115a`
 and `7a4d354`. Runtime implementation remains the same pinned OpenHands
 candidate. The latest implementation hardening `8d46bc9` makes partial-startup
 cleanup fail closed on unknown residue, and `633e728` verifies the exact
-LiteLLM release-tag commit in the workflow before gateway startup. The
-grouped continuation after
-Runtime implementation remains the same pinned OpenHands candidate. The
-grouped continuation after
+LiteLLM release-tag commit in the workflow before gateway startup. `498aba0`
+maps scanner coverage failures to `BLOCKED_SCANNER_COVERAGE` and review-only
+findings to `BLOCKED_SECURITY_TRIAGE` without changing fail-closed behavior.
+The grouped continuation after
 the prior overnight record validates exact gateway aliases and the governed
 MCP key, prevents LiteLLM/tool-service/Agent Server/model stages from running
 after a provider or gateway readiness failure, preserves narrow startup,

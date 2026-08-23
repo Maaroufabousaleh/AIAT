@@ -38,8 +38,9 @@ The follow-up evidence-only commits `a8ff763`, `7dc416b`, and `7a4d354` keep tha
 certificate pinned to the exact candidate SHA while the branch advances; the
 validator intentionally blocks an unpinned/current-HEAD invocation instead of
 silently treating a later documentation or evidence commit as the certified
-candidate. Cleanup hardening `8d46bc9` and exact LiteLLM release-tag
-verification `633e728` are repository-local certification changes and remain
+candidate. Cleanup hardening `8d46bc9`, exact LiteLLM release-tag verification
+`633e728`, and narrow scan-blocker classification `498aba0` are repository-local
+certification changes and remain
 separate from the clean-candidate certificate until a new exact candidate SHA
 is deliberately frozen.
 
