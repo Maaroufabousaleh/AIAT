@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `4f51dac` (prepared candidate `45f30a98e2658cdd52c4002e478df626df16b826`); the branch also
+hardening at `4f51dac`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 

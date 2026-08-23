@@ -20,10 +20,10 @@ repository-local evidence only. A future manual run still requires the
 operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
-OpenCode remains the current default. The currently prepared, not-yet-run
-candidate is `45f30a98e2658cdd52c4002e478df626df16b826`; it requires one new
-deliberate provider-backed certification run and does not itself constitute
-live evidence.
+OpenCode remains the current default. The next candidate SHA must be frozen
+from the reviewed branch after any final operator-local changes; it requires
+one new deliberate provider-backed certification run and does not inherit live
+evidence from the historical provider-boundary runs.
 
 The later OpenHands path hardening `488a593` makes the OmniRoute API-auth
 probe compatible with older frozen candidate helper interfaces through a
