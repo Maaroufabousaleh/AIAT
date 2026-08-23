@@ -234,6 +234,20 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_omniroute_auth_helper_issues())
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")
+    # The workflow checks out the exact candidate SHA before invoking helper
+    # scripts.  Keep the auth step compatible with older, valid candidates
+    # whose helper predates the native retry flags: it must probe --help,
+    # provide a bounded outer retry fallback, and retain scalar mode/count
+    # evidence rather than passing unknown CLI arguments.
+    compatibility_markers = (
+        'auth_probe_mode="compatibility_outer_retry"',
+        'auth_probe_mode="native_transport_retry"',
+        'scripts/check_openhands_omniroute_auth.py --help',
+        'workflow_probe_mode',
+        'workflow_attempt_count',
+    )
+    if any(marker not in text for marker in compatibility_markers):
+        errors.append("omniroute_auth_candidate_compatibility_missing")
     errors.extend(_litellm_omniroute_port_issues())
     for image in EXPECTED_IMAGES:
         if image not in text:

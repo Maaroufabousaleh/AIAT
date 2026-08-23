@@ -159,6 +159,15 @@ def test_omniroute_auth_probe_requires_bounded_transport_retry() -> None:
     assert "omniroute_auth_transport_retry_missing" in module.validate(weakened)["errors"]
 
 
+def test_omniroute_auth_probe_is_compatible_with_frozen_candidate_helpers() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "omniroute_auth_candidate_compatibility_missing" not in report["errors"]
+    weakened = text.replace('auth_probe_mode="compatibility_outer_retry"', 'auth_probe_mode="missing"', 1)
+    assert "omniroute_auth_candidate_compatibility_missing" in module.validate(weakened)["errors"]
+
+
 def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     module = _module()
     text = _workflow()

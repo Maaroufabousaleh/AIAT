@@ -401,12 +401,75 @@ jobs:
           output="$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/auth.json"
           mkdir -p "$(dirname "$output")"
           echo "::add-mask::$OPENHANDS_MODEL_GATEWAY_API_KEY"
-          uv run python scripts/check_openhands_omniroute_auth.py \
-            --url http://127.0.0.1:20129/v1/models \
-            --output "$output" \
-            --attempts 30 \
-            --interval-seconds 1
-          auth_exit_code=$?
+          auth_helper=(
+            --url http://127.0.0.1:20129/v1/models
+            --output "$output"
+          )
+          auth_exit_code=2
+          auth_attempt_count=0
+          auth_probe_mode="compatibility_outer_retry"
+          # Candidate checkouts can legitimately predate the helper's native
+          # transport-retry flags.  Detect the interface from the exact
+          # checked-out candidate instead of passing unknown arguments.  New
+          # helpers retain the richer per-request retry evidence; older
+          # helpers receive the same bounded startup protection through this
+          # outer loop.  HTTP authentication decisions remain fail-closed.
+          if uv run python scripts/check_openhands_omniroute_auth.py --help 2>/dev/null | grep -q -- "--attempts"; then
+            auth_probe_mode="native_transport_retry"
+            uv run python scripts/check_openhands_omniroute_auth.py \
+              "${auth_helper[@]}" \
+              --attempts 30 \
+              --interval-seconds 1
+            auth_exit_code=$?
+            auth_attempt_count=1
+          else
+            for attempt in $(seq 1 30); do
+              auth_attempt_count="$attempt"
+              uv run python scripts/check_openhands_omniroute_auth.py "${auth_helper[@]}"
+              auth_exit_code=$?
+              if [ "$auth_exit_code" -eq 0 ]; then
+                break
+              fi
+              if [ "$attempt" -lt 30 ]; then
+                sleep 1
+              fi
+            done
+          fi
+          AUTH_PROBE_MODE="$auth_probe_mode" AUTH_ATTEMPT_COUNT="$auth_attempt_count" \
+            python3 - "$output" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          try:
+              report = json.loads(output.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {
+                  "schema_version": "aiat.openhands-certification-omniroute-auth.v1",
+                  "status": "BLOCKED",
+                  "failure_class": "MODEL_GATEWAY_RESPONSE_INVALID",
+                  "raw_response_retained": False,
+                  "credentials_retained": False,
+              }
+          if not isinstance(report, dict):
+              report = {
+                  "schema_version": "aiat.openhands-certification-omniroute-auth.v1",
+                  "status": "BLOCKED",
+                  "failure_class": "MODEL_GATEWAY_RESPONSE_INVALID",
+                  "raw_response_retained": False,
+                  "credentials_retained": False,
+              }
+          report["workflow_probe_mode"] = os.environ.get("AUTH_PROBE_MODE", "unknown")
+          try:
+              report["workflow_attempt_count"] = int(os.environ.get("AUTH_ATTEMPT_COUNT", "0"))
+          except ValueError:
+              report["workflow_attempt_count"] = 0
+          report["raw_response_retained"] = False
+          report["credentials_retained"] = False
+          output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
           if [ "$auth_exit_code" -eq 0 ]; then
             echo "status=PASS" >> "$GITHUB_OUTPUT"
             echo "ready=true" >> "$GITHUB_OUTPUT"
