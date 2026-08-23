@@ -29,7 +29,11 @@ secret-safe GitHub summary; `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`,
 `0c0a210`, `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, and
 `334c321` add controller-attestation tests, complete gate definitions,
 offline isolation/race coverage, governed model/profile readback, and
-provider-preflight execution-failure classification. OpenHands is
+provider-preflight execution-failure classification. Follow-up hardening
+`d012ab9` rejects mutable native smoke-image inputs and binds the checked-out
+candidate SHA before probes; `1154a5f` keeps failure evidence scalar-only and
+does not retain raw container logs; the status reconciliation is recorded in
+`c1c6700`. OpenHands is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
 under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).
