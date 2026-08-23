@@ -30,6 +30,44 @@ def _config() -> OCIObjectStoreConfig:
     )
 
 
+def test_oci_environment_requires_explicit_sse_kms_mode() -> None:
+    config, missing = OCIObjectStoreConfig.from_env(
+        {
+            "OCI_REGION": "region",
+            "OCI_NAMESPACE": "namespace",
+            "OCI_BUCKET": "bucket",
+            "OCI_KMS_KEY_ID": "ocid1.key.oc1.fixture",
+        }
+    )
+    assert config is None
+    assert missing == ["OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS"]
+
+    config, missing = OCIObjectStoreConfig.from_env(
+        {
+            "OCI_REGION": "region",
+            "OCI_NAMESPACE": "namespace",
+            "OCI_BUCKET": "bucket",
+            "OCI_KMS_KEY_ID": "ocid1.key.oc1.fixture",
+            "OBJECT_STORE_ENCRYPTION_MODE": "AES256",
+        }
+    )
+    assert config is None
+    assert missing == ["OBJECT_STORE_ENCRYPTION_MODE must be SSE_KMS"]
+
+    config, missing = OCIObjectStoreConfig.from_env(
+        {
+            "OCI_REGION": "region",
+            "OCI_NAMESPACE": "namespace",
+            "OCI_BUCKET": "bucket",
+            "OCI_KMS_KEY_ID": "ocid1.key.oc1.fixture",
+            "OBJECT_STORE_ENCRYPTION_MODE": "sse_kms",
+        }
+    )
+    assert missing == []
+    assert config is not None
+    assert config.encryption_mode == "SSE_KMS"
+
+
 @pytest.mark.asyncio
 async def test_oci_fixture_runs_existing_conformance_multipart_and_encryption_wave() -> None:
     config = _config()

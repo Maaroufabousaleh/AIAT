@@ -61,6 +61,7 @@ class OCIObjectStoreConfig:
     namespace: str
     bucket: str
     kms_key_id: str
+    encryption_mode: str = "SSE_KMS"
     auth_profile: str = "DEFAULT"
     config_file: str | None = None
     auth_mode: str = "config"
@@ -76,6 +77,13 @@ class OCIObjectStoreConfig:
             "OCI_KMS_KEY_ID": values.get("OCI_KMS_KEY_ID", "").strip(),
         }
         missing = [name for name, value in required.items() if not value]
+        encryption_mode = values.get("OBJECT_STORE_ENCRYPTION_MODE", "").strip().upper()
+        if encryption_mode != "SSE_KMS":
+            missing.append(
+                "OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS"
+                if not encryption_mode
+                else "OBJECT_STORE_ENCRYPTION_MODE must be SSE_KMS"
+            )
         if missing:
             return None, missing
         mode = values.get("OCI_AUTH_MODE", "config").strip().lower() or "config"
@@ -87,6 +95,7 @@ class OCIObjectStoreConfig:
                 namespace=required["OCI_NAMESPACE"],
                 bucket=required["OCI_BUCKET"],
                 kms_key_id=required["OCI_KMS_KEY_ID"],
+                encryption_mode=encryption_mode,
                 auth_profile=values.get("OCI_AUTH_PROFILE", "DEFAULT").strip() or "DEFAULT",
                 config_file=values.get("OCI_CONFIG_FILE", "").strip() or None,
                 auth_mode=mode,
@@ -106,6 +115,7 @@ class OCIObjectStoreConfig:
             "namespace_configured": bool(self.namespace),
             "bucket_configured": bool(self.bucket),
             "kms_key_id_sha256": self.kms_key_id_sha256,
+            "encryption_mode": self.encryption_mode,
             "auth_mode": self.auth_mode,
             "auth_profile_configured": bool(self.auth_profile),
             "config_file_configured": bool(self.config_file),
@@ -219,6 +229,8 @@ class OCIObjectStoreAdapter:
     adapter_version = "oci-native-sse-kms-v1"
 
     def __init__(self, config: OCIObjectStoreConfig, transport: OCIObjectStorageTransport) -> None:
+        if config.encryption_mode != "SSE_KMS":
+            raise OCIEncryptionEvidenceError("OCI adapter requires OBJECT_STORE_ENCRYPTION_MODE=SSE_KMS")
         self.config = config
         self.transport = transport
         self._preflight: dict[str, Any] | None = None
@@ -239,7 +251,7 @@ class OCIObjectStoreAdapter:
             "bucket_match": True,
             "kms_key_match": True,
             "kms_key_id_sha256": self.config.kms_key_id_sha256,
-            "encryption_mode": "SSE_KMS",
+            "encryption_mode": self.config.encryption_mode,
         }
         return dict(self._preflight)
 
