@@ -31,10 +31,18 @@ EXPECTED_ROUTE = f"{PROVIDER}/{PROVIDER_MODEL}"
 class GatewayProvisioningError(RuntimeError):
     """A disposable provider route could not be created or verified."""
 
-    def __init__(self, reason: str, *, stage: str = "omniroute_health", http_status: int | None = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        stage: str = "omniroute_health",
+        http_status: int | None = None,
+        exception_type: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.http_status = http_status
+        self.exception_type = exception_type
 
 
 def _json(
@@ -61,6 +69,32 @@ def _json(
         return response.json()
     except ValueError as exc:
         raise GatewayProvisioningError("omniroute_invalid_json") from exc
+
+
+def _request(
+    client: httpx.Client,
+    method: str,
+    path: str,
+    *,
+    stage: str,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Perform one bounded control/provider request with an explicit stage."""
+
+    try:
+        return client.request(method, path, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise GatewayProvisioningError(
+            "omniroute_request_timeout",
+            stage=stage,
+            exception_type="ReadTimeout",
+        ) from exc
+    except httpx.TransportError as exc:
+        raise GatewayProvisioningError(
+            "omniroute_request_transport_error",
+            stage=stage,
+            exception_type="ConnectError",
+        ) from exc
 
 
 def _connections(value: Any) -> list[dict[str, Any]]:
@@ -109,7 +143,7 @@ def provision(
         follow_redirects=False,
     )
     try:
-        current = _connections(_json(client.get("/api/providers"), stage="gateway_auth"))
+        current = _connections(_json(_request(client, "GET", "/api/providers", stage="omniroute_health"), stage="omniroute_health"))
         existing = next(
             (
                 item
@@ -127,14 +161,21 @@ def provision(
         }
         if existing is None:
             connection = _connection(
-                _json(client.post("/api/providers", json=payload), expected={200, 201}, stage="gateway_auth")
+                _json(
+                    _request(client, "POST", "/api/providers", stage="omniroute_health", json=payload),
+                    expected={200, 201},
+                    stage="omniroute_health",
+                )
             )
             action = "created"
         else:
             connection = _connection(
                 _json(
-                    client.put(
+                    _request(
+                        client,
+                        "PUT",
                         f"/api/providers/{existing['id']}",
+                        stage="omniroute_health",
                         json={key: value for key, value in payload.items() if key != "provider"},
                     ),
                     expected={200, 201},
@@ -146,14 +187,14 @@ def provision(
         connection_id = str(connection["id"])
 
         tested = _json(
-            client.post(f"/api/providers/{connection_id}/test", json={}),
+            _request(client, "POST", f"/api/providers/{connection_id}/test", stage="provider", json={}),
             expected={200},
             stage="provider",
         )
         if not isinstance(tested, dict) or tested.get("valid") is not True:
             raise GatewayProvisioningError("selected_provider_validation_failed")
 
-        readback = _connections(_json(client.get("/api/providers"), stage="gateway_auth"))
+        readback = _connections(_json(_request(client, "GET", "/api/providers", stage="omniroute_health"), stage="omniroute_health"))
         if len(readback) != 1:
             raise GatewayProvisioningError("omniroute_provider_count_is_not_exactly_one")
         selected = next((item for item in readback if str(item.get("id")) == connection_id), None)
@@ -199,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
                 stage=exc.stage,
                 http_status=exc.http_status,
                 error_code=reason,
+                exception_type=exc.exception_type,
                 provider_secret_present=exc.stage != "provider_preflight",
             )
         elif "credential_missing" in reason:
@@ -208,9 +250,9 @@ def main(argv: list[str] | None = None) -> int:
         elif "http_403" in reason:
             failure = classify_failure(stage="provider", http_status=403)
         elif isinstance(exc, httpx.TimeoutException):
-            failure = classify_failure(stage="provider", exception_type="ReadTimeout")
+            failure = classify_failure(stage="omniroute_health", exception_type="ReadTimeout")
         elif isinstance(exc, httpx.TransportError):
-            failure = classify_failure(stage="provider", exception_type="ConnectError")
+            failure = classify_failure(stage="omniroute_health", exception_type="ConnectError")
         else:
             failure = classify_failure(stage="omniroute_health", error_code=reason)
         report = {

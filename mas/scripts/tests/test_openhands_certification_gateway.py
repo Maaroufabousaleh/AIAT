@@ -246,3 +246,20 @@ def test_disposable_route_cannot_add_fallback_provider_or_model() -> None:
     models = config["model_list"]
     assert [item["model_name"] for item in models] == ["omniroute-coding"]
     assert all(item["litellm_params"]["api_base"] == "http://omniroute:20128/v1" for item in models)
+
+
+def test_omniroute_control_transport_failure_is_not_classified_as_provider_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("disposable control endpoint unavailable", request=request)
+
+    client = httpx.Client(base_url="http://omniroute.test", transport=httpx.MockTransport(handler))
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION.provision(
+            base_url="http://omniroute.test",
+            management_key="gateway-secret",
+            provider_key="provider-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.stage == "omniroute_health"
+    assert error.value.exception_type == "ConnectError"

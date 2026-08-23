@@ -65,6 +65,13 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         failure_class = str(value.get("failure_class") or "")
         if failure_class.startswith(("MODEL_GATEWAY", "OPENHANDS_TO_GATEWAY", "LITELLM_TO_OMNIROUTE")):
             return "BLOCKED_MODEL_GATEWAY"
+        if failure_class in {
+            "LITELLM_STARTUP_FAILURE",
+            "LITELLM_HEALTH_FAILURE",
+            "OMNIROUTE_STARTUP_FAILURE",
+            "OMNIROUTE_HEALTH_FAILURE",
+        }:
+            return "BLOCKED_RUNTIME_STARTUP"
         if failure_class.startswith("PROVIDER_") or failure_class == "MISSING_PROVIDER_SECRET":
             return "BLOCKED_PROVIDER"
         if name.startswith("runtime/") and value.get("status") == "BLOCKED":
@@ -78,6 +85,9 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
     topology = report("gateway/network-topology.json")
     if topology.get("topology_status") == "BLOCKED":
         return "FAILED_INFRASTRUCTURE"
+    runsc_gateway = report("gateway/runsc-to-litellm.json")
+    if runsc_gateway.get("status") == "BLOCKED":
+        return "BLOCKED_MODEL_GATEWAY"
     if report("startup/startup.json").get("health_status") == "BLOCKED":
         return "BLOCKED_GVISOR"
     if report("bridge/startup.json").get("health_status") == "BLOCKED":
