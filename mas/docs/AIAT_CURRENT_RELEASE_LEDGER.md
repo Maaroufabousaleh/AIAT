@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `334c321` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 61/61; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `334c321` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -20,6 +20,10 @@ operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
 OpenCode remains the current default.
+
+The current `check_release_ledger.py --json` static invocation reports 63/63
+passing checks. Any older 61/61 wording in historical ledger rows is retained
+for provenance and does not override the machine-readable result.
 
 The [P0 release-scope and external-prerequisite matrix](../../Docs/current/P0_RELEASE_SCOPE_MATRIX.md)
 is the current operator decision boundary. It records the corrected
@@ -44,7 +48,7 @@ wave (`d92b3dc`/`407a4f9`), the live AIAT credentials-manager boundary certifica
 (`12ba7c7`/`1808a15`/`1c1df03`), the fresh configured Compose trace/metrics/worker/runtime/model
 read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), the encrypted
 object-store envelope and fresh-process restore checks (`57504a7`), and the static
-aggregation at 61/61 checks passing; the current live profiles retain their
+aggregation at 63/63 checks passing; the current live profiles retain their
 own pending/blocked counts and the working tree remains dirty;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
