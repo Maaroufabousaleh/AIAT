@@ -164,6 +164,24 @@ def test_incomplete_gateway_topology_is_infrastructure_failure(tmp_path: Path) -
     assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"
 
 
+def test_network_creation_failure_is_infrastructure_failure(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "network-startup.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED",
+                "failure_class": "FAILED_INFRASTRUCTURE",
+                "reason": "docker_network_create_failed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "FAILED_INFRASTRUCTURE"
+    assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"
+
+
 def test_runsc_gateway_probe_failure_gets_model_gateway_blocker(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()

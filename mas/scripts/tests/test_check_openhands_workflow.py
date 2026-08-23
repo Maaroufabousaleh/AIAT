@@ -144,6 +144,14 @@ def test_provider_and_gateway_failures_gate_worker_startup() -> None:
     assert "gateway_route_gate_missing_before_worker_stages" in module.validate(without_gateway_gate)["errors"]
 
 
+def test_network_creation_is_evidenced_and_gates_downstream_stages() -> None:
+    module = _module()
+    text = _workflow()
+    assert "network_readiness_gate_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("network-startup.json", "network-startup-omitted.json", 1)
+    assert "network_readiness_gate_missing" in module.validate(weakened)["errors"]
+
+
 def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     module = _module()
     text = _workflow()

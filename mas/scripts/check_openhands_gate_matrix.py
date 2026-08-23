@@ -83,6 +83,9 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         if report(name).get("health_status") == "BLOCKED":
             return "BLOCKED_RUNTIME_STARTUP"
     topology = report("gateway/network-topology.json")
+    network_startup = report("gateway/network-startup.json")
+    if network_startup.get("failure_class") == "FAILED_INFRASTRUCTURE" or network_startup.get("status") == "BLOCKED":
+        return "FAILED_INFRASTRUCTURE"
     if topology.get("topology_status") == "BLOCKED":
         return "FAILED_INFRASTRUCTURE"
     runsc_gateway = report("gateway/runsc-to-litellm.json")

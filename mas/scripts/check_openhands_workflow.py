@@ -81,6 +81,14 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_gate_missing_before_expensive_stages")
     if "id: provider\n" not in text or "steps.provider.outputs.ready == 'true'" not in text:
         errors.append("provider_route_gate_missing_before_model_stages")
+    if (
+        "id: network\n" not in text
+        or 'echo "ready=true" >> "$GITHUB_OUTPUT"' not in text
+        or "network-startup.json" not in text
+        or '"failure_class": None if created else "FAILED_INFRASTRUCTURE"' not in text
+        or "steps.network.outputs.ready == 'true'" not in text
+    ):
+        errors.append("network_readiness_gate_missing")
     if "steps.gateway.outputs.ready == 'true'" not in text:
         errors.append("gateway_route_gate_missing_before_worker_stages")
     if "runtime-provisioning.json" not in text or "runtime_status" not in text or 'echo "ready=true" >> "$GITHUB_OUTPUT"' not in text:
