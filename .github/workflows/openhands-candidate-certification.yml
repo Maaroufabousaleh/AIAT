@@ -270,6 +270,7 @@ jobs:
               + "\n",
               encoding="utf-8",
           )
+          PY
           uv run python scripts/verify_openhands_gateway_pins.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/pins.json"
           litellm_version="$(docker run --rm --network none --entrypoint python "$LITELLM_IMAGE" \
@@ -316,6 +317,8 @@ jobs:
               + "\n",
               encoding="utf-8",
           )
+
+          PY
 
       - name: Create disposable model-gateway network
         id: network

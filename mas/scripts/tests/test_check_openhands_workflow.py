@@ -28,6 +28,8 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert report["manual_only"] is True
     assert report["candidate_sha_bound"] is True
     assert report["exact_image_pins"] is True
+    assert report["run_block_shell_validation"] == "PASS"
+    assert report["heredoc_audit"] == "PASS"
     assert "GITHUB_STEP_SUMMARY" in _workflow()
     assert "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" in _workflow()
     assert "docker logs" not in _workflow()
@@ -45,6 +47,34 @@ def test_all_workflow_run_blocks_have_valid_shell_syntax() -> None:
                 continue
             result = subprocess.run(["bash", "-n"], input=run, text=True, capture_output=True, check=False)
             assert result.returncode == 0, f"{step.get('name')}: {result.stderr}"
+
+
+def test_broken_heredoc_is_rejected_even_when_bash_n_returns_zero() -> None:
+    module = _module()
+    text = _workflow()
+    broken = text.replace(
+        "\n          PY\n          uv run python scripts/verify_openhands_gateway_pins.py",
+        "\n          uv run python scripts/verify_openhands_gateway_pins.py",
+        1,
+    )
+    report = module.validate(broken)
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+    assert any(
+        "heredoc_marker_count_mismatch:PY" in error or "unclosed_heredoc:PY" in error
+        for error in report["errors"]
+    )
+
+    # Bash -n alone is insufficient: it warns but returns zero for this case.
+    run = next(
+        step["run"]
+        for step in (yaml.safe_load(broken)["jobs"]["certify"]["steps"])
+        if step.get("name") == "Pull pinned certification images and verify gateway provenance"
+    )
+    parsed = subprocess.run(["bash", "-n"], input=run, text=True, capture_output=True, check=False)
+    assert parsed.returncode == 0
+    assert parsed.stderr == ""
+    warning_issues = module._run_block_shell_issues("cat <<'PY'\necho hi\n")
+    assert "bash_unclosed_heredoc_warning" in warning_issues
 
 
 def test_automatic_trigger_and_static_profile_are_rejected() -> None:

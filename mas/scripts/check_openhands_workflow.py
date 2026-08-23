@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 SCHEMA = "aiat.openhands-certification-workflow-validation.v1"
 WORKFLOW_NAME = ".github/workflows/openhands-candidate-certification.yml"
@@ -16,9 +20,108 @@ EXPECTED_IMAGES = (
     "diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb",
 )
 
+_HEREDOC_OPEN = re.compile(
+    r"(?<!<)<<(?P<strip>-?)(?P<quote>['\"\\]?)(?P<marker>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"
+)
+
+
+def _heredoc_issues(run: str) -> list[str]:
+    """Find heredoc delimiters in the exact YAML-rendered shell block.
+
+    ``bash -n`` returns success for an unterminated heredoc while emitting a
+    warning, so delimiter accounting is intentionally performed separately.
+    The queue follows shell's left-to-right heredoc body order and does not
+    inspect body text as shell, preventing nested-looking content from hiding
+    a missing terminator.
+    """
+
+    pending: list[tuple[str, bool, int]] = []
+    opener_counts: Counter[str] = Counter()
+    terminator_counts: Counter[str] = Counter()
+    issues: list[str] = []
+    for line_number, line in enumerate(run.splitlines(), start=1):
+        # Count marker lines independently of the state machine.  If an
+        # earlier terminator is missing, a later same-named marker can be
+        # consumed by the wrong heredoc; this count catches that exact shell
+        # swallowing failure even when ``bash -n`` returns zero.
+        if line and not line.startswith((" ", "\t")):
+            terminator_counts[line] += 1
+        matches = list(_HEREDOC_OPEN.finditer(line))
+        for match in matches:
+            opener_counts[match.group("marker")] += 1
+        if pending:
+            marker, allow_tabs, opener_line = pending[0]
+            if line == marker or (allow_tabs and line.startswith("\t") and line.lstrip("\t") == marker):
+                pending.pop(0)
+            continue
+        for match in matches:
+            marker = match.group("marker")
+            pending.append((marker, bool(match.group("strip")), line_number))
+    for marker, opener_count in opener_counts.items():
+        terminator_count = terminator_counts.get(marker, 0)
+        if opener_count != terminator_count:
+            issues.append(
+                f"heredoc_marker_count_mismatch:{marker}:openers={opener_count}:terminators={terminator_count}"
+            )
+    for marker, _allow_tabs, opener_line in pending:
+        issues.append(f"unclosed_heredoc:{marker}:opener_line={opener_line}")
+    return issues
+
+
+def _run_block_shell_issues(run: str) -> list[str]:
+    """Parse one GitHub Actions ``run: |`` value exactly as shell text."""
+
+    issues = _heredoc_issues(run)
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=run,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        issues.append(f"bash_syntax_error:{result.stderr.strip() or 'unknown'}")
+    # Bash deliberately reports an unterminated heredoc as a warning and may
+    # still return zero under ``-n``.  Treat that warning as a hard failure.
+    if re.search(r"here-document .*delimited by end-of-file", result.stderr, re.IGNORECASE):
+        issues.append("bash_unclosed_heredoc_warning")
+    return issues
+
+
+def _workflow_run_block_issues(text: str) -> list[str]:
+    """Validate the actual YAML-rendered ``run`` blocks, not reconstructed snippets."""
+
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        return [f"workflow_yaml_parse_error:{type(exc).__name__}"]
+    if not isinstance(document, dict):
+        return ["workflow_yaml_root_invalid"]
+    jobs = document.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return ["workflow_jobs_invalid"]
+    issues: list[str] = []
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            issues.append(f"workflow_job_invalid:{job_id}")
+            continue
+        steps = job.get("steps") or []
+        if not isinstance(steps, list):
+            issues.append(f"workflow_steps_invalid:{job_id}")
+            continue
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict) or not isinstance(step.get("run"), str):
+                continue
+            label = str(step.get("name") or f"step-{index}")
+            for issue in _run_block_shell_issues(step["run"]):
+                issues.append(f"run_block:{job_id}:{label}:{issue}")
+    return issues
+
 
 def validate(text: str) -> dict[str, Any]:
     errors: list[str] = []
+    run_block_issues = _workflow_run_block_issues(text)
+    errors.extend(run_block_issues)
     if not re.search(r"(?m)^on:\s*$", text):
         errors.append("workflow_on_key_missing")
     if not re.search(r"(?m)^\s+workflow_dispatch:\s*$", text):
@@ -171,6 +274,10 @@ def validate(text: str) -> dict[str, Any]:
         "manual_only": not any(f"automatic_trigger_present:{name}" in errors for name in ("push", "pull_request", "schedule", "repository_dispatch")),
         "candidate_sha_bound": "candidate_sha_binding_missing" not in errors,
         "exact_image_pins": not any(item.startswith("exact_image_pin_missing") for item in errors),
+        "run_block_shell_validation": "PASS" if not run_block_issues else "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "heredoc_audit": "PASS"
+        if not any("heredoc" in item.lower() for item in run_block_issues)
+        else "FAILED_CERTIFICATION_IMPLEMENTATION",
         "errors": errors,
         "secrets_or_payloads_retained": False,
     }
