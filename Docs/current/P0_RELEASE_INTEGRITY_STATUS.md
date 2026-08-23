@@ -16,7 +16,8 @@ workflow remains
 `workflow_dispatch` only and skips model/runtime stages when `GROQ_API_KEY` is
 absent; cleanup and sanitized evidence still run. The only planned persistent
 GitHub secret is `GROQ_API_KEY`; AIAT tool, session, and internal gateway keys
-remain run-scoped. Existing native gVisor evidence from run `32594885180` is
+remain run-scoped. Existing OpenHands gVisor evidence from run `32594885180`
+and the retained native Ubuntu gVisor certificate from run `32541110299` are
 retained; no new workflow was dispatched in this continuation. Commits
 `4234d07`, `1db5b72`, and `cf80dd1` are the grouped provider-preflight,
 offline-harness, and evidence-wiring changes; `cbad706`, `6da661f`, and
@@ -46,8 +47,9 @@ tier. Provider-managed KMS/SSE is release-required but still operator-target
   `workflow_dispatch` path (`e3af166`), the OCI SSE/KMS evidence adapter and
   deterministic fixture (`2fe6f48`), and a fresh pinned OpenCode v1.18.21
   candidate certificate (`60f60a1`). The static ledger is now 63/63 pass with
-  `NO-RELEASE`; the native workflow has not yet run, OCI live evidence still
-  needs an operator target, and the OpenCode technical gate is blocked on the
+  `NO-RELEASE`; the native gVisor workflow has retained PASS evidence from run
+  `32541110299`, while separate native release-host checks and OCI live
+  evidence still need operator state, and the OpenCode technical gate is blocked on the
   local WSL tool state. The candidate workflow now self-provisions exact
   Semgrep/TruffleHog/SkillSpector/Syft inputs with checksums and explicit
   installation, execution, finding, and SBOM failure classes. The historical
