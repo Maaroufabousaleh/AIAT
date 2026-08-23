@@ -59,6 +59,10 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("floating_or_unpinned_image_reference")
     if "--runtime=runsc" not in text or "sudo runsc install" not in text:
         errors.append("runsc_proof_missing")
+    if re.search(r"--publish\s+(?!127\.0\.0\.1:)", text):
+        errors.append("non_loopback_port_exposure")
+    if "host.docker.internal" in text or "OPENHANDS_MODEL_GATEWAY_URL: http://127.0.0.1" in text:
+        errors.append("laptop_or_host_gateway_dependency")
     if "id: provider_preflight" not in text or "GROQ_API_KEY" not in text:
         errors.append("provider_preflight_missing")
     if "BLOCKED_MISSING_OPERATOR_SECRET" not in text:

@@ -71,6 +71,17 @@ def test_candidate_images_require_linux_amd64_platform_readback() -> None:
     assert "candidate_image_platform_verification_missing" in module.validate(weakened)["errors"]
 
 
+def test_gateway_ports_are_loopback_only_and_internal_target_is_not_host_bound() -> None:
+    module = _module()
+    text = _workflow()
+    assert "non_loopback_port_exposure" not in module.validate(text)["errors"]
+    assert "laptop_or_host_gateway_dependency" not in module.validate(text)["errors"]
+    weakened = text.replace("--publish 127.0.0.1:4000:4000", "--publish 0.0.0.0:4000:4000", 1)
+    assert "non_loopback_port_exposure" in module.validate(weakened)["errors"]
+    weakened = text.replace("OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000", "OPENHANDS_MODEL_GATEWAY_URL: http://127.0.0.1:4000", 1)
+    assert "laptop_or_host_gateway_dependency" in module.validate(weakened)["errors"]
+
+
 def test_live_task_requires_host_test_and_workspace_verification() -> None:
     module = _module()
     text = _workflow()
