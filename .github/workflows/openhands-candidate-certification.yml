@@ -237,6 +237,39 @@ jobs:
           docker image inspect "$LITELLM_IMAGE" >/dev/null
           docker image inspect "$OMNIROUTE_IMAGE" >/dev/null
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          openhands_platform="$(docker image inspect "$OPENHANDS_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          litellm_platform="$(docker image inspect "$LITELLM_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          omniroute_platform="$(docker image inspect "$OMNIROUTE_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          test "$openhands_platform" = "linux/amd64"
+          test "$litellm_platform" = "linux/amd64"
+          test "$omniroute_platform" = "linux/amd64"
+          OPENHANDS_PLATFORM="$openhands_platform" LITELLM_PLATFORM="$litellm_platform" \
+            OMNIROUTE_PLATFORM="$omniroute_platform" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/image-platforms.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-image-platforms.v1",
+                      "expected_platform": "linux/amd64",
+                      "platforms": {
+                          "openhands": os.environ["OPENHANDS_PLATFORM"],
+                          "litellm": os.environ["LITELLM_PLATFORM"],
+                          "omniroute": os.environ["OMNIROUTE_PLATFORM"],
+                      },
+                      "all_verified": True,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
           uv run python scripts/verify_openhands_gateway_pins.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/pins.json"
           litellm_version="$(docker run --rm --network none --entrypoint python "$LITELLM_IMAGE" \

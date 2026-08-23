@@ -31,6 +31,7 @@ LOCAL_TEST_COMMAND = (
     "scripts/tests/test_openhands_certification_gateway.py",
     "scripts/tests/test_openhands_gateway_errors.py",
     "scripts/tests/test_openhands_gate_matrix.py",
+    "scripts/tests/test_check_openhands_worker_comparison.py",
     "scripts/tests/test_openhands_coding_task_fixture.py",
     "scripts/tests/test_openhands_live_certify.py",
     "scripts/tests/test_openhands_offline_harness.py",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -33,3 +34,27 @@ def test_live_wrapper_uses_narrow_blocker_classes() -> None:
     statuses["coding_task"] = "PASS"
     statuses["zero_residue"] = "FAILED_CLEANUP"
     assert module._final_status(statuses, ["run_scoped_mcp_grant_residue"]) == "BLOCKED_CLEANUP"
+
+
+def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path: Path) -> None:
+    module = _module()
+    task = tmp_path / "task.json"
+    prompt = "Implement the governed disposable task without exposing credentials."
+    task.write_text(
+        json.dumps(
+            {
+                "task_id": "fixture-task",
+                "prompt": prompt,
+                "test_command": "python -m pytest -q",
+                "expected_changed_paths": ["slugger/core.py"],
+                "forbidden_changed_paths": ["tests/test_slugger.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded_prompt, definition, blockers = module._load_task_definition(task)
+    assert loaded_prompt == prompt
+    assert blockers == []
+    assert definition["task_id"] == "fixture-task"
+    assert "prompt" not in definition
+    assert prompt not in json.dumps(definition)

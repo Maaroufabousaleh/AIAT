@@ -40,6 +40,36 @@ _REQUIRED_ENV = (
 _CERTIFICATION_CONTROLLER = "aiat-github-actions"
 
 
+def _load_task_definition(task_spec: Path | None) -> tuple[str | None, dict[str, Any], list[str]]:
+    """Load the execution prompt without retaining it in evidence.
+
+    The live Agent Server must receive the exact prompt from the governed task
+    specification.  The prompt is still task payload, so the sanitized report
+    keeps only scalar task metadata and a specification hash.
+    """
+
+    if task_spec is None:
+        return None, {}, []
+    try:
+        loaded_task = json.loads(task_spec.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, {}, ["coding_task_spec_invalid"]
+    if not isinstance(loaded_task, dict) or not str(loaded_task.get("prompt") or "").strip():
+        return None, {}, ["coding_task_spec_invalid"]
+    try:
+        task_hash = hashlib.sha256(task_spec.read_bytes()).hexdigest()
+    except OSError:
+        return None, {}, ["coding_task_spec_invalid"]
+    definition = {
+        "task_id": loaded_task.get("task_id"),
+        "test_command": loaded_task.get("test_command"),
+        "expected_changed_paths": loaded_task.get("expected_changed_paths", []),
+        "forbidden_changed_paths": loaded_task.get("forbidden_changed_paths", []),
+        "task_spec_sha256": task_hash,
+    }
+    return str(loaded_task["prompt"]).strip(), definition, []
+
+
 def _status_map(status: str) -> dict[str, str]:
     return {
         "coding_task": status,
@@ -89,22 +119,8 @@ async def certify(
     report_payload = json.loads(interface_report.read_text(encoding="utf-8"))
     verification = OpenHandsInterfaceVerification.from_report(report_payload)
     statuses = _status_map("NOT_RUN")
-    task_definition: dict[str, Any] = {}
-    if task_spec is not None:
-        try:
-            loaded_task = json.loads(task_spec.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            loaded_task = None
-        if not isinstance(loaded_task, dict) or not str(loaded_task.get("prompt") or "").strip():
-            blockers.append("coding_task_spec_invalid")
-        else:
-            task_definition = {
-                "task_id": loaded_task.get("task_id"),
-                "test_command": loaded_task.get("test_command"),
-                "expected_changed_paths": loaded_task.get("expected_changed_paths", []),
-                "forbidden_changed_paths": loaded_task.get("forbidden_changed_paths", []),
-                "task_spec_sha256": hashlib.sha256(task_spec.read_bytes()).hexdigest(),
-            }
+    task_prompt, task_definition, task_spec_blockers = _load_task_definition(task_spec)
+    blockers.extend(task_spec_blockers)
     missing = [name for name in _REQUIRED_ENV if not os.getenv(name, "").strip()]
     controller = os.getenv("OPENHANDS_CERTIFICATION_CONTROLLER", "").strip()
     controller_run_id = os.getenv("OPENHANDS_CERT_CONTROLLER_RUN_ID", "").strip()
@@ -235,10 +251,8 @@ async def certify(
         task_type="coding",
         project_id=UUID(os.environ["OPENHANDS_PROJECT_ID"]) if os.getenv("OPENHANDS_PROJECT_ID") else None,
         task_input={
-            "prompt": task_definition.get(
-                "prompt",
-                "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. Do not access credentials or external tools.",
-            )
+            "prompt": task_prompt
+            or "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. Do not access credentials or external tools."
         },
         resolved_model_profile=ModelProfileReference(
             profile_id="aiat-live-certification",

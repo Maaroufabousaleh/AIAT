@@ -32,6 +32,13 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("exact_candidate_checkout_missing")
     if "actual=$(git rev-parse HEAD)" not in text or 'test "$actual" = "$EXPECTED_SHA"' not in text:
         errors.append("candidate_sha_binding_missing")
+    if (
+        "image-platforms.json" not in text
+        or 'test "$openhands_platform" = "linux/amd64"' not in text
+        or 'test "$litellm_platform" = "linux/amd64"' not in text
+        or 'test "$omniroute_platform" = "linux/amd64"' not in text
+    ):
+        errors.append("candidate_image_platform_verification_missing")
     if "4c1237f391fe394e9f67505fe3a0bd2d81f84188" not in text:
         errors.append("openhands_source_commit_binding_missing")
     for image in EXPECTED_IMAGES:

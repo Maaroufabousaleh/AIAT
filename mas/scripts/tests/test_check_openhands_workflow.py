@@ -46,6 +46,14 @@ def test_non_native_or_unpinned_candidate_inputs_are_rejected() -> None:
     assert "openhands_source_commit_binding_missing" in report["errors"]
 
 
+def test_candidate_images_require_linux_amd64_platform_readback() -> None:
+    module = _module()
+    text = _workflow()
+    assert "candidate_image_platform_verification_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('test "$omniroute_platform" = "linux/amd64"', "true", 1)
+    assert "candidate_image_platform_verification_missing" in module.validate(weakened)["errors"]
+
+
 def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     text = _workflow()
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))
