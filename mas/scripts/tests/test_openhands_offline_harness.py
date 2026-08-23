@@ -50,6 +50,19 @@ def test_negative_security_and_secret_scan_retain_no_values() -> None:
     assert "generated-secret" not in str(generated)
 
 
+def test_partial_cleanup_removes_started_resources_and_rejects_unknowns() -> None:
+    module = _module()
+    cleanup = module.cleanup_started_resources(("omniroute", "agent-server", "mcp-entry"))
+    assert cleanup["status"] == "PASS"
+    assert cleanup["removed_resources"] == ["agent-server", "mcp-entry", "omniroute"]
+    assert cleanup["remaining"] == []
+    blocked = module.cleanup_started_resources(("omniroute", "unexpected-resource"))
+    assert blocked["status"] == "BLOCKED_CLEANUP"
+    assert blocked["removed_resources"] == ["omniroute"]
+    assert blocked["remaining"] == ["unexpected-resource"]
+    assert "unexpected-resource" in str(blocked)
+
+
 def test_complete_offline_harness_is_fixture_only() -> None:
     report = _module().run_offline_harness()
     assert report["mode"] == "offline_fixture_only"

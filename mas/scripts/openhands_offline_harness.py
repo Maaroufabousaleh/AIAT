@@ -171,6 +171,33 @@ def cleanup_residue(residue: Iterable[str]) -> dict[str, Any]:
     return {"status": "PASS" if not remaining else "BLOCKED_CLEANUP", "remaining": remaining, "payloads_retained": False}
 
 
+_KNOWN_DISPOSABLE_RESOURCES = frozenset(
+    {"agent-server", "tool-service", "litellm", "omniroute", "mcp-entry", "network", "workspace", "secret-files"}
+)
+
+
+def cleanup_started_resources(started: Iterable[str]) -> dict[str, Any]:
+    """Model fail-closed cleanup for every known partial-startup resource.
+
+    The fixture does not contact Docker or an Agent Server.  It still models
+    the important contract: every resource that was started is removed, and
+    an unexpected resource name cannot silently disappear from evidence.
+    """
+
+    started_resources = sorted({str(item) for item in started if item})
+    unknown = sorted(set(started_resources) - _KNOWN_DISPOSABLE_RESOURCES)
+    removed = [item for item in started_resources if item not in unknown]
+    remaining = list(unknown)
+    return {
+        "status": "PASS" if not remaining and len(removed) == len(started_resources) else "BLOCKED_CLEANUP",
+        "started_resources": started_resources,
+        "removed_resources": removed,
+        "remaining": remaining,
+        "unknown_resources": unknown,
+        "payloads_retained": False,
+    }
+
+
 def workspace_isolation_attacks() -> dict[str, Any]:
     """Exercise path, symlink, terminal, download, and git boundary checks."""
 
@@ -259,7 +286,7 @@ def partial_startup_cleanup() -> dict[str, Any]:
     results = {
         name: {
             "started_resources": sorted(residue),
-            "cleanup": cleanup_residue([]),
+            "cleanup": cleanup_started_resources(residue),
         }
         for name, residue in scenarios.items()
     }
