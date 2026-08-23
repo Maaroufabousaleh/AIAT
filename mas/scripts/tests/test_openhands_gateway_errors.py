@@ -81,3 +81,12 @@ def test_gateway_authentication_is_not_reported_as_provider_credential_failure()
     assert gateway.failure_class == module.MODEL_GATEWAY_AUTH_FAILURE
     provider = module.classify_failure(stage="provider", http_status=401)
     assert provider.failure_class == module.INVALID_PROVIDER_CREDENTIAL
+
+
+def test_internal_gateway_stages_precede_provider_http_heuristics() -> None:
+    module = _load("openhands_gateway_errors")
+    assert module.classify_failure(stage="omniroute_health", http_status=503).failure_class == module.OMNIROUTE_HEALTH_FAILURE
+    assert module.classify_failure(stage="litellm_health", exception_type="ConnectError").failure_class == module.LITELLM_HEALTH_FAILURE
+    assert module.classify_failure(stage="litellm_to_omniroute", http_status=502).failure_class == module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE
+    assert module.classify_failure(stage="openhands_to_gateway", exception_type="ConnectError").failure_class == module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE
+    assert module.classify_failure(stage="gateway_response", http_status=500).failure_class == module.MODEL_GATEWAY_RESPONSE_INVALID

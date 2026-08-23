@@ -24,10 +24,18 @@ PROVIDER_MODEL = "llama-3.3-70b-versatile"
 class GatewayProbeError(RuntimeError):
     """A required gateway health or deterministic route probe failed."""
 
-    def __init__(self, reason: str, *, stage: str = "gateway_response", http_status: int | None = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        stage: str = "gateway_response",
+        http_status: int | None = None,
+        exception_type: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.http_status = http_status
+        self.exception_type = exception_type
 
 
 def _usage(value: Any) -> dict[str, int]:
@@ -41,8 +49,21 @@ def _usage(value: Any) -> dict[str, int]:
     return result
 
 
-def _health(client: httpx.Client, path: str) -> dict[str, Any]:
-    response = client.get(path)
+def _health(client: httpx.Client, path: str, *, stage: str) -> dict[str, Any]:
+    try:
+        response = client.get(path)
+    except httpx.TimeoutException as exc:
+        raise GatewayProbeError(
+            "gateway_health_timeout",
+            stage=stage,
+            exception_type="ReadTimeout",
+        ) from exc
+    except httpx.TransportError as exc:
+        raise GatewayProbeError(
+            "gateway_health_transport_error",
+            stage=stage,
+            exception_type="ConnectError",
+        ) from exc
     return {"path": path, "http_status": response.status_code, "passed": response.status_code == 200}
 
 
@@ -54,30 +75,61 @@ def probe(
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     if not gateway_key:
-        raise GatewayProbeError("model_gateway_key_missing")
+        raise GatewayProbeError("model_gateway_key_missing", stage="gateway_auth")
     created_client = client is None
     client = client or httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0), follow_redirects=False)
     try:
-        omniroute = _health(client, f"{omniroute_url.rstrip('/')}/api/health/ping")
-        if not omniroute["passed"]:
-            raise GatewayProbeError("omniroute_health_failed")
-        litellm = _health(client, f"{litellm_url.rstrip('/')}/health/readiness")
-        if not litellm["passed"]:
-            raise GatewayProbeError("litellm_health_failed")
-
-        response = client.post(
-            f"{litellm_url.rstrip('/')}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {gateway_key}"},
-            json={
-                "model": AIAT_MODEL,
-                "messages": [
-                    {"role": "user", "content": "Reply with one short confirmation token."}
-                ],
-                "temperature": 0,
-                "max_tokens": 8,
-                "stream": False,
-            },
+        if not omniroute_url or not litellm_url:
+            raise GatewayProbeError("gateway_endpoint_missing", stage="gateway_response")
+        omniroute = _health(
+            client,
+            f"{omniroute_url.rstrip('/')}/api/health/ping",
+            stage="omniroute_health",
         )
+        if not omniroute["passed"]:
+            raise GatewayProbeError(
+                "omniroute_health_failed",
+                stage="omniroute_health",
+                http_status=int(omniroute["http_status"]),
+            )
+        litellm = _health(
+            client,
+            f"{litellm_url.rstrip('/')}/health/readiness",
+            stage="litellm_health",
+        )
+        if not litellm["passed"]:
+            raise GatewayProbeError(
+                "litellm_health_failed",
+                stage="litellm_health",
+                http_status=int(litellm["http_status"]),
+            )
+
+        try:
+            response = client.post(
+                f"{litellm_url.rstrip('/')}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {gateway_key}"},
+                json={
+                    "model": AIAT_MODEL,
+                    "messages": [
+                        {"role": "user", "content": "Reply with one short confirmation token."}
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 8,
+                    "stream": False,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise GatewayProbeError(
+                "gateway_route_timeout",
+                stage="litellm_to_omniroute",
+                exception_type="ReadTimeout",
+            ) from exc
+        except httpx.TransportError as exc:
+            raise GatewayProbeError(
+                "gateway_route_transport_error",
+                stage="litellm_to_omniroute",
+                exception_type="ConnectError",
+            ) from exc
         if response.status_code != 200:
             if response.status_code in {401, 403}:
                 raise GatewayProbeError(
@@ -147,18 +199,29 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(exc, GatewayProbeError):
             stage = exc.stage
             http_status = exc.http_status
+            exception_type = exc.exception_type
         elif "omniroute_health" in reason:
             stage = "omniroute_health"
+            exception_type = None
         elif "litellm_health" in reason:
             stage = "litellm_health"
+            exception_type = None
         elif "route_probe" in reason:
             stage = "litellm_to_omniroute"
-        if isinstance(exc, httpx.TimeoutException):
-            failure = classify_failure(stage="provider", exception_type="ReadTimeout")
-        elif isinstance(exc, httpx.TransportError):
-            failure = classify_failure(stage="provider", exception_type="ConnectError")
+            exception_type = None
         else:
-            failure = classify_failure(stage=stage, http_status=http_status, error_code=reason)
+            exception_type = None
+        if isinstance(exc, httpx.TimeoutException):
+            failure = classify_failure(stage=stage, exception_type="ReadTimeout")
+        elif isinstance(exc, httpx.TransportError):
+            failure = classify_failure(stage=stage, exception_type="ConnectError")
+        else:
+            failure = classify_failure(
+                stage=stage,
+                http_status=http_status,
+                error_code=reason,
+                exception_type=exception_type,
+            )
         report = {
             "schema_version": SCHEMA,
             "status": "BLOCKED",

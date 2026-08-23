@@ -153,6 +153,52 @@ def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
     assert error.value.http_status == 401
 
 
+def test_route_probe_preserves_omniroute_health_failure_stage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/health/ping":
+            return httpx.Response(503, json={"status": "redacted"})
+        raise AssertionError(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(
+            litellm_url="http://litellm.test",
+            omniroute_url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.stage == "omniroute_health"
+    assert error.value.http_status == 503
+
+
+def test_route_probe_preserves_litellm_health_failure_stage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/health/ping":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "GET" and request.url.path == "/health/readiness":
+            return httpx.Response(503, json={"status": "redacted"})
+        raise AssertionError(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(
+            litellm_url="http://litellm.test",
+            omniroute_url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.stage == "litellm_health"
+    assert error.value.http_status == 503
+
+
+def test_route_probe_rejects_missing_internal_endpoint_before_network() -> None:
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(litellm_url="", omniroute_url="http://omniroute.test", gateway_key="gateway-secret")
+    assert error.value.stage == "gateway_response"
+
+
 def test_pin_verification_requires_the_exact_repo_digest() -> None:
     def runner(command, **kwargs):
         image = command[-1]

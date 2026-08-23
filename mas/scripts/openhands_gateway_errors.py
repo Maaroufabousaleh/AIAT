@@ -117,6 +117,30 @@ def classify_failure(
         if http_status is not None and http_status >= 400:
             return GatewayFailure(MODEL_GATEWAY_RESPONSE_INVALID, normalized_stage, http_status)
 
+    # Preserve harness/gateway stages before applying provider HTTP/exception
+    # heuristics.  A failed health probe or an internal route transport error
+    # is not evidence of a provider credential or availability failure.
+    internal_stage_defaults = {
+        "litellm_startup": LITELLM_STARTUP_FAILURE,
+        "litellm_health": LITELLM_HEALTH_FAILURE,
+        "omniroute_startup": OMNIROUTE_STARTUP_FAILURE,
+        "omniroute_health": OMNIROUTE_HEALTH_FAILURE,
+        "litellm_to_omniroute": LITELLM_TO_OMNIROUTE_ROUTE_FAILURE,
+        "openhands_to_gateway": OPENHANDS_TO_GATEWAY_NETWORK_FAILURE,
+        "gateway_response": MODEL_GATEWAY_RESPONSE_INVALID,
+    }
+    if normalized_stage in internal_stage_defaults:
+        retryable = bool(
+            exception in {"readtimeout", "connecttimeout", "connecterror", "connectionerror", "networkerror", "dnserror"}
+            or (http_status is not None and http_status >= 500)
+        )
+        return GatewayFailure(
+            internal_stage_defaults[normalized_stage],
+            normalized_stage,
+            http_status,
+            retryable=retryable,
+        )
+
     if "timeout" in exception or exception in {"readtimeout", "connecttimeout"}:
         return GatewayFailure(PROVIDER_TIMEOUT, normalized_stage, retryable=True)
     if exception in {"connecterror", "connectionerror", "networkerror", "dnserror"}:
