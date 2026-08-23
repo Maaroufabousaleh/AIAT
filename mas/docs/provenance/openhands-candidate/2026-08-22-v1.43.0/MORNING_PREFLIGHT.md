@@ -91,8 +91,12 @@ task test after model execution, compares the exact workspace diff to the
 task contract, requires returned artifact hashes, and scans transient events
 for secret disclosure. `7bc9f63` additionally exercises bounded pause/resume,
 interrupt, and timeout controls, requires an observed remote pause transition,
-and scans lifecycle events without retaining payloads. A model response alone
-cannot advance those gates.
+and scans lifecycle events without retaining payloads. The gateway/provisioning
+wave now gates LiteLLM, the tool bridge, Agent Server, and live model stages on
+successful OmniRoute route validation and the runsc-to-LiteLLM probe; a failed
+control-plane/provider stage cannot fall through into model execution. The
+post-run verifier also scans disposable workspace files for secret canaries
+using hashes/counts only. A model response alone cannot advance those gates.
 None of these local checks is live provider evidence.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate

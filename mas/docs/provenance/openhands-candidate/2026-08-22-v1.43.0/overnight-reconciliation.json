@@ -16,7 +16,10 @@
     "self_contained_gateway": "bad5a0bd55a164710da0590c60d34a45f3701f92",
     "gateway_provenance_docs": "0114f0b518e4c855943605e4027603dd51269540",
     "single_provider_route_test": "6ad2b3ef3feaed6b0873bef611c31e49db2c827b",
-    "gateway_topology_evidence": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2"
+    "gateway_topology_evidence": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2",
+    "gateway_readiness_gates": "b25abb37243a3a9ac634c4ce782742b4e9b8bd5b",
+    "gateway_failure_taxonomy": "fd50dc9bb324a6e45a64b54df937dc9165eb5cb2",
+    "workspace_secret_scan": "784ce475c33736b9a29136a292bef0e8def78fe0"
   },
   "dependency_map": [
     "manual workflow -> exact candidate checkout and candidate preflight",
