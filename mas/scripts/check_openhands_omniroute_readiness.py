@@ -91,6 +91,27 @@ def probe(
             "provider_count_expected": 1,
         }, 2
 
+    # A failed launch or an already-exited container cannot become ready.  Do
+    # not spend the bounded HTTP retry window probing a process that is gone;
+    # retain the distinction between process startup and application health.
+    if run_exit_code != 0 or not container_running:
+        return {
+            "schema_version": SCHEMA,
+            "status": "BLOCKED",
+            "health_status": "BLOCKED",
+            "application_health_status": "BLOCKED",
+            "failure_class": "OMNIROUTE_STARTUP_FAILURE",
+            "container_start_status": "BLOCKED",
+            "application_health_endpoint": url,
+            "endpoint": url,
+            "last_http_status": None,
+            "attempt_count": 0,
+            "run_exit_code": run_exit_code,
+            "container_running": container_running,
+            "raw_response_retained": False,
+            "provider_count_expected": 1,
+        }, 2
+
     attempts = max(1, int(attempts))
     last_status: int | None = None
     last_error: str | None = None
