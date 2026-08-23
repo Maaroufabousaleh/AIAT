@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `176055e`; the branch also
+hardening at `4bddd4b`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -217,6 +217,12 @@ AIAT bridge grant surface. These changes do not dispatch a workflow or
 activate OpenHands. `eced0cf` requires the committed approval-record
 identifier whenever a report claims approved status, and `176055e` packages
 the canonical report for the API-image runtime path.
+
+The latest offline routing-fixture hardening is `7d06e4f`. It records bounded
+rate-limit fallback semantics, rejects unbounded fixture failure labels, and
+asserts that credential-like connection fields never appear in scalar route
+evidence. This does not claim a live multi-provider run and does not dispatch
+the candidate workflow.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
