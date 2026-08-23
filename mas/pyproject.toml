@@ -83,6 +83,7 @@ ignore_missing_imports = true
 
 # ── pytest (shared) ───────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
+pythonpath = ["scripts"]
 testpaths = [
     "packages/mas-core/tests",
     "packages/mas-api-sdk/tests",
