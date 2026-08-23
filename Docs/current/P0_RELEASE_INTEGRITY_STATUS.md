@@ -71,8 +71,10 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 
 ### Repository-local continuation refresh — 2026-08-23
 
-The current candidate implementation is `agent/fix-review-p1` at
-`d5ad256f5d4931ce92b25cb67b81fec3ff61420c`. The grouped continuation after
+The current candidate branch is `agent/fix-review-p1` at
+`7dc416baf77b0282a010f5741213bd0dddea4395`. Runtime implementation remains
+the same pinned OpenHands candidate; the latest commits are evidence/docs-only
+follow-up. The grouped continuation after
 the prior overnight record validates exact gateway aliases and the governed
 MCP key, prevents LiteLLM/tool-service/Agent Server/model stages from running
 after a provider or gateway readiness failure, preserves narrow startup,
@@ -98,7 +100,11 @@ lifecycle evidence, not a repository implementation failure. The only
 planned persistent OpenHands certification secret remains `GROQ_API_KEY`;
 tool, session, internal gateway, profile, and MCP values remain run-scoped.
 OpenHands remains inactive, OpenCode remains the current default, and the
-global release decision remains `NO-RELEASE`.
+global release decision remains `NO-RELEASE`. The clean-candidate certificate
+is intentionally pinned to the earlier exact SHA
+`61f7d49b905a109a154f961e147f783016792218`; use the explicit
+`--candidate-sha` argument when validating that certificate because the
+development checkout is still operator-dirty.
 
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are

@@ -34,6 +34,11 @@ validator confirms an explicitly pinned candidate SHA and retention boundary;
 it reports the development checkout's dirty state separately.
 This isolates protected/operator-owned dirty files from candidate evidence but
 does not close the native, live-provider, pending-evidence, or activation gates.
+The follow-up evidence-only commits `a8ff763` and `7dc416b` keep that
+certificate pinned to the exact candidate SHA while the branch advances; the
+validator intentionally blocks an unpinned/current-HEAD invocation instead of
+silently treating a later documentation or evidence commit as the certified
+candidate.
 
 The retained native Ubuntu gVisor certificate
 [`native_gvisor_certification_live.json`](mas/docs/provenance/native_gvisor_certification_live.json)
