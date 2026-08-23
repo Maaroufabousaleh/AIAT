@@ -82,17 +82,20 @@ def _resolve_openhands_interface_report(report_ref: str | Path) -> Path:
             relative_options.append(Path(*raw.parts[1:]))
         for relative in relative_options:
             candidate = relative if relative.is_absolute() else root / relative
-            canonical_root = (
-                root / "mas/docs/provenance/openhands-candidate"
-                if relative.parts[:2] == ("mas", "docs")
-                else root / _OPENHANDS_CANONICAL_REPORT_DIR
-            ).resolve()
             try:
                 resolved = candidate.resolve()
-                resolved.relative_to(canonical_root)
             except (OSError, ValueError):
                 continue
-            if resolved.name == "interface-verification.json" and resolved.is_file():
+            if resolved.name != "interface-verification.json" or not resolved.is_file():
+                continue
+            for canonical_root in (
+                (root / "mas/docs/provenance/openhands-candidate").resolve(),
+                (root / _OPENHANDS_CANONICAL_REPORT_DIR).resolve(),
+            ):
+                try:
+                    resolved.relative_to(canonical_root)
+                except ValueError:
+                    continue
                 return resolved
     raise ValueError(
         "OpenHands interface verification must use the canonical candidate provenance directory"
