@@ -29,6 +29,7 @@ LOCAL_TEST_COMMAND = (
     "pytest",
     "scripts/tests/test_openhands_candidate_certify.py",
     "scripts/tests/test_openhands_certification_gateway.py",
+    "scripts/tests/test_openhands_model_routing.py",
     "scripts/tests/test_openhands_gateway_errors.py",
     "scripts/tests/test_openhands_gate_matrix.py",
     "scripts/tests/test_check_openhands_worker_comparison.py",

@@ -24,6 +24,8 @@ PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 PROVIDER_SERVER_ERROR = "PROVIDER_SERVER_ERROR"
 PROVIDER_MODEL_UNAVAILABLE = "PROVIDER_MODEL_UNAVAILABLE"
 PROVIDER_MODEL_NOT_FOUND = "PROVIDER_MODEL_NOT_FOUND"
+AUTO_ROUTER_NO_VALID_PROVIDERS = "AUTO_ROUTER_NO_VALID_PROVIDERS"
+AUTO_ROUTER_ROUTE_FAILURE = "AUTO_ROUTER_ROUTE_FAILURE"
 LITELLM_STARTUP_FAILURE = "LITELLM_STARTUP_FAILURE"
 LITELLM_HEALTH_FAILURE = "LITELLM_HEALTH_FAILURE"
 OMNIROUTE_STARTUP_FAILURE = "OMNIROUTE_STARTUP_FAILURE"
@@ -48,6 +50,8 @@ _PROVIDER_CLASSES = {
     PROVIDER_SERVER_ERROR,
     PROVIDER_MODEL_UNAVAILABLE,
     PROVIDER_MODEL_NOT_FOUND,
+    AUTO_ROUTER_NO_VALID_PROVIDERS,
+    AUTO_ROUTER_ROUTE_FAILURE,
 }
 
 
@@ -133,6 +137,10 @@ def classify_failure(
         "gateway_response": MODEL_GATEWAY_RESPONSE_INVALID,
     }
     if normalized_stage in internal_stage_defaults:
+        if code in {"auto_no_valid_providers", "no_valid_providers"}:
+            return GatewayFailure(AUTO_ROUTER_NO_VALID_PROVIDERS, normalized_stage, http_status)
+        if code in {"auto_route_failure", "auto_router_failure"}:
+            return GatewayFailure(AUTO_ROUTER_ROUTE_FAILURE, normalized_stage, http_status)
         if normalized_stage == "omniroute_health":
             if http_status in {401, 403}:
                 return GatewayFailure(OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE, normalized_stage, http_status)
@@ -158,6 +166,12 @@ def classify_failure(
 
     if code in {"insufficient_quota", "quota_exceeded", "billing_hard_limit"}:
         return GatewayFailure(PROVIDER_QUOTA_EXHAUSTED, normalized_stage, http_status)
+    if code in {"baseline_model_unavailable", "provider_model_unavailable"}:
+        return GatewayFailure(PROVIDER_MODEL_UNAVAILABLE, normalized_stage, http_status)
+    if code in {"auto_no_valid_providers", "no_valid_providers"}:
+        return GatewayFailure(AUTO_ROUTER_NO_VALID_PROVIDERS, normalized_stage, http_status)
+    if code in {"auto_route_failure", "auto_router_failure"}:
+        return GatewayFailure(AUTO_ROUTER_ROUTE_FAILURE, normalized_stage, http_status)
     if code in {"model_not_found", "unknown_model", "invalid_model"} or http_status == 404:
         return GatewayFailure(PROVIDER_MODEL_NOT_FOUND, normalized_stage, http_status)
     if code in {"model_unavailable", "service_unavailable", "overloaded"}:

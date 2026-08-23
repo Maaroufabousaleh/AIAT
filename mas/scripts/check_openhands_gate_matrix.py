@@ -64,6 +64,8 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         return "BLOCKED_GATEWAY_PROVENANCE"
 
     for name in (
+        "gateway/provider-baseline.json",
+        "gateway/auto-routing.json",
         "gateway/route-probe.json",
         "gateway/provider-provisioning.json",
         "runtime/runtime-provisioning.json",
@@ -87,7 +89,11 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
             return "BLOCKED_GVISOR"
         if failure_class in {"TOOL_SERVICE_STARTUP_FAILURE", "TOOL_SERVICE_HEALTH_FAILURE"}:
             return "BLOCKED_TOOL_BRIDGE"
-        if failure_class.startswith("PROVIDER_") or failure_class == "MISSING_PROVIDER_SECRET":
+        if (
+            failure_class.startswith("PROVIDER_")
+            or failure_class.startswith("AUTO_ROUTER_")
+            or failure_class == "MISSING_PROVIDER_SECRET"
+        ):
             return "BLOCKED_PROVIDER"
         if name.startswith("runtime/") and value.get("status") == "BLOCKED":
             return "BLOCKED_TOOL_BRIDGE"

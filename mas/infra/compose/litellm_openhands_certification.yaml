@@ -4,9 +4,11 @@
 model_list:
   - model_name: omniroute-coding
     litellm_params:
-      # LiteLLM's OpenAI-compatible adapter forwards this exact provider/model
-      # identity to the OmniRoute OpenAI-compatible endpoint.
-      model: openai/groq/llama-3.3-70b-versatile
+      # The OpenHands-visible alias is stable; OmniRoute owns governed provider
+      # selection through its pinned zero-config coding combo.  The explicit
+      # ``openai/`` prefix selects LiteLLM's OpenAI-compatible transport and
+      # forwards ``auto/coding`` as the model id to OmniRoute.
+      model: openai/auto/coding
       # OmniRoute v3.8.38 serves dashboard/management on 20128 and its
       # OpenAI-compatible API bridge on API_PORT=20129.
       api_base: http://omniroute:20129/v1

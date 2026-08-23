@@ -21,10 +21,25 @@ try:
 except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_gateway_errors import classify_failure  # type: ignore
 
+try:
+    from openhands_model_routing import (
+        AIAT_MODEL_ID,
+        CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_PROVIDER,
+        baseline_discovery_status,
+    )
+except ImportError:  # pragma: no cover - package invocation fallback
+    from scripts.openhands_model_routing import (  # type: ignore
+        AIAT_MODEL_ID,
+        CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_PROVIDER,
+        baseline_discovery_status,
+    )
+
 SCHEMA = "aiat.openhands-certification-gateway-provisioning.v1"
-PROVIDER = "groq"
+PROVIDER = CERTIFICATION_PROVIDER
 PROVIDER_NAME = "AIAT OpenHands certification Groq"
-PROVIDER_MODEL = "llama-3.3-70b-versatile"
+PROVIDER_MODEL = CERTIFICATION_BASELINE_MODEL
 EXPECTED_ROUTE = f"{PROVIDER}/{PROVIDER_MODEL}"
 
 
@@ -121,6 +136,38 @@ def _validate_connection(connection: dict[str, Any]) -> None:
         raise GatewayProvisioningError("omniroute_provider_model_mismatch")
 
 
+def _discover_baseline_model(
+    client: httpx.Client,
+    connection_id: str,
+) -> dict[str, object]:
+    """Require the frozen baseline to be present in live provider discovery.
+
+    OmniRoute may fall back to its local catalog when the upstream model list is
+    unavailable.  That fallback is useful for the dashboard but cannot prove a
+    live certification baseline, so only ``api``/``upstream`` discovery passes.
+    """
+
+    response = _request(
+        client,
+        "GET",
+        f"/api/providers/{connection_id}/models?refresh=true",
+        stage="provider",
+    )
+    payload = _json(response, expected={200}, stage="provider")
+    result = baseline_discovery_status(
+        provider=PROVIDER,
+        desired_model=PROVIDER_MODEL,
+        discovery_payload=payload,
+    )
+    if result["status"] != "PASS":
+        raise GatewayProvisioningError(
+            "baseline_model_unavailable",
+            stage="provider",
+            http_status=response.status_code,
+        )
+    return result
+
+
 def provision(
     *,
     base_url: str,
@@ -186,6 +233,8 @@ def provision(
         _validate_connection(connection)
         connection_id = str(connection["id"])
 
+        baseline = _discover_baseline_model(client, connection_id)
+
         tested = _json(
             _request(client, "POST", f"/api/providers/{connection_id}/test", stage="provider", json={}),
             expected={200},
@@ -206,8 +255,10 @@ def provision(
             "status": "PASS",
             "provider": PROVIDER,
             "provider_name": PROVIDER_NAME,
-            "requested_aiat_model": "omniroute-coding",
+            "requested_aiat_model": AIAT_MODEL_ID,
             "resolved_provider_model": EXPECTED_ROUTE,
+            "baseline_discovery": baseline,
+            "auto_router_model": "auto/coding",
             "management_endpoint": "http://omniroute:20128",
             "openai_compatible_endpoint": "http://omniroute:20129/v1",
             "connection_id": connection_id,
@@ -261,6 +312,13 @@ def main(argv: list[str] | None = None) -> int:
             "status": "BLOCKED",
             "failure": reason,
             "failure_class": failure.failure_class,
+            "failure_stage": failure.stage,
+            "failure_http_status": failure.http_status,
+            "failure_retryable": failure.retryable,
+            "provider": PROVIDER,
+            "provider_model": PROVIDER_MODEL,
+            "requested_provider_model": EXPECTED_ROUTE,
+            "requested_aiat_model": AIAT_MODEL_ID,
             "provider_credential_retained": False,
             "management_key_retained": False,
             "response_payloads_retained": False,

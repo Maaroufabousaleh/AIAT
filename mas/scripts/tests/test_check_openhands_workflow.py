@@ -147,6 +147,19 @@ def test_omniroute_readiness_and_api_port_contract_are_explicit() -> None:
     assert "steps.omniroute_auth.outputs.ready == 'true'" in text
     config = Path(__file__).resolve().parents[2] / "infra" / "compose" / "litellm_openhands_certification.yaml"
     assert "http://omniroute:20129/v1" in config.read_text(encoding="utf-8")
+    assert "model: openai/auto/coding" in config.read_text(encoding="utf-8")
+
+
+def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "provider_baseline_gate_missing" not in report["errors"]
+    assert "litellm_auto_coding_route_missing" not in report["errors"]
+    weakened = text.replace("scripts/check_openhands_provider_baseline.py", "scripts/missing.py", 1)
+    assert "provider_baseline_gate_missing" in module.validate(weakened)["errors"]
+    weakened = text.replace("--auto-routing-output", "--missing-auto-routing-output", 1)
+    assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
 def test_wrong_omniroute_management_port_is_rejected_by_static_validation(tmp_path: Path, monkeypatch) -> None:

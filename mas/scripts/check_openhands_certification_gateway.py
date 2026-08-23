@@ -15,11 +15,26 @@ try:
 except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_gateway_errors import classify_failure  # type: ignore
 
+try:
+    from openhands_model_routing import (
+        AIAT_MODEL_ID,
+        AUTO_ROUTER_MODEL,
+        CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_PROVIDER,
+    )
+except ImportError:  # pragma: no cover - package invocation fallback
+    from scripts.openhands_model_routing import (  # type: ignore
+        AIAT_MODEL_ID,
+        AUTO_ROUTER_MODEL,
+        CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_PROVIDER,
+    )
+
 SCHEMA = "aiat.openhands-certification-gateway-health.v1"
 OMNIROUTE_HEALTH_PATH = "/api/monitoring/health"
-AIAT_MODEL = "omniroute-coding"
-PROVIDER = "groq"
-PROVIDER_MODEL = "llama-3.3-70b-versatile"
+AIAT_MODEL = AIAT_MODEL_ID
+PROVIDER = CERTIFICATION_PROVIDER
+PROVIDER_MODEL = CERTIFICATION_BASELINE_MODEL
 
 
 class GatewayProbeError(RuntimeError):
@@ -37,6 +52,11 @@ class GatewayProbeError(RuntimeError):
         self.stage = stage
         self.http_status = http_status
         self.exception_type = exception_type
+
+
+def _write_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
 def _usage(value: Any) -> dict[str, int]:
@@ -145,7 +165,7 @@ def probe(
             if response.status_code == 429:
                 raise GatewayProbeError("provider_rate_limit", stage="provider", http_status=429)
             if response.status_code == 404:
-                raise GatewayProbeError("provider_model_not_found", stage="provider", http_status=404)
+                raise GatewayProbeError("auto_no_valid_providers", stage="provider", http_status=404)
             raise GatewayProbeError(
                 "litellm_route_probe_failed",
                 stage="litellm_to_omniroute",
@@ -168,8 +188,8 @@ def probe(
             "health": {"omniroute": omniroute, "litellm": litellm},
             "route": {
                 "requested_aiat_model": AIAT_MODEL,
-                "resolved_provider": PROVIDER,
-                "resolved_provider_model": f"{PROVIDER}/{PROVIDER_MODEL}",
+                "resolved_route_model": AUTO_ROUTER_MODEL,
+                "routing_mode": "omniroute_auto_coding",
                 "litellm_http_status": response.status_code,
                 "response_success": True,
                 "usage": usage,
@@ -190,6 +210,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--litellm-url", default=os.getenv("LITELLM_BASE_URL", ""))
     parser.add_argument("--omniroute-url", default=os.getenv("OMNIROUTE_BASE_URL", ""))
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--auto-routing-output",
+        type=Path,
+        help="Optional second path for the governed auto/coding scalar evidence.",
+    )
     args = parser.parse_args(argv)
     try:
         report = probe(
@@ -232,15 +257,23 @@ def main(argv: list[str] | None = None) -> int:
             "status": "BLOCKED",
             "failure": reason,
             "failure_class": failure.failure_class,
+            "failure_stage": failure.stage,
+            "failure_http_status": failure.http_status,
+            "failure_retryable": failure.retryable,
+            "requested_aiat_model": AIAT_MODEL,
+            "resolved_route_model": AUTO_ROUTER_MODEL,
+            "routing_mode": "omniroute_auto_coding",
             "gateway_key_retained": False,
             "raw_response_retained": False,
         }
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        _write_report(args.output, report)
+        if args.auto_routing_output:
+            _write_report(args.auto_routing_output, report)
         print(json.dumps({"status": "BLOCKED", "failure": report["failure"]}, sort_keys=True))
         return 2
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    _write_report(args.output, report)
+    if args.auto_routing_output:
+        _write_report(args.auto_routing_output, report)
     print(json.dumps({"status": report["status"]}, sort_keys=True))
     return 0
 

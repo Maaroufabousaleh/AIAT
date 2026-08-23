@@ -189,6 +189,8 @@ def _litellm_omniroute_port_issues() -> list[str]:
         return ["litellm_omniroute_management_port_used_for_api"]
     if "api_base: http://omniroute:20129/v1" not in config:
         return ["litellm_omniroute_api_port_missing"]
+    if "model: openai/auto/coding" not in config:
+        return ["litellm_auto_coding_route_missing"]
     return []
 
 
@@ -339,6 +341,14 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("omniroute_auth_boundary_missing")
     if "check_openhands_omniroute_auth.py" not in text or "http://127.0.0.1:20129/v1/models" not in text:
         errors.append("omniroute_auth_evidence_missing")
+    if (
+        "check_openhands_provider_baseline.py" not in text
+        or "provider-baseline.json" not in text
+        or "steps.baseline.outputs.ready == 'true'" not in text
+    ):
+        errors.append("provider_baseline_gate_missing")
+    if "--auto-routing-output" not in text or "auto-routing.json" not in text:
+        errors.append("auto_routing_evidence_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:
         errors.append("postrun_task_verification_missing")
     if (

@@ -96,3 +96,24 @@ def test_internal_gateway_stages_precede_provider_http_heuristics() -> None:
     assert module.classify_failure(stage="litellm_to_omniroute", http_status=502).failure_class == module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE
     assert module.classify_failure(stage="openhands_to_gateway", exception_type="ConnectError").failure_class == module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE
     assert module.classify_failure(stage="gateway_response", http_status=500).failure_class == module.MODEL_GATEWAY_RESPONSE_INVALID
+
+
+def test_auto_router_failure_classes_are_distinct_from_fixed_model_not_found() -> None:
+    module = _load("openhands_gateway_errors")
+    assert (
+        module.classify_failure(stage="provider", error_code="auto_no_valid_providers").failure_class
+        == module.AUTO_ROUTER_NO_VALID_PROVIDERS
+    )
+    assert (
+        module.classify_failure(stage="litellm_to_omniroute", error_code="auto_route_failure").failure_class
+        == module.AUTO_ROUTER_ROUTE_FAILURE
+    )
+
+
+def test_baseline_model_unavailability_is_a_provider_availability_class() -> None:
+    module = _load("openhands_gateway_errors")
+    failure = module.classify_failure(
+        stage="provider",
+        error_code="baseline_model_unavailable",
+    )
+    assert failure.failure_class == module.PROVIDER_MODEL_UNAVAILABLE

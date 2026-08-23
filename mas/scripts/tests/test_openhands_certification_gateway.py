@@ -22,6 +22,7 @@ def _load(name: str):
 
 PROVISION = _load("provision_openhands_certification_gateway")
 PROBE = _load("check_openhands_certification_gateway")
+BASELINE = _load("check_openhands_provider_baseline")
 PINS = _load("verify_openhands_gateway_pins")
 CONFIG = Path(__file__).resolve().parents[2] / "infra" / "compose" / "litellm_openhands_certification.yaml"
 
@@ -55,6 +56,17 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
             )
         if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
             return httpx.Response(200, json={"valid": True, "diagnosis": {}})
+        if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
+            assert request.url.params.get("refresh") == "true"
+            return httpx.Response(
+                200,
+                json={
+                    "provider": "groq",
+                    "connectionId": "connection-1",
+                    "source": "api",
+                    "models": [{"id": PROVISION.PROVIDER_MODEL}],
+                },
+            )
         if request.method == "GET" and request.url.path == "/api/providers":
             return httpx.Response(200, json={"connections": []})
         raise AssertionError(request)
@@ -88,7 +100,8 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     serialized = json.dumps(report, sort_keys=True)
     assert report["status"] == "PASS"
     assert report["provider_count"] == 1
-    assert report["resolved_provider_model"] == "groq/llama-3.3-70b-versatile"
+    assert report["resolved_provider_model"] == f"groq/{PROVISION.PROVIDER_MODEL}"
+    assert report["baseline_discovery"]["status"] == "PASS"
     assert report["management_endpoint"] == "http://omniroute:20128"
     assert report["openai_compatible_endpoint"] == "http://omniroute:20129/v1"
     assert provider_key not in serialized
@@ -132,6 +145,40 @@ def test_route_probe_retains_only_scalar_usage() -> None:
     client.close()
 
 
+def test_route_probe_can_write_explicit_auto_routing_evidence(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "route-probe.json"
+    auto_output = tmp_path / "auto-routing.json"
+    monkeypatch.setenv("OPENHANDS_MODEL_GATEWAY_API_KEY", "gateway-secret")
+
+    # Exercise the CLI writer without contacting a live gateway by replacing
+    # the probe function with a scalar-only fixture report.
+    original = PROBE.probe
+    monkeypatch.setattr(
+        PROBE,
+        "probe",
+        lambda **kwargs: {
+            "schema_version": PROBE.SCHEMA,
+            "status": "PASS",
+            "route": {"resolved_route_model": "auto/coding", "raw_response_retained": False},
+            "gateway_key_retained": False,
+        },
+    )
+    assert PROBE.main(
+        [
+            "--litellm-url",
+            "http://litellm.test",
+            "--omniroute-url",
+            "http://omniroute.test",
+            "--output",
+            str(output),
+            "--auto-routing-output",
+            str(auto_output),
+        ]
+    ) == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == json.loads(auto_output.read_text(encoding="utf-8"))
+    monkeypatch.setattr(PROBE, "probe", original)
+
+
 def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/api/monitoring/health":
@@ -153,6 +200,49 @@ def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
     client.close()
     assert error.value.stage == "gateway_auth"
     assert error.value.http_status == 401
+
+
+def test_provider_baseline_uses_exact_provider_qualified_model() -> None:
+    gateway_key = "gateway-secret-must-not-appear"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == f"Bearer {gateway_key}"
+        payload = json.loads(request.content)
+        assert payload["model"] == f"groq/{BASELINE.CERTIFICATION_BASELINE_MODEL}"
+        return httpx.Response(
+            200,
+            headers={"x-omniroute-selected-connection-id": "connection-1"},
+            json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = BASELINE.probe(
+        url="http://omniroute.test",
+        gateway_key=gateway_key,
+        client=client,
+    )
+    assert report["status"] == "PASS"
+    assert report["provider_model"] == BASELINE.CERTIFICATION_BASELINE_MODEL
+    assert report["usage"]["total_tokens"] == 3
+    assert gateway_key not in json.dumps(report, sort_keys=True)
+    client.close()
+
+
+def test_provider_baseline_404_is_model_unavailable_not_harness_failure() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(404, json={"error": "redacted"}))
+    )
+    with pytest.raises(BASELINE.BaselineProbeError) as error:
+        BASELINE.probe(url="http://omniroute.test", gateway_key="gateway-secret", client=client)
+    client.close()
+    assert error.value.stage == "provider"
+    assert error.value.http_status == 404
+    assert str(error.value) == "baseline_model_unavailable"
 
 
 def test_route_probe_preserves_omniroute_health_failure_stage() -> None:
@@ -193,6 +283,29 @@ def test_route_probe_preserves_litellm_health_failure_stage() -> None:
     client.close()
     assert error.value.stage == "litellm_health"
     assert error.value.http_status == 503
+
+
+def test_auto_route_404_is_not_reported_as_fixed_provider_model_not_found() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "GET" and request.url.path == "/health/readiness":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "POST" and request.url.path == "/v1/chat/completions":
+            return httpx.Response(404, json={"error": "redacted"})
+        raise AssertionError(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(
+            litellm_url="http://litellm.test",
+            omniroute_url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+        )
+    client.close()
+    assert str(error.value) == "auto_no_valid_providers"
+    assert error.value.stage == "provider"
 
 
 def test_route_probe_rejects_missing_internal_endpoint_before_network() -> None:
@@ -236,7 +349,7 @@ def test_disposable_litellm_config_has_one_governed_omniroute_route() -> None:
     assert route["model_name"] == "omniroute-coding"
     params = route["litellm_params"]
     assert params == {
-        "model": "openai/groq/llama-3.3-70b-versatile",
+        "model": "openai/auto/coding",
         "api_base": "http://omniroute:20129/v1",
         "api_key": "os.environ/OMNIROUTE_API_KEY",
     }

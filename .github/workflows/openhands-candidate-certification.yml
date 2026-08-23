@@ -447,9 +447,31 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Verify deterministic provider baseline through OmniRoute
+        id: baseline
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          OMNIROUTE_BASE_URL=http://127.0.0.1:20129 \
+            OPENHANDS_MODEL_GATEWAY_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            uv run python scripts/check_openhands_provider_baseline.py \
+              --url http://127.0.0.1:20129 \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-baseline.json"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Start disposable LiteLLM model gateway
         id: litellm
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.baseline.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -516,9 +538,9 @@ jobs:
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "status=PASS" >> "$GITHUB_OUTPUT"
 
-      - name: Verify deterministic provider route through LiteLLM
+      - name: Verify governed OmniRoute auto/coding route through LiteLLM
         id: gateway
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.baseline.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -528,7 +550,8 @@ jobs:
             uv run python scripts/check_openhands_certification_gateway.py \
               --litellm-url http://127.0.0.1:4000 \
               --omniroute-url http://127.0.0.1:20128 \
-              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/route-probe.json"
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/route-probe.json" \
+              --auto-routing-output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/auto-routing.json"
           exit_code=$?
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           if [ "$exit_code" -eq 0 ]; then
@@ -1239,6 +1262,8 @@ jobs:
           print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
           print(f"- Candidate preflight: `{report.get('configuration_status') or 'unknown'}`")
           print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
+          print(f"- Provider baseline: `{read_status('gateway/provider-baseline.json', 'status')}`")
+          print(f"- Auto-router evidence: `{read_status('gateway/auto-routing.json', 'status')}`")
           print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")
           print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
           print(f"- Evidence schema: `{read_status('certification/evidence-schema-validation.json', 'status')}`")
