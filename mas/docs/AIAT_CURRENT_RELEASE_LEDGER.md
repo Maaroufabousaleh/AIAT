@@ -21,6 +21,14 @@ execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
 OpenCode remains the current default.
 
+The later OpenHands path hardening `488a593` makes the OmniRoute API-auth
+probe compatible with older frozen candidate helper interfaces through a
+bounded fallback while retaining scalar probe evidence. `ecc1b48` formalizes
+the explicit provider-pool specification: the live CI pool remains Groq-only,
+with Gemini/Cerebras documented as future allowlisted options and no automatic
+credential discovery. These changes remain repository-local and do not add
+live provider, lifecycle, steward, activation, or release evidence.
+
 Run `32645055499` (job `97207942478`) is retained as failed workflow
 implementation evidence for the inactive OpenHands candidate. Provider and
 candidate preflights passed, and the OpenHands, LiteLLM, and OmniRoute pinned

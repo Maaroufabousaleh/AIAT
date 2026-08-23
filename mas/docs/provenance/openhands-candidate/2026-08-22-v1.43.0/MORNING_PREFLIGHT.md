@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `a061ddb`; the branch also
+hardening at `ecc1b48`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -31,6 +31,15 @@ does not depend on a repository checkout being present in the deployed image.
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
 only exact commit identifiers, scalar wiring, and secret-free boundary state.
+
+The workflow auth-boundary step is compatible with an explicitly frozen
+candidate checkout: `488a593` detects whether the candidate helper supports
+native transport-retry flags and otherwise uses a bounded outer retry, while
+retaining only scalar probe mode/count evidence. The governed provider-pool
+specification is recorded in `gateway-provenance.json` and implemented by
+`ecc1b48`; CI remains Groq-only (`GROQ_API_KEY`), while Gemini/Cerebras are
+documented as future explicit allowlist options and no credentials are
+discovered or added automatically.
 
 ### Historical workflow implementation failure
 
@@ -235,6 +244,11 @@ rate-limit fallback semantics, rejects unbounded fixture failure labels, and
 asserts that credential-like connection fields never appear in scalar route
 evidence. This does not claim a live multi-provider run and does not dispatch
 the candidate workflow.
+
+The latest compatibility/provider-pool hardening is `488a593` plus `ecc1b48`.
+These commits do not claim live provider, lifecycle, steward, activation, or
+release evidence; a new candidate SHA must still be frozen and pass the
+read-only preflight before one deliberate workflow dispatch.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve
