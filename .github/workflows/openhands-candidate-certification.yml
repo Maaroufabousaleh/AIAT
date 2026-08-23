@@ -77,6 +77,15 @@ jobs:
             echo "$entry" >> "$GITHUB_PATH"
           done < "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-paths.txt"
 
+      - name: Run deterministic OpenHands offline harnesses
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/offline"
+          uv run python scripts/check_openhands_coding_task_fixture.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/offline/coding-task-fixture.json"
+          uv run python scripts/check_openhands_offline_harness.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/offline/lifecycle-security-harness.json"
+
       - name: Generate disposable AIAT tool-service secret
         run: |
           set -euo pipefail
@@ -101,6 +110,30 @@ jobs:
             echo "OPENHANDS_MODEL_GATEWAY_URL=http://litellm:4000"
           } >> "$GITHUB_ENV"
 
+      - name: Check required external provider configuration
+        id: provider_preflight
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/provider" \
+            "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          uv run python scripts/check_openhands_provider_configuration.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json"
+          exit_code=$?
+          if [ "$exit_code" = 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_MISSING_OPERATOR_SECRET" >> "$GITHUB_OUTPUT"
+          fi
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          # A missing provider secret is a bounded operator block.  Keep the
+          # run on the evidence/cleanup path without starting model stages.
+          exit 0
+
       - name: Run non-secret OpenHands portability preflight
         id: preflight
         continue-on-error: true
@@ -115,6 +148,7 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Pull pinned certification images and verify gateway provenance
+        if: steps.provider_preflight.outputs.ready == 'true'
         run: |
           set -euo pipefail
           docker pull "$OPENHANDS_IMAGE"
@@ -161,6 +195,7 @@ jobs:
 
       - name: Create disposable model-gateway network
         id: network
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -171,6 +206,7 @@ jobs:
 
       - name: Start disposable OmniRoute provider gateway
         id: omniroute
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -226,6 +262,7 @@ jobs:
 
       - name: Configure exactly one disposable OmniRoute provider route
         id: provider
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -240,6 +277,7 @@ jobs:
 
       - name: Start disposable LiteLLM model gateway
         id: litellm
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -293,6 +331,7 @@ jobs:
 
       - name: Verify deterministic provider route through LiteLLM
         id: gateway
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -307,6 +346,7 @@ jobs:
 
       - name: Start disposable AIAT tool-service bridge
         id: bridge
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -362,6 +402,7 @@ jobs:
 
       - name: Start Agent Server under runsc
         id: server
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -422,6 +463,7 @@ jobs:
 
       - name: Prove runsc Agent Server can reach the internal LiteLLM target
         id: runsc_gateway
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           AGENT_CONTAINER: ${{ steps.server.outputs.container }}
@@ -458,6 +500,7 @@ jobs:
 
       - name: Record disposable gateway network topology
         id: network_topology
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
@@ -507,6 +550,7 @@ jobs:
 
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
@@ -524,6 +568,7 @@ jobs:
 
       - name: Run governed OpenHands live adapter wave
         id: live
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
@@ -539,17 +584,21 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
+          cp -R "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task/." \
+            "$RUNNER_TEMP/aiat-openhands-workspace/"
           test -s "$RUNNER_TEMP/aiat-openhands-session-key"
           export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
           uv run python scripts/openhands_live_certify.py \
             --base-url http://127.0.0.1:18000 \
             --interface-report docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json \
             --workspace /workspace/project \
+            --task-spec docs/provenance/openhands-candidate/2026-08-22-v1.43.0/coding-task-spec.json \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/live/live-certification.json"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenHands supply-chain and runtime evidence
         id: certification
+        if: steps.provider_preflight.outputs.ready == 'true'
         continue-on-error: true
         env:
           CONTAINER_NAME: ${{ steps.server.outputs.container }}
@@ -663,6 +712,23 @@ jobs:
           )
           PY
 
+      - name: Evaluate mandatory OpenHands gate matrix
+        if: always()
+        env:
+          PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}
+          CANDIDATE_SHA: ${{ env.AIAT_CANDIDATE_SHA }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          provider_status="${PROVIDER_STATUS:-BLOCKED_MISSING_OPERATOR_SECRET}"
+          uv run python scripts/check_openhands_gate_matrix.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json" \
+            --provider-status "$provider_status" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --source-commit 4c1237f391fe394e9f67505fe3a0bd2d81f84188 \
+            --image-digest sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+          exit 0
+
       - name: Upload sanitized OpenHands evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -676,7 +742,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/candidate-certification.json"
+          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json"
           test -f "$report"
           status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report")
-          test "$status" = passed
+          test "$status" = PASSED

@@ -16,6 +16,11 @@ from typing import Any
 
 import httpx
 
+try:
+    from openhands_gateway_errors import classify_failure
+except ImportError:  # pragma: no cover - package invocation fallback
+    from scripts.openhands_gateway_errors import classify_failure  # type: ignore
+
 SCHEMA = "aiat.openhands-certification-gateway-provisioning.v1"
 PROVIDER = "groq"
 PROVIDER_NAME = "AIAT OpenHands certification Groq"
@@ -168,10 +173,24 @@ def main(argv: list[str] | None = None) -> int:
             provider_key=os.getenv("GROQ_API_KEY", "").strip(),
         )
     except (GatewayProvisioningError, httpx.HTTPError) as exc:
+        reason = str(exc) if isinstance(exc, GatewayProvisioningError) else "omniroute_transport_error"
+        if "credential_missing" in reason:
+            failure = classify_failure(stage="provider_preflight", provider_secret_present=False)
+        elif "http_401" in reason:
+            failure = classify_failure(stage="provider", http_status=401)
+        elif "http_403" in reason:
+            failure = classify_failure(stage="provider", http_status=403)
+        elif isinstance(exc, httpx.TimeoutException):
+            failure = classify_failure(stage="provider", exception_type="ReadTimeout")
+        elif isinstance(exc, httpx.TransportError):
+            failure = classify_failure(stage="provider", exception_type="ConnectError")
+        else:
+            failure = classify_failure(stage="omniroute_health", error_code=reason)
         report = {
             "schema_version": SCHEMA,
             "status": "BLOCKED",
-            "failure": str(exc) if isinstance(exc, GatewayProvisioningError) else "omniroute_transport_error",
+            "failure": reason,
+            "failure_class": failure.failure_class,
             "provider_credential_retained": False,
             "management_key_retained": False,
             "response_payloads_retained": False,

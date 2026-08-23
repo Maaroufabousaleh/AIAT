@@ -10,6 +10,11 @@ from typing import Any
 
 import httpx
 
+try:
+    from openhands_gateway_errors import classify_failure
+except ImportError:  # pragma: no cover - package invocation fallback
+    from scripts.openhands_gateway_errors import classify_failure  # type: ignore
+
 SCHEMA = "aiat.openhands-certification-gateway-health.v1"
 AIAT_MODEL = "omniroute-coding"
 PROVIDER = "groq"
@@ -117,10 +122,25 @@ def main(argv: list[str] | None = None) -> int:
             gateway_key=os.getenv("OPENHANDS_MODEL_GATEWAY_API_KEY", "").strip(),
         )
     except (GatewayProbeError, httpx.HTTPError) as exc:
+        reason = str(exc) if isinstance(exc, GatewayProbeError) else "gateway_transport_error"
+        stage = "gateway_response"
+        if "omniroute_health" in reason:
+            stage = "omniroute_health"
+        elif "litellm_health" in reason:
+            stage = "litellm_health"
+        elif "route_probe" in reason:
+            stage = "litellm_to_omniroute"
+        if isinstance(exc, httpx.TimeoutException):
+            failure = classify_failure(stage="provider", exception_type="ReadTimeout")
+        elif isinstance(exc, httpx.TransportError):
+            failure = classify_failure(stage="provider", exception_type="ConnectError")
+        else:
+            failure = classify_failure(stage=stage, error_code=reason)
         report = {
             "schema_version": SCHEMA,
             "status": "BLOCKED",
-            "failure": str(exc) if isinstance(exc, GatewayProbeError) else "gateway_transport_error",
+            "failure": reason,
+            "failure_class": failure.failure_class,
             "gateway_key_retained": False,
             "raw_response_retained": False,
         }

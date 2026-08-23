@@ -52,11 +52,19 @@ def verify(*, runner: Any = subprocess.run) -> dict[str, Any]:
         if expected["image"] not in repo_digests:
             raise PinVerificationError(f"{expected['component']}_digest_mismatch")
         labels = (inspected.get("Config") or {}).get("Labels") or {}
+        image_os = str(inspected.get("Os") or "")
+        image_architecture = str(inspected.get("Architecture") or "")
+        if image_os != "linux" or image_architecture != "amd64":
+            raise PinVerificationError(f"{expected['component']}_platform_not_linux_amd64")
         revision_label = labels.get("org.opencontainers.image.revision")
         components.append(
             {
                 **expected,
                 "repo_digest_verified": True,
+                "image_os": image_os,
+                "image_architecture": image_architecture,
+                "image_platform": f"{image_os}/{image_architecture}",
+                "image_platform_verified": True,
                 "image_revision_label": revision_label,
                 "source_revision_label_matches": revision_label == expected["source_commit"],
                 "source_revision_attestation": (

@@ -135,6 +135,8 @@ def test_pin_verification_requires_the_exact_repo_digest() -> None:
             "stdout": json.dumps([
                 {
                     "RepoDigests": [expected["image"]],
+                    "Os": "linux",
+                    "Architecture": "amd64",
                     "Config": {"Labels": {"org.opencontainers.image.revision": expected["source_commit"]}},
                 }
             ])
