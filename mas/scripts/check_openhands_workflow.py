@@ -42,6 +42,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("provider_preflight_missing")
     if "BLOCKED_MISSING_OPERATOR_SECRET" not in text:
         errors.append("provider_missing_secret_class_missing")
+    if "FAILED_CERTIFICATION_IMPLEMENTATION" not in text or "preflight-wrapper.json" not in text:
+        errors.append("provider_preflight_execution_failure_class_missing")
     if "if: always()" not in text or "actions/upload-artifact@v4" not in text:
         errors.append("always_cleanup_or_artifact_upload_missing")
     if "steps.provider_preflight.outputs.ready == 'true'" not in text:

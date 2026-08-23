@@ -44,3 +44,6 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
 
     report = _module().validate(text.replace('"verified_absent"', '"removed"'))
     assert "cleanup_absence_readback_missing" in report["errors"]
+
+    report = _module().validate(text.replace("preflight-wrapper.json", "preflight.json"))
+    assert "provider_preflight_execution_failure_class_missing" in report["errors"]

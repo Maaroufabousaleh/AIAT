@@ -120,18 +120,68 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/provider" \
             "$RUNNER_TEMP/aiat-openhands-evidence/certification"
           uv run python scripts/check_openhands_provider_configuration.py \
-            --output "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json"
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json" \
+            > /dev/null 2> /dev/null
           exit_code=$?
-          if [ "$exit_code" = 0 ]; then
+          provider_status=$(python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json" \
+            "$exit_code" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          status = report.get("status") if isinstance(report, dict) else None
+          if exit_code == 0 and status == "PASS":
+              print("PASS")
+          elif status == "BLOCKED_MISSING_OPERATOR_SECRET":
+              print("BLOCKED_MISSING_OPERATOR_SECRET")
+          else:
+              # A malformed report or an unexpected checker/tool failure is
+              # not evidence that the operator omitted the provider secret.
+              print("FAILED_CERTIFICATION_IMPLEMENTATION")
+          PY
+          )
+          if [ "$provider_status" = "PASS" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
             echo "status=PASS" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "status=BLOCKED_MISSING_OPERATOR_SECRET" >> "$GITHUB_OUTPUT"
+            echo "status=$provider_status" >> "$GITHUB_OUTPUT"
           fi
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          # A missing provider secret is a bounded operator block.  Keep the
-          # run on the evidence/cleanup path without starting model stages.
+          PROVIDER_STATUS="$provider_status" EXIT_CODE="$exit_code" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight-wrapper.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-provider-preflight-wrapper.v1",
+                      "status": os.environ["PROVIDER_STATUS"],
+                      "checker_exit_code": int(os.environ["EXIT_CODE"]),
+                      "secret_name": "GROQ_API_KEY",
+                      "secret_value_retained": False,
+                      "stdout_or_stderr_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          # A missing provider secret is a bounded operator block.  Any other
+          # checker/tool failure remains a certification implementation failure;
+          # both stay on the evidence/cleanup path without starting model stages.
           exit 0
 
       - name: Run non-secret OpenHands portability preflight
