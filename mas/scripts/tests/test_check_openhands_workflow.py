@@ -47,6 +47,14 @@ def test_non_native_or_unpinned_candidate_inputs_are_rejected() -> None:
     assert "openhands_source_commit_binding_missing" in report["errors"]
 
 
+def test_gateway_source_tags_are_dereferenced_and_recorded() -> None:
+    module = _module()
+    text = _workflow()
+    assert "litellm_source_tag_commit_verification_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("refs/tags/v1.90.0^{}", "refs/tags/v1.90.0", 1)
+    assert "litellm_source_tag_commit_verification_missing" in module.validate(weakened)["errors"]
+
+
 def test_candidate_images_require_linux_amd64_platform_readback() -> None:
     module = _module()
     text = _workflow()

@@ -41,6 +41,12 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("candidate_image_platform_verification_missing")
     if "4c1237f391fe394e9f67505fe3a0bd2d81f84188" not in text:
         errors.append("openhands_source_commit_binding_missing")
+    if (
+        "refs/tags/v1.90.0^{}" not in text
+        or "litellm_release_tag_commit" not in text
+        or "6e8282d40655d47ed1557f030e53d6819e464e79" not in text
+    ):
+        errors.append("litellm_source_tag_commit_verification_missing")
     for image in EXPECTED_IMAGES:
         if image not in text:
             errors.append(f"exact_image_pin_missing:{image.split('@', 1)[0]}")
