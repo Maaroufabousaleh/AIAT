@@ -27,6 +27,13 @@ CERTIFICATION_PROVIDER_SECRET_NAMES: Mapping[str, str] = {
     "cerebras": "CEREBRAS_API_KEY",
 }
 
+# The live GitHub certification intentionally uses one operator-supplied
+# provider today.  The wider list is a recommendation for a future governed
+# pool, not an instruction to enumerate the operator's environment or to add
+# secrets automatically.
+CERTIFICATION_PROVIDER_POOL = (CERTIFICATION_PROVIDER,)
+RECOMMENDED_PROVIDER_POOL = ("groq", "gemini", "cerebras")
+
 # Fixture-only failure labels accepted by ``simulate_auto_route``.  The live
 # OmniRoute service owns the actual classification; keeping this list bounded
 # prevents an arbitrary provider response or credential value from becoming
@@ -107,6 +114,46 @@ def governed_provider_secret_names(providers: Iterable[str]) -> dict[str, str]:
             raise ValueError(f"unsupported certification provider: {provider}")
         result[provider] = secret_name
     return result
+
+
+def parse_governed_provider_pool(
+    value: str | None,
+    *,
+    default: Iterable[str] = CERTIFICATION_PROVIDER_POOL,
+) -> tuple[str, ...]:
+    """Parse an explicit provider allowlist without discovering credentials.
+
+    A caller may provide a comma-separated allowlist (for example
+    ``groq,gemini``).  Empty entries, duplicates, and unknown providers are
+    rejected.  This function only validates names; it never reads an
+    environment variable or returns a credential value.
+    """
+
+    if value is None or not value.strip():
+        raw = [str(provider) for provider in default]
+    else:
+        raw = value.split(",")
+    providers = tuple(item.strip().lower() for item in raw)
+    if not providers or any(not provider for provider in providers):
+        raise ValueError("provider pool must contain non-empty provider names")
+    if len(set(providers)) != len(providers):
+        raise ValueError("provider pool must not contain duplicates")
+    governed_provider_secret_names(providers)
+    return providers
+
+
+def provider_pool_spec(value: str | None = None) -> dict[str, object]:
+    """Return sanitized provider-pool governance metadata for evidence."""
+
+    providers = parse_governed_provider_pool(value)
+    return {
+        "providers": list(providers),
+        "secret_names": governed_provider_secret_names(providers),
+        "allowlist_source": "explicit_governed_configuration",
+        "arbitrary_environment_enumeration": False,
+        "recommended_future_pool": list(RECOMMENDED_PROVIDER_POOL),
+        "credential_values_retained": False,
+    }
 
 
 def auto_router_model_override_allowed(requested_model: object) -> bool:

@@ -104,6 +104,8 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     assert report["baseline_discovery"]["status"] == "PASS"
     assert report["management_endpoint"] == "http://omniroute:20128"
     assert report["openai_compatible_endpoint"] == "http://omniroute:20129/v1"
+    assert report["provider_pool"]["providers"] == ["groq"]
+    assert report["provider_pool"]["arbitrary_environment_enumeration"] is False
     assert provider_key not in serialized
     assert management_key not in serialized
     client.close()

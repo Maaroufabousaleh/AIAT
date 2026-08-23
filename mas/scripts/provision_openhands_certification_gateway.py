@@ -27,6 +27,7 @@ try:
         CERTIFICATION_BASELINE_MODEL,
         CERTIFICATION_PROVIDER,
         baseline_discovery_status,
+        provider_pool_spec,
     )
 except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_model_routing import (  # type: ignore
@@ -34,6 +35,7 @@ except ImportError:  # pragma: no cover - package invocation fallback
         CERTIFICATION_BASELINE_MODEL,
         CERTIFICATION_PROVIDER,
         baseline_discovery_status,
+        provider_pool_spec,
     )
 
 SCHEMA = "aiat.openhands-certification-gateway-provisioning.v1"
@@ -265,6 +267,7 @@ def provision(
             "action": action,
             "provider_validation": "PASS",
             "provider_count": len(readback),
+            "provider_pool": provider_pool_spec(),
             "provider_credential_retained": False,
             "management_key_retained": False,
             "response_payloads_retained": False,

@@ -45,6 +45,18 @@
       ],
       "offline_multi_provider_fixtures": "repository-local tests; no extra CI credentials provisioned"
     },
+    "provider_pool_spec": {
+      "active_ci_pool": ["groq"],
+      "recommended_future_pool": ["groq", "gemini", "cerebras"],
+      "secret_names": {
+        "groq": "GROQ_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "cerebras": "CEREBRAS_API_KEY"
+      },
+      "allowlist_source": "explicit_governed_configuration",
+      "arbitrary_environment_enumeration": false,
+      "credential_values_retained": false
+    },
     "credentials": {
       "aiat_model_gateway_key": "workflow-run-generated; masked; not retained",
       "aiat_tool_secret": "workflow-run-generated; masked; not retained",

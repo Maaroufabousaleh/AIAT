@@ -69,6 +69,24 @@ def test_provider_secret_mapping_is_explicit_and_bounded() -> None:
         ROUTING.governed_provider_secret_names(["arbitrary-provider"])
 
 
+def test_provider_pool_is_explicit_and_never_discovers_environment_credentials() -> None:
+    assert ROUTING.parse_governed_provider_pool(None) == ("groq",)
+    assert ROUTING.parse_governed_provider_pool("groq, gemini") == ("groq", "gemini")
+    spec = ROUTING.provider_pool_spec("groq")
+    assert spec["providers"] == ["groq"]
+    assert spec["secret_names"] == {"groq": "GROQ_API_KEY"}
+    assert spec["allowlist_source"] == "explicit_governed_configuration"
+    assert spec["arbitrary_environment_enumeration"] is False
+    assert spec["credential_values_retained"] is False
+
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        ROUTING.parse_governed_provider_pool("groq,groq")
+    with pytest.raises(ValueError, match="unsupported certification provider"):
+        ROUTING.parse_governed_provider_pool("groq,unknown")
+    with pytest.raises(ValueError, match="non-empty"):
+        ROUTING.parse_governed_provider_pool("groq,,gemini")
+
+
 def _connections() -> list[dict[str, object]]:
     return [
         {"provider": "groq", "model": "openai/gpt-oss-120b", "credential_present": True},
