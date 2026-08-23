@@ -197,5 +197,30 @@
     "raw_model_payloads_retained": false,
     "credentials_retained": false,
     "licence_metadata_is_gate": false
+  },
+  "post_overnight_refresh": {
+    "recorded_at": "2026-08-23",
+    "starting_head": "4bddd4b3b8819329570e5ca2bb922f564b015720",
+    "ending_head": "2a2be0f79a38b5817c65b8d363fcf66b75c69200",
+    "commits": {
+      "report_path_resolution": "4bddd4b3b8819329570e5ca2bb922f564b015720",
+      "omniroute_fallback_fixture_coverage": "7d06e4f",
+      "preflight_document_refresh": "2a2be0f79a38b5817c65b8d363fcf66b75c69200"
+    },
+    "scope": "repository-local OpenHands activation/report portability and offline OmniRoute routing fixtures",
+    "workflow_dispatched": false,
+    "openhands_active": false,
+    "opencode_modified": false,
+    "protected_memory_files_touched": false,
+    "live_provider_evidence": "not_run; deliberate operator dispatch remains pending",
+    "local_validation": {
+      "workflow_static": "PASS",
+      "dispatch_preflight": "PASS",
+      "openhands_fixture_suite": "PASS",
+      "routing_fixture_suite": "PASS",
+      "docs_index": "PASS",
+      "release_ledger": "PASS; 63/63 checks; 2 unrelated OpenCode review items pending",
+      "global_release_decision": "NO-RELEASE"
+    }
   }
 }
