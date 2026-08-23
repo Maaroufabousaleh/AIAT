@@ -46,6 +46,7 @@ def _status_map(status: str) -> dict[str, str]:
         "pause": "NOT_RUN",
         "interrupt": "NOT_RUN",
         "resume": "NOT_RUN",
+        "forced_failure": "NOT_RUN",
         "crash_recovery": "NOT_RUN",
         "timeout": "NOT_RUN",
         "budget": "NOT_RUN",

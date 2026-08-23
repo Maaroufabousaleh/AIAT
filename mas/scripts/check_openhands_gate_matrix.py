@@ -116,6 +116,7 @@ def derive_gate_rows(evidence_root: Path) -> dict[str, dict[str, Any]]:
         "pause": "graceful_pause",
         "interrupt": "immediate_interrupt",
         "resume": "resume",
+        "forced_failure": "forced_failure",
         "crash_recovery": "recovery",
         "timeout": "timeout",
         "budget": "budget_enforcement",
