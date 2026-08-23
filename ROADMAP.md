@@ -79,7 +79,10 @@ incomplete GitHub result cannot be attached to this candidate. `7b2e60d` and
 `2d3ee8f` extend and record the cleanup assertion for the disposable workspace
 and tool image; `0d821bd` adds immutable image-platform verification, exact
 task-prompt wiring without payload retention, and the neutral comparison
-record.
+record. `732ab3d` now requires the live wrapper to re-run the fixed task test,
+verify the exact workspace diff and returned artifact set, and scan transient
+events for secret disclosure; `2c1b976` records those semantics in the
+maintained candidate/release status documents.
 This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a
