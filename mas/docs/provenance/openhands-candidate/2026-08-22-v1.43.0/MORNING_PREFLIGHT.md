@@ -34,6 +34,18 @@ missing `PY` terminators in the image/provenance step and makes the validator
 reject unclosed or marker-count-mismatched heredocs. The next candidate SHA
 must be frozen after this fix and verified by the safe preflight.
 
+Run `32648660093` (job `97216753646`) is preserved as
+[`github-run-32648660093-failure.json`](./github-run-32648660093-failure.json).
+It is a separate `FAILED_CERTIFICATION_IMPLEMENTATION` record: provider and
+candidate preflights, image pulls, platform verification, and the immutable
+gateway pin verifier all passed, but the old inline provenance check queried
+only `refs/tags/v1.90.0^{}`. LiteLLM v1.90.0 is a lightweight tag, so that
+peeled-ref lookup was empty and the live gate wave never ran. The corrected
+workflow delegates all six checks to a diagnostic helper that accepts exact
+annotated or lightweight tags and writes per-check scalar evidence before it
+fails. This record is not provider, image, gVisor, runtime, or security
+evidence.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,

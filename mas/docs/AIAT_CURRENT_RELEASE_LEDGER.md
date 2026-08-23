@@ -30,6 +30,20 @@ Commit `a02899b` restores the missing workflow terminators and adds exact
 YAML-rendered heredoc validation. This does not count as provider or runtime
 evidence and does not alter the global `NO-RELEASE` decision.
 
+Run `32648660093` (job `97216753646`) is retained as a second, independent
+failed workflow-implementation record. Provider/candidate preflights, all
+three image pulls, platform verification, and the immutable gateway pin
+verifier passed; the live gate wave was not attempted. The old inline
+provenance assertion queried only the peeled ref for LiteLLM `v1.90.0`, which
+is a lightweight tag, so the exact tag target was incorrectly treated as
+missing. The failure is recorded as
+`FAILED_CERTIFICATION_IMPLEMENTATION` /
+`LITELLM_RELEASE_TAG_RESOLUTION_FAILED`, not as a provider, image, runtime,
+gVisor, or security failure. The replacement diagnostic helper resolves both
+annotated and lightweight exact tags and retains scalar results for all six
+subchecks. This historical evidence does not alter the global
+`NO-RELEASE` decision.
+
 The subsequent reviewed continuation commits `6a5b79a`, `72a0313`,
 `4708bbf`, `7d9a96d`, `7ef369e`, `d012ab9`, `88ad977`, `1154a5f`,
 `c1c6700`, `f4f261c`, and `64c85c3` reconcile candidate pins, retained

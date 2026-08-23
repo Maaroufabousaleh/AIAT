@@ -138,6 +138,28 @@
     "fix_commit": "a02899bc7f36cf79948629b23507db8fa7d557d4",
     "historical_evidence_immutable": true
   },
+  "historical_workflow_failure_32648660093": {
+    "run_id": "32648660093",
+    "job_id": "97216753646",
+    "artifact_id": "9495601763",
+    "artifact_digest": "sha256:abbf2ef1fb934b972d8fa577fefaab4f004c144dcbb96ebb5880ac6a295b2753",
+    "classification": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_reason": "LITELLM_RELEASE_TAG_RESOLUTION_FAILED",
+    "failure_detail": "lightweight tag queried only through refs/tags/v1.90.0^{}",
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_pin_verifier": "PASS",
+    "image_pulls": {
+      "openhands": "PASS",
+      "litellm": "PASS",
+      "omniroute": "PASS"
+    },
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_ref": "github-run-32648660093-failure.json",
+    "historical_evidence_immutable": true
+  },
   "evidence_policy": {
     "raw_model_payloads_retained": false,
     "credentials_retained": false,
