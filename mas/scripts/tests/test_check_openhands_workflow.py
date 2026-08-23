@@ -167,7 +167,15 @@ def test_cleanup_requires_delete_status_and_absence_readback() -> None:
 def test_cleanup_requires_workspace_and_tool_image_absence() -> None:
     module = _module()
     text = _workflow()
-    assert "workspace_or_tool_image_cleanup_missing" not in module.validate(text)["errors"]
+    assert "workspace_profile_or_tool_image_cleanup_missing" not in module.validate(text)["errors"]
     weakened = text.replace('rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"', "true", 1)
     report = module.validate(weakened)
-    assert "workspace_or_tool_image_cleanup_missing" in report["errors"]
+    assert "workspace_profile_or_tool_image_cleanup_missing" in report["errors"]
+
+
+def test_cleanup_requires_run_scoped_profile_disposal_evidence() -> None:
+    module = _module()
+    text = _workflow()
+    assert "workspace_profile_or_tool_image_cleanup_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('"verified_by_agent_container_absence": profile_status in {"NOT_CREATED", "VERIFIED_BY_CONTAINER_DISPOSAL"} and containers_absent == "true",', '"profile_disposal": True,', 1)
+    assert "workspace_profile_or_tool_image_cleanup_missing" in module.validate(weakened)["errors"]

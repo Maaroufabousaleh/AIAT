@@ -115,8 +115,10 @@ def validate(text: str) -> dict[str, Any]:
         or 'rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
         or '"tool_image_absent": image_absent == "true"' not in text
         or '"workspace_absent": workspace_absent == "true"' not in text
+        or '"profile": {' not in text
+        or '"verified_by_agent_container_absence"' not in text
     ):
-        errors.append("workspace_or_tool_image_cleanup_missing")
+        errors.append("workspace_profile_or_tool_image_cleanup_missing")
     if (
         "GITHUB_STEP_SUMMARY" not in text
         or "Summarize fail-closed certification result" not in text

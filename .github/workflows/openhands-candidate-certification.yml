@@ -878,6 +878,13 @@ jobs:
           if [ "$docker_available" = true ] && [ -n "$(docker ps -aq --filter "name=^/${name}$" 2>/dev/null)" ]; then
             agent_existed=1
           fi
+          profile_status="NOT_CREATED"
+          if [ "$agent_existed" = 1 ]; then
+            # The workflow gives Agent Server no named profile volume.  Its
+            # run-scoped profile therefore dies with this disposable
+            # container; retain only that scalar disposal assertion.
+            profile_status="VERIFIED_BY_CONTAINER_DISPOSAL"
+          fi
           if [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
             session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
             delete_code=$(curl --silent --show-error --output /dev/null \
@@ -1035,14 +1042,14 @@ jobs:
           unset session_key settings_response settings_json delete_code || true
           python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
             "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" \
-            "$mcp_status" "$mcp_verified_absent" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$cleanup_ok" "$docker_available" <<'PY'
+            "$mcp_status" "$mcp_verified_absent" "$profile_status" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$cleanup_ok" "$docker_available" <<'PY'
           import json
           import sys
           from pathlib import Path
 
           output, *values = sys.argv[1:]
           names = values[:5]
-          mcp_status, mcp_verified_absent, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, cleanup_ok, docker_available = values[5:]
+          mcp_status, mcp_verified_absent, profile_status, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, cleanup_ok, docker_available = values[5:]
           Path(output).parent.mkdir(parents=True, exist_ok=True)
           Path(output).write_text(
               json.dumps(
@@ -1057,6 +1064,11 @@ jobs:
                   "mcp": {
                       "status": mcp_status,
                       "verified_absent": mcp_verified_absent == "true",
+                  },
+                  "profile": {
+                      "status": profile_status,
+                      "run_scoped": True,
+                      "verified_by_agent_container_absence": profile_status in {"NOT_CREATED", "VERIFIED_BY_CONTAINER_DISPOSAL"} and containers_absent == "true",
                   },
                   "containers_absent": containers_absent == "true",
                   "tool_image_absent": image_absent == "true",
