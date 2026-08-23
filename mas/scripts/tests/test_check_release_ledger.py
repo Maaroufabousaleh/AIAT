@@ -68,6 +68,7 @@ def test_inventory_registers_retained_object_store_live_evidence() -> None:
         "object_store_multipart",
         "object_store_resource_profile",
         "object_store_provider_outage",
+        "sandbox_runtime_readiness",
     }
     assert retained["object_store_resource_profile"][1] == "aiat.object-store-resource-profile.v1"
 
