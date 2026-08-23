@@ -1,9 +1,17 @@
 # OpenHands v1.43.0 morning certification preparation
 
+**Repository-local refresh:** 2026-08-23, candidate preparation at
+`4223507e225669100415e877b166795847a94f60`.
+
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
+
+The local static release ledger remains 63/63 passing with two pending
+evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
+`BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
+task and lifecycle evidence. No workflow was dispatched during this refresh.
 
 The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
@@ -16,21 +24,23 @@ only exact commit identifiers, scalar wiring, and secret-free boundary state.
    GitHub input.
 
    ```bash
-   gh variable set OPENHANDS_MODEL_ID --body omniroute-coding
-   gh variable set OPENHANDS_MCP_SETTINGS_KEY --body aiat-openhands-v1-43-0-coding
+   REPO="OWNER/REPOSITORY"
+   gh variable set OPENHANDS_MODEL_ID --repo "$REPO" --body omniroute-coding
+   gh variable set OPENHANDS_MCP_SETTINGS_KEY --repo "$REPO" --body aiat-openhands-v1-43-0-coding
    ```
 
 2. Set the one external provider secret interactively. The value is read from
    stdin and is never embedded in shell history or documentation.
 
    ```bash
-   gh secret set GROQ_API_KEY
+   gh secret set GROQ_API_KEY --repo "$REPO"
    ```
 
 3. Freeze and inspect the exact candidate commit. Do not use an implicit
    `HEAD` in the dispatch command.
 
    ```bash
+   WORKFLOW_REF="agent/fix-review-p1"
    CANDIDATE_SHA="$(git rev-parse HEAD)"
    git show -s --format='%H %s' "$CANDIDATE_SHA"
    ```
@@ -40,8 +50,9 @@ only exact commit identifiers, scalar wiring, and secret-free boundary state.
 
    ```bash
    python3 mas/scripts/check_openhands_dispatch_preflight.py \
+     --repo . \
      --candidate-sha "$CANDIDATE_SHA" \
-     --github-repo OWNER/REPOSITORY \
+     --github-repo "$REPO" \
      --output /tmp/aiat-openhands-dispatch-preflight.json
    ```
 
@@ -59,7 +70,8 @@ only exact commit identifiers, scalar wiring, and secret-free boundary state.
 
    ```bash
    gh workflow run openhands-candidate-certification.yml \
-     --ref "$CANDIDATE_SHA" \
+     --repo "$REPO" \
+     --ref "$WORKFLOW_REF" \
      -f candidate_sha="$CANDIDATE_SHA"
    ```
 
@@ -67,10 +79,11 @@ only exact commit identifiers, scalar wiring, and secret-free boundary state.
    failed certification; first identify a material prerequisite change.
 
    ```bash
-   RUN_ID="$(gh run list --workflow openhands-candidate-certification.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
-   gh run watch "$RUN_ID" --exit-status
-   gh run view "$RUN_ID" --log-failed
+   RUN_ID="$(gh run list --repo "$REPO" --workflow openhands-candidate-certification.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   gh run watch "$RUN_ID" --repo "$REPO" --exit-status || true
+   gh run view "$RUN_ID" --repo "$REPO" --log-failed
    gh run download "$RUN_ID" \
+     --repo "$REPO" \
      --name "openhands-candidate-certification-${RUN_ID}" \
      --dir "/tmp/aiat-openhands-evidence-${RUN_ID}"
    python3 -m json.tool "/tmp/aiat-openhands-evidence-${RUN_ID}/certification/gate-evaluation.json"
@@ -97,6 +110,12 @@ successful OmniRoute route validation and the runsc-to-LiteLLM probe; a failed
 control-plane/provider stage cannot fall through into model execution. The
 post-run verifier also scans disposable workspace files for secret canaries
 using hashes/counts only. A model response alone cannot advance those gates.
+The subsequent repository-local group (`88eeb6d`, `55930ad`, `3e31206`,
+`b25abb3`, `fd50dc9`, `784ce47`, `fbbb63c`, and `4223507`) validates exact
+gateway network aliases, pins the governed MCP key, gates every expensive
+stage on provider/gateway/runtime readiness, classifies control-plane failures,
+scans workspace evidence for secret canaries, emits an explicit fail-closed
+summary, and publishes runtime materialization readiness to downstream steps.
 None of these local checks is live provider evidence.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate

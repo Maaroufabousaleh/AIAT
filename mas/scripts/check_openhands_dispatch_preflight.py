@@ -86,6 +86,7 @@ def evaluate_static(
     secret_names: set[str] | None,
     variable_values: dict[str, str] | None,
     local_tests_passed: bool,
+    workflow_ref: str = "main",
 ) -> dict[str, Any]:
     workflow = validate_workflow(workflow_text)
     sha_explicit = bool(requested_sha and len(requested_sha) == 40 and requested_sha == actual_sha)
@@ -126,6 +127,7 @@ def evaluate_static(
         "local_deterministic_tests": local_tests_passed,
     }
     ready = all(checks.values())
+    dispatch_ref = workflow_ref.strip() or "main"
     return {
         "schema_version": SCHEMA,
         "status": "PASS" if ready else "BLOCKED_OPERATOR_CONFIGURATION",
@@ -146,7 +148,15 @@ def evaluate_static(
             "OPENHANDS_SESSION_API_KEY",
             "OPENHANDS_MODEL_GATEWAY_API_KEY",
         ],
-        "dispatch_command": f"gh workflow run openhands-candidate-certification.yml --ref {actual_sha} -f candidate_sha={actual_sha}",
+        # The workflow definition is selected by a branch/tag ref; the exact
+        # candidate SHA is carried separately as the required dispatch input
+        # and is verified again after checkout. Passing a raw SHA as --ref is
+        # not portable across GitHub workflow-dispatch implementations.
+        "workflow_ref": dispatch_ref,
+        "dispatch_command": (
+            "gh workflow run openhands-candidate-certification.yml "
+            f"--ref {dispatch_ref} -f candidate_sha={actual_sha}"
+        ),
         "secrets_or_payloads_retained": False,
     }
 
@@ -184,6 +194,8 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
             "exit_code": code,
             "output_retained": False,
         }
+    code, branch = _run(["git", "branch", "--show-current"], cwd=repo)
+    workflow_ref = branch.strip() if code == 0 and branch.strip() else "main"
     report = evaluate_static(
         workflow_text=workflow_text,
         manifest_text=manifest_text,
@@ -194,9 +206,9 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         secret_names=secret_names,
         variable_values=variable_values,
         local_tests_passed=local_tests_passed,
+        workflow_ref=workflow_ref,
     )
     report["local_validation"] = local_validation
-    code, branch = _run(["git", "branch", "--show-current"], cwd=repo)
     report["branch"] = branch.strip() if code == 0 else None
     code, status = _run(["git", "status", "--porcelain"], cwd=repo)
     report["worktree_status"] = "CLEAN" if code == 0 and not status.strip() else "UNDERSTOOD_DIRTY"

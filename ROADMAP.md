@@ -86,8 +86,14 @@ maintained candidate/release status documents.
 `7bc9f63` wires bounded live pause/resume, interrupt, and timeout probes,
 requires a real remote running-to-paused transition, scans lifecycle events
 for secret disclosure, and limits deferred MCP cleanup to certification-mode
-adapters. These remain unverified live-provider gates until the operator
-supplies `GROQ_API_KEY` and dispatches one deliberate run.
+adapters. The follow-up group (`88eeb6d`, `55930ad`, `3e31206`, `b25abb3`,
+`fd50dc9`, `784ce47`, `fbbb63c`, and `4223507`) validates exact gateway
+network aliases, pins and preflights the governed MCP key, gates every
+expensive stage on provider/gateway/runtime readiness, classifies startup and
+route failures, scans workspace evidence for secret canaries, emits an
+explicit fail-closed summary, and publishes runtime materialization readiness
+to downstream steps. These remain unverified live-provider gates until the
+operator supplies `GROQ_API_KEY` and dispatches one deliberate run.
 This does not replace OpenCode, activate OpenHands, or advance the global release
 decision. Tomorrow's only planned live prerequisite is the operator-owned
 `GROQ_API_KEY`, followed by the safe preflight and one dispatch against a

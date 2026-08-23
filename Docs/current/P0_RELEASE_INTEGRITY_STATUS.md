@@ -69,6 +69,37 @@ still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
 under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).
 
+### Repository-local continuation refresh — 2026-08-23
+
+The current candidate branch is `agent/fix-review-p1` at
+`4223507e225669100415e877b166795847a94f60`. The grouped continuation after
+the prior overnight record validates exact gateway aliases and the governed
+MCP key, prevents LiteLLM/tool-service/Agent Server/model stages from running
+after a provider or gateway readiness failure, preserves narrow startup,
+health, and route failure classes, scans disposable workspace evidence for
+secret canaries using scalar counts/fingerprints only, and publishes runtime
+materialization readiness to downstream workflow steps. The workflow remains
+manual-only; no workflow was dispatched in this refresh.
+
+Repository-local checks at this SHA report:
+
+```text
+STATIC_RELEASE_LEDGER=63/63 PASS
+STATIC_RELEASE_DECISION=NO-RELEASE
+PENDING_EVIDENCE_ITEMS=2
+DOCUMENTATION_INDEX=PASS (13 features, 3 plans, 22 maintained documents)
+OPENHANDS_WORKFLOW_VALIDATION=PASS
+OPENHANDS_OFFLINE_HARNESS=PASS
+OPENHANDS_GATE_MATRIX=BLOCKED_INCOMPLETE_MANDATORY_GATES
+```
+
+The gate-matrix blocker is the intentional absence of live provider/task and
+lifecycle evidence, not a repository implementation failure. The only
+planned persistent OpenHands certification secret remains `GROQ_API_KEY`;
+tool, session, internal gateway, profile, and MCP values remain run-scoped.
+OpenHands remains inactive, OpenCode remains the current default, and the
+global release decision remains `NO-RELEASE`.
+
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are
 required for this release; Firecracker is an optional unverified high-risk
