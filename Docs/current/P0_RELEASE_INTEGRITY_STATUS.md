@@ -71,6 +71,17 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 
 ### Repository-local continuation refresh — 2026-08-23
 
+#### Historical workflow implementation failure — run 32645055499
+
+Run `32645055499` (job `97207942478`) is retained as
+[`github-run-32645055499-failure.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32645055499-failure.json).
+The candidate and provider preflights passed, and OpenHands, LiteLLM, and
+OmniRoute image pulls all completed successfully. The live gate wave was not
+started. The failure is `FAILED_CERTIFICATION_IMPLEMENTATION` caused by a
+malformed workflow heredoc. Commit `a02899b` restores both missing terminators
+and strengthens validation; this evidence is not provider, image, gVisor,
+security, or OpenHands runtime evidence and does not change `NO-RELEASE`.
+
 The certification implementation baseline is `agent/fix-review-p1` at
 `cedcee2a1efd740439b7b54d45f17610fc6c8a71`; runtime implementation remains
 the same pinned OpenHands candidate. The latest hardening verifies exact

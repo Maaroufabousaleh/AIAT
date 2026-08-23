@@ -39,7 +39,8 @@
     "service_startup_failure_evidence": "cedcee2a1efd740439b7b54d45f17610fc6c8a71",
     "overnight_readiness_documentation": "393282d16e1475f618904e21a25013835da18e4a",
     "network_readiness_documentation": "60e5046f7fc4ed13dde3700a6c88faf5af1e1c8a",
-    "startup_evidence_documentation": "3ed4993439ee6dc08daccb0177f0d2b72a2e3955"
+    "startup_evidence_documentation": "3ed4993439ee6dc08daccb0177f0d2b72a2e3955",
+    "workflow_heredoc_fix": "a02899bc7f36cf79948629b23507db8fa7d557d4"
   },
   "dependency_map": [
     "manual workflow -> exact candidate checkout and candidate preflight",
@@ -117,6 +118,25 @@
     ],
     "live_provider_evidence": "requires operator-supplied GROQ_API_KEY",
     "workflow_dispatched_during_reconciliation": false
+  },
+  "historical_workflow_failure": {
+    "run_id": "32645055499",
+    "job_id": "97207942478",
+    "artifact_id": "9494670248",
+    "artifact_digest": "sha256:853293b57127bc7b5766e93655de5b300cf678e3e86aaa27fd9f0bc0a1bf4519",
+    "classification": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_reason": "MALFORMED_WORKFLOW_HEREDOC",
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "image_pulls": {
+      "openhands": "PASS",
+      "litellm": "PASS",
+      "omniroute": "PASS"
+    },
+    "live_gate_wave": "NOT_RUN",
+    "evidence_ref": "github-run-32645055499-failure.json",
+    "fix_commit": "a02899bc7f36cf79948629b23507db8fa7d557d4",
+    "historical_evidence_immutable": true
   },
   "evidence_policy": {
     "raw_model_payloads_retained": false,

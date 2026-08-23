@@ -21,6 +21,15 @@ execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
 OpenCode remains the current default.
 
+Run `32645055499` (job `97207942478`) is retained as failed workflow
+implementation evidence for the inactive OpenHands candidate. Provider and
+candidate preflights passed, and the OpenHands, LiteLLM, and OmniRoute pinned
+images all pulled successfully; the live gate wave was not attempted. The
+failure was `FAILED_CERTIFICATION_IMPLEMENTATION` / `MALFORMED_WORKFLOW_HEREDOC`.
+Commit `a02899b` restores the missing workflow terminators and adds exact
+YAML-rendered heredoc validation. This does not count as provider or runtime
+evidence and does not alter the global `NO-RELEASE` decision.
+
 The subsequent reviewed continuation commits `6a5b79a`, `72a0313`,
 `4708bbf`, `7d9a96d`, `7ef369e`, `d012ab9`, `88ad977`, `1154a5f`,
 `c1c6700`, `f4f261c`, and `64c85c3` reconcile candidate pins, retained

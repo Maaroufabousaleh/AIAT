@@ -22,6 +22,18 @@ The overnight dependency and full local commit reconciliation is recorded in
 [`overnight-reconciliation.json`](./overnight-reconciliation.json). It contains
 only exact commit identifiers, scalar wiring, and secret-free boundary state.
 
+### Historical workflow implementation failure
+
+Run `32645055499` (job `97207942478`) is preserved as
+[`github-run-32645055499-failure.json`](./github-run-32645055499-failure.json).
+The provider preflight and all three pinned image pulls passed; no live gate
+wave ran. The run is classified as `FAILED_CERTIFICATION_IMPLEMENTATION` with
+reason `MALFORMED_WORKFLOW_HEREDOC`, not as a provider, image, gVisor, or
+OpenHands runtime failure. The workflow fix is `a02899b`, which restores both
+missing `PY` terminators in the image/provenance step and makes the validator
+reject unclosed or marker-count-mismatched heredocs. The next candidate SHA
+must be frozen after this fix and verified by the safe preflight.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,

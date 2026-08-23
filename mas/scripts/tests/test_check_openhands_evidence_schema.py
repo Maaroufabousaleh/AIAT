@@ -74,3 +74,31 @@ def test_invalid_json_is_reported_without_retaining_contents(tmp_path: Path) -> 
     assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
     assert any(item.startswith("json_invalid:broken.json") for item in report["errors"])
     assert "not-json" not in json.dumps(report, sort_keys=True)
+
+
+def test_historical_workflow_failure_record_is_scalar_and_fail_closed() -> None:
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32645055499-failure.json"
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["workflow"]["classification"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+    assert record["workflow"]["failure_reason"] == "MALFORMED_WORKFLOW_HEREDOC"
+    assert record["workflow"]["live_gate_wave"] == "NOT_RUN"
+    assert record["image_pulls"] == {
+        "openhands": {
+            "status": "PASS",
+            "image": record["image_pulls"]["openhands"]["image"],
+        },
+        "litellm": {
+            "status": "PASS",
+            "image": record["image_pulls"]["litellm"]["image"],
+        },
+        "omniroute": {
+            "status": "PASS",
+            "image": record["image_pulls"]["omniroute"]["image"],
+        },
+    }
+    assert record["artifact"]["raw_logs_retained"] is False
+    assert record["artifact"]["credentials_retained"] is False
+    assert record["artifact"]["payloads_retained"] is False
