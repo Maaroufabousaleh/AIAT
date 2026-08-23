@@ -82,7 +82,8 @@ requires an allowed delete status plus absence read-back; and `d21b4d7` makes
 repository-relative interface evidence resolve independently of the process
 working directory. `2d44d10` broadens the offline dispatch suite, `29df0d3`
 adds the exact-pin steward-registration preflight, and `7b2e60d` verifies
-workspace/tool-image cleanup in the zero-residue path. The registration
+workspace/tool-image cleanup in the zero-residue path; `2d3ee8f` records that
+cleanup hardening in the maintained status surfaces. The registration
 preflight rejects incomplete or mismatched gate artifacts before any
 certification record is submitted. Offline fixture evidence is not live
 certification evidence.

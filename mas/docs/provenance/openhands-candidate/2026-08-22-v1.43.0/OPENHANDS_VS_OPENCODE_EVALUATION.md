@@ -95,9 +95,11 @@ approved gateway/tool-service allowlist, read-only root where supported, and
 no host-path escape. The adapter rejects a missing or non-absolute workspace
 and rejects artifact paths that resolve outside it.
 
-Sandbox compatibility is not yet proven. OpenHands Agent Server requires its
-Python/runtime and shell dependencies to execute inside the profile; the
-candidate must pass a real gVisor run before any certification decision.
+The native gVisor prerequisite is proven by retained Ubuntu/runsc evidence in
+workflow run `32541110299`, and the prior OpenHands run `32594885180` proved
+Agent Server startup/readiness under runsc. The complete candidate 20-gate
+live wave, including model execution and lifecycle behavior, remains unrun;
+the retained sandbox evidence is not activation approval.
 
 Graceful pause, immediate interrupt, and `/run` resume are interface-compatible
 with a semantic caveat: OpenHands leaves an interrupted conversation paused,
@@ -139,6 +141,13 @@ finding is accepted or waived by this evaluation.
 
 ## Comparison with the pinned OpenCode candidate
 
+The neutral machine-readable comparison record is
+[`comparison-matrix.json`](./comparison-matrix.json). It is intentionally
+`NOT_RUN` with no winner or recommendation until both candidates are measured
+against the same disposable task, governed model/budget, security wave, and
+cleanup assertions. The record retains scalar metrics only; model responses,
+credentials, and workspace payloads are not comparison evidence.
+
 | Dimension | OpenHands candidate | OpenCode baseline | Evaluation state |
 | --- | --- | --- | --- |
 | Integration complexity | REST + WebSocket + workspace/file/git normalization; profile-based server setup | Existing session/event/permission/MCP adapter | OpenHands is a new adapter, not a drop-in |
@@ -148,7 +157,7 @@ finding is accepted or waived by this evaluation.
 | Recovery | Persisted conversation can be rerun after pause/error | Existing OpenCode session reconciliation | OpenHands recovery is unverified |
 | Artifacts | Git changes plus streamed file download; easy to hash without retaining contents | Session diff plus local workspace reads | Different implementation, same AIAT artifact contract |
 | Events | Typed WebSocket stream with unknown-event tolerance | OpenCode SSE event stream | Both normalize into AIAT events; raw payloads remain excluded |
-| Sandbox | Requires live gVisor certification of Agent Server dependencies | Existing OpenCode gVisor evidence path | Not yet comparable from live evidence |
+| Sandbox | Native Ubuntu/runsc startup and readiness evidence retained; complete candidate wave remains open | Existing OpenCode gVisor evidence path | Candidate live lifecycle/task comparison not run |
 | Security | New source/image/SBOM/scan evidence required | OpenCode v1.18.21 evidence remains separate and currently not interpretable | No automatic security conclusion |
 | Cost/latency | Must be measured with identical task/model/budget wave | Existing baseline measurements | Not run |
 | Maintenance | Upstream SDK and Agent Server release cadence; profile/API pinning | Existing OpenCode adapter and runtime pin | OpenHands adds a second external surface |
@@ -164,7 +173,7 @@ OPENCODE_ADAPTER_CODE_REUSABLE_PERCENT=approximately 65% of adapter architecture
 NEW_FILES_REQUIRED=parallel adapter; adapter contract tests; pinned interface report; inactive candidate manifest; evaluation/comparison record
 FILES_REQUIRING_CHANGE=only the new candidate files and third-party metadata entry; existing OpenCode adapter/manifests remain unchanged
 TOOL_SERVICE_BRIDGE_REQUIRED=YES
-SANDBOX_COMPATIBILITY=UNVERIFIED_GVISOR_REQUIRED
+SANDBOX_COMPATIBILITY=NATIVE_RUNSC_EVIDENCE_PASS_COMPLETE_CANDIDATE_WAVE_PENDING
 CANCELLATION_COMPATIBILITY=MAPPABLE_WITH_SEMANTIC_CAVEAT
 RECOVERY_COMPATIBILITY=MAPPABLE_BUT_UNVERIFIED
 CERTIFICATION_REQUIREMENTS=all 20 gates listed above, with retained structured evidence and no waived blockers

@@ -1,0 +1,48 @@
+{
+  "schema_version": "aiat.external-worker-comparison.v1",
+  "status": "NOT_RUN",
+  "decision": null,
+  "candidates": {
+    "openhands": {
+      "name": "OpenHands Software Agent SDK + Agent Server",
+      "version": "1.43.0",
+      "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+      "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+      "worker_status": "INACTIVE"
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "version": "1.18.21",
+      "source_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+      "image_digest": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "worker_status": "CURRENT_DEFAULT_UNCHANGED"
+    }
+  },
+  "task": {
+    "fixture": "mas/scripts/fixtures/openhands-coding-task",
+    "task_spec": "coding-task-spec.json",
+    "same_task_and_budget_required": true,
+    "same_provider_and_model_required": true
+  },
+  "metrics": {
+    "task_success": {"status": "NOT_RUN", "value": null},
+    "tests_passed": {"status": "NOT_RUN", "value": null},
+    "correctness": {"status": "NOT_RUN", "value": null},
+    "diff_size": {"status": "NOT_RUN", "value": null},
+    "diff_quality": {"status": "NOT_RUN", "value": null},
+    "wall_time_ms": {"status": "NOT_RUN", "value": null},
+    "model_tokens": {"status": "NOT_RUN", "value": null},
+    "approximate_model_cost": {"status": "NOT_RUN", "value": null},
+    "tool_calls": {"status": "NOT_RUN", "value": null},
+    "pause": {"status": "NOT_RUN", "value": null},
+    "interrupt": {"status": "NOT_RUN", "value": null},
+    "recovery": {"status": "NOT_RUN", "value": null},
+    "timeout": {"status": "NOT_RUN", "value": null},
+    "security_gate": {"status": "NOT_RUN", "value": null},
+    "integration_complexity": {"status": "NOT_RUN", "value": null},
+    "cleanup": {"status": "NOT_RUN", "value": null}
+  },
+  "payloads_retained": false,
+  "raw_model_responses_retained": false,
+  "winner_requires_complete_governed_evidence": true
+}

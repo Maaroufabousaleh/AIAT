@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `2d44d10` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `0d821bd` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -52,7 +52,11 @@ read-back, and resolve repository-relative interface evidence independently of
 the service working directory. `2d44d10` also broadens the offline dispatch
 suite, `29df0d3` adds a read-only exact-pin steward-registration preflight, and
 `7b2e60d` extends zero-residue cleanup to the disposable workspace and tool
-image. The registration preflight now requires a complete 20-gate artifact
+image; `2d3ee8f` records that cleanup hardening in the maintained status
+surfaces. `0d821bd` additionally binds the exact candidate image platform,
+uses the governed task specification prompt in the live request without
+retaining it in evidence, and validates the neutral comparison record. The
+registration preflight now requires a complete 20-gate artifact
 bound to the exact candidate/source/image pins before any steward submission.
 These changes add no live
 provider evidence and do not alter the global `NO-RELEASE` decision.
