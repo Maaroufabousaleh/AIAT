@@ -112,3 +112,51 @@ def test_image_cross_check_retains_only_path_classification(monkeypatch) -> None
     assert result["classification_counts"]["SOURCE_ONLY"] == 1
     assert any(row["path_class"] == "ci_release" for row in result["paths"])
     assert result["payloads_retained"] is False
+
+
+def test_cleanup_failure_cannot_leave_a_passed_certification(monkeypatch, tmp_path: Path) -> None:
+    certify_module = _module()
+
+    def fake_prepare(_repository: str, _version: str, root: Path):
+        source = root / "scan-source"
+        source.mkdir()
+        return ({"commit": certify_module.EXPECTED_SOURCE_COMMIT}, source)
+
+    monkeypatch.setattr(certify_module, "_prepare_source", fake_prepare)
+    monkeypatch.setattr(certify_module, "_current_git_revision", lambda: "b" * 40)
+    monkeypatch.setattr(certify_module, "_tool_version", lambda name, output: {"name": name, "available": True})
+    monkeypatch.setattr(
+        certify_module,
+        "_run_scanner",
+        lambda name, command, source, output_dir: {
+            "name": name,
+            "status": "pass",
+            "finding_count": 0,
+            "severity_counts": {},
+            "scanner_error_count": 0,
+            "scanner_errors": [],
+            "failure_classes": [],
+            "raw_output_retained": True,
+            "raw_json_path": f"{name}.json",
+        },
+    )
+    monkeypatch.setattr(certify_module, "_run_sbom", lambda source, output: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_run_image_sbom", lambda image, output: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_image_probe", lambda image: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_run_boundary", lambda command, output: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_load_json", lambda path: {"status": "pass", "failure_classes": []})
+    monkeypatch.setattr(certify_module, "_agent_server_probe", lambda base, key, commit, version: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_container_probe", lambda name: {"status": "pass", "runtime": "runsc"})
+    monkeypatch.setattr(certify_module, "_image_cross_check", lambda name, rows: {"status": "pass"})
+    monkeypatch.setattr(certify_module, "_cleanup_container", lambda name: {"status": "blocked", "remaining_containers": 1})
+
+    report = certify_module.certify(
+        repository=certify_module.DEFAULT_REPOSITORY,
+        version=certify_module.DEFAULT_VERSION,
+        image_ref=certify_module.DEFAULT_IMAGE,
+        output_dir=tmp_path,
+        boundary_command=["true"],
+        tooling_manifest_path=tmp_path / "tooling.json",
+    )
+    assert report["status"] == "blocked"
+    assert "agent_server_container_residue" in report["blockers"]

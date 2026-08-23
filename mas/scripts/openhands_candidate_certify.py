@@ -708,15 +708,18 @@ def certify(
         failure_classes.add(SECURITY_FINDING)
 
     security_interpretable = not scanner_errors and all(row.get("status") == "pass" for row in scanner_rows)
+    cleanup = _cleanup_container(container_name)
+    if cleanup.get("status") != "pass":
+        blockers.append("agent_server_container_residue")
+    # Cleanup is a mandatory certification gate.  Compute the decision only
+    # after cleanup so a late residue finding cannot leave a false PASS or
+    # findings-only status in the retained report.
     if blockers:
         decision = "blocked"
     elif findings:
         decision = "findings_review_required"
     else:
         decision = "passed"
-    cleanup = _cleanup_container(container_name)
-    if cleanup.get("status") != "pass":
-        blockers.append("agent_server_container_residue")
     report = {
         "schema_version": SCHEMA,
         "programme_scope": "personal-internal-only",
