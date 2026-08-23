@@ -152,6 +152,23 @@ def test_omniroute_startup_failure_gets_runtime_blocker_class(tmp_path: Path) ->
     assert report["evidence_blocker_status"] == "BLOCKED_RUNTIME_STARTUP"
 
 
+def test_omniroute_readiness_subclasses_remain_runtime_blockers(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    for failure_class in (
+        "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE",
+        "OMNIROUTE_APPLICATION_HEALTH_FAILURE",
+        "OMNIROUTE_HEALTH_TIMEOUT",
+    ):
+        (tmp_path / "gateway" / "omniroute").mkdir(exist_ok=True)
+        (tmp_path / "gateway" / "omniroute" / "health.json").write_text(
+            json.dumps({"health_status": "BLOCKED", "failure_class": failure_class}),
+            encoding="utf-8",
+        )
+        report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+        assert report["status"] == "BLOCKED_RUNTIME_STARTUP"
+
+
 def test_candidate_preflight_failure_is_not_reported_as_provider_failure(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     report = module.evaluate(

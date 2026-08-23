@@ -28,6 +28,9 @@ LITELLM_STARTUP_FAILURE = "LITELLM_STARTUP_FAILURE"
 LITELLM_HEALTH_FAILURE = "LITELLM_HEALTH_FAILURE"
 OMNIROUTE_STARTUP_FAILURE = "OMNIROUTE_STARTUP_FAILURE"
 OMNIROUTE_HEALTH_FAILURE = "OMNIROUTE_HEALTH_FAILURE"
+OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE = "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE"
+OMNIROUTE_APPLICATION_HEALTH_FAILURE = "OMNIROUTE_APPLICATION_HEALTH_FAILURE"
+OMNIROUTE_HEALTH_TIMEOUT = "OMNIROUTE_HEALTH_TIMEOUT"
 LITELLM_TO_OMNIROUTE_ROUTE_FAILURE = "LITELLM_TO_OMNIROUTE_ROUTE_FAILURE"
 OPENHANDS_TO_GATEWAY_NETWORK_FAILURE = "OPENHANDS_TO_GATEWAY_NETWORK_FAILURE"
 MODEL_GATEWAY_AUTH_FAILURE = "MODEL_GATEWAY_AUTH_FAILURE"
@@ -130,6 +133,13 @@ def classify_failure(
         "gateway_response": MODEL_GATEWAY_RESPONSE_INVALID,
     }
     if normalized_stage in internal_stage_defaults:
+        if normalized_stage == "omniroute_health":
+            if http_status in {401, 403}:
+                return GatewayFailure(OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE, normalized_stage, http_status)
+            if http_status is not None and http_status >= 500:
+                return GatewayFailure(OMNIROUTE_APPLICATION_HEALTH_FAILURE, normalized_stage, http_status, retryable=True)
+            if exception in {"readtimeout", "connecttimeout", "connecterror", "connectionerror", "networkerror", "dnserror"}:
+                return GatewayFailure(OMNIROUTE_HEALTH_TIMEOUT, normalized_stage, http_status, retryable=True)
         retryable = bool(
             exception in {"readtimeout", "connecttimeout", "connecterror", "connectionerror", "networkerror", "dnserror"}
             or (http_status is not None and http_status >= 500)

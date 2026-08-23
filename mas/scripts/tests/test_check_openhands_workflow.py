@@ -135,6 +135,29 @@ def test_gateway_ports_are_loopback_only_and_internal_target_is_not_host_bound()
     assert "laptop_or_host_gateway_dependency" in module.validate(weakened)["errors"]
 
 
+def test_omniroute_readiness_and_api_port_contract_are_explicit() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert report["status"] == "PASS", report["errors"]
+    assert "api/monitoring/health" in text
+    assert "check_openhands_omniroute_readiness.py" in text
+    assert "--publish 127.0.0.1:20129:20129" in text
+    assert "--env REQUIRE_API_KEY=true" in text
+    assert "steps.omniroute_auth.outputs.ready == 'true'" in text
+    config = Path(__file__).resolve().parents[2] / "infra" / "compose" / "litellm_openhands_certification.yaml"
+    assert "http://omniroute:20129/v1" in config.read_text(encoding="utf-8")
+
+
+def test_wrong_omniroute_management_port_is_rejected_by_static_validation(tmp_path: Path, monkeypatch) -> None:
+    module = _module()
+    config = tmp_path / "litellm_openhands_certification.yaml"
+    config.write_text("api_base: http://omniroute:20128/v1\n", encoding="utf-8")
+    monkeypatch.setattr(module, "LITELLM_CERTIFICATION_CONFIG", config)
+    report = module.validate(_workflow())
+    assert "litellm_omniroute_management_port_used_for_api" in report["errors"]
+
+
 def test_live_task_requires_host_test_and_workspace_verification() -> None:
     module = _module()
     text = _workflow()

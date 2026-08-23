@@ -14,6 +14,7 @@ import yaml
 
 SCHEMA = "aiat.openhands-certification-workflow-validation.v1"
 WORKFLOW_NAME = ".github/workflows/openhands-candidate-certification.yml"
+LITELLM_CERTIFICATION_CONFIG = Path(__file__).resolve().parents[1] / "infra" / "compose" / "litellm_openhands_certification.yaml"
 EXPECTED_IMAGES = (
     "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
     "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
@@ -141,6 +142,56 @@ def _gateway_provenance_helper_issues() -> list[str]:
     return ["gateway_provenance_helper_pin_or_tag_logic_missing"] if any(item not in helper for item in required) else []
 
 
+def _omniroute_readiness_helper_issues() -> list[str]:
+    """Ensure readiness uses the pinned public health and narrow classes."""
+
+    helper_path = Path(__file__).with_name("check_openhands_omniroute_readiness.py")
+    try:
+        helper = helper_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["omniroute_readiness_helper_missing"]
+    required = (
+        'EXPECTED_HEALTH_PATH = "/api/monitoring/health"',
+        '"OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE"',
+        '"OMNIROUTE_APPLICATION_HEALTH_FAILURE"',
+        '"OMNIROUTE_HEALTH_TIMEOUT"',
+        '"OMNIROUTE_STARTUP_FAILURE"',
+        '"raw_response_retained": False',
+    )
+    return ["omniroute_readiness_helper_contract_missing"] if any(item not in helper for item in required) else []
+
+
+def _omniroute_auth_helper_issues() -> list[str]:
+    """Ensure the provider API auth boundary is tested without retaining keys."""
+
+    helper_path = Path(__file__).with_name("check_openhands_omniroute_auth.py")
+    try:
+        helper = helper_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["omniroute_auth_helper_missing"]
+    required = (
+        '"unauthenticated_provider_route_denied"',
+        '"wrong_gateway_key_denied"',
+        '"correct_gateway_key_accepted"',
+        '"credentials_retained": False',
+    )
+    return ["omniroute_auth_helper_contract_missing"] if any(item not in helper for item in required) else []
+
+
+def _litellm_omniroute_port_issues() -> list[str]:
+    """Reject a LiteLLM route aimed at OmniRoute's management port."""
+
+    try:
+        config = LITELLM_CERTIFICATION_CONFIG.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["litellm_certification_config_missing"]
+    if "api_base: http://omniroute:20128/v1" in config:
+        return ["litellm_omniroute_management_port_used_for_api"]
+    if "api_base: http://omniroute:20129/v1" not in config:
+        return ["litellm_omniroute_api_port_missing"]
+    return []
+
+
 def validate(text: str) -> dict[str, Any]:
     errors: list[str] = []
     run_block_issues = _workflow_run_block_issues(text)
@@ -175,6 +226,9 @@ def validate(text: str) -> dict[str, Any]:
     ):
         errors.append("gateway_provenance_diagnostic_helper_missing")
     errors.extend(_gateway_provenance_helper_issues())
+    errors.extend(_omniroute_readiness_helper_issues())
+    errors.extend(_omniroute_auth_helper_issues())
+    errors.extend(_litellm_omniroute_port_issues())
     for image in EXPECTED_IMAGES:
         if image not in text:
             errors.append(f"exact_image_pin_missing:{image.split('@', 1)[0]}")
@@ -277,6 +331,14 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("internal_run_scoped_secret_required_as_github_secret")
     if "OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000" not in text:
         errors.append("canonical_gateway_url_missing")
+    if "check_openhands_omniroute_readiness.py" not in text or "api/monitoring/health" not in text:
+        errors.append("omniroute_public_readiness_probe_missing")
+    if "--publish 127.0.0.1:20129:20129" not in text or "--env API_PORT=20129" not in text:
+        errors.append("omniroute_api_port_binding_missing")
+    if "--env REQUIRE_API_KEY=true" not in text or "Verify OmniRoute OpenAI API authentication boundary" not in text:
+        errors.append("omniroute_auth_boundary_missing")
+    if "check_openhands_omniroute_auth.py" not in text or "http://127.0.0.1:20129/v1/models" not in text:
+        errors.append("omniroute_auth_evidence_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:
         errors.append("postrun_task_verification_missing")
     if (

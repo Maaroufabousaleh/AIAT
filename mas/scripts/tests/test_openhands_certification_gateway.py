@@ -89,6 +89,8 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     assert report["status"] == "PASS"
     assert report["provider_count"] == 1
     assert report["resolved_provider_model"] == "groq/llama-3.3-70b-versatile"
+    assert report["management_endpoint"] == "http://omniroute:20128"
+    assert report["openai_compatible_endpoint"] == "http://omniroute:20129/v1"
     assert provider_key not in serialized
     assert management_key not in serialized
     client.close()
@@ -98,7 +100,7 @@ def test_route_probe_retains_only_scalar_usage() -> None:
     gateway_key = "gateway-secret-must-not-appear"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/api/health/ping":
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
             return httpx.Response(200, json={"status": "ok"})
         if request.method == "GET" and request.url.path == "/health/readiness":
             return httpx.Response(200, json={"status": "ok"})
@@ -132,7 +134,7 @@ def test_route_probe_retains_only_scalar_usage() -> None:
 
 def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/api/health/ping":
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
             return httpx.Response(200, json={"status": "ok"})
         if request.method == "GET" and request.url.path == "/health/readiness":
             return httpx.Response(200, json={"status": "ok"})
@@ -155,7 +157,7 @@ def test_route_probe_distinguishes_internal_gateway_auth_failure() -> None:
 
 def test_route_probe_preserves_omniroute_health_failure_stage() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/api/health/ping":
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
             return httpx.Response(503, json={"status": "redacted"})
         raise AssertionError(request)
 
@@ -174,7 +176,7 @@ def test_route_probe_preserves_omniroute_health_failure_stage() -> None:
 
 def test_route_probe_preserves_litellm_health_failure_stage() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/api/health/ping":
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
             return httpx.Response(200, json={"status": "ok"})
         if request.method == "GET" and request.url.path == "/health/readiness":
             return httpx.Response(503, json={"status": "redacted"})
@@ -235,7 +237,7 @@ def test_disposable_litellm_config_has_one_governed_omniroute_route() -> None:
     params = route["litellm_params"]
     assert params == {
         "model": "openai/groq/llama-3.3-70b-versatile",
-        "api_base": "http://omniroute:20128/v1",
+        "api_base": "http://omniroute:20129/v1",
         "api_key": "os.environ/OMNIROUTE_API_KEY",
     }
     assert config["general_settings"] == {"master_key": "os.environ/LITELLM_MASTER_KEY"}
@@ -249,7 +251,7 @@ def test_disposable_route_cannot_add_fallback_provider_or_model() -> None:
     config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     models = config["model_list"]
     assert [item["model_name"] for item in models] == ["omniroute-coding"]
-    assert all(item["litellm_params"]["api_base"] == "http://omniroute:20128/v1" for item in models)
+    assert all(item["litellm_params"]["api_base"] == "http://omniroute:20129/v1" for item in models)
 
 
 def test_omniroute_control_transport_failure_is_not_classified_as_provider_failure() -> None:

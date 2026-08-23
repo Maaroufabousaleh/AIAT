@@ -34,6 +34,9 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "litellm_health": module.LITELLM_HEALTH_FAILURE,
         "omni_start": module.OMNIROUTE_STARTUP_FAILURE,
         "omni_health": module.OMNIROUTE_HEALTH_FAILURE,
+        "omni_health_auth": module.OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE,
+        "omni_health_app": module.OMNIROUTE_APPLICATION_HEALTH_FAILURE,
+        "omni_health_timeout": module.OMNIROUTE_HEALTH_TIMEOUT,
         "route": module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE,
         "openhands_network": module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE,
         "gateway_auth": module.MODEL_GATEWAY_AUTH_FAILURE,
@@ -55,6 +58,9 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "litellm_health": module.classify_failure(stage="litellm_health"),
         "omni_start": module.classify_failure(stage="omniroute_startup"),
         "omni_health": module.classify_failure(stage="omniroute_health"),
+        "omni_health_auth": module.classify_failure(stage="omniroute_health", http_status=401),
+        "omni_health_app": module.classify_failure(stage="omniroute_health", http_status=503),
+        "omni_health_timeout": module.classify_failure(stage="omniroute_health", exception_type="ReadTimeout"),
         "route": module.classify_failure(stage="litellm_to_omniroute"),
         "openhands_network": module.classify_failure(stage="openhands_to_gateway"),
         "gateway_auth": module.classify_failure(stage="gateway_auth"),
@@ -85,7 +91,7 @@ def test_gateway_authentication_is_not_reported_as_provider_credential_failure()
 
 def test_internal_gateway_stages_precede_provider_http_heuristics() -> None:
     module = _load("openhands_gateway_errors")
-    assert module.classify_failure(stage="omniroute_health", http_status=503).failure_class == module.OMNIROUTE_HEALTH_FAILURE
+    assert module.classify_failure(stage="omniroute_health", http_status=503).failure_class == module.OMNIROUTE_APPLICATION_HEALTH_FAILURE
     assert module.classify_failure(stage="litellm_health", exception_type="ConnectError").failure_class == module.LITELLM_HEALTH_FAILURE
     assert module.classify_failure(stage="litellm_to_omniroute", http_status=502).failure_class == module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE
     assert module.classify_failure(stage="openhands_to_gateway", exception_type="ConnectError").failure_class == module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE

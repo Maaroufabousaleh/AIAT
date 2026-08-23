@@ -7,7 +7,9 @@ model_list:
       # LiteLLM's OpenAI-compatible adapter forwards this exact provider/model
       # identity to the OmniRoute OpenAI-compatible endpoint.
       model: openai/groq/llama-3.3-70b-versatile
-      api_base: http://omniroute:20128/v1
+      # OmniRoute v3.8.38 serves dashboard/management on 20128 and its
+      # OpenAI-compatible API bridge on API_PORT=20129.
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
 litellm_settings:

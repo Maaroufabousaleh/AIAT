@@ -345,66 +345,77 @@ jobs:
           docker run --detach --name "$name" \
             --network "$network" --network-alias omniroute \
             --publish 127.0.0.1:20128:20128 \
+            --publish 127.0.0.1:20129:20129 \
             --env PORT=20128 \
             --env DASHBOARD_PORT=20128 \
             --env API_PORT=20129 \
             --env API_HOST=0.0.0.0 \
+            --env REQUIRE_API_KEY=true \
             --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             --env GROQ_API_KEY="$GROQ_API_KEY" \
             "$OMNIROUTE_IMAGE" || run_exit_code=$?
           echo "omniroute_container=$name" >> "$GITHUB_ENV"
           echo "container=$name" >> "$GITHUB_OUTPUT"
-          healthy=0
-          if [ "$run_exit_code" -eq 0 ]; then
-            for _ in $(seq 1 60); do
-              if curl --fail --silent --show-error http://127.0.0.1:20128/api/health/ping >/dev/null; then
-                healthy=1
-                break
-              fi
-              sleep 2
-            done
+          container_running=false
+          if docker inspect "$name" >/dev/null 2>&1; then
             docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
             docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-runtime.json"
+            container_running="$(docker inspect --format '{{if .State.Running}}true{{else}}false{{end}}' "$name")"
           fi
-          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
+          readiness_exit_code=0
+          # The readiness helper emits OMNIROUTE_STARTUP_FAILURE,
+          # OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE,
+          # OMNIROUTE_APPLICATION_HEALTH_FAILURE, or OMNIROUTE_HEALTH_TIMEOUT.
+          uv run python scripts/check_openhands_omniroute_readiness.py \
+            --url http://127.0.0.1:20128/api/monitoring/health \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" \
+            --run-exit-code "$run_exit_code" \
+            --container-running "$container_running" \
+            --attempts 60 --interval-seconds 2 --timeout-seconds 5 || readiness_exit_code=$?
+          readiness_status="$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
           import json
-          import os
           import sys
           from pathlib import Path
 
-          healthy, output = sys.argv[1:]
-          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
-          startup_failed = run_exit_code != "0"
-          Path(output).write_text(
-              json.dumps(
-                  {
-                      "schema_version": "aiat.openhands-certification-omniroute-health.v1",
-                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
-                      "failure_class": None if healthy == "1" else "OMNIROUTE_STARTUP_FAILURE" if startup_failed else "OMNIROUTE_HEALTH_FAILURE",
-                      "run_exit_code": int(run_exit_code),
-                      "endpoint": "http://omniroute:20128/api/health/ping",
-                      "provider_count_expected": 1,
-                      "raw_response_retained": False,
-                  },
-                  sort_keys=True,
-                  indent=2,
-              )
-              + "\n",
-              encoding="utf-8",
-          )
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print(report.get("status", "BLOCKED") if isinstance(report, dict) else "BLOCKED")
           PY
-          if [ "$run_exit_code" -ne 0 ]; then
+          )"
+          if [ "$run_exit_code" -ne 0 ] || [ "$readiness_exit_code" -ne 0 ] || [ "$readiness_status" != PASS ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "status=BLOCKED_RUNTIME_STARTUP" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          test "$healthy" = 1
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "status=PASS" >> "$GITHUB_OUTPUT"
 
+      - name: Verify OmniRoute OpenAI API authentication boundary
+        id: omniroute_auth
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          output="$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/auth.json"
+          mkdir -p "$(dirname "$output")"
+          echo "::add-mask::$OPENHANDS_MODEL_GATEWAY_API_KEY"
+          uv run python scripts/check_openhands_omniroute_auth.py \
+            --url http://127.0.0.1:20129/v1/models \
+            --output "$output"
+          auth_exit_code=$?
+          if [ "$auth_exit_code" -eq 0 ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure exactly one disposable OmniRoute provider route
         id: provider
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true' && steps.omniroute_auth.outputs.ready == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

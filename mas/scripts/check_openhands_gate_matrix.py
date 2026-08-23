@@ -78,6 +78,9 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
             "LITELLM_HEALTH_FAILURE",
             "OMNIROUTE_STARTUP_FAILURE",
             "OMNIROUTE_HEALTH_FAILURE",
+            "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE",
+            "OMNIROUTE_APPLICATION_HEALTH_FAILURE",
+            "OMNIROUTE_HEALTH_TIMEOUT",
         }:
             return "BLOCKED_RUNTIME_STARTUP"
         if failure_class in {"OPENHANDS_AGENT_SERVER_STARTUP_FAILURE", "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE"}:

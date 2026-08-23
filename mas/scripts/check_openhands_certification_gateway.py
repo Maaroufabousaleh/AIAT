@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_gateway_errors import classify_failure  # type: ignore
 
 SCHEMA = "aiat.openhands-certification-gateway-health.v1"
+OMNIROUTE_HEALTH_PATH = "/api/monitoring/health"
 AIAT_MODEL = "omniroute-coding"
 PROVIDER = "groq"
 PROVIDER_MODEL = "llama-3.3-70b-versatile"
@@ -64,7 +65,11 @@ def _health(client: httpx.Client, path: str, *, stage: str) -> dict[str, Any]:
             stage=stage,
             exception_type="ConnectError",
         ) from exc
-    return {"path": path, "http_status": response.status_code, "passed": response.status_code == 200}
+    return {
+        "path": path,
+        "http_status": response.status_code,
+        "passed": 200 <= response.status_code < 300,
+    }
 
 
 def probe(
@@ -83,7 +88,7 @@ def probe(
             raise GatewayProbeError("gateway_endpoint_missing", stage="gateway_response")
         omniroute = _health(
             client,
-            f"{omniroute_url.rstrip('/')}/api/health/ping",
+            f"{omniroute_url.rstrip('/')}{OMNIROUTE_HEALTH_PATH}",
             stage="omniroute_health",
         )
         if not omniroute["passed"]:
