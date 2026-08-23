@@ -110,6 +110,35 @@ def test_host_task_verification_does_not_infer_pass_without_workspace(tmp_path: 
     assert blockers == ["test_execution_evidence_unavailable"]
 
 
+def test_host_task_verification_scans_workspace_files_without_retaining_secret(tmp_path: Path) -> None:
+    module = _module()
+    fixture = tmp_path / "fixture"
+    workspace = tmp_path / "workspace"
+    (fixture / "slugger").mkdir(parents=True)
+    (fixture / "tests").mkdir()
+    (fixture / "slugger" / "core.py").write_text("before\n", encoding="utf-8")
+    (fixture / "tests" / "test_slugger.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    import shutil
+
+    shutil.copytree(fixture, workspace)
+    (workspace / "slugger" / "core.py").write_text("after\n", encoding="utf-8")
+    (workspace / "unexpected.txt").write_text("sentinel-value", encoding="utf-8")
+    details, blockers = module._verify_host_task(
+        task_definition={
+            "test_command": "python -m pytest -q",
+            "expected_changed_paths": ["slugger/core.py", "unexpected.txt"],
+            "forbidden_changed_paths": [],
+        },
+        host_workspace=workspace,
+        fixture_root=fixture,
+        secret_values=["sentinel-value"],
+    )
+    assert details["workspace_secret_scan"]["status"] == "BLOCKED_SECRET_NON_DISCLOSURE"
+    assert details["workspace_secret_scan"]["matches"] == 1
+    assert "sentinel-value" not in json.dumps(details)
+    assert "secret_disclosure_detected" in blockers
+
+
 def test_event_secret_scan_retains_only_fingerprints() -> None:
     module = _module()
 

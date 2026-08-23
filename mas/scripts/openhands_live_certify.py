@@ -120,11 +120,41 @@ def _workspace_changed_paths(*, host_workspace: Path, fixture_root: Path) -> lis
     return sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
 
 
+def _scan_workspace_for_secrets(root: Path, secret_values: list[str]) -> dict[str, Any]:
+    """Scan disposable workspace files without retaining file contents."""
+
+    fingerprints: set[str] = set()
+    matched_files = 0
+    if root.is_dir():
+        for path in root.rglob("*"):
+            if not path.is_file() or any(part in {".git", "__pycache__", ".pytest_cache"} for part in path.parts):
+                continue
+            try:
+                payload = path.read_bytes()
+            except OSError:
+                continue
+            file_matched = False
+            for value in secret_values:
+                if value and value.encode("utf-8") in payload:
+                    fingerprints.add(hashlib.sha256(value.encode("utf-8")).hexdigest()[:16])
+                    file_matched = True
+            if file_matched:
+                matched_files += 1
+    return {
+        "status": "PASS" if not fingerprints else "BLOCKED_SECRET_NON_DISCLOSURE",
+        "matches": len(fingerprints),
+        "matched_files": matched_files,
+        "matched_fingerprints": sorted(fingerprints),
+        "raw_values_retained": False,
+    }
+
+
 def _verify_host_task(
     *,
     task_definition: dict[str, Any],
     host_workspace: Path | None,
     fixture_root: Path | None,
+    secret_values: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Verify tests and filesystem effects without retaining command output.
 
@@ -140,6 +170,13 @@ def _verify_host_task(
         "test_exit_code": None,
         "test_timeout": False,
         "raw_test_output_retained": False,
+        "workspace_secret_scan": {
+            "status": "NOT_RUN",
+            "matches": 0,
+            "matched_files": 0,
+            "matched_fingerprints": [],
+            "raw_values_retained": False,
+        },
     }
     blockers: list[str] = []
     expected = _safe_relative_paths(task_definition.get("expected_changed_paths"))
@@ -179,7 +216,11 @@ def _verify_host_task(
         details["test_timeout"] = True
         details["test_execution"] = "FAILED_TEST_EXECUTION"
         details["failure_class"] = "PROVIDER_TIMEOUT"
+        workspace_secret_scan = _scan_workspace_for_secrets(host_workspace, secret_values or [])
+        details["workspace_secret_scan"] = workspace_secret_scan
         blockers.append("test_execution_timeout")
+        if workspace_secret_scan["status"] != "PASS":
+            blockers.append("secret_disclosure_detected")
         return details, blockers
     details["test_exit_code"] = completed.returncode
     details["test_execution"] = "PASS" if completed.returncode == 0 else "FAILED_TEST_EXECUTION"
@@ -189,6 +230,10 @@ def _verify_host_task(
         blockers.append("test_execution_failed")
     if not modifications_pass:
         blockers.append("file_modifications_contract_failed")
+    workspace_secret_scan = _scan_workspace_for_secrets(host_workspace, secret_values or [])
+    details["workspace_secret_scan"] = workspace_secret_scan
+    if workspace_secret_scan["status"] != "PASS":
+        blockers.append("secret_disclosure_detected")
     return details, blockers
 
 
@@ -597,6 +642,11 @@ async def certify(
         budget={"max_iterations": int(os.getenv("OPENHANDS_CERT_MAX_ITERATIONS", "20"))},
     )
     try:
+        secret_values = [
+            os.environ.get("OPENHANDS_SESSION_API_KEY", ""),
+            os.environ.get("AIAT_TOOL_SECRET", ""),
+            os.environ.get("OPENHANDS_MODEL_GATEWAY_API_KEY", ""),
+        ]
         readiness = await adapter.readiness(request)
         if not readiness.ready:
             blockers.extend([f"readiness:{item}" for item in readiness.blockers])
@@ -626,11 +676,6 @@ async def certify(
         await adapter.start(request)
         result_event = None
         event_count = 0
-        secret_values = [
-            os.environ.get("OPENHANDS_SESSION_API_KEY", ""),
-            os.environ.get("AIAT_TOOL_SECRET", ""),
-            os.environ.get("OPENHANDS_MODEL_GATEWAY_API_KEY", ""),
-        ]
         secret_matches: set[str] = set()
         async for event in adapter.events(request.run_id):
             event_count += 1
@@ -649,6 +694,7 @@ async def certify(
             task_definition=task_definition,
             host_workspace=host_workspace,
             fixture_root=fixture_root,
+            secret_values=secret_values,
         )
         statuses["test_execution"] = str(postrun["test_execution"])
         statuses["file_modifications"] = str(postrun["file_modifications"])
@@ -674,6 +720,13 @@ async def certify(
         }
         if secret_matches:
             blockers.append("secret_disclosure_detected")
+        workspace_scan = postrun.get("workspace_secret_scan")
+        if isinstance(workspace_scan, dict):
+            secret_matches.update(str(item) for item in workspace_scan.get("matched_fingerprints", []))
+            task_definition["secret_scan"]["matches"] = len(secret_matches)
+            task_definition["secret_scan"]["matched_fingerprints"] = sorted(secret_matches)
+            if secret_matches:
+                statuses["secret_isolation"] = "BLOCKED_SECRET_NON_DISCLOSURE"
         task_definition["postrun"] = postrun
         blockers.extend(postrun_blockers)
         if exercise_lifecycle:
