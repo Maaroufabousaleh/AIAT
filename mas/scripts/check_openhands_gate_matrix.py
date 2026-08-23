@@ -19,6 +19,14 @@ except ImportError:  # pragma: no cover - package invocation fallback
 SCHEMA = "aiat.openhands-certification-gate-evaluation.v1"
 
 
+def _json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _load_gate_rows(path: Path | None) -> dict[str, dict[str, Any]]:
     gates = initial_gate_map()
     if path is None or not path.is_file():
@@ -34,6 +42,69 @@ def _load_gate_rows(path: Path | None) -> dict[str, dict[str, Any]]:
     return gates
 
 
+def _set_gate(gates: dict[str, dict[str, Any]], gate_id: str, status: str, evidence: str) -> None:
+    if gate_id not in gates or status == "NOT_RUN":
+        return
+    gates[gate_id]["status"] = status
+    gates[gate_id]["evidence_refs"] = [evidence]
+
+
+def derive_gate_rows(evidence_root: Path) -> dict[str, dict[str, Any]]:
+    """Derive only explicitly evidenced gate statuses from a run directory."""
+
+    gates = initial_gate_map()
+    certification_path = evidence_root / "certification" / "candidate-certification.json"
+    certification = _json(certification_path)
+    source_sbom = certification.get("source_sbom") if isinstance(certification.get("source_sbom"), dict) else {}
+    image_sbom = certification.get("image_sbom") if isinstance(certification.get("image_sbom"), dict) else {}
+    if source_sbom.get("status") == "pass" and image_sbom.get("status") == "pass":
+        _set_gate(gates, "sbom", "PASS", str(certification_path.relative_to(evidence_root)))
+    boundary = certification.get("aiat_local_boundary") if isinstance(certification.get("aiat_local_boundary"), dict) else {}
+    if boundary.get("status") == "pass":
+        _set_gate(gates, "aiat_local_boundary", "PASS", str(certification_path.relative_to(evidence_root)))
+    if certification.get("security_findings_interpretable") is True and not certification.get("scanner_errors"):
+        _set_gate(gates, "security_scan_with_retained_evidence", "PASS", str(certification_path.relative_to(evidence_root)))
+
+    startup_path = evidence_root / "startup" / "startup.json"
+    startup = _json(startup_path)
+    runtime_path = evidence_root / "startup" / "container-runtime.json"
+    runtime = runtime_path.read_text(encoding="utf-8").strip() if runtime_path.is_file() else ""
+    if startup.get("health_status") == "PASS" and runtime.strip('"') == "runsc":
+        _set_gate(gates, "gvisor_execution", "PASS", str(startup_path.relative_to(evidence_root)))
+
+    live_path = evidence_root / "live" / "live-certification.json"
+    live = _json(live_path)
+    live_gates = live.get("gates") if isinstance(live.get("gates"), dict) else {}
+    mapping = {
+        "coding_task": "real_coding_task",
+        "pause": "graceful_pause",
+        "interrupt": "immediate_interrupt",
+        "resume": "resume",
+        "crash_recovery": "recovery",
+        "timeout": "timeout",
+        "budget": "budget_enforcement",
+        "forbidden_tool": "forbidden_tool_attempt",
+        "workspace_isolation": "cross_workspace_isolation",
+        "secret_isolation": "secret_non_disclosure",
+        "zero_residue": "zero_residue_cleanup",
+    }
+    for source, gate_id in mapping.items():
+        status = str(live_gates.get(source) or "NOT_RUN").upper()
+        _set_gate(gates, gate_id, status, str(live_path.relative_to(evidence_root)))
+    task = live.get("task") if isinstance(live.get("task"), dict) else {}
+    if live_gates.get("coding_task") == "PASS":
+        _set_gate(gates, "isolated_workspace", "PASS", str(live_path.relative_to(evidence_root)))
+        if task.get("expected_changed_paths"):
+            _set_gate(gates, "file_modifications", "PASS", str(live_path.relative_to(evidence_root)))
+            _set_gate(gates, "artifact_capture", "PASS", str(live_path.relative_to(evidence_root)))
+
+    cleanup_path = evidence_root / "gateway" / "cleanup.json"
+    cleanup = _json(cleanup_path)
+    if cleanup.get("zero_residue") is True:
+        _set_gate(gates, "zero_residue_cleanup", "PASS", str(cleanup_path.relative_to(evidence_root)))
+    return gates
+
+
 def evaluate(
     *,
     gate_status_path: Path | None = None,
@@ -41,8 +112,9 @@ def evaluate(
     candidate_sha: str | None = None,
     source_commit: str | None = None,
     image_digest: str | None = None,
+    evidence_root: Path | None = None,
 ) -> dict[str, Any]:
-    gates = _load_gate_rows(gate_status_path)
+    gates = _load_gate_rows(gate_status_path) if gate_status_path else derive_gate_rows(evidence_root) if evidence_root else initial_gate_map()
     result = evaluate_gate_map(gates, blocker_status=provider_status)
     return {
         "schema_version": SCHEMA,
@@ -53,6 +125,7 @@ def evaluate(
         "gates": gates,
         "evaluation": result,
         "provider_configuration_status": provider_status,
+        "evidence_root_used": bool(evidence_root),
         "payloads_retained": False,
     }
 
@@ -65,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-sha")
     parser.add_argument("--source-commit")
     parser.add_argument("--image-digest")
+    parser.add_argument("--evidence-root", type=Path)
     args = parser.parse_args(argv)
     report = evaluate(
         gate_status_path=args.gate_status,
@@ -72,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate_sha=args.candidate_sha,
         source_commit=args.source_commit,
         image_digest=args.image_digest,
+        evidence_root=args.evidence_root,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")

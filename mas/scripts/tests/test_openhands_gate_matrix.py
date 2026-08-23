@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -52,3 +53,17 @@ def test_unknown_or_invalid_gate_fails_implementation() -> None:
     assert result["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
     assert result["missing_gates"] == ["resume"]
     assert result["unknown_gates"] == ["unexpected"]
+
+
+def test_evidence_derivation_only_promotes_explicit_live_statuses(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "live").mkdir()
+    (tmp_path / "live" / "live-certification.json").write_text(
+        json.dumps({"gates": {"coding_task": "PASS", "pause": "NOT_RUN"}, "task": {"expected_changed_paths": ["slugger/core.py"]}}),
+        encoding="utf-8",
+    )
+    gates = module.derive_gate_rows(tmp_path)
+    assert gates["real_coding_task"]["status"] == "PASS"
+    assert gates["file_modifications"]["status"] == "PASS"
+    assert gates["graceful_pause"]["status"] == "NOT_RUN"
+    assert gates["resume"]["status"] == "NOT_RUN"
