@@ -19,7 +19,9 @@
       "provider": "groq",
       "provider_model": "llama-3.3-70b-versatile",
       "litellm_route": "openai/groq/llama-3.3-70b-versatile",
-      "omniroute_endpoint": "http://omniroute:20128/v1",
+      "omniroute_endpoint": "http://omniroute:20129/v1",
+      "omniroute_management_endpoint": "http://127.0.0.1:20128",
+      "omniroute_readiness_endpoint": "http://127.0.0.1:20128/api/monitoring/health",
       "fallbacks": false,
       "provider_count": 1
     },
@@ -31,10 +33,28 @@
     "network_paths": {
       "openhands_to_tool_service": "http://tool-service:8002",
       "openhands_to_litellm": "http://litellm:4000",
-      "litellm_to_omniroute": "http://omniroute:20128/v1",
+      "litellm_to_omniroute": "http://omniroute:20129/v1",
       "omniroute_to_provider": "Groq HTTPS API selected by the configured provider route"
     },
-    "public_port_exposure": "none for gateway services; runner-side health checks use loopback publishes"
+    "ports": {
+      "dashboard_management": 20128,
+      "openai_compatible_api": 20129,
+      "runner_publishes": ["127.0.0.1:20128", "127.0.0.1:20129"]
+    },
+    "health_contract": {
+      "endpoint": "/api/monitoring/health",
+      "public_read_only": true,
+      "startup_probe_separate_from_provider_route": true,
+      "auth_boundary_probe": "/v1/models",
+      "pinned_release_discrepancy": {
+        "release": "v3.8.38",
+        "documented_ping_route": "src/app/api/health/ping/route.ts",
+        "central_public_route_config": "src/shared/constants/publicApiRoutes.ts",
+        "supported_public_monitoring_route": "src/app/api/monitoring/health/route.ts",
+        "aiat_action": "use monitoring health for startup readiness; preserve API-key auth on /v1"
+      }
+    },
+    "public_port_exposure": "loopback-only runner checks; no gateway port is publicly exposed"
   },
   "pins": {
     "litellm": {

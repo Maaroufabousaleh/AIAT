@@ -62,7 +62,9 @@
   "network_preflight": {
     "openhands_to_tool_service": "run-scoped network alias http://tool-service:8002",
     "openhands_to_litellm": "runsc container probe http://litellm:4000",
-    "litellm_to_omniroute": "LiteLLM config api_base http://omniroute:20128/v1",
+    "litellm_to_omniroute": "LiteLLM config api_base http://omniroute:20129/v1",
+    "omniroute_readiness": "public read-only GET http://127.0.0.1:20128/api/monitoring/health",
+    "omniroute_api_auth_boundary": "loopback GET http://127.0.0.1:20129/v1/models; missing/wrong key denied, run key accepted",
     "omniroute_to_provider": "provider route probe for Groq exact model",
     "host_or_laptop_endpoint": false,
     "public_gateway_ports": false

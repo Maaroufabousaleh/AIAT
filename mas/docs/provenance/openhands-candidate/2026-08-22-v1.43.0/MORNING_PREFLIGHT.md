@@ -46,6 +46,17 @@ annotated or lightweight tags and writes per-check scalar evidence before it
 fails. This record is not provider, image, gVisor, runtime, or security
 evidence.
 
+Run `32651712645` (job `97224247350`) is preserved as
+[`github-run-32651712645-failure.json`](./github-run-32651712645-failure.json).
+The provenance, image pulls, network creation, and OmniRoute container/Docker
+health passed, but the pinned release's `/api/health/ping` returned HTTP 401
+after startup. The run remains a blocked runtime-readiness record, not Groq,
+provenance, gVisor, or OpenHands evidence. The corrected harness uses the
+release's public read-only `/api/monitoring/health` endpoint for application
+readiness, keeps dashboard/management on port 20128, uses the
+OpenAI-compatible API bridge on port 20129, and separately verifies its API-key
+boundary.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,

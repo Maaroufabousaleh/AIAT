@@ -1,0 +1,61 @@
+{
+  "schema_version": "aiat.openhands-workflow-failure.v1",
+  "historical_evidence": true,
+  "candidate_sha": "97436eceee9f5d16fc85580fa4f0eecad698ebd2",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "workflow": {
+    "name": "openhands-candidate-certification.yml",
+    "run_id": "32651712645",
+    "job_id": "97224247350",
+    "artifact_id": "9496431498",
+    "artifact_digest": "sha256:f02622a65ec47c44c7105b236502f8339a37b0c6add30a9f6463e50d71b4dd92",
+    "classification": "BLOCKED_RUNTIME_STARTUP",
+    "failure_reason": "OMNIROUTE_HEALTH_FAILURE",
+    "retrospective_readiness_classification": "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE",
+    "failure_detail": "The immutable v3.8.38 /api/health/ping path returned HTTP 401 after cold start; the public monitoring health contract was not yet used.",
+    "live_gate_wave": "NOT_RUN"
+  },
+  "provider": {
+    "provider": "groq",
+    "configuration_status": "PASS",
+    "secret_name": "GROQ_API_KEY",
+    "secret_value_retained": false,
+    "provider_route_configuration": "NOT_RUN",
+    "live_model_call": "NOT_RUN"
+  },
+  "image_pulls": {
+    "openhands": {"status": "PASS"},
+    "litellm": {"status": "PASS"},
+    "omniroute": {"status": "PASS"},
+    "platform_verification": "PASS",
+    "gateway_pin_verification": "PASS",
+    "gateway_version_verification": "PASS"
+  },
+  "gateway": {
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_docker_health": "PASS",
+    "old_health_endpoint": "/api/health/ping",
+    "observed_old_endpoint_status": 401,
+    "new_readiness_endpoint": "/api/monitoring/health",
+    "application_readiness": "BLOCKED",
+    "zero_residue": "PASS"
+  },
+  "evidence_boundary": {
+    "historical_record_immutable": true,
+    "provider_failure": false,
+    "image_provenance_failure": false,
+    "openhands_runtime_failure": false,
+    "gvisor_failure": false,
+    "security_finding": false,
+    "raw_logs_retained": false,
+    "credentials_retained": false,
+    "payloads_retained": false,
+    "evidence_schema": "PASS"
+  }
+}
