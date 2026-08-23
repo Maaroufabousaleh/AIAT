@@ -27,6 +27,22 @@ CERTIFICATION_PROVIDER_SECRET_NAMES: Mapping[str, str] = {
     "cerebras": "CEREBRAS_API_KEY",
 }
 
+# Fixture-only failure labels accepted by ``simulate_auto_route``.  The live
+# OmniRoute service owns the actual classification; keeping this list bounded
+# prevents an arbitrary provider response or credential value from becoming
+# evidence in an offline routing report.
+AUTO_ROUTER_FAILURE_CLASSES = frozenset(
+    {
+        "INVALID_PROVIDER_CREDENTIAL",
+        "PROVIDER_AUTHORIZATION_DENIED",
+        "PROVIDER_MODEL_UNAVAILABLE",
+        "PROVIDER_NETWORK_FAILURE",
+        "PROVIDER_RATE_LIMIT",
+        "PROVIDER_SERVER_ERROR",
+        "PROVIDER_TIMEOUT",
+    }
+)
+
 
 def baseline_route(provider: str = CERTIFICATION_PROVIDER) -> str:
     """Return the exact provider-qualified baseline route."""
@@ -136,11 +152,26 @@ def simulate_auto_route(
     *,
     allowed_providers: Iterable[str],
     failing_providers: Iterable[str] = (),
+    failure_by_provider: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
-    """Return deterministic fixture evidence for an auto/coding selection."""
+    """Return deterministic fixture evidence for an auto/coding selection.
+
+    ``failure_by_provider`` is deliberately fixture-only metadata.  It lets
+    tests distinguish a rate limit from a generic provider failure without
+    accepting raw provider responses or credentials.  The live gateway still
+    remains the authority for real provider selection and failure semantics.
+    """
 
     pool = build_governed_auto_pool(connections, allowed_providers=allowed_providers)
     failures = {str(provider).strip().lower() for provider in failing_providers}
+    failure_classes: dict[str, str] = {}
+    for provider, failure_class in (failure_by_provider or {}).items():
+        normalized_provider = str(provider).strip().lower()
+        normalized_class = str(failure_class).strip().upper()
+        if normalized_class not in AUTO_ROUTER_FAILURE_CLASSES:
+            raise ValueError(f"unsupported auto-router fixture failure class: {failure_class}")
+        failure_classes[normalized_provider] = normalized_class
+        failures.add(normalized_provider)
     attempted = [item for item in pool if item["provider"] not in failures]
     if not attempted:
         return {
@@ -148,12 +179,24 @@ def simulate_auto_route(
             "candidate_count": len(pool),
             "selected": None,
             "fallback_used": bool(pool),
+            "failed_provider_classes": {
+                provider: failure_classes[provider]
+                for provider in sorted(failure_classes)
+                if provider in failures
+            },
             "credential_values_retained": False,
         }
+    primary_provider = pool[0]["provider"] if pool else None
     return {
         "status": "PASS",
         "candidate_count": len(pool),
         "selected": attempted[0],
         "fallback_used": bool(pool and attempted[0] != pool[0]),
+        "fallback_failure_class": failure_classes.get(primary_provider or ""),
+        "failed_provider_classes": {
+            provider: failure_classes[provider]
+            for provider in sorted(failure_classes)
+            if provider in failures
+        },
         "credential_values_retained": False,
     }

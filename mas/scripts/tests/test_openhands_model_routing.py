@@ -106,6 +106,45 @@ def test_auto_router_fixture_falls_back_and_excludes_unhealthy_or_disallowed() -
     assert excluded == [{"provider": "gemini", "model": "m"}]
 
 
+def test_auto_router_fixture_distinguishes_rate_limit_fallback_without_secrets() -> None:
+    report = ROUTING.simulate_auto_route(
+        _connections(),
+        allowed_providers=["groq", "gemini"],
+        failure_by_provider={"groq": "PROVIDER_RATE_LIMIT"},
+    )
+    assert report["status"] == "PASS"
+    assert report["fallback_used"] is True
+    assert report["fallback_failure_class"] == "PROVIDER_RATE_LIMIT"
+    assert report["failed_provider_classes"] == {"groq": "PROVIDER_RATE_LIMIT"}
+    assert report["credential_values_retained"] is False
+    assert "provider-secret" not in str(report)
+
+
+def test_auto_router_fixture_rejects_unbounded_failure_labels() -> None:
+    with pytest.raises(ValueError, match="unsupported auto-router fixture failure class"):
+        ROUTING.simulate_auto_route(
+            _connections(),
+            allowed_providers=["groq"],
+            failure_by_provider={"groq": "raw-provider-response"},
+        )
+
+
+def test_auto_router_fixture_does_not_echo_credential_like_connection_fields() -> None:
+    connections = [
+        {
+            "provider": "groq",
+            "model": ROUTING.CERTIFICATION_BASELINE_MODEL,
+            "credential_present": True,
+            "credential_value": "provider-secret",
+        },
+        {"provider": "gemini", "model": "gemini-2.5-pro", "credential_present": True},
+    ]
+    report = ROUTING.simulate_auto_route(connections, allowed_providers=["groq", "gemini"])
+    assert report["status"] == "PASS"
+    assert "provider-secret" not in str(report)
+    assert report["credential_values_retained"] is False
+
+
 def test_auto_router_fixture_fails_closed_without_valid_providers() -> None:
     report = ROUTING.simulate_auto_route(
         _connections(),
