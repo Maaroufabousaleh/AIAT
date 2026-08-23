@@ -70,6 +70,17 @@
       "scope": "deterministic fixture and negative-security checks"
     }
   },
+  "clean_candidate_static_evidence": {
+    "candidate_sha": "61f7d49b905a109a154f961e147f783016792218",
+    "certificate": "../../../release_ledger_clean_candidate_static.json",
+    "validator": "scripts/check_clean_candidate_release.py",
+    "status": "PASS",
+    "worktree_clean": true,
+    "changed_path_count": 0,
+    "static_checks": "63/63",
+    "release_decision": "NO-RELEASE",
+    "live_profile_included": false
+  },
   "current_external_boundary": {
     "persistent_github_variables": [
       "OPENHANDS_MODEL_ID=omniroute-coding",

@@ -19,6 +19,11 @@ FURTHER_IDENTICAL_AUDITS=NOT_REQUIRED
 GLOBAL_RELEASE_DECISION=NO-RELEASE
 ```
 
+The exact candidate `61f7d49b905a109a154f961e147f783016792218` has a fresh
+clean-clone static ledger certificate with 63/63 checks passing and zero
+changed paths. The certificate is scalar-only and does not substitute for
+native-host, provider, live, pending-evidence, or activation gates.
+
 The latest host-safe local Compose ledger remains a scalar summary of 79/85
 passes, 0 failures, 6 blocked checks, and 4 pending items. The retained
 release evidence is [`release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json).

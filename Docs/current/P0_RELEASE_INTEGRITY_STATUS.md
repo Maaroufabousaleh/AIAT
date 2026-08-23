@@ -1087,6 +1087,18 @@ single frozen commit before production claims are made.
 
 ## Still open before P0 exit
 
+The exact candidate commit `61f7d49b905a109a154f961e147f783016792218` was
+also evaluated from a fresh local Git clone. The clean clone had zero changed
+paths and passed the static ledger 63/63 with no failures; the scalar result is
+retained at [`release_ledger_clean_candidate_static.json`](../../mas/docs/provenance/release_ledger_clean_candidate_static.json).
+The read-only validator `uv run --isolated python scripts/check_clean_candidate_release.py --json`
+reconciles the retained candidate SHA, clean-clone boundary, 63/63 summary,
+and payload/credential retention flags; it reports the development checkout's
+protected dirty state separately.
+This separates the protected/operator-owned dirty files in the development
+checkout from candidate evidence, but does not close native-host, provider,
+live, pending-evidence, or activation gates.
+
 1. Repeat the network denial/allow matrix on a clean native-Linux release host
    and close the historical `DEF-2026-07-14-036` record with that evidence
    using the `check_network_boundary.py --live --json` harness. The refreshed
