@@ -161,6 +161,19 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
 
 
 @pytest.mark.asyncio
+async def test_tool_bridge_rejects_grants_outside_bounded_coding_surface(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected network call: {request.method} {request.url}")
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    run = run.model_copy(update={"tool_grants": [*run.tool_grants, "aiat.github.write"]})
+    with pytest.raises(RuntimeError, match="bounded coding surface"):
+        await adapter._configure_tool_bridge(run)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_wave_defers_bridge_delete_until_trusted_final_cleanup(tmp_path: Path) -> None:
     calls: list[str] = []
 
@@ -501,32 +514,45 @@ def test_report_loader_requires_full_provenance_and_pinned_digest() -> None:
         OpenHandsInterfaceVerification.from_report(report)
 
 
-@pytest.mark.asyncio
-async def test_transport_factory_uses_the_governed_openhands_adapter(tmp_path: Path) -> None:
-    adapter = adapter_for_transport(
-        "openhands_agent_server",
-        worker_id="coding-worker-openhands-candidate",
-        config={
-            "base_url": "http://openhands.test",
-            "interface_verification": {
-                "approval_status": "APPROVED",
-                "approved": True,
-                "pin": {
-                    "repository": "https://github.com/OpenHands/software-agent-sdk.git",
-                    "release": "v1.43.0",
-                    "commit_sha": COMMIT,
+def test_transport_factory_rejects_inline_openhands_approval_claim(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="inline approval claims are not trusted"):
+        adapter_for_transport(
+            "openhands_agent_server",
+            worker_id="coding-worker-openhands-candidate",
+            config={
+                "base_url": "http://openhands.test",
+                "interface_verification": {
+                    "approval_status": "APPROVED",
+                    "approved": True,
+                    "pin": {
+                        "repository": "https://github.com/OpenHands/software-agent-sdk.git",
+                        "release": "v1.43.0",
+                        "commit_sha": COMMIT,
+                    },
+                    "image": {"ref": "ghcr.io/openhands/agent-server:1.43.0-python", "digest": IMAGE_DIGEST},
                 },
-                "image": {"ref": "ghcr.io/openhands/agent-server:1.43.0-python", "digest": IMAGE_DIGEST},
             },
-        },
-        context=AdapterContext(
-            workspace_path=str(tmp_path),
-            secrets={"openhands_session_api_key": "session-secret-test"},
-        ),
-    )
-    assert isinstance(adapter, OpenHandsAgentServerAdapter)
-    assert adapter.certification_mode is False
-    await adapter.close()
+            context=AdapterContext(
+                workspace_path=str(tmp_path),
+                secrets={"openhands_session_api_key": "session-secret-test"},
+            ),
+        )
+
+
+def test_transport_factory_rejects_noncanonical_openhands_report_ref(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="canonical candidate provenance directory"):
+        adapter_for_transport(
+            "openhands_agent_server",
+            worker_id="coding-worker-openhands-candidate",
+            config={
+                "base_url": "http://openhands.test",
+                "interface_verification_ref": "mas/docs/provenance/security_scan_evidence.yaml",
+            },
+            context=AdapterContext(
+                workspace_path=str(tmp_path),
+                secrets={"openhands_session_api_key": "session-secret-test"},
+            ),
+        )
 
 
 @pytest.mark.asyncio

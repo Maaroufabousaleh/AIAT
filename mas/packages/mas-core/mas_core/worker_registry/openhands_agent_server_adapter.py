@@ -70,6 +70,16 @@ _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 _OPENHANDS_MAX_ITERATIONS = 20
 _OPENHANDS_TIMEOUT_SECONDS = 300
+# Keep the candidate's AIAT bridge surface bounded even when a caller builds a
+# WorkerRunRequest directly.  The profile/preflight carries the same contract,
+# but the adapter must not mint a broader signed grant from untrusted input.
+_OPENHANDS_ALLOWED_TOOL_GRANTS = frozenset(
+    {
+        "aiat.repository.read",
+        "aiat.repository.write",
+        "aiat.tests.execute",
+    }
+)
 
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 
@@ -572,6 +582,13 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
 
         if request.run_id in self._mcp_by_run:
             return
+        requested_tools = frozenset(str(name).strip() for name in request.tool_grants if str(name).strip())
+        unexpected_tools = requested_tools - _OPENHANDS_ALLOWED_TOOL_GRANTS
+        if unexpected_tools:
+            raise RuntimeError(
+                "OpenHands tool grants exceed the bounded coding surface: "
+                + ", ".join(sorted(unexpected_tools))
+            )
         settings_key = self._mcp_settings_key()
         if self.context.metadata.get("openhands_mcp_preconfigured") is True:
             # The workflow provisioning step owns creation of the entry when
@@ -607,7 +624,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             worker_id=self.worker_id,
             run_id=request.run_id,
             project_id=request.project_id,
-            tool_names=request.tool_grants,
+            tool_names=requested_tools,
             ttl_seconds=_OPENHANDS_MCP_GRANT_TTL_SECONDS,
             now=issued_at,
         )

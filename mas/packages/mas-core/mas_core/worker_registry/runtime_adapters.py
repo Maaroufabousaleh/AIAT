@@ -1806,20 +1806,36 @@ def adapter_for_transport(
 
         report = config.get("interface_verification")
         report_ref = config.get("interface_verification_ref")
-        if report is None and report_ref:
-            report_path = Path(str(report_ref))
-            if not report_path.is_absolute() and not report_path.is_file():
-                # Manifests are repository-relative, while the worker service
-                # may be launched from ``mas/`` or another application cwd.
-                # Resolve against the repository root without accepting a
-                # missing or silently substituted report.
-                repo_root = Path(__file__).resolve().parents[5]
-                candidate = repo_root / report_path
-                if candidate.is_file():
-                    report_path = candidate
-            report = report_path
-        if report is None:
+        # Unlike the isolated certification factory, the normal runtime path
+        # is activation-scoped.  An inline mapping is caller-controlled data
+        # and could simply set ``approved=true`` without a steward record.  A
+        # production adapter may therefore consume only the repository's
+        # canonical, committed interface-verification report.  This mirrors
+        # the OpenCode adapter's committed-fixture rule and keeps approval
+        # evidence outside ordinary worker request/configuration input.
+        if report is not None:
+            raise ValueError(
+                "OpenHands transport requires interface_verification_ref; inline approval claims are not trusted"
+            )
+        if not report_ref:
             raise ValueError("OpenHands transport requires pinned interface verification evidence")
+        repo_root = Path(__file__).resolve().parents[5].resolve()
+        report_path = Path(str(report_ref))
+        if not report_path.is_absolute():
+            report_path = repo_root / report_path
+        try:
+            resolved_report = report_path.resolve()
+            resolved_report.relative_to(repo_root)
+        except (OSError, ValueError) as exc:
+            raise ValueError("OpenHands interface verification must resolve inside the AIAT repository") from exc
+        canonical_root = (repo_root / "mas/docs/provenance/openhands-candidate").resolve()
+        try:
+            resolved_report.relative_to(canonical_root)
+        except ValueError as exc:
+            raise ValueError("OpenHands interface verification must use the canonical candidate provenance directory") from exc
+        if resolved_report.name != "interface-verification.json" or not resolved_report.is_file():
+            raise ValueError("OpenHands interface verification report is not a committed canonical file")
+        report = resolved_report
         verification = OpenHandsInterfaceVerification.from_report(report)
         return OpenHandsAgentServerAdapter(
             verification,
