@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `eced0cf` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `176055e` (latest reviewed OpenHands certification-path hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -124,7 +124,9 @@ OpenHands transport factory to consume only the committed canonical
 interface-verification report and rejects AIAT bridge grants outside the
 bounded repository/test coding surface before issuing a run grant. `eced0cf`
 also requires an explicit approval-record identifier whenever a report claims
-approved status.
+approved status. `176055e` packages the canonical candidate provenance in the
+orchestrator API image and resolves source-style refs against that image-local
+evidence root without accepting arbitrary paths.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained
