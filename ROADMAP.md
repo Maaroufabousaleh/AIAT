@@ -38,13 +38,14 @@ changes; the global decision remains `NO-RELEASE`.
 The inactive OpenHands v1.43.0 candidate now has a repository-local,
 manual-only certification path: exact LiteLLM/OmniRoute pins, fixed internal
 gateway routing, run-scoped secrets/profile/MCP lifecycle, explicit provider
-absence classification, one-shot/time-bounded certification authorization,
-MCP pre-clean/readback, cleanup fail-closed handling, a fail-closed 20-gate
-matrix, deterministic coding-task fixture, and offline lifecycle/security/
-cleanup evidence. This does not replace OpenCode, activate OpenHands, or
-advance the global release decision. Tomorrow's only planned live prerequisite
-is the operator-owned `GROQ_API_KEY`, followed by the safe preflight and one
-dispatch against a frozen candidate SHA.
+absence and execution-failure classification, controller-attested single-use
+certification authorization with a bounded TTL, MCP pre-clean/readback,
+cleanup fail-closed handling, a fail-closed 20-gate matrix, deterministic
+coding-task fixture, and offline lifecycle/security/cleanup evidence. This
+does not replace OpenCode, activate OpenHands, or advance the global release
+decision. Tomorrow's only planned live prerequisite is the operator-owned
+`GROQ_API_KEY`, followed by the safe preflight and one dispatch against a
+frozen candidate SHA.
 
 The latest bounded P1 implementation slice (`60839f4`) stabilizes the
 Governance and Projects dashboard refresh callbacks and last-known-state refs.

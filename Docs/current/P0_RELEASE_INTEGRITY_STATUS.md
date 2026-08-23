@@ -9,7 +9,10 @@ default and from the global release decision. The repository-local
 certification path now has an explicit provider-secret preflight, a sanitized
 gateway/provider error taxonomy, strict Linux/amd64 digest checks, a canonical
 20-gate matrix, a deterministic disposable coding-task fixture, and offline
-lifecycle/security/cleanup harness evidence. The workflow remains
+lifecycle/security/cleanup harness evidence. The run-scoped certification
+authorization is controller-attested (`aiat-github-actions`), single-use, and
+900 seconds TTL; it remains distinct from steward activation approval. The
+workflow remains
 `workflow_dispatch` only and skips model/runtime stages when `GROQ_API_KEY` is
 absent; cleanup and sanitized evidence still run. The only planned persistent
 GitHub secret is `GROQ_API_KEY`; AIAT tool, session, and internal gateway keys
@@ -21,7 +24,11 @@ offline-harness, and evidence-wiring changes; `cbad706`, `6da661f`, and
 pre-clean/readback, and cleanup fail-closed semantics; `a6fa383`, `5724979`,
 `b1c5d8e`, and `a6b6eae` separate gateway/provider failures, strengthen the
 offline attack/cleanup harness, classify scalar blocker evidence, and add a
-secret-safe GitHub summary. OpenHands is
+secret-safe GitHub summary; `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`,
+`0c0a210`, `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, and
+`334c321` add controller-attestation tests, complete gate definitions,
+offline isolation/race coverage, governed model/profile readback, and
+provider-preflight execution-failure classification. OpenHands is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
 under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).

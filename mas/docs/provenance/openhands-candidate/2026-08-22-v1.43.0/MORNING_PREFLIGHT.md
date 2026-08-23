@@ -63,7 +63,7 @@ explicit frozen commit after the preflight passes.
    gh run download "$RUN_ID" \
      --name "openhands-candidate-certification-${RUN_ID}" \
      --dir "/tmp/aiat-openhands-evidence-${RUN_ID}"
-   python -m json.tool "/tmp/aiat-openhands-evidence-${RUN_ID}/certification/gate-evaluation.json"
+   python3 -m json.tool "/tmp/aiat-openhands-evidence-${RUN_ID}/certification/gate-evaluation.json"
    ```
 
 The only expected persistent secret for this candidate workflow is

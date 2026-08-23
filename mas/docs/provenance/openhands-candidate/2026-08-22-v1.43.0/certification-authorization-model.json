@@ -13,6 +13,9 @@
     "certification_authorization": {
       "state": "run_scoped",
       "issuer": "AIAT trusted certification controller",
+      "controller_identity": "aiat-github-actions",
+      "single_use": true,
+      "ttl_seconds": 900,
       "required": [
         "exact candidate commit and image digest",
         "disposable Agent Server/profile/workspace",
