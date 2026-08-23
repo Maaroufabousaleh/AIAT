@@ -17,13 +17,33 @@
     "provider_route": {
       "aiat_model_id": "omniroute-coding",
       "provider": "groq",
-      "provider_model": "llama-3.3-70b-versatile",
-      "litellm_route": "openai/groq/llama-3.3-70b-versatile",
+      "provider_model": "openai/gpt-oss-120b",
+      "litellm_route": "openai/auto/coding",
+      "routing_mode": "omniroute_auto_coding",
+      "deterministic_baseline": "groq/openai/gpt-oss-120b",
       "omniroute_endpoint": "http://omniroute:20129/v1",
       "omniroute_management_endpoint": "http://127.0.0.1:20128",
       "omniroute_readiness_endpoint": "http://127.0.0.1:20128/api/monitoring/health",
       "fallbacks": false,
-      "provider_count": 1
+      "provider_count": 1,
+      "provider_pool": ["groq"],
+      "evidence_files": [
+        "gateway/provider-baseline.json",
+        "gateway/auto-routing.json",
+        "gateway/route-probe.json"
+      ]
+    },
+    "auto_router_contract": {
+      "supported": true,
+      "model_id": "auto/coding",
+      "zero_config_virtual_combo": true,
+      "active_connection_credential_filter": true,
+      "candidate_selection": "pinned OmniRoute v3.8.38 auto-combo scoring",
+      "source_refs": [
+        "OmniRoute v3.8.38/open-sse/services/autoCombo/virtualFactory.ts",
+        "OmniRoute v3.8.38/src/sse/handlers/chatHelpers.ts"
+      ],
+      "offline_multi_provider_fixtures": "repository-local tests; no extra CI credentials provisioned"
     },
     "credentials": {
       "aiat_model_gateway_key": "workflow-run-generated; masked; not retained",
@@ -97,5 +117,6 @@
       "disposable service storage"
     ]
   },
-  "live_status": "not_run_by_this_change"
+  "live_status": "not_run_by_this_change",
+  "historical_model_note": "The prior llama-3.3-70b-versatile harness route is retained only in immutable run evidence; Groq retired that model on 2026-08-16."
 }

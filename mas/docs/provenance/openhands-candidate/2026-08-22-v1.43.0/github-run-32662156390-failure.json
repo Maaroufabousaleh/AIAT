@@ -1,0 +1,49 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32662156390",
+    "job_id": "97249868393",
+    "candidate_sha": "1fcaf6cb62c6583efdf0ea1396e3d52329453fc3",
+    "artifact_id": "9499074700",
+    "artifact_digest": "sha256:5c341d4948ab5203c60e0933ee622f0c4cd680f730e663abf36143ac29d6a4f0"
+  },
+  "classification": {
+    "final_status": "BLOCKED_PROVIDER",
+    "failure_class": "PROVIDER_MODEL_NOT_FOUND",
+    "root_cause_status": "ATTRIBUTED_PROVIDER_MODEL_RETIREMENT",
+    "root_cause": "Groq retired llama-3.3-70b-versatile on 2026-08-16; the run's pinned harness requested that stale model through OmniRoute v3.8.38.",
+    "404_origin": "GROQ",
+    "root_cause_evidence": {
+      "provider_deprecation_record": "https://console.groq.com/docs/deprecations",
+      "pinned_omniroute_release": "v3.8.38",
+      "route_response_status": 404,
+      "response_payload_retained": false
+    },
+    "raw_provider_payload_retained": false
+  },
+  "evidence": {
+    "omniroute_readiness": "PASS",
+    "omniroute_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "litellm_start": "PASS",
+    "provider_model_request": "BLOCKED_MODEL_NOT_FOUND",
+    "tool_service": "NOT_RUN",
+    "openhands": "NOT_RUN",
+    "zero_residue": "PASS",
+    "gateway_provenance": "PASS",
+    "image_platform_verification": "PASS",
+    "live_gate_wave": "NOT_RUN"
+  },
+  "superseded_harness_behavior": {
+    "fixed_provider_model": "llama-3.3-70b-versatile",
+    "replacement_architecture": "exact live-discovered Groq baseline plus OmniRoute auto/coding",
+    "new_baseline_model": "openai/gpt-oss-120b",
+    "baseline_fallback_during_run": false
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

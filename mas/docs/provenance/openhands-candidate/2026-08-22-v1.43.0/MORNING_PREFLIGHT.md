@@ -57,6 +57,19 @@ readiness, keeps dashboard/management on port 20128, uses the
 OpenAI-compatible API bridge on port 20129, and separately verifies its API-key
 boundary.
 
+Run `32662156390` (job `97249868393`) is preserved as
+[`github-run-32662156390-failure.json`](./github-run-32662156390-failure.json).
+It passed OmniRoute readiness/authentication, exactly-one Groq route
+provisioning, LiteLLM startup, gateway provenance, and cleanup, then stopped at
+the provider model request with `PROVIDER_MODEL_NOT_FOUND`. The old
+`llama-3.3-70b-versatile` harness choice was retired by Groq on 2026-08-16;
+the next candidate uses a live-discovered `openai/gpt-oss-120b` baseline before
+the governed `auto/coding` route. `omniroute-coding` remains the only model id
+visible to OpenHands and no additional provider secrets are required for the
+one-provider CI pool. The workflow retains separate scalar evidence for the
+baseline (`gateway/provider-baseline.json`) and auto-router route
+(`gateway/auto-routing.json` plus the compatibility `route-probe.json`).
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,

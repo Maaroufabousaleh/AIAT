@@ -51,6 +51,18 @@ native gVisor evidence, immutable smoke-image inputs, scalar-only failure
 evidence, and release-scope classifications. They do not alter the global
 decision or activate either coding worker.
 
+Run `32662156390` (job `97249868393`) is retained as immutable provider-boundary
+evidence for candidate `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`. OmniRoute
+readiness/authentication, exactly-one Groq route provisioning, LiteLLM startup,
+gateway provenance, and zero-residue cleanup passed; the model route returned
+`PROVIDER_MODEL_NOT_FOUND`, so tool-service/OpenHands live gates were not run.
+The stale `llama-3.3-70b-versatile` harness choice is retired by Groq's
+2026-08-16 model shutdown. The maintained certification path now requires a
+live-discovered deterministic `groq/openai/gpt-oss-120b` baseline followed by
+the governed OmniRoute `auto/coding` route while keeping `omniroute-coding` as
+the worker-visible alias. This evidence remains provider-blocked and does not
+alter the global `NO-RELEASE` decision.
+
 The preflight hardening commit `188b747` additionally requires the isolated
 deterministic OpenHands test suite for dispatch readiness; diagnostic
 `--skip-tests` runs remain explicitly non-ready.

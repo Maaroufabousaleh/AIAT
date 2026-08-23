@@ -28,12 +28,26 @@
       "tool_service": "tool-service"
     },
     "provider": "groq",
-    "provider_model": "llama-3.3-70b-versatile",
+    "provider_model": "openai/gpt-oss-120b",
+    "routing_model": "auto/coding",
+    "deterministic_baseline": "groq/openai/gpt-oss-120b",
     "aiat_model_id": "omniroute-coding",
     "fallbacks": false,
     "gateway_key_scope": "workflow-run-generated",
     "provider_key_scope": "one operator-supplied GROQ_API_KEY GitHub secret",
     "raw_responses_retained": false
+  },
+  "routing_contract": {
+    "worker_visible_model": "omniroute-coding",
+    "litellm_upstream_model": "auto/coding",
+    "deterministic_baseline_before_auto": "groq/openai/gpt-oss-120b",
+    "evidence_files": [
+      "gateway/provider-baseline.json",
+      "gateway/auto-routing.json",
+      "gateway/route-probe.json"
+    ],
+    "provider_pool_policy": "explicitly allowlisted provider secrets only",
+    "additional_provider_secrets_configured": false
   },
   "github_configuration": {
     "variables": {
@@ -65,7 +79,7 @@
     "litellm_to_omniroute": "LiteLLM config api_base http://omniroute:20129/v1",
     "omniroute_readiness": "public read-only GET http://127.0.0.1:20128/api/monitoring/health",
     "omniroute_api_auth_boundary": "loopback GET http://127.0.0.1:20129/v1/models; missing/wrong key denied, run key accepted",
-    "omniroute_to_provider": "provider route probe for Groq exact model",
+    "omniroute_to_provider": "deterministic Groq baseline, then governed auto/coding route",
     "host_or_laptop_endpoint": false,
     "public_gateway_ports": false
   },
