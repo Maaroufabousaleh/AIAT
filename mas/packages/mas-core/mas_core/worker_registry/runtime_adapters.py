@@ -1807,7 +1807,17 @@ def adapter_for_transport(
         report = config.get("interface_verification")
         report_ref = config.get("interface_verification_ref")
         if report is None and report_ref:
-            report = Path(str(report_ref))
+            report_path = Path(str(report_ref))
+            if not report_path.is_absolute() and not report_path.is_file():
+                # Manifests are repository-relative, while the worker service
+                # may be launched from ``mas/`` or another application cwd.
+                # Resolve against the repository root without accepting a
+                # missing or silently substituted report.
+                repo_root = Path(__file__).resolve().parents[5]
+                candidate = repo_root / report_path
+                if candidate.is_file():
+                    report_path = candidate
+            report = report_path
         if report is None:
             raise ValueError("OpenHands transport requires pinned interface verification evidence")
         verification = OpenHandsInterfaceVerification.from_report(report)

@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -29,10 +30,6 @@ from mas_core.worker_registry.openhands_agent_server_adapter import (
     issue_openhands_certification_authorization,
 )
 from mas_core.worker_registry.runtime_adapters import adapter_for_transport
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
@@ -485,6 +482,34 @@ async def test_transport_factory_uses_the_governed_openhands_adapter(tmp_path: P
     )
     assert isinstance(adapter, OpenHandsAgentServerAdapter)
     assert adapter.certification_mode is False
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_factory_resolves_repository_relative_interface_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(Path(__file__).resolve().parents[4])
+    captured: dict[str, object] = {}
+
+    def load_report(report: object) -> OpenHandsInterfaceVerification:
+        captured["report"] = report
+        return verification(approved=True)
+
+    monkeypatch.setattr(OpenHandsInterfaceVerification, "from_report", staticmethod(load_report))
+    adapter = adapter_for_transport(
+        "openhands_agent_server",
+        worker_id="coding-worker-openhands-candidate",
+        config={
+            "base_url": "http://openhands.test",
+            "interface_verification_ref": "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json",
+        },
+        context=AdapterContext(
+            workspace_path=str(tmp_path),
+            secrets={"openhands_session_api_key": "session-secret-test"},
+        ),
+    )
+    assert isinstance(adapter, OpenHandsAgentServerAdapter)
+    assert Path(str(captured["report"])).is_file()
+    assert adapter.verification.commit_sha == COMMIT
     await adapter.close()
 
 
