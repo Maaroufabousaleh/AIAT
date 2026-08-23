@@ -1,8 +1,9 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, certification implementation
-baseline at `7dc416baf77b0282a010f5741213bd0dddea4395`; the branch also
-contains docs-only status reconciliation `dabaa44da69a7191fc86817d2e4219c211ba115a`.
+baseline at `633e7288f268f010b3b67704346913c2944d77bc`; the branch also
+contains docs-only status reconciliations after that baseline. The next live
+run must freeze the exact SHA actually selected by the operator.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The

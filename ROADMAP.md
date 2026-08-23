@@ -34,11 +34,14 @@ validator confirms an explicitly pinned candidate SHA and retention boundary;
 it reports the development checkout's dirty state separately.
 This isolates protected/operator-owned dirty files from candidate evidence but
 does not close the native, live-provider, pending-evidence, or activation gates.
-The follow-up evidence-only commits `a8ff763` and `7dc416b` keep that
+The follow-up evidence-only commits `a8ff763`, `7dc416b`, and `7a4d354` keep that
 certificate pinned to the exact candidate SHA while the branch advances; the
 validator intentionally blocks an unpinned/current-HEAD invocation instead of
 silently treating a later documentation or evidence commit as the certified
-candidate.
+candidate. Cleanup hardening `8d46bc9` and exact LiteLLM release-tag
+verification `633e728` are repository-local certification changes and remain
+separate from the clean-candidate certificate until a new exact candidate SHA
+is deliberately frozen.
 
 The retained native Ubuntu gVisor certificate
 [`native_gvisor_certification_live.json`](mas/docs/provenance/native_gvisor_certification_live.json)
