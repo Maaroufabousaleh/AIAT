@@ -102,6 +102,9 @@ def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     weakened = text.replace('test "$topology_status" = PASS', 'echo "$topology_status"')
     assert "network_topology_assertion_missing" in module.validate(weakened)["errors"]
 
+    weakened = text.replace('"aliases": sorted(str(item) for item in (value.get("Aliases") or []) if item),', '"aliases": [],', 1)
+    assert "network_topology_assertion_missing" in module.validate(weakened)["errors"]
+
 
 def test_cleanup_requires_delete_status_and_absence_readback() -> None:
     module = _module()

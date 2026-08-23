@@ -638,6 +638,12 @@ jobs:
           network = raw[0] if isinstance(raw, list) and raw else {}
           containers = network.get("Containers") if isinstance(network, dict) else {}
           topology = []
+          expected_aliases = {
+              f"aiat-openhands-cert-{run_id}": "agent-server",
+              f"aiat-openhands-tool-service-{run_id}": "tool-service",
+              f"aiat-openhands-litellm-{run_id}": "litellm",
+              f"aiat-openhands-omniroute-{run_id}": "omniroute",
+          }
           if isinstance(containers, dict):
               for value in containers.values():
                   if not isinstance(value, dict):
@@ -645,6 +651,7 @@ jobs:
                   topology.append(
                       {
                           "name": value.get("Name"),
+                          "aliases": sorted(str(item) for item in (value.get("Aliases") or []) if item),
                           "ipv4": bool(value.get("IPv4Address")),
                       }
                   )
@@ -659,12 +666,13 @@ jobs:
               inspect_exit_code == "0"
               and observed == expected
               and all(item.get("ipv4") for item in topology)
+              and all(expected_aliases.get(str(item.get("name"))) in item.get("aliases", []) for item in topology)
           )
           output.write_text(
               json.dumps(
                   {
                       "schema_version": "aiat.openhands-certification-network-topology.v1",
-                      "network_aliases_expected": ["agent-server", "tool-service", "litellm", "omniroute"],
+                      "network_aliases_expected": expected_aliases,
                       "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
                       "expected_container_count": len(expected),
                       "observed_container_count": len(observed),

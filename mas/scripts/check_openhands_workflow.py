@@ -77,6 +77,8 @@ def validate(text: str) -> dict[str, Any]:
         "network-topology.json" not in text
         or 'docker network inspect "$network"' not in text
         or '"topology_status": "PASS" if complete else "BLOCKED"' not in text
+        or '"aliases": sorted' not in text
+        or "expected_aliases" not in text
         or 'test "$topology_status" = PASS' not in text
     ):
         errors.append("network_topology_assertion_missing")
