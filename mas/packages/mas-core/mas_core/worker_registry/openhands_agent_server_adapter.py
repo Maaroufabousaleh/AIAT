@@ -75,6 +75,9 @@ TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 # certification path; the adapter requires a token issued by the dedicated
 # AIAT certification controller and bound to the exact candidate pins.
 _CERTIFICATION_AUTHORITY = object()
+_CERTIFICATION_FACTORY_TOKEN = object()
+_CONSUMED_CERTIFICATION_AUTHORIZATIONS: set[object] = set()
+_CERTIFICATION_AUTHORIZATION_TTL_SECONDS = 900
 _CERTIFICATION_SANDBOX_PROFILE = "gvisor"
 _CERTIFICATION_SANDBOX_RUNTIME = "runsc"
 
@@ -95,6 +98,8 @@ class OpenHandsCertificationAuthorization:
     sandbox_runtime: str
     controller_run_id: str
     _authority: object = field(repr=False, compare=False)
+    issued_at: float = 0.0
+    expires_at: float = 0.0
 
     @property
     def scope(self) -> str:
@@ -135,6 +140,8 @@ def issue_openhands_certification_authorization(
         sandbox_runtime=runtime,
         controller_run_id=run_id,
         _authority=_CERTIFICATION_AUTHORITY,
+        issued_at=time.time(),
+        expires_at=time.time() + _CERTIFICATION_AUTHORIZATION_TTL_SECONDS,
     )
 
 
@@ -150,6 +157,9 @@ def _valid_certification_authorization(
         and authorization.image_digest == verification.image_digest
         and authorization.sandbox_profile == _CERTIFICATION_SANDBOX_PROFILE
         and authorization.sandbox_runtime == _CERTIFICATION_SANDBOX_RUNTIME
+        and authorization.issued_at > 0
+        and authorization.expires_at > authorization.issued_at
+        and authorization.issued_at <= time.time() < authorization.expires_at
     )
 
 
@@ -270,10 +280,13 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         context: AdapterContext | None = None,
         timeout_seconds: float = 60.0,
         certification_authorization: OpenHandsCertificationAuthorization | None = None,
+        _certification_factory_token: object | None = None,
     ) -> None:
         context = context or AdapterContext()
         metadata_certification_mode = context.metadata.get("openhands_certification_mode") is True
         certification_mode = certification_authorization is not None
+        if certification_mode and _certification_factory_token is not _CERTIFICATION_FACTORY_TOKEN:
+            raise ValueError("OpenHands certification mode is available only through the trusted certification factory")
         if certification_mode and not _valid_certification_authorization(certification_authorization, verification):
             raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
         if metadata_certification_mode and not certification_mode:
@@ -337,6 +350,11 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         constructor, which continues to require a steward-approved report.
         """
 
+        if authorization in _CONSUMED_CERTIFICATION_AUTHORIZATIONS:
+            raise ValueError("OpenHands certification authorization has already been used")
+        if not _valid_certification_authorization(authorization, verification):
+            raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
+        _CONSUMED_CERTIFICATION_AUTHORIZATIONS.add(authorization)
         return cls(
             verification,
             base_url=base_url,
@@ -345,6 +363,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             context=context,
             timeout_seconds=timeout_seconds,
             certification_authorization=authorization,
+            _certification_factory_token=_CERTIFICATION_FACTORY_TOKEN,
         )
 
     @property

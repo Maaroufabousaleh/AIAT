@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
@@ -242,6 +243,57 @@ def test_certification_authorization_cannot_be_spoofed_or_rebound_to_other_pins(
             authorization=fake,
             base_url="http://openhands.test",
             worker_id="candidate",
+            context=_certification_context(tmp_path),
+        )
+
+
+def test_certification_authorization_is_factory_only_single_use_and_time_bounded(tmp_path: Path) -> None:
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    with pytest.raises(ValueError, match="trusted certification factory"):
+        OpenHandsAgentServerAdapter(
+            pending,
+            base_url="http://openhands.test",
+            worker_id="candidate",
+            context=_certification_context(tmp_path),
+            certification_authorization=authorization,
+        )
+
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="candidate",
+        context=_certification_context(tmp_path),
+    )
+    assert adapter.certification_mode is True
+    with pytest.raises(ValueError, match="already been used"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=authorization,
+            base_url="http://openhands.test",
+            worker_id="candidate-replay",
+            context=_certification_context(tmp_path),
+        )
+
+    expired = issue_openhands_certification_authorization(
+        pending,
+        controller_run_id="32594885181",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    expired = replace(expired, issued_at=time.time() - 901, expires_at=time.time() - 1)
+    with pytest.raises(ValueError, match="invalid or does not match"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=expired,
+            base_url="http://openhands.test",
+            worker_id="candidate-expired",
             context=_certification_context(tmp_path),
         )
 
