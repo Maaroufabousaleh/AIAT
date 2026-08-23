@@ -71,6 +71,14 @@ evidence only, does not assert a provider outage or an implementation defect,
 and does not alter the global `NO-RELEASE` decision. The immutable scalar
 record is [`provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32673150585-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32673150585-failure.json).
 
+The subsequent repository-local baseline hardening does not reinterpret that
+historical 502 or claim a live retry. It bounds the exact provider probe to two
+attempts for transient server/transport failures, records scalar attempt
+history and safe provider error codes/types, uses Groq's current
+`max_completion_tokens`/low-reasoning request contract, and remains fail-closed
+after the bound. A future certification run is still required to establish
+whether the pinned provider route succeeds.
+
 Run `32662156390` (job `97249868393`) is retained as immutable provider-boundary
 evidence for candidate `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`. OmniRoute
 readiness/authentication, exactly-one Groq route provisioning, LiteLLM startup,

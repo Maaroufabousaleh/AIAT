@@ -112,6 +112,13 @@ live gate wave were not run. This is not evidence of image, gVisor, or
 OpenHands failure, and it is not a reason to rerun without a material provider
 state change.
 
+The repository-local follow-up keeps this evidence immutable while hardening
+the baseline probe: it makes the Groq GPT-OSS request contract explicit,
+allows at most one retry for a transient server/transport boundary, and
+retains only scalar attempt status plus bounded provider error code/type fields.
+Persistent 5xx, authentication, rate-limit, model, or response-shape failures
+still block closed; no live result is claimed by this change.
+
 ## Operator sequence
 
 1. Set or verify the two non-secret repository variables. No profile UUID,
