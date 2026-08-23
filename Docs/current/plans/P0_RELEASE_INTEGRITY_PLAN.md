@@ -56,11 +56,12 @@ failure is retained.
 
 The [P0 release-scope and external-prerequisite matrix](../P0_RELEASE_SCOPE_MATRIX.md)
 freezes the next boundary: native Linux and default gVisor remain required;
-Firecracker is optional/unverified unless promoted; provider-managed KMS/SSE,
-external mail, and live self-improvement are deferred for the current internal
-release unless explicitly promoted; security findings and protected memory
-files require operator disposition. Do not repeat identical live checks or
-change the ledger until a prerequisite materially changes.
+Firecracker is optional/unverified unless promoted; provider-managed KMS/SSE
+remains required, external mail is required only if email remains in the
+release scope, and live self-improvement is deferred for the current internal
+release. Security findings and protected memory files require operator
+disposition. Do not repeat identical live checks or change the ledger until a
+prerequisite materially changes.
 
 ## Why this plan is first
 

@@ -44,8 +44,9 @@ The current operator/external-state boundary is recorded in the [P0
 release-scope and external-prerequisite matrix](Docs/current/P0_RELEASE_SCOPE_MATRIX.md).
 It keeps native Linux and the default gVisor runtime required, classifies
 Firecracker as optional and unverified unless the operator promotes the
-high-risk tier, and explicitly dispositions provider-managed KMS/SSE, external
-mail, and live self-improvement as deferred for the current internal release.
+high-risk tier. Provider-managed KMS/SSE remains required, external mail is
+conditional on email remaining in release scope, and live self-improvement is
+deferred for the current internal release.
 Security findings and the protected memory-file state remain required operator
 decisions. No identical live audit is required until a prerequisite materially
 changes; the global decision remains `NO-RELEASE`.
