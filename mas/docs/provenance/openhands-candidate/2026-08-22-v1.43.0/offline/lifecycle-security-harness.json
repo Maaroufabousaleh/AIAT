@@ -69,6 +69,13 @@
         "tool": "host.filesystem.read"
       }
     ],
+    "lifecycle_races": {
+      "completion_wins": true,
+      "pause_timeout_reconciled": true,
+      "payloads_retained": false,
+      "status": "PASS",
+      "timeout_wins_over_pending_tool": true
+    },
     "model_override": {
       "accepted_task_fields": [
         "prompt"
@@ -152,12 +159,46 @@
     },
     "pause_interrupt_semantics": "pause is resumable; interrupt is immediate and resumable only by governed policy",
     "payloads_retained": false,
+    "recovery_idempotency": "PASS",
     "secret_scan": {
       "matched_fingerprints": [],
       "matches": 0,
       "raw_values_retained": false,
       "secret_count": 4,
       "status": "PASS"
+    },
+    "workspace_attacks": {
+      "attempt_count": 6,
+      "denied_count": 6,
+      "operations": [
+        {
+          "denied": true,
+          "operation": "terminal"
+        },
+        {
+          "denied": true,
+          "operation": "file.read"
+        },
+        {
+          "denied": true,
+          "operation": "file.write"
+        },
+        {
+          "denied": true,
+          "operation": "file.list"
+        },
+        {
+          "denied": true,
+          "operation": "file.download"
+        },
+        {
+          "denied": true,
+          "operation": "git.inspect"
+        }
+      ],
+      "raw_paths_retained": false,
+      "status": "PASS",
+      "symlink_traversal_tested": true
     }
   },
   "forbidden_tool": "PASS",
