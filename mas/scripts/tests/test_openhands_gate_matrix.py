@@ -73,7 +73,14 @@ def test_evidence_derivation_only_promotes_explicit_live_statuses(tmp_path: Path
     (tmp_path / "live" / "live-certification.json").write_text(
         json.dumps(
             {
-                "gates": {"coding_task": "PASS", "pause": "NOT_RUN", "forced_failure": "PASS"},
+                "gates": {
+                    "coding_task": "PASS",
+                    "file_modifications": "PASS",
+                    "test_execution": "PASS",
+                    "artifact_capture": "PASS",
+                    "pause": "NOT_RUN",
+                    "forced_failure": "PASS",
+                },
                 "task": {"expected_changed_paths": ["slugger/core.py"]},
             }
         ),
@@ -82,9 +89,24 @@ def test_evidence_derivation_only_promotes_explicit_live_statuses(tmp_path: Path
     gates = module.derive_gate_rows(tmp_path)
     assert gates["real_coding_task"]["status"] == "PASS"
     assert gates["file_modifications"]["status"] == "PASS"
+    assert gates["test_execution"]["status"] == "PASS"
+    assert gates["artifact_capture"]["status"] == "PASS"
     assert gates["graceful_pause"]["status"] == "NOT_RUN"
     assert gates["resume"]["status"] == "NOT_RUN"
     assert gates["forced_failure"]["status"] == "PASS"
+
+
+def test_coding_success_does_not_infer_tests_or_artifacts(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "live").mkdir()
+    (tmp_path / "live" / "live-certification.json").write_text(
+        json.dumps({"gates": {"coding_task": "PASS"}, "task": {"expected_changed_paths": ["slugger/core.py"]}}),
+        encoding="utf-8",
+    )
+    gates = module.derive_gate_rows(tmp_path)
+    assert gates["real_coding_task"]["status"] == "PASS"
+    assert gates["test_execution"]["status"] == "NOT_RUN"
+    assert gates["artifact_capture"]["status"] == "NOT_RUN"
 
 
 def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> None:

@@ -58,3 +58,61 @@ def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path
     assert definition["task_id"] == "fixture-task"
     assert "prompt" not in definition
     assert prompt not in json.dumps(definition)
+
+
+def test_host_task_verification_requires_real_test_and_exact_workspace_change(tmp_path: Path) -> None:
+    module = _module()
+    fixture = tmp_path / "fixture"
+    workspace = tmp_path / "workspace"
+    (fixture / "slugger").mkdir(parents=True)
+    (fixture / "tests").mkdir()
+    (fixture / "slugger" / "core.py").write_text("before\n", encoding="utf-8")
+    (fixture / "tests" / "test_slugger.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    import shutil
+
+    shutil.copytree(fixture, workspace)
+    (workspace / "slugger" / "core.py").write_text("after\n", encoding="utf-8")
+    definition = {
+        "test_command": "python -m pytest -q",
+        "expected_changed_paths": ["slugger/core.py"],
+        "forbidden_changed_paths": ["tests/test_slugger.py"],
+    }
+    details, blockers = module._verify_host_task(
+        task_definition=definition,
+        host_workspace=workspace,
+        fixture_root=fixture,
+    )
+    assert details["file_modifications"] == "PASS"
+    assert details["test_execution"] == "PASS"
+    assert details["changed_paths"] == ["slugger/core.py"]
+    assert blockers == []
+
+
+def test_host_task_verification_does_not_infer_pass_without_workspace(tmp_path: Path) -> None:
+    module = _module()
+    details, blockers = module._verify_host_task(
+        task_definition={
+            "test_command": "python -m pytest -q",
+            "expected_changed_paths": ["slugger/core.py"],
+            "forbidden_changed_paths": [],
+        },
+        host_workspace=None,
+        fixture_root=None,
+    )
+    assert details["test_execution"] == "NOT_RUN"
+    assert details["file_modifications"] == "NOT_RUN"
+    assert blockers == ["test_execution_evidence_unavailable"]
+
+
+def test_event_secret_scan_retains_only_fingerprints() -> None:
+    module = _module()
+
+    class Event:
+        def model_dump_json(self) -> str:
+            return '{"status":"safe","value":"sentinel"}'
+
+    clean = module._scan_event_for_secrets(Event(), ["secret-value"])
+    assert clean["matches"] == 0
+    leaked = module._scan_event_for_secrets(Event(), ["sentinel"])
+    assert leaked["matches"] == 1
+    assert "sentinel" not in json.dumps(leaked)

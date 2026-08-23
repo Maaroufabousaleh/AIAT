@@ -73,3 +73,9 @@ def test_complete_offline_harness_is_fixture_only() -> None:
     assert report["details"]["lifecycle_races"]["status"] == "PASS"
     assert report["details"]["recovery_idempotency"] == "PASS"
     assert report["details"]["partial_startup_cleanup"]["scenarios"]["mcp_after_failed_task"]["started_resources"]
+    assert report["mandatory_gate_count"] == 20
+    assert report["live_certification_required"] is True
+    assert len(report["fixture_gate_results"]) == 20
+    assert report["fixture_gate_results"]["graceful_pause"] == "PASS"
+    assert report["fixture_gate_results"]["test_execution"] == "NOT_RUN"
+    assert report["fixture_gate_results"]["real_coding_task"] == "NOT_RUN"

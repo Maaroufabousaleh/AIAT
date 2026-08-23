@@ -270,6 +270,41 @@ def partial_startup_cleanup() -> dict[str, Any]:
     }
 
 
+def _fixture_gate_results(report: dict[str, Any]) -> dict[str, str]:
+    """Map only exercised fixture behaviors; never claim live certification."""
+
+    passed = {
+        "aiat_local_boundary": report["model_override_denial"],
+        "isolated_workspace": report["workspace_isolation"],
+        "graceful_pause": report["pause"],
+        "immediate_interrupt": report["interrupt"],
+        "resume": report["resume"],
+        "forced_failure": report["forced_failure"],
+        "recovery": report["recovery"],
+        "timeout": report["timeout"],
+        "budget_enforcement": report["budget"],
+        "forbidden_tool_attempt": report["forbidden_tool"],
+        "cross_workspace_isolation": report["workspace_isolation"],
+        "secret_non_disclosure": report["secret_isolation"],
+        "zero_residue_cleanup": report["zero_residue"]["status"],
+    }
+    live_only = {
+        "sbom",
+        "security_scan_with_retained_evidence",
+        "gvisor_execution",
+        "real_coding_task",
+        "file_modifications",
+        "test_execution",
+        "artifact_capture",
+    }
+    results = {gate_id: "NOT_RUN" for gate_id in live_only}
+    results.update({gate_id: str(status) for gate_id, status in passed.items()})
+    # The fixture exercises lifecycle semantics but is not a live Agent Server
+    # proof; an explicit marker prevents downstream consumers from mistaking
+    # these values for release evidence.
+    return results
+
+
 def run_offline_harness() -> dict[str, Any]:
     conversation = FakeConversation(max_units=3)
     conversation.start()
@@ -324,7 +359,7 @@ def run_offline_harness() -> dict[str, Any]:
     except ValueError as exc:
         recovery_idempotent = str(exc) == "recover_not_eligible"
     race_matrix = lifecycle_race_matrix()
-    return {
+    report = {
         "schema_version": "aiat.openhands-offline-harness.v1",
         "mode": "offline_fixture_only",
         "coding_task": "PASS",
@@ -355,10 +390,14 @@ def run_offline_harness() -> dict[str, Any]:
             "payloads_retained": False,
         },
     }
+    report["fixture_gate_results"] = _fixture_gate_results(report)
+    report["mandatory_gate_count"] = 20
+    report["live_certification_required"] = True
+    return report
 
 
 def main(output: Path) -> int:
     report = run_offline_harness()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    return 0 if all(value == "PASS" for key, value in report.items() if key not in {"schema_version", "mode", "details", "zero_residue"}) and report["zero_residue"]["status"] == "PASS" else 2
+    return 0 if all(value == "PASS" for key, value in report.items() if key not in {"schema_version", "mode", "details", "zero_residue", "fixture_gate_results", "mandatory_gate_count", "live_certification_required"}) and report["zero_residue"]["status"] == "PASS" else 2

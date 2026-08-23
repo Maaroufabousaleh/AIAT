@@ -116,6 +116,10 @@ def derive_gate_rows(evidence_root: Path) -> dict[str, dict[str, Any]]:
     live_gates = live.get("gates") if isinstance(live.get("gates"), dict) else {}
     mapping = {
         "coding_task": "real_coding_task",
+        "file_modifications": "file_modifications",
+        "test_execution": "test_execution",
+        "artifact_capture": "artifact_capture",
+        "isolated_workspace": "isolated_workspace",
         "pause": "graceful_pause",
         "interrupt": "immediate_interrupt",
         "resume": "resume",
@@ -131,13 +135,6 @@ def derive_gate_rows(evidence_root: Path) -> dict[str, dict[str, Any]]:
     for source, gate_id in mapping.items():
         status = str(live_gates.get(source) or "NOT_RUN").upper()
         _set_gate(gates, gate_id, status, str(live_path.relative_to(evidence_root)))
-    task = live.get("task") if isinstance(live.get("task"), dict) else {}
-    if live_gates.get("coding_task") == "PASS":
-        _set_gate(gates, "isolated_workspace", "PASS", str(live_path.relative_to(evidence_root)))
-        if task.get("expected_changed_paths"):
-            _set_gate(gates, "file_modifications", "PASS", str(live_path.relative_to(evidence_root)))
-            _set_gate(gates, "artifact_capture", "PASS", str(live_path.relative_to(evidence_root)))
-
     cleanup_path = evidence_root / "gateway" / "cleanup.json"
     cleanup = _json(cleanup_path)
     if cleanup.get("zero_residue") is True:

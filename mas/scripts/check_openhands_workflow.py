@@ -99,6 +99,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("internal_run_scoped_secret_required_as_github_secret")
     if "OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000" not in text:
         errors.append("canonical_gateway_url_missing")
+    if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:
+        errors.append("postrun_task_verification_missing")
     if re.search(r"(?m)^\s*docker\s+logs\b", text):
         errors.append("raw_container_logs_retained")
     return {

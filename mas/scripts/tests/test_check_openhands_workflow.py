@@ -54,6 +54,14 @@ def test_candidate_images_require_linux_amd64_platform_readback() -> None:
     assert "candidate_image_platform_verification_missing" in module.validate(weakened)["errors"]
 
 
+def test_live_task_requires_host_test_and_workspace_verification() -> None:
+    module = _module()
+    text = _workflow()
+    assert "postrun_task_verification_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('            --host-workspace "$RUNNER_TEMP/aiat-openhands-workspace" \\\n', "", 1)
+    assert "postrun_task_verification_missing" in module.validate(weakened)["errors"]
+
+
 def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     text = _workflow()
     report = _module().validate(text.replace("steps.provider_preflight.outputs.ready == 'true'", "steps.other.outputs.ready == 'true'"))

@@ -13,6 +13,8 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -70,9 +72,148 @@ def _load_task_definition(task_spec: Path | None) -> tuple[str | None, dict[str,
     return str(loaded_task["prompt"]).strip(), definition, []
 
 
+def _safe_relative_paths(value: Any) -> list[str] | None:
+    """Validate task paths before using them for post-run evidence checks."""
+
+    if not isinstance(value, list):
+        return None
+    paths: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item or item.startswith("/"):
+            return None
+        path = Path(item)
+        if path.is_absolute() or ".." in path.parts or "." in path.parts:
+            return None
+        paths.append(path.as_posix())
+    return sorted(set(paths))
+
+
+def _workspace_changed_paths(*, host_workspace: Path, fixture_root: Path) -> list[str]:
+    """Compare the disposable workspace with its pristine task fixture.
+
+    Generated test caches are deliberately ignored.  The returned list contains
+    only scalar relative paths and never file contents.
+    """
+
+    ignored_names = {"__pycache__", ".pytest_cache"}
+
+    def files(root: Path) -> dict[str, bytes]:
+        result: dict[str, bytes] = {}
+        if not root.is_dir():
+            return result
+        for path in root.rglob("*"):
+            if not path.is_file() or any(part in ignored_names for part in path.parts) or path.suffix == ".pyc":
+                continue
+            try:
+                result[path.relative_to(root).as_posix()] = path.read_bytes()
+            except OSError:
+                # An unreadable path is represented as a change; the caller
+                # will fail the evidence check without retaining the payload.
+                result[path.relative_to(root).as_posix()] = b"<unreadable>"
+        return result
+
+    before = files(fixture_root)
+    after = files(host_workspace)
+    return sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+
+
+def _verify_host_task(
+    *,
+    task_definition: dict[str, Any],
+    host_workspace: Path | None,
+    fixture_root: Path | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Verify tests and filesystem effects without retaining command output.
+
+    The command is intentionally allowlisted.  Certification task input never
+    becomes an arbitrary shell command, and a missing host workspace remains a
+    fail-closed ``NOT_RUN`` result rather than an inferred pass.
+    """
+
+    details: dict[str, Any] = {
+        "test_execution": "NOT_RUN",
+        "file_modifications": "NOT_RUN",
+        "changed_paths": [],
+        "test_exit_code": None,
+        "test_timeout": False,
+        "raw_test_output_retained": False,
+    }
+    blockers: list[str] = []
+    expected = _safe_relative_paths(task_definition.get("expected_changed_paths"))
+    forbidden = _safe_relative_paths(task_definition.get("forbidden_changed_paths"))
+    command = str(task_definition.get("test_command") or "")
+    if expected is None or forbidden is None or command != "python -m pytest -q":
+        blockers.append("task_spec_postrun_contract_invalid")
+        details["failure_class"] = "FAILED_CERTIFICATION_IMPLEMENTATION"
+        return details, blockers
+    if host_workspace is None or fixture_root is None:
+        blockers.append("test_execution_evidence_unavailable")
+        details["failure_class"] = "BLOCKED_LIFECYCLE"
+        return details, blockers
+    host_workspace = host_workspace.resolve()
+    fixture_root = fixture_root.resolve()
+    if not host_workspace.is_dir() or not fixture_root.is_dir():
+        blockers.append("test_execution_workspace_missing")
+        details["failure_class"] = "FAILED_CERTIFICATION_IMPLEMENTATION"
+        return details, blockers
+    changed = _workspace_changed_paths(host_workspace=host_workspace, fixture_root=fixture_root)
+    details["changed_paths"] = changed
+    details["expected_changed_paths"] = expected
+    details["forbidden_changed_paths"] = forbidden
+    forbidden_changed = sorted(set(changed) & set(forbidden))
+    details["forbidden_changed"] = forbidden_changed
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q"],
+            cwd=host_workspace,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        details["test_timeout"] = True
+        details["test_execution"] = "FAILED_TEST_EXECUTION"
+        details["failure_class"] = "PROVIDER_TIMEOUT"
+        blockers.append("test_execution_timeout")
+        return details, blockers
+    details["test_exit_code"] = completed.returncode
+    details["test_execution"] = "PASS" if completed.returncode == 0 else "FAILED_TEST_EXECUTION"
+    modifications_pass = changed == expected and not forbidden_changed
+    details["file_modifications"] = "PASS" if modifications_pass else "FAILED_FILE_MODIFICATIONS"
+    if completed.returncode != 0:
+        blockers.append("test_execution_failed")
+    if not modifications_pass:
+        blockers.append("file_modifications_contract_failed")
+    return details, blockers
+
+
+def _scan_event_for_secrets(event: Any, secret_values: list[str]) -> dict[str, Any]:
+    """Scan one transient normalized event without retaining its payload."""
+
+    try:
+        serialized = event.model_dump_json() if hasattr(event, "model_dump_json") else json.dumps(event, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        serialized = ""
+    matched: set[str] = set()
+    for value in secret_values:
+        if value and value in serialized:
+            matched.add(hashlib.sha256(value.encode("utf-8")).hexdigest()[:16])
+    return {
+        "matches": len(matched),
+        "matched_fingerprints": sorted(matched),
+        "raw_payload_retained": False,
+    }
+
+
 def _status_map(status: str) -> dict[str, str]:
     return {
         "coding_task": status,
+        "file_modifications": "NOT_RUN",
+        "test_execution": "NOT_RUN",
+        "artifact_capture": "NOT_RUN",
+        "isolated_workspace": "NOT_RUN",
         "pause": "NOT_RUN",
         "interrupt": "NOT_RUN",
         "resume": "NOT_RUN",
@@ -98,6 +239,16 @@ def _final_status(statuses: dict[str, str], blockers: list[str]) -> str:
         return "BLOCKED_CERTIFICATION_AUTHORIZATION"
     if any(item.startswith("runtime:") for item in blockers):
         return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if any(item.startswith("task_spec_postrun") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if any(item.startswith("test_execution") for item in blockers):
+        return "BLOCKED_LIFECYCLE"
+    if any(item.startswith("file_modifications") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if any(item.startswith("artifact_capture") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if any(item.startswith("secret_disclosure") for item in blockers):
+        return "BLOCKED_SECRET_NON_DISCLOSURE"
     if statuses.get("coding_task") == "FAILED_MODEL_EXECUTION":
         return "FAILED_MODEL_EXECUTION"
     if statuses.get("zero_residue") == "FAILED_CLEANUP":
@@ -114,6 +265,8 @@ async def certify(
     workspace: str | None,
     exercise_lifecycle: bool = False,
     task_spec: Path | None = None,
+    host_workspace: Path | None = None,
+    fixture_root: Path | None = None,
 ) -> dict[str, Any]:
     blockers: list[str] = []
     report_payload = json.loads(interface_report.read_text(encoding="utf-8"))
@@ -293,8 +446,16 @@ async def certify(
         await adapter.start(request)
         result_event = None
         event_count = 0
+        secret_values = [
+            os.environ.get("OPENHANDS_SESSION_API_KEY", ""),
+            os.environ.get("AIAT_TOOL_SECRET", ""),
+            os.environ.get("OPENHANDS_MODEL_GATEWAY_API_KEY", ""),
+        ]
+        secret_matches: set[str] = set()
         async for event in adapter.events(request.run_id):
             event_count += 1
+            observation = _scan_event_for_secrets(event, secret_values)
+            secret_matches.update(observation["matched_fingerprints"])
             if event.result is not None or event.error is not None:
                 result_event = event
         statuses["coding_task"] = (
@@ -304,6 +465,37 @@ async def certify(
         )
         if statuses["coding_task"] != "PASS":
             blockers.append("live_coding_task_failed")
+        postrun, postrun_blockers = _verify_host_task(
+            task_definition=task_definition,
+            host_workspace=host_workspace,
+            fixture_root=fixture_root,
+        )
+        statuses["test_execution"] = str(postrun["test_execution"])
+        statuses["file_modifications"] = str(postrun["file_modifications"])
+        if result_event and result_event.result and result_event.result.artifacts:
+            artifact_names = sorted(str(item.name) for item in result_event.result.artifacts)
+            expected = set(task_definition.get("expected_changed_paths") or [])
+            statuses["artifact_capture"] = "PASS" if expected and expected.issubset(artifact_names) else "FAILED_ARTIFACT_CAPTURE"
+            postrun["artifact_count"] = len(result_event.result.artifacts)
+            postrun["artifact_names"] = artifact_names
+        else:
+            statuses["artifact_capture"] = "NOT_RUN"
+            postrun["artifact_count"] = 0
+            postrun["artifact_names"] = []
+        if statuses["artifact_capture"] == "FAILED_ARTIFACT_CAPTURE":
+            blockers.append("artifact_capture_contract_failed")
+        statuses["secret_isolation"] = "PASS" if not secret_matches else "BLOCKED_SECRET_NON_DISCLOSURE"
+        task_definition["secret_scan"] = {
+            "status": statuses["secret_isolation"],
+            "secret_count": sum(bool(value) for value in secret_values),
+            "matches": len(secret_matches),
+            "matched_fingerprints": sorted(secret_matches),
+            "raw_values_retained": False,
+        }
+        if secret_matches:
+            blockers.append("secret_disclosure_detected")
+        task_definition["postrun"] = postrun
+        blockers.extend(postrun_blockers)
         if exercise_lifecycle:
             blockers.append("lifecycle_exercise_requires_dedicated_long_running_task_profile")
     except Exception as exc:  # runtime errors remain evidence, never activation
@@ -373,6 +565,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--exercise-lifecycle", action="store_true")
     parser.add_argument("--task-spec", type=Path)
+    parser.add_argument("--host-workspace", type=Path)
+    parser.add_argument("--fixture-root", type=Path)
     args = parser.parse_args(argv)
     if not args.base_url:
         report = {
@@ -389,6 +583,8 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=args.workspace,
                 exercise_lifecycle=args.exercise_lifecycle,
                 task_spec=args.task_spec,
+                host_workspace=args.host_workspace,
+                fixture_root=args.fixture_root,
             )
         )
     if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":
