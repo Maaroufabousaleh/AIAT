@@ -21,6 +21,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     profile_id = "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31"
     calls: list[tuple[str, str]] = []
     mcp_present = False
+    mcp_key = MODULE.EXPECTED_MCP_KEY
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal mcp_present
@@ -33,15 +34,15 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
             return httpx.Response(201, json={"name": "aiat-openhands-omniroute-coding", "message": "saved"})
         if request.method == "GET" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
             return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "llm": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
-        if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+        if request.method == "POST" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = True
             return httpx.Response(201, json={})
-        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+        if request.method == "DELETE" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = False
             return httpx.Response(404, json={})
         if request.method == "GET" and request.url.path == "/api/settings":
             config = {
-                "aiat-openhands-test-run": {
+                mcp_key: {
                     "url": MODULE.BRIDGE_URL,
                     "transport": "streamable-http",
                     "enabled": True,
@@ -62,7 +63,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                     "profile": {
                         "id": profile_id,
                         "llm_profile_ref": "aiat-openhands-omniroute-coding",
-                        "mcp_server_refs": ["aiat-openhands-test-run"],
+                        "mcp_server_refs": [mcp_key],
                         "tools": [{"name": "TerminalTool"}, {"name": "FileEditorTool"}],
                         "enable_sub_agents": False,
                         "enable_switch_llm_tool": False,
@@ -76,7 +77,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                     "valid": True,
                     "llm_profile_ref": "aiat-openhands-omniroute-coding",
                     "llm_profile_resolved": True,
-                    "resolved_mcp_config_keys": ["aiat-openhands-test-run"],
+                    "resolved_mcp_config_keys": [mcp_key],
                     "dangling_mcp_server_refs": [],
                 },
             )
@@ -90,7 +91,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
         model_id="omniroute-coding",
         gateway_url="http://litellm:4000",
         gateway_api_key="gateway-secret-that-is-not-retained",
-        mcp_key="aiat-openhands-test-run",
+        mcp_key=mcp_key,
         client=client,
     )
     assert report["status"] == "PASS"
@@ -99,8 +100,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert "tool-secret-that-is-not-retained" not in json.dumps(report)
     assert "gateway-secret-that-is-not-retained" not in json.dumps(report)
     assert report["mcp"]["preclean"] == "PASS"
-    assert ("DELETE", "/api/settings/mcp/aiat-openhands-test-run") in calls
-    assert ("POST", "/api/settings/mcp/aiat-openhands-test-run") in calls
+    assert ("DELETE", f"/api/settings/mcp/{mcp_key}") in calls
+    assert ("POST", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", "/api/agent-profiles/aiat-openhands-v1-43-0-coding") in calls
     client.close()
 
@@ -114,7 +115,21 @@ def test_provisioning_fails_closed_for_unapproved_model() -> None:
             model_id="arbitrary-model",
             gateway_url="http://litellm:4000",
             gateway_api_key="gateway-secret",
-            mcp_key="aiat-openhands-test-run",
+            mcp_key=MODULE.EXPECTED_MCP_KEY,
+            client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))),
+        )
+
+
+def test_provisioning_fails_closed_for_noncanonical_mcp_key() -> None:
+    with pytest.raises(MODULE.ProvisioningError, match="governed_openhands_certification_key"):
+        MODULE.provision(
+            base_url="http://openhands.test",
+            session_api_key="session",
+            aiat_tool_secret="tool-secret",
+            model_id="omniroute-coding",
+            gateway_url="http://litellm:4000",
+            gateway_api_key="gateway-secret",
+            mcp_key="aiat-openhands-other-run",
             client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))),
         )
 
@@ -123,7 +138,7 @@ def test_mcp_readback_rejects_unapproved_entries() -> None:
     with pytest.raises(MODULE.ProvisioningError, match="unapproved_entries"):
         MODULE._validate_mcp_entry(
             {
-                "aiat-openhands-test-run": {
+                MODULE.EXPECTED_MCP_KEY: {
                     "url": MODULE.BRIDGE_URL,
                     "transport": "streamable-http",
                     "enabled": True,
@@ -131,5 +146,5 @@ def test_mcp_readback_rejects_unapproved_entries() -> None:
                 },
                 "unexpected-external-server": {"url": "https://example.invalid/mcp"},
             },
-            "aiat-openhands-test-run",
+            MODULE.EXPECTED_MCP_KEY,
         )

@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -27,10 +26,10 @@ CANDIDATE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 CANDIDATE_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 EXPECTED_MODEL_ID = "omniroute-coding"
 EXPECTED_GATEWAY_URL = "http://litellm:4000"
+EXPECTED_MCP_KEY = "aiat-openhands-v1-43-0-coding"
 LLM_PROFILE_NAME = "aiat-openhands-omniroute-coding"
 AGENT_PROFILE_NAME = "aiat-openhands-v1-43-0-coding"
 MCP_KEY_PREFIX = "aiat-openhands-"
-MCP_KEY_PATTERN = re.compile(r"aiat-openhands-[a-z0-9][a-z0-9._-]*\Z")
 BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 WORKER_ID = "coding-worker-openhands-candidate"
 TOOL_GRANTS = ("aiat.repository.read", "aiat.repository.write", "aiat.tests.execute")
@@ -126,8 +125,8 @@ def provision(
         raise ProvisioningError("model_gateway_credential_missing")
     if not aiat_tool_secret:
         raise ProvisioningError("aiat_tool_secret_missing")
-    if not MCP_KEY_PATTERN.fullmatch(mcp_key):
-        raise ProvisioningError("mcp_key_must_use_lowercase_aiat_openhands_key_chars")
+    if mcp_key != EXPECTED_MCP_KEY:
+        raise ProvisioningError("mcp_key_must_equal_the_governed_openhands_certification_key")
     if candidate_commit != CANDIDATE_COMMIT:
         raise ProvisioningError("candidate_commit_mismatch")
     if image_digest != CANDIDATE_IMAGE_DIGEST:
