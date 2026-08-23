@@ -523,6 +523,8 @@ jobs:
             OPENHANDS_MODEL_GATEWAY_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
             uv run python scripts/check_openhands_provider_baseline.py \
               --url http://127.0.0.1:20129 \
+              --max-attempts 2 \
+              --retry-delay-seconds 1 \
               --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-baseline.json"
           exit_code=$?
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
@@ -1352,6 +1354,7 @@ jobs:
           print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
           print(f"- OmniRoute API auth boundary: `{read_status('gateway/omniroute/auth.json', 'status')}` ({read_status('gateway/omniroute/auth.json', 'failure_class')})")
           print(f"- Provider baseline: `{read_status('gateway/provider-baseline.json', 'status')}`")
+          print(f"- Provider baseline failure: `{read_status('gateway/provider-baseline.json', 'failure_class')}` HTTP `{read_status('gateway/provider-baseline.json', 'failure_http_status')}` attempts `{read_status('gateway/provider-baseline.json', 'attempt_count')}`")
           print(f"- Auto-router evidence: `{read_status('gateway/auto-routing.json', 'status')}`")
           print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")
           print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")

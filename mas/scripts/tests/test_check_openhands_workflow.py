@@ -180,6 +180,14 @@ def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
+def test_provider_baseline_requires_bounded_retry_contract() -> None:
+    module = _module()
+    text = _workflow()
+    assert "provider_baseline_gate_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("              --max-attempts 2 \\\n", "", 1)
+    assert "provider_baseline_gate_missing" in module.validate(weakened)["errors"]
+
+
 def test_wrong_omniroute_management_port_is_rejected_by_static_validation(tmp_path: Path, monkeypatch) -> None:
     module = _module()
     config = tmp_path / "litellm_openhands_certification.yaml"

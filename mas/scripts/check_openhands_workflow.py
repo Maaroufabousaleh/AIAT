@@ -348,6 +348,7 @@ def validate(text: str) -> dict[str, Any]:
         or "EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK" not in text
         or "gVisor startup" not in text
         or "OmniRoute API auth boundary" not in text
+        or "Provider baseline failure" not in text
         or "Model gateway route" not in text
     ):
         errors.append("fail_closed_summary_missing")
@@ -370,6 +371,8 @@ def validate(text: str) -> dict[str, Any]:
     if (
         "check_openhands_provider_baseline.py" not in text
         or "provider-baseline.json" not in text
+        or "--max-attempts 2" not in text
+        or "--retry-delay-seconds 1" not in text
         or "steps.baseline.outputs.ready == 'true'" not in text
     ):
         errors.append("provider_baseline_gate_missing")

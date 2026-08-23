@@ -213,6 +213,10 @@ def test_provider_baseline_uses_exact_provider_qualified_model() -> None:
         assert request.headers["authorization"] == f"Bearer {gateway_key}"
         payload = json.loads(request.content)
         assert payload["model"] == f"groq/{BASELINE.CERTIFICATION_BASELINE_MODEL}"
+        assert payload["max_completion_tokens"] == BASELINE.BASELINE_MAX_COMPLETION_TOKENS
+        assert payload["reasoning_effort"] == BASELINE.BASELINE_REASONING_EFFORT
+        assert payload["include_reasoning"] is False
+        assert "max_tokens" not in payload
         return httpx.Response(
             200,
             headers={"x-omniroute-selected-connection-id": "connection-1"},
@@ -231,8 +235,105 @@ def test_provider_baseline_uses_exact_provider_qualified_model() -> None:
     assert report["status"] == "PASS"
     assert report["provider_model"] == BASELINE.CERTIFICATION_BASELINE_MODEL
     assert report["usage"]["total_tokens"] == 3
+    assert report["attempt_count"] == 1
+    assert report["attempts"] == [{"attempt": 1, "http_status": 200, "retryable": False, "status": "PASS"}]
     assert gateway_key not in json.dumps(report, sort_keys=True)
     client.close()
+
+
+def test_provider_baseline_retries_transient_server_error_once() -> None:
+    responses = iter(
+        [
+            httpx.Response(502, json={"error": {"code": "upstream_error", "type": "server_error"}}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}),
+        ]
+    )
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return next(responses)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = BASELINE.probe(
+        url="http://omniroute.test",
+        gateway_key="gateway-secret",
+        client=client,
+        max_attempts=2,
+        retry_delay_seconds=0,
+        sleep=lambda _: None,
+    )
+    client.close()
+    assert calls == 2
+    assert report["status"] == "PASS"
+    assert report["attempt_count"] == 2
+    assert report["attempts"][0] == {
+        "attempt": 1,
+        "failure": "PROVIDER_SERVER_ERROR",
+        "http_status": 502,
+        "provider_error_code": "upstream_error",
+        "provider_error_type": "server_error",
+        "retryable": True,
+        "status": "BLOCKED",
+    }
+
+
+def test_provider_baseline_persistent_server_error_is_fail_closed_with_history() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                502,
+                json={"error": {"code": "upstream_error", "type": "server_error"}},
+            )
+        )
+    )
+    with pytest.raises(BASELINE.BaselineProbeError) as error:
+        BASELINE.probe(
+            url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+            max_attempts=2,
+            retry_delay_seconds=0,
+            sleep=lambda _: None,
+        )
+    client.close()
+    assert error.value.http_status == 502
+    assert error.value.attempt_history[0]["failure"] == "PROVIDER_SERVER_ERROR"
+    assert len(error.value.attempt_history) == 2
+    assert all(item["retryable"] is True for item in error.value.attempt_history)
+
+
+def test_provider_baseline_does_not_retry_model_not_found() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(404, json={"error": {"code": "model_not_found"}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(BASELINE.BaselineProbeError) as error:
+        BASELINE.probe(
+            url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+            max_attempts=3,
+            retry_delay_seconds=0,
+            sleep=lambda _: pytest.fail("model-not-found must not retry"),
+        )
+    client.close()
+    assert calls == 1
+    assert error.value.attempt_history == [
+        {
+            "attempt": 1,
+            "failure": "PROVIDER_MODEL_NOT_FOUND",
+            "http_status": 404,
+            "provider_error_code": "model_not_found",
+            "retryable": False,
+            "status": "BLOCKED",
+        }
+    ]
 
 
 def test_provider_baseline_404_is_model_unavailable_not_harness_failure() -> None:
