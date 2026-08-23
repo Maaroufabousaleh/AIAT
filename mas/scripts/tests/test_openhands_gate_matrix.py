@@ -173,3 +173,41 @@ def test_runsc_gateway_probe_failure_gets_model_gateway_blocker(tmp_path: Path) 
     )
     report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
     assert report["status"] == "BLOCKED_MODEL_GATEWAY"
+
+
+def test_scanner_coverage_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "certification").mkdir()
+    (tmp_path / "certification" / "candidate-certification.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "scanner_errors": 4,
+                "failure_classes": ["SCANNER_COVERAGE_INCOMPLETE"],
+                "security_findings_interpretable": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_SCANNER_COVERAGE"
+    assert report["evidence_blocker_status"] == "BLOCKED_SCANNER_COVERAGE"
+
+
+def test_review_only_findings_get_security_triage_blocker(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "certification").mkdir()
+    (tmp_path / "certification" / "candidate-certification.json").write_text(
+        json.dumps(
+            {
+                "status": "findings_review_required",
+                "scanner_errors": 0,
+                "raw_findings_count": 76,
+                "security_findings_interpretable": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_SECURITY_TRIAGE"
+    assert report["evidence_blocker_status"] == "BLOCKED_SECURITY_TRIAGE"

@@ -92,6 +92,29 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         return "BLOCKED_GVISOR"
     if report("bridge/startup.json").get("health_status") == "BLOCKED":
         return "BLOCKED_TOOL_BRIDGE"
+
+    # Runtime/harness failures take precedence over scan interpretation.  A
+    # failed Agent Server or bridge must not be relabelled as a security
+    # finding merely because the candidate report is incomplete.
+    certification = report("certification/candidate-certification.json")
+    failure_classes = {
+        str(value)
+        for value in certification.get("failure_classes", [])
+        if value
+    }
+    scanner_errors = int(certification.get("scanner_errors") or 0)
+    if (
+        scanner_errors > 0
+        or "SCANNER_COVERAGE_INCOMPLETE" in failure_classes
+        or "SCANNER_EXECUTION_FAILURE" in failure_classes
+    ):
+        return "BLOCKED_SCANNER_COVERAGE"
+    if (
+        certification.get("status") == "findings_review_required"
+        or int(certification.get("raw_findings_count") or 0) > 0
+        or certification.get("security_findings_interpretable") is False
+    ):
+        return "BLOCKED_SECURITY_TRIAGE"
     cleanup = report("gateway/cleanup.json")
     if cleanup and cleanup.get("zero_residue") is False:
         return "BLOCKED_CLEANUP"
