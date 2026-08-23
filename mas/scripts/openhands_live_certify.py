@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -61,11 +62,28 @@ async def certify(
     interface_report: Path,
     workspace: str | None,
     exercise_lifecycle: bool = False,
+    task_spec: Path | None = None,
 ) -> dict[str, Any]:
     blockers: list[str] = []
     report_payload = json.loads(interface_report.read_text(encoding="utf-8"))
     verification = OpenHandsInterfaceVerification.from_report(report_payload)
     statuses = _status_map("BLOCKED")
+    task_definition: dict[str, Any] = {}
+    if task_spec is not None:
+        try:
+            loaded_task = json.loads(task_spec.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            loaded_task = None
+        if not isinstance(loaded_task, dict) or not str(loaded_task.get("prompt") or "").strip():
+            blockers.append("coding_task_spec_invalid")
+        else:
+            task_definition = {
+                "task_id": loaded_task.get("task_id"),
+                "test_command": loaded_task.get("test_command"),
+                "expected_changed_paths": loaded_task.get("expected_changed_paths", []),
+                "forbidden_changed_paths": loaded_task.get("forbidden_changed_paths", []),
+                "task_spec_sha256": hashlib.sha256(task_spec.read_bytes()).hexdigest(),
+            }
     missing = [name for name in _REQUIRED_ENV if not os.getenv(name, "").strip()]
     controller = os.getenv("OPENHANDS_CERTIFICATION_CONTROLLER", "").strip()
     controller_run_id = os.getenv("OPENHANDS_CERT_CONTROLLER_RUN_ID", "").strip()
@@ -110,6 +128,7 @@ async def certify(
             "events": {"retained": False},
             "cleanup": {"status": "NOT_RUN", "payloads_retained": False},
             "blockers": blockers,
+            "task": task_definition,
             "security_policy": "no findings accepted; no activation performed",
         }
 
@@ -168,6 +187,7 @@ async def certify(
                 "events": {"retained": False},
                 "cleanup": {"status": "NOT_RUN", "payloads_retained": False},
                 "blockers": blockers,
+                "task": task_definition,
                 "security_policy": "certification authorization never implies activation approval",
             }
     if authorization is not None:
@@ -192,9 +212,9 @@ async def certify(
         task_type="coding",
         project_id=UUID(os.environ["OPENHANDS_PROJECT_ID"]) if os.getenv("OPENHANDS_PROJECT_ID") else None,
         task_input={
-            "prompt": (
-                "In this disposable certification repository, make one minimal safe code change, "
-                "run the existing tests, and report the result. Do not access credentials or external tools."
+            "prompt": task_definition.get(
+                "prompt",
+                "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. Do not access credentials or external tools.",
             )
         },
         resolved_model_profile=ModelProfileReference(
@@ -230,6 +250,7 @@ async def certify(
                 "events": {"retained": False},
                 "cleanup": {"status": "NOT_RUN", "payloads_retained": False},
                 "blockers": blockers,
+                "task": task_definition,
                 "security_policy": "no findings accepted; no activation performed",
             }
         await adapter.start(request)
@@ -270,6 +291,7 @@ async def certify(
         "events": {"count": event_count, "payloads_retained": False},
         "cleanup": {"status": statuses["zero_residue"], "payloads_retained": False},
         "blockers": blockers,
+        "task": task_definition,
         "security_policy": "certification authorization never implies activation approval; no activation performed",
     }
 
@@ -309,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--exercise-lifecycle", action="store_true")
+    parser.add_argument("--task-spec", type=Path)
     args = parser.parse_args(argv)
     if not args.base_url:
         report = {"schema_version": SCHEMA, "status": "BLOCKED", "blockers": ["agent_server_url_missing"], "worker_activation": "INACTIVE"}
@@ -319,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                 interface_report=args.interface_report,
                 workspace=args.workspace,
                 exercise_lifecycle=args.exercise_lifecycle,
+                task_spec=args.task_spec,
             )
         )
     if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":

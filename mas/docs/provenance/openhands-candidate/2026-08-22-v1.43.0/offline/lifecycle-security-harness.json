@@ -1,0 +1,144 @@
+{
+  "budget": "PASS",
+  "coding_task": "PASS",
+  "details": {
+    "conversation_history": [
+      "start",
+      "pause",
+      "resume",
+      "interrupt",
+      "resume",
+      "crash",
+      "recover",
+      "start",
+      "timeout"
+    ],
+    "forbidden_tools": [
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "external_mcp.register"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "github.write"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "cloud.deploy"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "browser.open"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "desktop.control"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "provider.credentials.read"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "model.switch"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "gateway.override"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "host.filesystem.read"
+      }
+    ],
+    "model_override": {
+      "accepted_task_fields": [
+        "prompt"
+      ],
+      "attempted_governed_fields": [
+        "base_url",
+        "model",
+        "provider",
+        "tools"
+      ],
+      "denied": true,
+      "task_payload_retained": false
+    },
+    "partial_startup_cleanup": {
+      "payloads_retained": false,
+      "scenarios": {
+        "agent_without_mcp": {
+          "payloads_retained": false,
+          "remaining": [],
+          "status": "PASS"
+        },
+        "gateway_without_agent": {
+          "payloads_retained": false,
+          "remaining": [],
+          "status": "PASS"
+        },
+        "mcp_after_failed_task": {
+          "payloads_retained": false,
+          "remaining": [],
+          "status": "PASS"
+        },
+        "nothing_started": {
+          "payloads_retained": false,
+          "remaining": [],
+          "status": "PASS"
+        },
+        "omniroute_only": {
+          "payloads_retained": false,
+          "remaining": [],
+          "status": "PASS"
+        }
+      },
+      "status": "PASS"
+    },
+    "pause_interrupt_semantics": "pause is resumable; interrupt is immediate and resumable only by governed policy",
+    "payloads_retained": false,
+    "secret_scan": {
+      "matched_fingerprints": [],
+      "matches": 0,
+      "raw_values_retained": false,
+      "secret_count": 4,
+      "status": "PASS"
+    }
+  },
+  "forbidden_tool": "PASS",
+  "forced_failure": "PASS",
+  "interrupt": "PASS",
+  "mcp_override_denial": "PASS",
+  "mode": "offline_fixture_only",
+  "model_override_denial": "PASS",
+  "pause": "PASS",
+  "recovery": "PASS",
+  "resume": "PASS",
+  "schema_version": "aiat.openhands-offline-harness.v1",
+  "secret_isolation": "PASS",
+  "timeout": "PASS",
+  "workspace_isolation": "PASS",
+  "zero_residue": {
+    "payloads_retained": false,
+    "remaining": [],
+    "status": "PASS"
+  }
+}

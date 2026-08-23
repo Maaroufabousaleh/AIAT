@@ -1,6 +1,23 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-08-21
+**Updated:** 2026-08-23
+
+## OpenHands v1.43.0 overnight continuation
+
+The inactive OpenHands candidate remains separate from the current OpenCode
+default and from the global release decision. The repository-local
+certification path now has an explicit provider-secret preflight, a sanitized
+gateway/provider error taxonomy, strict Linux/amd64 digest checks, a canonical
+20-gate matrix, a deterministic disposable coding-task fixture, and offline
+lifecycle/security/cleanup harness evidence. The workflow remains
+`workflow_dispatch` only and skips model/runtime stages when `GROQ_API_KEY` is
+absent; cleanup and sanitized evidence still run. The only planned persistent
+GitHub secret is `GROQ_API_KEY`; AIAT tool, session, and internal gateway keys
+remain run-scoped. Existing native gVisor evidence from run `32594885180` is
+retained; no new workflow was dispatched in this continuation. OpenHands is
+still `CERTIFYING`/inactive, steward approval is still separate, and global
+`NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
+under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).
 
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are

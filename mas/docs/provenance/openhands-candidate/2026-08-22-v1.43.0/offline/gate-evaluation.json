@@ -1,0 +1,248 @@
+{
+  "candidate_sha": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2",
+  "evaluation": {
+    "all_required_gates_passed": false,
+    "blocked_gate_count": 0,
+    "blocked_gates": [],
+    "failed_gate_count": 0,
+    "failed_gates": [],
+    "invalid_gates": [],
+    "mandatory_gate_count": 20,
+    "missing_gates": [],
+    "not_run_gate_count": 20,
+    "not_run_gates": [
+      "aiat_local_boundary",
+      "artifact_capture",
+      "budget_enforcement",
+      "cross_workspace_isolation",
+      "file_modifications",
+      "forbidden_tool_attempt",
+      "forced_failure",
+      "graceful_pause",
+      "gvisor_execution",
+      "immediate_interrupt",
+      "isolated_workspace",
+      "real_coding_task",
+      "recovery",
+      "resume",
+      "sbom",
+      "secret_non_disclosure",
+      "security_scan_with_retained_evidence",
+      "test_execution",
+      "timeout",
+      "zero_residue_cleanup"
+    ],
+    "passed_gate_count": 0,
+    "passed_gates": [],
+    "status": "BLOCKED_MISSING_OPERATOR_SECRET",
+    "unknown_gates": []
+  },
+  "gates": {
+    "aiat_local_boundary": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "aiat_local_boundary",
+      "live_required": false,
+      "phase": "governance",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "artifact_capture": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "artifact_capture",
+      "live_required": true,
+      "phase": "evidence",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "budget_enforcement": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "budget_enforcement",
+      "live_required": true,
+      "phase": "governance",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "cross_workspace_isolation": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "cross_workspace_isolation",
+      "live_required": true,
+      "phase": "security",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "file_modifications": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "file_modifications",
+      "live_required": true,
+      "phase": "coding",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "forbidden_tool_attempt": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "forbidden_tool_attempt",
+      "live_required": true,
+      "phase": "security",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "forced_failure": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "forced_failure",
+      "live_required": true,
+      "phase": "recovery",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "graceful_pause": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "graceful_pause",
+      "live_required": true,
+      "phase": "lifecycle",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "gvisor_execution": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "gvisor_execution",
+      "live_required": true,
+      "phase": "runtime",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "immediate_interrupt": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "immediate_interrupt",
+      "live_required": true,
+      "phase": "lifecycle",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "isolated_workspace": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "isolated_workspace",
+      "live_required": true,
+      "phase": "workspace",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "real_coding_task": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "real_coding_task",
+      "live_required": true,
+      "phase": "coding",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "recovery": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "recovery",
+      "live_required": true,
+      "phase": "recovery",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "resume": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "resume",
+      "live_required": true,
+      "phase": "lifecycle",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "sbom": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "sbom",
+      "live_required": false,
+      "phase": "supply_chain",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "secret_non_disclosure": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "secret_non_disclosure",
+      "live_required": true,
+      "phase": "security",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "security_scan_with_retained_evidence": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "security_scan_with_retained_evidence",
+      "live_required": false,
+      "phase": "supply_chain",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "test_execution": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "test_execution",
+      "live_required": true,
+      "phase": "coding",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "timeout": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "timeout",
+      "live_required": true,
+      "phase": "lifecycle",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    },
+    "zero_residue_cleanup": {
+      "evidence_refs": [],
+      "failure_class": null,
+      "gate_id": "zero_residue_cleanup",
+      "live_required": true,
+      "phase": "cleanup",
+      "required": true,
+      "sanitized_details": {},
+      "status": "NOT_RUN"
+    }
+  },
+  "openhands_image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+  "openhands_source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+  "payloads_retained": false,
+  "provider_configuration_status": "BLOCKED_MISSING_OPERATOR_SECRET",
+  "schema_version": "aiat.openhands-certification-gate-evaluation.v1",
+  "status": "BLOCKED_MISSING_OPERATOR_SECRET"
+}

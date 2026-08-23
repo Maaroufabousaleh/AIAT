@@ -1,0 +1,15 @@
+{
+  "changed_paths": [
+    "slugger/core.py"
+  ],
+  "credentials_required": false,
+  "fixture": "mas/scripts/fixtures/openhands-coding-task",
+  "initial_tests_failed_as_expected": true,
+  "missing_paths": [],
+  "network_required": false,
+  "payloads_retained": false,
+  "raw_test_output_retained": false,
+  "reference_tests_passed": true,
+  "schema_version": "aiat.openhands-certification-coding-task-fixture-check.v1",
+  "status": "PASS"
+}

@@ -1,0 +1,74 @@
+# OpenHands v1.43.0 morning certification preparation
+
+This is a manual preparation guide for the inactive candidate. It does not
+activate OpenHands, approve the steward record, or dispatch a workflow. The
+workflow is `workflow_dispatch` only and must be dispatched once against an
+explicit frozen commit after the preflight passes.
+
+## Operator sequence
+
+1. Set or verify the two non-secret repository variables. No profile UUID,
+   internal tool secret, or internal model-gateway secret is a persistent
+   GitHub input.
+
+   ```bash
+   gh variable set OPENHANDS_MODEL_ID --body omniroute-coding
+   gh variable set OPENHANDS_MCP_SETTINGS_KEY --body aiat-openhands-v1-43-0-coding
+   ```
+
+2. Set the one external provider secret interactively. The value is read from
+   stdin and is never embedded in shell history or documentation.
+
+   ```bash
+   gh secret set GROQ_API_KEY
+   ```
+
+3. Freeze and inspect the exact candidate commit. Do not use an implicit
+   `HEAD` in the dispatch command.
+
+   ```bash
+   CANDIDATE_SHA="$(git rev-parse HEAD)"
+   git show -s --format='%H %s' "$CANDIDATE_SHA"
+   ```
+
+4. Run the safe read-only preflight. It checks secret/variable presence only,
+   never retrieves a secret value, and runs the bounded deterministic tests.
+
+   ```bash
+   python mas/scripts/check_openhands_dispatch_preflight.py \
+     --candidate-sha "$CANDIDATE_SHA" \
+     --github-repo OWNER/REPOSITORY \
+     --output /tmp/aiat-openhands-dispatch-preflight.json
+   ```
+
+   Continue only when it reports `READY_TO_DISPATCH`/`ready_to_dispatch=true`.
+   A dirty but understood local worktree does not change the exact SHA used by
+   GitHub; do not stage or normalize the protected memory files.
+
+5. Dispatch exactly one run against that same SHA. Do not dispatch OpenCode.
+
+   ```bash
+   gh workflow run openhands-candidate-certification.yml \
+     --ref "$CANDIDATE_SHA" \
+     -f candidate_sha="$CANDIDATE_SHA"
+   ```
+
+6. Watch and inspect the single run. Do not automatically rerun a blocked or
+   failed certification; first identify a material prerequisite change.
+
+   ```bash
+   RUN_ID="$(gh run list --workflow openhands-candidate-certification.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   gh run watch "$RUN_ID" --exit-status
+   gh run view "$RUN_ID" --log-failed
+   gh run download "$RUN_ID" \
+     --name "openhands-candidate-certification-${RUN_ID}" \
+     --dir "/tmp/aiat-openhands-evidence-${RUN_ID}"
+   python -m json.tool "/tmp/aiat-openhands-evidence-${RUN_ID}/certification/gate-evaluation.json"
+   ```
+
+The only expected persistent secret for this candidate workflow is
+`GROQ_API_KEY`. `AIAT_TOOL_SECRET`, `OPENHANDS_SESSION_API_KEY`, and
+`OPENHANDS_MODEL_GATEWAY_API_KEY` are generated, masked, and cleaned up inside
+the run. The profile UUID and MCP registration are also run-scoped. A passing
+certification does not activate the worker; evidence registration and steward
+activation approval remain independent.
