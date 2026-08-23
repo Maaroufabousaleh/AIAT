@@ -456,6 +456,55 @@ jobs:
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           test "$exit_code" = 0
 
+      - name: Record disposable gateway network topology
+        id: network_topology
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          topology_input="$RUNNER_TEMP/aiat-openhands-network-inspect.json"
+          docker network inspect "$network" > "$topology_input"
+          python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" \
+            "$topology_input" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          raw = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          network = raw[0] if isinstance(raw, list) and raw else {}
+          containers = network.get("Containers") if isinstance(network, dict) else {}
+          topology = []
+          if isinstance(containers, dict):
+              for value in containers.values():
+                  if not isinstance(value, dict):
+                      continue
+                  topology.append(
+                      {
+                          "name": value.get("Name"),
+                          "ipv4": bool(value.get("IPv4Address")),
+                      }
+                  )
+          output.write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-network-topology.v1",
+                      "network_aliases_expected": ["agent-server", "tool-service", "litellm", "omniroute"],
+                      "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
+                      "credentials_or_payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          exit_code=$?
+          rm -f "$topology_input"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime
         continue-on-error: true
