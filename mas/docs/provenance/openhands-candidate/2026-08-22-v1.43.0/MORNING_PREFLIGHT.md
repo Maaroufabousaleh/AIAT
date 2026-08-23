@@ -82,6 +82,10 @@ includes exact disposable-network topology assertions, candidate-worker-bound
 certification authorization, a bounded 20-iteration/300-second adapter budget,
 strict MCP allowlist/delete read-back, and repository-relative interface-report
 resolution, and zero-residue verification for the workspace and tool image.
+The current candidate hardening (`732ab3d`, `2cf8591`) also re-runs the fixed
+task test after model execution, compares the exact workspace diff to the
+task contract, requires returned artifact hashes, and scans transient events
+for secret disclosure. A model response alone cannot advance those gates.
 None of these local checks is live provider evidence.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate

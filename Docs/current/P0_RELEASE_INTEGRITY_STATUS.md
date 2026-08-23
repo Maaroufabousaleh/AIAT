@@ -57,7 +57,9 @@ requires disposable workspace and tool-image absence in the cleanup evidence;
 `2d3ee8f` records that cleanup hardening in the maintained release status.
 `0d821bd` additionally verifies the pinned image platforms, preserves the
 governed coding-task prompt for the live request without retaining payloads,
-and validates the neutral OpenHands/OpenCode comparison record.
+and validates the neutral OpenHands/OpenCode comparison record. `732ab3d`
+adds fail-closed post-run test/diff/artifact/secret checks, while `2c1b976`
+and `2cf8591` align the maintained status and disposable git-baseline workflow.
 OpenHands
 is
 still `CERTIFYING`/inactive, steward approval is still separate, and global

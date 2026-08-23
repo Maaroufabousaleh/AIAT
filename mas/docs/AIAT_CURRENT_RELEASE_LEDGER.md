@@ -56,7 +56,11 @@ image; `2d3ee8f` records that cleanup hardening in the maintained status
 surfaces. `0d821bd` additionally binds the exact candidate image platform,
 uses the governed task specification prompt in the live request without
 retaining it in evidence, and validates the neutral comparison record. The
-registration preflight now requires a complete 20-gate artifact
+`732ab3d` follow-up requires post-run fixed-test, exact workspace-diff,
+returned-artifact, and transient secret-disclosure checks; `2c1b976` and
+`2cf8591` align the maintained candidate status and disposable git-baseline
+workflow semantics. The registration preflight now requires a complete
+20-gate artifact
 bound to the exact candidate/source/image pins before any steward submission.
 These changes add no live
 provider evidence and do not alter the global `NO-RELEASE` decision.
